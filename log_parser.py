@@ -1,204 +1,201 @@
+import os
 import re
 import json
-import os
-import difflib
+import time
 from collections import defaultdict
 
 # ==============================================================================
-# 1. Log Reader (노이즈 필터링)
+# [Dependency Check]
+# ==============================================================================
+try:
+    from sentence_transformers import SentenceTransformer
+    from sklearn.cluster import DBSCAN
+    import numpy as np
+    AI_AVAILABLE = True
+except ImportError:
+    print("⚠️ 경고: AI 라이브러리 미설치. (pip install sentence-transformers scikit-learn)")
+    AI_AVAILABLE = False
+
+# ==============================================================================
+# 1. Log Reader & Parser
 # ==============================================================================
 class SubutaiLogReader:
     def __init__(self, file_path):
         self.file_path = file_path
 
-    def _is_ignorable(self, line_num, line):
-        """
-        [User Custom Logic] 분석할 가치가 없는 라인을 True로 리턴
-        """
-        stripped = line.strip()
-        if not stripped: return True
-        if stripped.startswith("---") or stripped.startswith("==="): return True
-        if stripped.startswith("Info:") or "Page" in stripped: return True
+    def _is_ignorable(self, line):
+        line = line.strip()
+        if not line or line.startswith(("---", "===", "Info:", "Page")): return True
         return False
 
     def stream_valid_lines(self):
-        if not os.path.exists(self.file_path):
-            return []
+        if not os.path.exists(self.file_path): return []
         with open(self.file_path, 'r', encoding='utf-8', errors='ignore') as f:
-            for i, line in enumerate(f, 1):
-                if not self._is_ignorable(i, line):
-                    yield line.strip()
+            for line in f:
+                if not self._is_ignorable(line): yield line.strip()
 
-# ==============================================================================
-# 2. Parser (N-Tuple 추출)
-# ==============================================================================
 class SubutaiParser:
     def __init__(self):
-        # 예: LINT-01, TIM-05
         self.rule_pattern = re.compile(r"^([A-Z]+-\d+)")
-        # 따옴표 안의 변수 추출
         self.var_pattern = re.compile(r"['\"](.*?)['\"]")
 
     def parse_line(self, line):
         match = self.rule_pattern.search(line)
         rule_id = match.group(1) if match else "UNKNOWN"
-        
         variables = self.var_pattern.findall(line)
-        var_tuple = tuple(variables) if variables else ("NO_VAR",)
-        
-        # 뼈대만 남기기 (숫자와 변수 내용 제거)
+        # 템플릿: 변수 내용 제거
         template = self.var_pattern.sub("'<VAR>'", line)
         template = re.sub(r"\d+", "<NUM>", template)
-        
         return {
             "rule_id": rule_id,
             "template": template,
-            "variables": var_tuple,
+            "variables": variables,
             "raw_log": line
         }
 
 # ==============================================================================
-# 3. Aggressive Clusterer (경로 일반화 핵심 엔진)
+# 2. Logic Layer: Full Path Logic (절삭 없음!)
 # ==============================================================================
-class AggressiveClusterer:
+class LogicClusterer:
     def __init__(self):
         pass
 
-    def generalize_pattern(self, str1, str2):
+    def get_logic_signature(self, var_str):
         """
-        두 문자열(변수명/경로)을 비교하여 '다른 부분'만 '*'로 치환한 패턴 반환
-        Ex) 'u_cpu_core' + 'u_gpu_core' -> 'u_*_core'
+        [수정됨] 계층 구조를 자르지 않습니다.
+        대신 숫자(Index)만 마스킹하여 전체 경로를 보존합니다.
+        
+        Input:  top/u_cpu_0/core/reg_128
+        Output: top/u_cpu_*/core/reg_*
         """
-        # 1. 길이 차이가 너무 크면 구조가 다른 것임 -> 병합 안 함
-        if abs(len(str1) - len(str2)) > 10: 
-            return None
-
-        # 2. 구분자(Delimiter) 기준으로 토큰화
-        # 경로(/), 언더바(_), 점(.) 등을 기준으로 쪼갬
-        seps = r"([/_.\-])"
-        parts1 = re.split(seps, str1)
-        parts2 = re.split(seps, str2)
-
-        # 구조적 길이(토큰 수)가 다르면 병합 불가
-        if len(parts1) != len(parts2):
-            return None
-
-        new_parts = []
-        diff_count = 0
-        
-        for p1, p2 in zip(parts1, parts2):
-            if p1 == p2:
-                new_parts.append(p1)
-            elif '*' in p1: # 이미 와일드카드가 있는 경우 유지
-                new_parts.append(p1)
-            else:
-                # 다르다면 '*'로 치환
-                diff_count += 1
-                new_parts.append("*")
-        
-        # 3. 안전장치: 전체 토큰 중 40% 이상이 다르면 "너무 다르다"고 판단하여 병합 거부
-        # (너무 뭉뚱그려지는 것 방지)
-        total_tokens = len(parts1)
-        if diff_count > max(1, total_tokens * 0.4):
-            return None
-            
-        return "".join(new_parts)
+        # 숫자를 모두 *로 치환 (경로는 그대로 유지)
+        masked_path = re.sub(r"\d+", "*", var_str)
+        return masked_path
 
     def run(self, parsed_logs):
-        # Step 1: Template Grouping (물리적 1차 분류)
-        template_groups = defaultdict(list)
+        groups = defaultdict(list)
+        
         for p in parsed_logs:
-            # Rule ID와 템플릿이 같은 것끼리 모음
-            key = (p['rule_id'], p['template'])
-            # 여기서는 편의상 첫 번째 변수(variables[0])를 기준으로 클러스터링
-            if p['variables'] and p['variables'][0] != "NO_VAR":
-                template_groups[key].append(p['variables'][0])
-
-        final_results = []
-
-        # Step 2: Iterative Aggressive Merge
-        for (rule_id, template), var_list in template_groups.items():
+            if not p['variables']:
+                sig = "NO_VAR"
+            else:
+                # 첫 번째 변수 기준 (필요시 Source/Dest 모두 고려 가능)
+                sig = self.get_logic_signature(p['variables'][0])
             
-            # [핵심] 정렬을 해야 비슷한 것끼리 붙어서 병합 확률이 높아짐
-            var_list.sort()
-            
-            merged_groups = []
-            if not var_list: continue
+            # Rule ID + Full Path Pattern으로 1차 그룹핑
+            key = (p['rule_id'], sig)
+            groups[key].append(p)
 
-            # 첫 번째 요소를 시작 패턴으로 잡음
-            current_pattern = var_list[0]
-            current_count = 1
-            sample_members = [var_list[0]]
-
-            for i in range(1, len(var_list)):
-                next_var = var_list[i]
-                
-                # 현재 패턴과 다음 변수를 일반화 시도
-                generalized = self.generalize_pattern(current_pattern, next_var)
-                
-                if generalized:
-                    # 병합 성공! 패턴 업데이트 (구체적 -> 일반적)
-                    current_pattern = generalized
-                    current_count += 1
-                    if len(sample_members) < 3: sample_members.append(next_var)
-                else:
-                    # 병합 실패! 지금까지 뭉친 그룹 저장하고 새로 시작
-                    merged_groups.append({
-                        "pattern": current_pattern,
-                        "count": current_count,
-                        "samples": sample_members
-                    })
-                    current_pattern = next_var
-                    current_count = 1
-                    sample_members = [next_var]
-            
-            # 루프 끝나고 남은 마지막 그룹 저장
-            merged_groups.append({
-                "pattern": current_pattern,
-                "count": current_count,
-                "samples": sample_members
+        # AI 엔진 연동용 데이터 포맷
+        logic_results = []
+        for (rule_id, sig), members in groups.items():
+            logic_results.append({
+                "rule_id": rule_id,
+                "pattern": sig,  # 전체 경로가 살아있는 패턴
+                "count": len(members),
+                "template": members[0]['template'],
+                "sample_log": members[0]['raw_log']
             })
-
-            # 결과 포맷팅
-            for mg in merged_groups:
-                # 카테고리 태깅
-                if "*" in mg['pattern']:
-                    cat = "Grouped Pattern (Waive Check)"
-                else:
-                    cat = "Single Issue (Fix Check)"
-
-                final_results.append({
-                    "rule_id": rule_id,
-                    "final_pattern": mg['pattern'],
-                    "count": mg['count'],
-                    "category": cat,
-                    "template": template,
-                    "example_vars": mg['samples']
-                })
-
-        return final_results
+            
+        return logic_results
 
 # ==============================================================================
-# 4. Main Execution (Test)
+# 3. AI Layer: Semantic Clusterer
+# ==============================================================================
+class AIClusterer:
+    def __init__(self, model_name='all-MiniLM-L6-v2'):
+        if AI_AVAILABLE:
+            print(f"⏳ AI 모델 로딩 중... ({model_name})")
+            self.model = SentenceTransformer(model_name)
+            print("✅ 모델 로딩 완료!")
+
+    def run(self, logic_groups):
+        if not AI_AVAILABLE or not logic_groups: return logic_groups
+
+        print(f"🤖 AI 분석 시작: {len(logic_groups)}개의 패턴을 분석합니다.")
+        t0 = time.time()
+
+        # Input: Rule ID + Full Path Pattern
+        # 예: "LINT-01 top/u_cpu_*/core/reg_*"
+        embedding_inputs = [f"{g['rule_id']} {g['pattern']}" for g in logic_groups]
+
+        # 벡터화
+        embeddings = self.model.encode(embedding_inputs, batch_size=128, show_progress_bar=True)
+
+        # 클러스터링 (DBSCAN)
+        # eps=0.25: 유사도 약 75% 이상이면 같은 그룹
+        clustering = DBSCAN(eps=0.25, min_samples=2, metric='cosine').fit(embeddings)
+        labels = clustering.labels_
+
+        # 결과 병합
+        ai_grouped_result = defaultdict(lambda: {
+            "super_group_id": None, "total_count": 0, 
+            "representative_pattern": "", "sub_patterns": []
+        })
+
+        for label, logic_group in zip(labels, logic_groups):
+            # Noise(-1)는 개별 그룹으로 처리
+            cluster_key = f"SG_{label}" if label != -1 else f"NOISE_{logic_group['pattern']}"
+            
+            group_data = ai_grouped_result[cluster_key]
+            group_data["super_group_id"] = cluster_key
+            group_data["total_count"] += logic_group['count']
+            group_data["sub_patterns"].append(logic_group)
+
+        # 최종 정리
+        final_output = []
+        for key, data in ai_grouped_result.items():
+            # 가장 빈도 높은 패턴을 대표 이름으로
+            main_sub = max(data["sub_patterns"], key=lambda x: x['count'])
+            data["representative_pattern"] = main_sub["pattern"]
+            data["rule_id"] = main_sub["rule_id"]
+            final_output.append(data)
+
+        final_output.sort(key=lambda x: x['total_count'], reverse=True)
+        print(f"⚡ AI 분석 완료 ({time.time()-t0:.2f}초)")
+        return final_output
+
+# ==============================================================================
+# 4. Main Execution
 # ==============================================================================
 if __name__ == "__main__":
-    # --- 테스트용 더미 파일 생성 (복잡한 경로 포함) ---
-    dummy_file = "aggressive_test.log"
+    # --- 테스트용 데이터 생성 ---
+    log_filename = "test_run.log"
+    with open(log_filename, "w") as f:
+        f.write("Info: Start\n")
+        # [Case 1] 경로가 깊지만 내용은 유사한 경우 -> Logic은 분리하지만 AI가 묶어야 함
+        # 기존: top/u_cpu/* 로 잘렸음 (Truncation)
+        # 변경: top/u_cpu/decode/pipe_* (Full Path 유지)
+        for i in range(10): f.write(f"LINT-01: Signal 'top/u_cpu/decode/pipe_{i}' float\n")
+        for i in range(10): f.write(f"LINT-01: Signal 'top/u_cpu/execute/pipe_{i}' float\n")
+        
+        # [Case 2] 글자가 다르지만 의미가 같은 경우 (AI 역할)
+        f.write("TIM-01: Path 'top/mem/ddr_phy_ctrl' violation\n")
+        f.write("TIM-01: Path 'top/mem/ddr_controller' violation\n")
 
-    print("🚀 Running Aggressive Clustering...\n")
+    print("🚀 Pipeline Start\n")
 
-    # 1. Read
-    reader = SubutaiLogReader(dummy_file)
-    lines = list(reader.stream_valid_lines())
-    
-    # 2. Parse
+    # 1. Read & Parse
+    reader = SubutaiLogReader(log_filename)
     parser = SubutaiParser()
-    parsed_data = [parser.parse_line(line) for line in lines]
+    parsed_logs = [parser.parse_line(line) for line in reader.stream_valid_lines()]
     
-    # 3. Cluster (Aggressive)
-    clusterer = AggressiveClusterer()
-    results = clusterer.run(parsed_data)
+    # 2. Logic (Full Path with Masking)
+    # 절삭(Truncation) 없이 순수하게 숫자만 마스킹합니다.
+    logic_engine = LogicClusterer()
+    logic_results = logic_engine.run(parsed_logs)
+    print(f"✅ Logic Result: {len(logic_results)} groups (Full Path Preserved)")
     
-    # 4. Result
-    print(json.dumps(results, indent=2))
-
+    # 3. AI (Semantic Merge)
+    # 살아있는 Full Path 정보를 이용해 정확하게 묶습니다.
+    ai_engine = AIClusterer()
+    final_results = ai_engine.run(logic_results)
+    
+    # 4. Report
+    print("\n" + "="*50)
+    for group in final_results[:5]:
+        print(f"[{group['representative_pattern']}] (Count: {group['total_count']})")
+        if len(group['sub_patterns']) > 1:
+            print(f"  └ Merged: {[sub['pattern'] for sub in group['sub_patterns']]}")
+    
+    if os.path.exists(log_filename): os.remove(log_filename)
