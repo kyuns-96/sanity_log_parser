@@ -172,23 +172,17 @@ class LogicClusterer:
     def run(self, parsed_logs):
         groups = defaultdict(list)
         for p in parsed_logs:
-            stem_sig = self.get_stem_signature(p['variable_stems'])
-            # Create composite key: prioritize stem signature for semantic grouping
-            # but include full signature and template for complete context
-            key = (p['rule_id'], stem_sig, p['template'])
+            # [1차 그룹핑] 원래 방식: variables만 사용 (stem 무시)
+            full_sig = self.get_logic_signature(p['variables'])
+            key = (p['rule_id'], full_sig, p['template'])
             groups[key].append(p)
 
         results = []
-        for (rule_id, stem_sig, temp), members in groups.items():
-            # Calculate full pattern for reference
-            full_sigs = [self.get_logic_signature(m['variables']) for m in members]
-            full_sig_representative = full_sigs[0] if full_sigs else "NO_VAR"
-            
+        for (rule_id, full_sig, temp), members in groups.items():
             results.append({
                 "type": "LogicGroup",
                 "rule_id": rule_id,
-                "stem_pattern": stem_sig,  # Primary pattern (hierarchical)
-                "full_pattern": full_sig_representative,  # Reference pattern
+                "pattern": full_sig,  # 원본 방식: 변수 기반 패턴
                 "template": temp,
                 "count": len(members),
                 "members": members  # <--- 여기에 raw_log가 포함된 파싱 객체들이 있음
@@ -211,14 +205,12 @@ class AIClusterer:
     def run(self, logic_groups):
         if not AI_AVAILABLE or not logic_groups: return []
 
-        print(f"🤖 AI analyzing {len(logic_groups)} logic groups...")
-        # Use stem_pattern for embeddings to enable hierarchical similarity detection
-        # This allows logs with different depths to be recognized as similar
-        embedding_inputs = [f"{g['template']} {g['stem_pattern']}" for g in logic_groups]
+        print(f"🤖 Stage 2 - AI Clustering: analyzing {len(logic_groups)} logic groups...")
+        # [2차 그룹핑] AI clustering: 1차 로직 그룹들을 의미적으로 재병합
+        embedding_inputs = [f"{g['template']} {g['pattern']}" for g in logic_groups]
         embeddings = self.model.encode(embedding_inputs, batch_size=128, show_progress_bar=False)
         
-        # Increased eps from 0.2 to 0.3 for stem-based clustering
-        # Higher eps allows more semantic flexibility when matching hierarchically different logs
+        # DBSCAN: 의미적으로 유사한 로직 그룹들을 병합
         clustering = DBSCAN(eps=0.3, min_samples=1, metric='cosine').fit(embeddings)
         
         ai_grouped = defaultdict(lambda: {"total_count": 0, "logic_subgroups": []})
@@ -243,11 +235,10 @@ class AIClusterer:
                 "super_group_id": key,
                 "rule_id": main['rule_id'],
                 "representative_template": main['template'],
-                "representative_stem_pattern": main['stem_pattern'],  # Hierarchical pattern (primary)
-                "representative_full_pattern": main['full_pattern'],  # Full variable pattern (reference)
+                "representative_pattern": main['pattern'],
                 "total_count": data["total_count"],
                 "merged_variants_count": len(data["logic_subgroups"]),
-                "original_logs": all_raw_logs  # <--- 복구된 원본 로그 리스트
+                "original_logs": all_raw_logs
             })
         
         final_output.sort(key=lambda x: x['total_count'], reverse=True)
@@ -276,25 +267,32 @@ if __name__ == "__main__":
             res = parser.parse_line(stripped)
             if res: parsed_logs.append(res)
 
-    # 2. Logic Clustering
+    # 2. Logic Clustering [1차 그룹핑: 원래 방식]
     logic_results = LogicClusterer().run(parsed_logs)
+    print(f"\n📊 Stage 1 - Logic Clustering (Original Method - Variables Only):")
+    print(f"   Input logs: {len(parsed_logs):,}")
+    print(f"   Output groups: {len(logic_results):,}")
+    print(f"   Compression ratio: {len(parsed_logs) / len(logic_results):.2f}x")
 
-    # 3. AI Clustering & Result Aggregation
+    # 3. AI Clustering [2차 그룹핑: 의미적 병합]
     results = [] # <--- 여기에 모든 결과를 저장합니다.
 
     if AI_AVAILABLE:
-        # AI 결과에는 이미 original_logs 복구 로직이 포함되어 있음
+        # 2차 그룹핑: 1차 로직 그룹들을 AI로 의미적으로 재병합
         results = AIClusterer().run(logic_results)
+        print(f"\n🤖 Stage 2 - AI Clustering (Semantic Merging of 1st-Groups):")
+        print(f"   Input 1st-groups: {len(logic_results):,}")
+        print(f"   Output 2nd-groups: {len(results):,}")
+        print(f"   Final compression ratio: {len(parsed_logs) / len(results):.2f}x")
     else:
-        # AI가 없으면 Logic 결과를 포맷팅하여 저장
+        # AI가 없으면 Logic 결과만 반환
         for g in logic_results:
             # Logic 그룹의 원본 로그 복구
             raw_logs = [m['raw_log'] for m in g['members']]
             results.append({
                 "type": "LogicGroup",
                 "rule_id": g['rule_id'],
-                "representative_stem_pattern": g['stem_pattern'],  # Hierarchical pattern (primary)
-                "representative_full_pattern": g['full_pattern'],  # Full variable pattern (reference)
+                "representative_pattern": g['pattern'],
                 "total_count": g['count'],
                 "original_logs": raw_logs
             })
@@ -306,8 +304,9 @@ if __name__ == "__main__":
     
     # 화면 출력 (샘플)
     for i, res in enumerate(results[:5]):
-        pattern_display = res.get('representative_stem_pattern', res.get('representative_pattern', 'N/A'))
-        print(f"{i+1:02d}. [{res['rule_id']}] {pattern_display}")
+        pattern_display = res.get('representative_pattern', 'N/A')
+        merged_info = f" (merged {res.get('merged_variants_count', 1)} groups)" if res.get('merged_variants_count', 1) > 1 else ""
+        print(f"{i+1:02d}. [{res['rule_id']}] {pattern_display}{merged_info}")
         print(f"    Count: {res['total_count']:,}")
         print(f"    Original Logs Sample (Top 2):")
         for log in res['original_logs'][:2]:
