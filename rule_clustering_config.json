@@ -5,138 +5,54 @@
   "rules": {
     "RULE_001": {
       "eps": 0.2,
-      "tail_weight": 2,
-      "tail_levels": 1,
-      "tail_weights": null,
-      "description": "기본 규칙: 뒷부분 1개 레벨"
+      "description": "기본: variable_position_weights 설정 없음"
     },
     "RULE_002": {
       "eps": 0.15,
-      "tail_levels": 2,
-      "tail_weights": [3, 2],
-      "description": "뒷부분 2개 레벨: 앞부분(3배) > 뒷부분(2배)"
+      "variable_position_weights": [3, 1],
+      "description": "첫번째 변수 중요(3배), 나머지 무시(1배)"
     },
     "RULE_003": {
       "eps": 0.25,
-      "tail_levels": 1,
-      "tail_weight": 1,
       "variable_position_weights": [3, 1],
       "variable_value_weights": {
         "top/u_cpu/decode/pipe_4": 3,
         "top/u_cpu/decode/pipe_5": 1
       },
-      "description": "느슨한 병합, 전체 패턴 중시 + 첫번째 변수 위치 중요(3배) + pipe_4 값 우선(3배)"
+      "description": "위치별 + 값별 가중치 모두 사용"
     }
   },
   "settings_guide": {
     "eps": {
       "description": "DBSCAN clustering 거리 임계값 (낮을수록 엄격)",
-      "recommended_range": [0.1, 0.3],
-      "low_value": "0.1-0.15 → 매우 엄격 (거의 병합 안 함)",
-      "medium_value": "0.2 → 중간 (권장)",
-      "high_value": "0.25-0.3 → 느슨함 (많이 병합)"
-    },
-    "tail_levels": {
-      "description": "뒷부분 몇 개 레벨을 추출할지",
-      "example_pattern": "BLK_CPU/A/B/C/mem_top_ABC",
-      "tail_levels_1": "tail_levels=1 → 마지막 1개: 'ABC'",
-      "tail_levels_2": "tail_levels=2 → 마지막 2개: 'mem_top', 'ABC'"
-    },
-    "tail_weights": {
-      "description": "각 뒷부분 레벨별 가중치 (배열)",
-      "note": "tail_weights가 지정되면 tail_weight는 무시됨",
-      "example_1": "[2] → 뒷부분을 2배로 반복",
-      "example_2": "[3, 2] → 첫번째는 3배, 두번째는 2배",
-      "example_3": "[2, 3, 1] → 첫, 둘, 셋째 각각 2배, 3배, 1배",
-      "null": "null → tail_weight 값 사용"
-    },
-    "tail_weight": {
-      "description": "뒷부분 가중치 (단순 반복)",
-      "note": "tail_weights가 null일 때만 사용",
-      "value_2": "기본값 2 → 뒷부분을 2회 반복"
+      "recommended_range": [0.1, 0.3]
     },
     "variable_position_weights": {
-      "description": "변수 위치별 중요도 가중치 (배열) - embedding에서 각 변수/부분을 몇 배로 반복할지",
-      "note": "tail_weights와 함께 사용 가능. 뒷부분 추출 후 위치별로 추가 가중치 적용",
-      "example_pattern": "BLK_CPU/A/B/C/mem_top_ABC",
-      "example_1": "[3, 2, 1] → 첫 부분 3배, 둘째 2배, 셋째 1배",
-      "example_2": "[4, 1] → 첫 부분 4배, 나머지 1배",
-      "example_3": "[2] → 모든 부분을 2배로 (부족한 위치는 마지막 값 사용)",
-      "null": "null → 위치별 가중치 없음 (모두 1배)"
+      "description": "변수 위치별 가중치 배열 - Template의 각 '<VAR>' 위치별로 강조도 설정",
+      "type": "array",
+      "example": "[3, 2, 1]",
+      "meaning": "첫번째 변수 3배, 둘째 2배, 셋째 1배"
     },
     "variable_value_weights": {
-      "description": "변수 값 기반 중요도 가중치 (객체) - 특정 변수 값에 대해 몇 배로 반복할지",
-      "note": "variable_position_weights와 동시 사용 불가. 변수 값 자체별로 가중치 설정",
-      "example_pattern_1": "변수: ['top/u_cpu/decode/pipe_4', 'top/u_cpu/decode/pipe_5', 'top/u_cpu/decode/pipe_5']",
-      "example_1": "{\"top/u_cpu/decode/pipe_4\": 3, \"top/u_cpu/decode/pipe_5\": 1}",
-      "example_1_result": "→ pipe_4는 3배, pipe_5는 1배 강조",
-      "example_2": "{\"top/u_cpu/decode/pipe_4\": 5}",
-      "example_2_result": "→ pipe_4는 5배, 지정되지 않은 변수는 1배 (기본값)",
-      "null": "null → 변수 값 기반 가중치 없음 (모두 1배)"
+      "description": "변수 값별 가중치 객체 - 특정 변수 값에 대해서만 강조도 설정",
+      "type": "object",
+      "example": "{\"pipe_4\": 3, \"pipe_5\": 1}",
+      "meaning": "pipe_4는 3배, pipe_5는 1배"
     }
   },
   "examples": {
-    "memory_access_important_tail": {
-      "tail_levels": 1,
-      "tail_weights": [4],
-      "reason": "메모리 주소(마지막)가 가장 중요 → 4배"
-    },
-    "memory_access_important_prev": {
-      "tail_levels": 2,
-      "tail_weights": [3, 1],
-      "reason": "메모리 종류(두번째)가 가장 중요 → 3배, 주소(마지막) → 1배"
-    },
-    "routing_last_two_important": {
-      "tail_levels": 2,
-      "tail_weights": [2, 3],
-      "reason": "마지막 노드(3배) > 이전 노드(2배)"
-    },
-    "timing_full_path": {
-      "tail_levels": 3,
-      "tail_weights": [1, 2, 3],
-      "reason": "경로의 마지막 3단계 모두 중요 (점진적 증가)"
-    },
-    "variable_position_weights_example_1": {
-      "description": "변수 위치별 가중치 사용 예시",
-      "variable_position_weights": [3, 2, 1],
-      "reason": "여러 변수 중 첫번째 변수가 가장 중요 (3배) → 둘째 (2배) → 셋째 (1배)"
-    },
-    "variable_position_weights_example_2": {
-      "description": "특정 변수 우선 예시",
-      "variable_position_weights": [4, 1],
-      "reason": "첫번째 변수가 매우 중요 (4배), 나머지는 무시 (1배)"
-    },
-    "combined_tail_and_variable_weights": {
-      "tail_levels": 2,
-      "tail_weights": [2, 3],
+    "variable_position_weights_basic": {
+      "description": "변수 위치별 가중치: 위치 0 (첫변수) 중요, 나머지는 덜 중요",
       "variable_position_weights": [3, 1],
-      "reason": "tail 부분의 마지막(3배) + 첫부분(2배)을 추출한 후, 첫번째를 다시 3배로 강조"
+      "reason": "Template: Signal '<VAR>' float Signal '<VAR>' 형태에서 첫번째 변수만 강조"
     },
-    "variable_value_weights_example_1": {
-      "description": "파이프 번호별 중요도 설정",
+    "variable_value_weights_specific": {
+      "description": "특정 변수 값에 대한 가중치",
       "variable_value_weights": {
         "top/u_cpu/decode/pipe_4": 3,
         "top/u_cpu/decode/pipe_5": 1
       },
-      "reason": "pipe_4가 가장 중요 (3배) → pipe_5는 덜 중요 (1배)"
-    },
-    "variable_value_weights_example_2": {
-      "description": "메모리 주소별 중요도 설정",
-      "variable_value_weights": {
-        "0x8000": 4,
-        "0x9000": 2,
-        "0xa000": 1
-      },
-      "reason": "특정 메모리 주소가 더 중요한 경우"
-    },
-    "variable_value_weights_example_3": {
-      "description": "패턴 매칭으로 동적 설정 (정확한 변수명 필요)",
-      "variable_value_weights": {
-        "top/u_cpu/decode/pipe_[0-2]": 5,
-        "top/u_cpu/decode/pipe_[3-5]": 2,
-        "top/u_cpu/decode/pipe_[6-9]": 1
-      },
-      "note": "정규식 패턴은 현재 미지원 - 정확한 변수명 전체를 지정해야 함"
+      "reason": "pipe_4는 중요(3배), pipe_5는 일반(1배)"
     }
   }
 }
