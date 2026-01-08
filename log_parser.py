@@ -202,44 +202,93 @@ class AIClusterer:
             except:
                 AI_AVAILABLE = False
 
+    def extract_variable_tail(self, full_pattern):
+        """
+        VLSI 변수의 뒷부분 추출 (뒷부분이 더 중요함)
+        예: 'BLK_CPU/A/B/C/mem_top_ABC' → 'mem_top_ABC' (마지막 / 이후)
+        """
+        if ' / ' in full_pattern:
+            parts = full_pattern.split(' / ')
+            # 마지막 변수의 뒷부분만 추출 (가장 중요한 부분)
+            return parts[-1]
+        return full_pattern
+
     def run(self, logic_groups):
         if not AI_AVAILABLE or not logic_groups: return []
 
         print(f"🤖 Stage 2 - AI Clustering: analyzing {len(logic_groups)} logic groups...")
-        # [2차 그룹핑] AI clustering: 1차 로직 그룹들을 의미적으로 재병합
-        embedding_inputs = [f"{g['template']} {g['pattern']}" for g in logic_groups]
-        embeddings = self.model.encode(embedding_inputs, batch_size=128, show_progress_bar=False)
         
-        # DBSCAN: 의미적으로 유사한 로직 그룹들을 병합
-        clustering = DBSCAN(eps=0.3, min_samples=1, metric='cosine').fit(embeddings)
+        # rule_id별로 그룹 분류
+        groups_by_rule = defaultdict(list)
+        for g in logic_groups:
+            groups_by_rule[g['rule_id']].append(g)
         
-        ai_grouped = defaultdict(lambda: {"total_count": 0, "logic_subgroups": []})
-        for label, logic_group in zip(clustering.labels_, logic_groups):
-            cluster_key = f"{logic_group['rule_id']}_SG_{label}"
-            ai_grouped[cluster_key]["total_count"] += logic_group['count']
-            ai_grouped[cluster_key]["logic_subgroups"].append(logic_group)
-
+        print(f"   Grouping by rule_id: {len(groups_by_rule)} different rules")
+        
         final_output = []
-        for key, data in ai_grouped.items():
-            main = max(data["logic_subgroups"], key=lambda x: x['count'])
+        ai_group_counter = 0
+        
+        # Rule별로 따로 AI Clustering 수행
+        for rule_id, rule_groups in groups_by_rule.items():
+            if len(rule_groups) < 2:
+                # 그룹이 1개면 병합할 것이 없음
+                for g in rule_groups:
+                    ai_group_counter += 1
+                    all_raw_logs = [m['raw_log'] for m in g['members']]
+                    final_output.append({
+                        "type": "AISuperGroup",
+                        "super_group_id": f"{rule_id}_SG_{ai_group_counter}",
+                        "rule_id": rule_id,
+                        "representative_template": g['template'],
+                        "representative_pattern": g['pattern'],
+                        "total_count": g['count'],
+                        "merged_variants_count": 1,
+                        "original_logs": all_raw_logs
+                    })
+                continue
             
-            # [핵심] 원본 로그 복구 로직
-            # AI 그룹 -> Logic 서브그룹 -> 멤버 -> raw_log 순으로 추출하여 합침
-            all_raw_logs = []
-            for sub in data["logic_subgroups"]:
-                for member in sub["members"]:
-                    all_raw_logs.append(member["raw_log"])
+            # 동일 rule_id 내에서만 embedding 및 clustering
+            # VLSI 변수의 뒷부분(실제 중요 정보)에 가중치를 두기 위해
+            # template + 뒷부분 변수 조합으로 embedding 입력 구성
+            embedding_inputs = []
+            for g in rule_groups:
+                tail = self.extract_variable_tail(g['pattern'])
+                # 뒷부분을 반복해서 가중치 증가
+                embedding_input = f"{g['template']} {tail} {tail}"
+                embedding_inputs.append(embedding_input)
+            
+            embeddings = self.model.encode(embedding_inputs, batch_size=128, show_progress_bar=False)
+            
+            # Rule별로 낮은 eps 값으로 더 엄격한 clustering
+            # eps=0.2로 낮춰서 과도한 병합 방지
+            clustering = DBSCAN(eps=0.2, min_samples=1, metric='cosine').fit(embeddings)
+            
+            ai_grouped = defaultdict(lambda: {"total_count": 0, "logic_subgroups": []})
+            for label, logic_group in zip(clustering.labels_, rule_groups):
+                cluster_key = f"{rule_id}_SG_{label}"
+                ai_grouped[cluster_key]["total_count"] += logic_group['count']
+                ai_grouped[cluster_key]["logic_subgroups"].append(logic_group)
 
-            final_output.append({
-                "type": "AISuperGroup",
-                "super_group_id": key,
-                "rule_id": main['rule_id'],
-                "representative_template": main['template'],
-                "representative_pattern": main['pattern'],
-                "total_count": data["total_count"],
-                "merged_variants_count": len(data["logic_subgroups"]),
-                "original_logs": all_raw_logs
-            })
+            # 결과 생성
+            for key, data in ai_grouped.items():
+                ai_group_counter += 1
+                main = max(data["logic_subgroups"], key=lambda x: x['count'])
+                
+                all_raw_logs = []
+                for sub in data["logic_subgroups"]:
+                    for member in sub["members"]:
+                        all_raw_logs.append(member["raw_log"])
+
+                final_output.append({
+                    "type": "AISuperGroup",
+                    "super_group_id": key,
+                    "rule_id": rule_id,
+                    "representative_template": main['template'],
+                    "representative_pattern": main['pattern'],
+                    "total_count": data["total_count"],
+                    "merged_variants_count": len(data["logic_subgroups"]),
+                    "original_logs": all_raw_logs
+                })
         
         final_output.sort(key=lambda x: x['total_count'], reverse=True)
         return final_output
