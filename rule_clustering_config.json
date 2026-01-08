@@ -6,15 +6,19 @@
     "RULE_001": {
       "eps": 0.2,
       "tail_weight": 2,
-      "description": "기본 규칙 예시"
+      "tail_levels": 1,
+      "tail_weights": null,
+      "description": "기본 규칙: 뒷부분 1개 레벨"
     },
     "RULE_002": {
       "eps": 0.15,
-      "tail_weight": 3,
-      "description": "엄격한 병합, 뒷부분 중요"
+      "tail_levels": 2,
+      "tail_weights": [3, 2],
+      "description": "뒷부분 2개 레벨: 앞부분(3배) > 뒷부분(2배)"
     },
     "RULE_003": {
       "eps": 0.25,
+      "tail_levels": 1,
       "tail_weight": 1,
       "description": "느슨한 병합, 전체 패턴 중시"
     }
@@ -27,35 +31,46 @@
       "medium_value": "0.2 → 중간 (권장)",
       "high_value": "0.25-0.3 → 느슨함 (많이 병합)"
     },
+    "tail_levels": {
+      "description": "뒷부분 몇 개 레벨을 추출할지",
+      "example_pattern": "BLK_CPU/A/B/C/mem_top_ABC",
+      "tail_levels_1": "tail_levels=1 → 마지막 1개: 'ABC'",
+      "tail_levels_2": "tail_levels=2 → 마지막 2개: 'mem_top', 'ABC'"
+    },
+    "tail_weights": {
+      "description": "각 뒷부분 레벨별 가중치 (배열)",
+      "note": "tail_weights가 지정되면 tail_weight는 무시됨",
+      "example_1": "[2] → 뒷부분을 2배로 반복",
+      "example_2": "[3, 2] → 첫번째는 3배, 두번째는 2배",
+      "example_3": "[2, 3, 1] → 첫, 둘, 셋째 각각 2배, 3배, 1배",
+      "null": "null → tail_weight 값 사용"
+    },
     "tail_weight": {
-      "description": "VLSI 변수 뒷부분 가중치 (높을수록 뒷부분 우선)",
-      "recommended_range": [1, 5],
-      "value_1": "뒷부분 1회 반복 → 전체 패턴 중시",
-      "value_2": "뒷부분 2회 반복 → 균형잡힘 (기본)",
-      "value_3": "뒷부분 3회 반복 → 뒷부분 중시",
-      "value_4_5": "뒷부분 4-5회 반복 → 뒷부분 매우 중시"
+      "description": "뒷부분 가중치 (단순 반복)",
+      "note": "tail_weights가 null일 때만 사용",
+      "value_2": "기본값 2 → 뒷부분을 2회 반복"
     }
   },
   "examples": {
-    "memory_access_rule": {
-      "eps": 0.18,
-      "tail_weight": 4,
-      "reason": "메모리 접근: 뒷부분(주소, 크기)이 가장 중요"
+    "memory_access_important_tail": {
+      "tail_levels": 1,
+      "tail_weights": [4],
+      "reason": "메모리 주소(마지막)가 가장 중요 → 4배"
     },
-    "timing_violation_rule": {
-      "eps": 0.22,
-      "tail_weight": 2,
-      "reason": "타이밍 위반: 경로와 시점 모두 중요"
+    "memory_access_important_prev": {
+      "tail_levels": 2,
+      "tail_weights": [3, 1],
+      "reason": "메모리 종류(두번째)가 가장 중요 → 3배, 주소(마지막) → 1배"
     },
-    "routing_error_rule": {
-      "eps": 0.2,
-      "tail_weight": 3,
-      "reason": "라우팅 에러: 마지막 노드/레이어가 중요"
+    "routing_last_two_important": {
+      "tail_levels": 2,
+      "tail_weights": [2, 3],
+      "reason": "마지막 노드(3배) > 이전 노드(2배)"
     },
-    "power_rule": {
-      "eps": 0.25,
-      "tail_weight": 1,
-      "reason": "전력 분석: 전체 경로 관찰"
+    "timing_full_path": {
+      "tail_levels": 3,
+      "tail_weights": [1, 2, 3],
+      "reason": "경로의 마지막 3단계 모두 중요 (점진적 증가)"
     }
   }
 }

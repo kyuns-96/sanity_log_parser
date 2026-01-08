@@ -232,22 +232,62 @@ class AIClusterer:
                 config['eps'] = self.default_eps
             if 'tail_weight' not in config:
                 config['tail_weight'] = self.default_tail_weight
+            if 'tail_levels' not in config:
+                config['tail_levels'] = 1  # 기본: 뒷부분 1개 레벨
+            if 'tail_weights' not in config:
+                config['tail_weights'] = None  # 기본: 균등 가중치
             return config
         return {
             'eps': self.default_eps,
-            'tail_weight': self.default_tail_weight
+            'tail_weight': self.default_tail_weight,
+            'tail_levels': 1,
+            'tail_weights': None
         }
 
-    def extract_variable_tail(self, full_pattern):
+    def extract_variable_tail(self, full_pattern, tail_levels=1, tail_weights=None):
         """
         VLSI 변수의 뒷부분 추출 (뒷부분이 더 중요함)
-        예: 'BLK_CPU/A/B/C/mem_top_ABC' → 'mem_top_ABC' (마지막 / 이후)
+        
+        Args:
+            full_pattern: 'BLK_CPU/A/B/C/mem_top_ABC' 형태
+            tail_levels: 뒷부분 몇 개 레벨을 추출할지 (기본 1)
+            tail_weights: 각 레벨별 가중치 리스트
+                          예: [2, 3] → 마지막은 2배, 그 앞은 3배
+        
+        Returns:
+            가중치가 적용된 뒷부분 문자열
+        
+        Example:
+            full_pattern = 'BLK_CPU/A/B/C/mem_top_ABC'
+            
+            tail_levels=1, tail_weights=[2]
+            → 'ABC ABC'
+            
+            tail_levels=2, tail_weights=[3, 2]
+            → 'mem_top mem_top mem_top ABC ABC'
         """
-        if ' / ' in full_pattern:
-            parts = full_pattern.split(' / ')
-            # 마지막 변수의 뒷부분만 추출 (가장 중요한 부분)
-            return parts[-1]
-        return full_pattern
+        if ' / ' not in full_pattern:
+            return full_pattern
+        
+        parts = full_pattern.split(' / ')
+        
+        # 뒷부분 레벨 추출
+        tail_parts = parts[-tail_levels:] if tail_levels <= len(parts) else parts
+        
+        # 가중치 설정 (기본값: 모두 1)
+        if tail_weights is None:
+            tail_weights = [1] * len(tail_parts)
+        else:
+            # tail_weights가 부족하면 마지막 값으로 채우기
+            while len(tail_weights) < len(tail_parts):
+                tail_weights.append(tail_weights[-1] if tail_weights else 1)
+        
+        # 각 부분을 가중치만큼 반복
+        result = []
+        for part, weight in zip(tail_parts, tail_weights):
+            result.extend([part] * weight)
+        
+        return ' '.join(result)
 
     def run(self, logic_groups):
         if not AI_AVAILABLE or not logic_groups: return []
@@ -269,6 +309,8 @@ class AIClusterer:
             config = self.get_rule_config(rule_id)
             eps = config['eps']
             tail_weight = config['tail_weight']
+            tail_levels = config.get('tail_levels', 1)
+            tail_weights = config.get('tail_weights', None)
             
             if len(rule_groups) < 2:
                 # 그룹이 1개면 병합할 것이 없음
@@ -289,13 +331,18 @@ class AIClusterer:
             
             # 동일 rule_id 내에서만 embedding 및 clustering
             # VLSI 변수의 뒷부분(실제 중요 정보)에 가중치를 두기 위해
-            # template + 뒷부분 변수 조합으로 embedding 입력 구성
             embedding_inputs = []
             for g in rule_groups:
-                tail = self.extract_variable_tail(g['pattern'])
-                # 뒷부분을 tail_weight만큼 반복해서 가중치 증가
-                tail_repeated = ' '.join([tail] * tail_weight)
-                embedding_input = f"{g['template']} {tail_repeated}"
+                # 뒷부분 레벨별 가중치 적용
+                if tail_weights:
+                    # 설정 파일에서 지정한 레벨별 가중치 사용
+                    tail_text = self.extract_variable_tail(g['pattern'], tail_levels, tail_weights)
+                else:
+                    # 단순 반복 (tail_weight 사용)
+                    tail = self.extract_variable_tail(g['pattern'], tail_levels, None)
+                    tail_text = ' '.join([tail] * tail_weight)
+                
+                embedding_input = f"{g['template']} {tail_text}"
                 embedding_inputs.append(embedding_input)
             
             embeddings = self.model.encode(embedding_inputs, batch_size=128, show_progress_bar=False)
