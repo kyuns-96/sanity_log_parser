@@ -236,23 +236,29 @@ class AIClusterer:
                 config['tail_levels'] = 1  # 기본: 뒷부분 1개 레벨
             if 'tail_weights' not in config:
                 config['tail_weights'] = None  # 기본: 균등 가중치
+            if 'variable_position_weights' not in config:
+                config['variable_position_weights'] = None  # 기본: 변수 위치 가중치 없음
             return config
         return {
             'eps': self.default_eps,
             'tail_weight': self.default_tail_weight,
             'tail_levels': 1,
-            'tail_weights': None
+            'tail_weights': None,
+            'variable_position_weights': None
         }
 
-    def extract_variable_tail(self, full_pattern, tail_levels=1, tail_weights=None):
+    def extract_variable_tail(self, full_pattern, tail_levels=1, tail_weights=None, variable_position_weights=None):
         """
         VLSI 변수의 뒷부분 추출 (뒷부분이 더 중요함)
+        변수 위치별 가중치도 지원
         
         Args:
             full_pattern: 'BLK_CPU/A/B/C/mem_top_ABC' 형태
             tail_levels: 뒷부분 몇 개 레벨을 추출할지 (기본 1)
             tail_weights: 각 레벨별 가중치 리스트
                           예: [2, 3] → 마지막은 2배, 그 앞은 3배
+            variable_position_weights: 변수 위치별 가중치
+                          예: [3, 2, 1] → 첫번째 변수는 3배, 둘째는 2배, 셋째는 1배
         
         Returns:
             가중치가 적용된 뒷부분 문자열
@@ -265,6 +271,10 @@ class AIClusterer:
             
             tail_levels=2, tail_weights=[3, 2]
             → 'mem_top mem_top mem_top ABC ABC'
+            
+            변수 튜플이 ('var1', 'var2', 'var3')이고
+            variable_position_weights=[3, 2, 1]이면
+            → 'var1 var1 var1 var2 var2 var3'
         """
         if ' / ' not in full_pattern:
             return full_pattern
@@ -287,7 +297,29 @@ class AIClusterer:
         for part, weight in zip(tail_parts, tail_weights):
             result.extend([part] * weight)
         
+        # 변수 위치별 가중치가 있으면 추가 적용
+        if variable_position_weights:
+            result = self._apply_variable_position_weights(result, variable_position_weights)
+        
         return ' '.join(result)
+    
+    def _apply_variable_position_weights(self, parts, variable_position_weights):
+        """
+        변수 위치별 가중치를 부분 문자열들에 적용
+        예: parts=['mem_top', 'ABC'], variable_position_weights=[3, 2]
+        → ['mem_top', 'mem_top', 'mem_top', 'ABC', 'ABC']
+        """
+        if not parts or not variable_position_weights:
+            return parts
+        
+        result = []
+        for i, part in enumerate(parts):
+            # 위치별 가중치 조회 (부족하면 마지막 값 사용)
+            weight_idx = min(i, len(variable_position_weights) - 1)
+            weight = variable_position_weights[weight_idx]
+            result.extend([part] * weight)
+        
+        return result
 
     def run(self, logic_groups):
         if not AI_AVAILABLE or not logic_groups: return []
@@ -311,6 +343,7 @@ class AIClusterer:
             tail_weight = config['tail_weight']
             tail_levels = config.get('tail_levels', 1)
             tail_weights = config.get('tail_weights', None)
+            variable_position_weights = config.get('variable_position_weights', None)
             
             if len(rule_groups) < 2:
                 # 그룹이 1개면 병합할 것이 없음
@@ -333,13 +366,13 @@ class AIClusterer:
             # VLSI 변수의 뒷부분(실제 중요 정보)에 가중치를 두기 위해
             embedding_inputs = []
             for g in rule_groups:
-                # 뒷부분 레벨별 가중치 적용
+                # 뒷부분 레벨별 가중치 + 변수 위치별 가중치 적용
                 if tail_weights:
                     # 설정 파일에서 지정한 레벨별 가중치 사용
-                    tail_text = self.extract_variable_tail(g['pattern'], tail_levels, tail_weights)
+                    tail_text = self.extract_variable_tail(g['pattern'], tail_levels, tail_weights, variable_position_weights)
                 else:
                     # 단순 반복 (tail_weight 사용)
-                    tail = self.extract_variable_tail(g['pattern'], tail_levels, None)
+                    tail = self.extract_variable_tail(g['pattern'], tail_levels, None, variable_position_weights)
                     tail_text = ' '.join([tail] * tail_weight)
                 
                 embedding_input = f"{g['template']} {tail_text}"

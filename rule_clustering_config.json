@@ -20,7 +20,8 @@
       "eps": 0.25,
       "tail_levels": 1,
       "tail_weight": 1,
-      "description": "느슨한 병합, 전체 패턴 중시"
+      "variable_position_weights": [3, 1],
+      "description": "느슨한 병합, 전체 패턴 중시 + 첫번째 변수 중요(3배)"
     }
   },
   "settings_guide": {
@@ -49,6 +50,15 @@
       "description": "뒷부분 가중치 (단순 반복)",
       "note": "tail_weights가 null일 때만 사용",
       "value_2": "기본값 2 → 뒷부분을 2회 반복"
+    },
+    "variable_position_weights": {
+      "description": "변수 위치별 중요도 가중치 (배열) - embedding에서 각 변수/부분을 몇 배로 반복할지",
+      "note": "tail_weights와 함께 사용 가능. 뒷부분 추출 후 위치별로 추가 가중치 적용",
+      "example_pattern": "BLK_CPU/A/B/C/mem_top_ABC",
+      "example_1": "[3, 2, 1] → 첫 부분 3배, 둘째 2배, 셋째 1배",
+      "example_2": "[4, 1] → 첫 부분 4배, 나머지 1배",
+      "example_3": "[2] → 모든 부분을 2배로 (부족한 위치는 마지막 값 사용)",
+      "null": "null → 위치별 가중치 없음 (모두 1배)"
     }
   },
   "examples": {
@@ -71,6 +81,22 @@
       "tail_levels": 3,
       "tail_weights": [1, 2, 3],
       "reason": "경로의 마지막 3단계 모두 중요 (점진적 증가)"
+    },
+    "variable_position_weights_example_1": {
+      "description": "변수 위치별 가중치 사용 예시",
+      "variable_position_weights": [3, 2, 1],
+      "reason": "여러 변수 중 첫번째 변수가 가장 중요 (3배) → 둘째 (2배) → 셋째 (1배)"
+    },
+    "variable_position_weights_example_2": {
+      "description": "특정 변수 우선 예시",
+      "variable_position_weights": [4, 1],
+      "reason": "첫번째 변수가 매우 중요 (4배), 나머지는 무시 (1배)"
+    },
+    "combined_tail_and_variable_weights": {
+      "tail_levels": 2,
+      "tail_weights": [2, 3],
+      "variable_position_weights": [3, 1],
+      "reason": "tail 부분의 마지막(3배) + 첫부분(2배)을 추출한 후, 첫번째를 다시 3배로 강조"
     }
   }
 }
