@@ -10,7 +10,17 @@
     "RULE_002": {
       "eps": 0.15,
       "variable_position_weights": [3, 1],
-      "description": "첫번째 변수 중요(3배), 나머지 무시(1배)"
+      "variable_tail_configs": {
+        "0": {
+          "tail_levels": 2,
+          "tail_weights": [3, 2]
+        },
+        "1": {
+          "tail_levels": 1,
+          "tail_weights": [1]
+        }
+      },
+      "description": "변수 위치별 tail 설정: 변수0은 뒷 2레벨(3배,2배), 변수1은 뒷 1레벨(1배)"
     },
     "RULE_003": {
       "eps": 0.25,
@@ -28,6 +38,12 @@
       "type": "array",
       "example": "[3, 2, 1]",
       "meaning": "첫번째 변수 3배, 둘째 2배, 셋째 1배"
+    },
+    "variable_tail_configs": {
+      "description": "변수 위치별 tail 추출 설정 - 각 변수마다 다른 tail_levels와 tail_weights 적용",
+      "type": "object",
+      "example": "{\"0\": {\"tail_levels\": 2, \"tail_weights\": [3, 2]}, \"1\": {\"tail_levels\": 1, \"tail_weights\": [1]}}",
+      "meaning": "변수0: 뒷 2레벨 추출(3배,2배), 변수1: 뒷 1레벨 추출(1배)"
     }
   },
   "examples": {
@@ -35,6 +51,20 @@
       "description": "변수 위치별 가중치: 위치 0 (첫변수) 중요, 나머지는 덜 중요",
       "variable_position_weights": [3, 1],
       "reason": "Template: Signal '<VAR>' float Signal '<VAR>' 형태에서 첫번째 변수만 강조"
+    },
+    "variable_tail_configs_example": {
+      "description": "변수 위치별 tail 설정",
+      "variable_tail_configs": {
+        "0": {
+          "tail_levels": 2,
+          "tail_weights": [3, 2]
+        },
+        "1": {
+          "tail_levels": 1,
+          "tail_weights": [1]
+        }
+      },
+      "reason": "변수0(top/u_cpu/decode/pipe_4): 뒷 2레벨 추출 → 'decode'(3배) + 'pipe_4'(2배), 변수1: 뒷 1레벨만"
     }
   }
 }

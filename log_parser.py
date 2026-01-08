@@ -230,24 +230,15 @@ class AIClusterer:
             config = self.rule_config[rule_id].copy()
             if 'eps' not in config:
                 config['eps'] = self.default_eps
-            if 'tail_weight' not in config:
-                config['tail_weight'] = self.default_tail_weight
-            if 'tail_levels' not in config:
-                config['tail_levels'] = 1  # 기본: 뒷부분 1개 레벨
-            if 'tail_weights' not in config:
-                config['tail_weights'] = None  # 기본: 균등 가중치
             if 'variable_position_weights' not in config:
-                config['variable_position_weights'] = None  # 기본: 변수 위치 가중치 없음
-            if 'variable_value_weights' not in config:
-                config['variable_value_weights'] = None  # 기본: 변수 값 기반 가중치 없음
+                config['variable_position_weights'] = None
+            if 'variable_tail_configs' not in config:
+                config['variable_tail_configs'] = None
             return config
         return {
             'eps': self.default_eps,
-            'tail_weight': self.default_tail_weight,
-            'tail_levels': 1,
-            'tail_weights': None,
             'variable_position_weights': None,
-            'variable_value_weights': None
+            'variable_tail_configs': None
         }
 
     def extract_variable_tail(self, full_pattern, tail_levels=1, tail_weights=None, variable_position_weights=None):
@@ -361,11 +352,8 @@ class AIClusterer:
         for rule_id, rule_groups in groups_by_rule.items():
             config = self.get_rule_config(rule_id)
             eps = config['eps']
-            tail_weight = config['tail_weight']
-            tail_levels = config.get('tail_levels', 1)
-            tail_weights = config.get('tail_weights', None)
             variable_position_weights = config.get('variable_position_weights', None)
-            variable_value_weights = config.get('variable_value_weights', None)
+            variable_tail_configs = config.get('variable_tail_configs', None)
             
             if len(rule_groups) < 2:
                 # 그룹이 1개면 병합할 것이 없음
@@ -385,33 +373,41 @@ class AIClusterer:
                 continue
             
             # 동일 rule_id 내에서만 embedding 및 clustering
-            # VLSI 변수의 뒷부분(실제 중요 정보)에 가중치를 두기 위해
             embedding_inputs = []
             for g in rule_groups:
-                # 뒷부분 레벨별 가중치 + 변수 위치별 가중치 + 변수 값 기반 가중치 적용
-                if tail_weights:
-                    # 설정 파일에서 지정한 레벨별 가중치 사용
-                    tail_text = self.extract_variable_tail(g['pattern'], tail_levels, tail_weights, variable_position_weights)
-                else:
-                    # 단순 반복 (tail_weight 사용)
-                    tail = self.extract_variable_tail(g['pattern'], tail_levels, None, variable_position_weights)
-                    tail_text = ' '.join([tail] * tail_weight)
+                # pattern에서 변수 추출
+                var_pattern = re.compile(r"'(.*?)'")
+                pattern_text = g['pattern'].replace(' / ', ' ')
+                variables = var_pattern.findall(pattern_text)
                 
-                # 변수 값 기반 가중치 적용 (tail_text를 다시 가중치 처리)
-                if variable_value_weights:
-                    # tail_text는 이미 처리된 변수들이므로, pattern에서 추출한 변수로 처리
-                    # pattern에서 변수 추출
-                    var_pattern = re.compile(r"'(.*?)'")
-                    # g['pattern']에는 " / " 형태로 경로가 있음
-                    pattern_text = g['pattern'].replace(' / ', ' ')
-                    variables = var_pattern.findall(pattern_text)
+                # 변수 위치별 tail 설정이 있는 경우
+                if variable_tail_configs:
+                    var_texts = []
+                    for idx, var in enumerate(variables):
+                        var_config = variable_tail_configs.get(str(idx), None)
+                        if var_config:
+                            tail_levels = var_config.get('tail_levels', 1)
+                            tail_weights = var_config.get('tail_weights', [1])
+                            # 변수를 " / " 형태로 복원
+                            var_with_sep = var.replace('/', ' / ')
+                            tail_text = self.extract_variable_tail(var_with_sep, tail_levels, tail_weights, None)
+                            var_texts.append(tail_text)
+                        else:
+                            # 설정이 없으면 변수 그대로
+                            var_texts.append(var)
                     
-                    # 변수 값 기반 가중치 적용
-                    weighted_vars = self._apply_variable_value_weights(variables, variable_value_weights)
-                    var_text = ' '.join(weighted_vars)
-                    embedding_input = f"{g['template']} {var_text}"
+                    # 변수 위치별 가중치 적용
+                    if variable_position_weights:
+                        var_texts = self._apply_variable_position_weights(var_texts, variable_position_weights)
+                    
+                    embedding_input = f"{g['template']} {' '.join(var_texts)}"
                 else:
-                    embedding_input = f"{g['template']} {tail_text}"
+                    # tail config 없으면 변수 그대로 사용
+                    if variable_position_weights:
+                        var_texts = self._apply_variable_position_weights(variables, variable_position_weights)
+                        embedding_input = f"{g['template']} {' '.join(var_texts)}"
+                    else:
+                        embedding_input = f"{g['template']} {' '.join(variables)}"
                 
                 embedding_inputs.append(embedding_input)
             
