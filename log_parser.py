@@ -238,13 +238,16 @@ class AIClusterer:
                 config['tail_weights'] = None  # 기본: 균등 가중치
             if 'variable_position_weights' not in config:
                 config['variable_position_weights'] = None  # 기본: 변수 위치 가중치 없음
+            if 'variable_value_weights' not in config:
+                config['variable_value_weights'] = None  # 기본: 변수 값 기반 가중치 없음
             return config
         return {
             'eps': self.default_eps,
             'tail_weight': self.default_tail_weight,
             'tail_levels': 1,
             'tail_weights': None,
-            'variable_position_weights': None
+            'variable_position_weights': None,
+            'variable_value_weights': None
         }
 
     def extract_variable_tail(self, full_pattern, tail_levels=1, tail_weights=None, variable_position_weights=None):
@@ -320,6 +323,24 @@ class AIClusterer:
             result.extend([part] * weight)
         
         return result
+    
+    def _apply_variable_value_weights(self, variables, variable_value_weights):
+        """
+        변수 값 기반 가중치를 적용 (변수 값 자체별로 가중치 설정)
+        예: variables=['pipe_4', 'pipe_5', 'pipe_5']
+             variable_value_weights={'pipe_4': 3, 'pipe_5': 1}
+        → ['pipe_4', 'pipe_4', 'pipe_4', 'pipe_5', 'pipe_5']
+        """
+        if not variables or not variable_value_weights:
+            return variables
+        
+        result = []
+        for var in variables:
+            # 변수 값에 해당하는 가중치 조회 (없으면 1)
+            weight = variable_value_weights.get(var, 1)
+            result.extend([var] * weight)
+        
+        return result
 
     def run(self, logic_groups):
         if not AI_AVAILABLE or not logic_groups: return []
@@ -344,6 +365,7 @@ class AIClusterer:
             tail_levels = config.get('tail_levels', 1)
             tail_weights = config.get('tail_weights', None)
             variable_position_weights = config.get('variable_position_weights', None)
+            variable_value_weights = config.get('variable_value_weights', None)
             
             if len(rule_groups) < 2:
                 # 그룹이 1개면 병합할 것이 없음
@@ -366,7 +388,7 @@ class AIClusterer:
             # VLSI 변수의 뒷부분(실제 중요 정보)에 가중치를 두기 위해
             embedding_inputs = []
             for g in rule_groups:
-                # 뒷부분 레벨별 가중치 + 변수 위치별 가중치 적용
+                # 뒷부분 레벨별 가중치 + 변수 위치별 가중치 + 변수 값 기반 가중치 적용
                 if tail_weights:
                     # 설정 파일에서 지정한 레벨별 가중치 사용
                     tail_text = self.extract_variable_tail(g['pattern'], tail_levels, tail_weights, variable_position_weights)
@@ -375,7 +397,22 @@ class AIClusterer:
                     tail = self.extract_variable_tail(g['pattern'], tail_levels, None, variable_position_weights)
                     tail_text = ' '.join([tail] * tail_weight)
                 
-                embedding_input = f"{g['template']} {tail_text}"
+                # 변수 값 기반 가중치 적용 (tail_text를 다시 가중치 처리)
+                if variable_value_weights:
+                    # tail_text는 이미 처리된 변수들이므로, pattern에서 추출한 변수로 처리
+                    # pattern에서 변수 추출
+                    var_pattern = re.compile(r"'(.*?)'")
+                    # g['pattern']에는 " / " 형태로 경로가 있음
+                    pattern_text = g['pattern'].replace(' / ', ' ')
+                    variables = var_pattern.findall(pattern_text)
+                    
+                    # 변수 값 기반 가중치 적용
+                    weighted_vars = self._apply_variable_value_weights(variables, variable_value_weights)
+                    var_text = ' '.join(weighted_vars)
+                    embedding_input = f"{g['template']} {var_text}"
+                else:
+                    embedding_input = f"{g['template']} {tail_text}"
+                
                 embedding_inputs.append(embedding_input)
             
             embeddings = self.model.encode(embedding_inputs, batch_size=128, show_progress_bar=False)
