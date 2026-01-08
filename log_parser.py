@@ -194,13 +194,49 @@ class LogicClusterer:
 # 4. AI Clusterer
 # ==============================================================================
 class AIClusterer:
-    def __init__(self, model_path='all-MiniLM-L6-v2'):
+    def __init__(self, model_path='all-MiniLM-L6-v2', config_file='rule_clustering_config.json'):
         global AI_AVAILABLE
         if AI_AVAILABLE:
             try:
                 self.model = SentenceTransformer(model_path)
             except:
                 AI_AVAILABLE = False
+        
+        # 설정 파일에서 rule별 eps와 tail_weight 로드
+        self.rule_config = self._load_config(config_file)
+        
+        # 기본 설정 (모든 rule 적용)
+        self.default_eps = 0.2
+        self.default_tail_weight = 2
+
+    def _load_config(self, config_file):
+        """설정 파일에서 rule별 파라미터 로드"""
+        if not os.path.exists(config_file):
+            print(f"   ⚠️  Config file '{config_file}' not found. Using default settings.")
+            return {}
+        
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            print(f"   ✅ Loaded rule config from '{config_file}'")
+            return config.get('rules', {})
+        except Exception as e:
+            print(f"   ⚠️  Error loading config: {e}. Using default settings.")
+            return {}
+
+    def get_rule_config(self, rule_id):
+        """Rule별 설정 조회, 없으면 기본값 반환"""
+        if rule_id in self.rule_config:
+            config = self.rule_config[rule_id].copy()
+            if 'eps' not in config:
+                config['eps'] = self.default_eps
+            if 'tail_weight' not in config:
+                config['tail_weight'] = self.default_tail_weight
+            return config
+        return {
+            'eps': self.default_eps,
+            'tail_weight': self.default_tail_weight
+        }
 
     def extract_variable_tail(self, full_pattern):
         """
@@ -230,6 +266,10 @@ class AIClusterer:
         
         # Rule별로 따로 AI Clustering 수행
         for rule_id, rule_groups in groups_by_rule.items():
+            config = self.get_rule_config(rule_id)
+            eps = config['eps']
+            tail_weight = config['tail_weight']
+            
             if len(rule_groups) < 2:
                 # 그룹이 1개면 병합할 것이 없음
                 for g in rule_groups:
@@ -253,15 +293,15 @@ class AIClusterer:
             embedding_inputs = []
             for g in rule_groups:
                 tail = self.extract_variable_tail(g['pattern'])
-                # 뒷부분을 반복해서 가중치 증가
-                embedding_input = f"{g['template']} {tail} {tail}"
+                # 뒷부분을 tail_weight만큼 반복해서 가중치 증가
+                tail_repeated = ' '.join([tail] * tail_weight)
+                embedding_input = f"{g['template']} {tail_repeated}"
                 embedding_inputs.append(embedding_input)
             
             embeddings = self.model.encode(embedding_inputs, batch_size=128, show_progress_bar=False)
             
-            # Rule별로 낮은 eps 값으로 더 엄격한 clustering
-            # eps=0.2로 낮춰서 과도한 병합 방지
-            clustering = DBSCAN(eps=0.2, min_samples=1, metric='cosine').fit(embeddings)
+            # Rule별 설정된 eps로 clustering
+            clustering = DBSCAN(eps=eps, min_samples=1, metric='cosine').fit(embeddings)
             
             ai_grouped = defaultdict(lambda: {"total_count": 0, "logic_subgroups": []})
             for label, logic_group in zip(clustering.labels_, rule_groups):

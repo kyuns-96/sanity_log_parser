@@ -1,0 +1,61 @@
+{
+  "description": "Rule별 AI clustering 파라미터 설정",
+  "default_eps": 0.2,
+  "default_tail_weight": 2,
+  "rules": {
+    "RULE_001": {
+      "eps": 0.2,
+      "tail_weight": 2,
+      "description": "기본 규칙 예시"
+    },
+    "RULE_002": {
+      "eps": 0.15,
+      "tail_weight": 3,
+      "description": "엄격한 병합, 뒷부분 중요"
+    },
+    "RULE_003": {
+      "eps": 0.25,
+      "tail_weight": 1,
+      "description": "느슨한 병합, 전체 패턴 중시"
+    }
+  },
+  "settings_guide": {
+    "eps": {
+      "description": "DBSCAN clustering 거리 임계값 (낮을수록 엄격)",
+      "recommended_range": [0.1, 0.3],
+      "low_value": "0.1-0.15 → 매우 엄격 (거의 병합 안 함)",
+      "medium_value": "0.2 → 중간 (권장)",
+      "high_value": "0.25-0.3 → 느슨함 (많이 병합)"
+    },
+    "tail_weight": {
+      "description": "VLSI 변수 뒷부분 가중치 (높을수록 뒷부분 우선)",
+      "recommended_range": [1, 5],
+      "value_1": "뒷부분 1회 반복 → 전체 패턴 중시",
+      "value_2": "뒷부분 2회 반복 → 균형잡힘 (기본)",
+      "value_3": "뒷부분 3회 반복 → 뒷부분 중시",
+      "value_4_5": "뒷부분 4-5회 반복 → 뒷부분 매우 중시"
+    }
+  },
+  "examples": {
+    "memory_access_rule": {
+      "eps": 0.18,
+      "tail_weight": 4,
+      "reason": "메모리 접근: 뒷부분(주소, 크기)이 가장 중요"
+    },
+    "timing_violation_rule": {
+      "eps": 0.22,
+      "tail_weight": 2,
+      "reason": "타이밍 위반: 경로와 시점 모두 중요"
+    },
+    "routing_error_rule": {
+      "eps": 0.2,
+      "tail_weight": 3,
+      "reason": "라우팅 에러: 마지막 노드/레이어가 중요"
+    },
+    "power_rule": {
+      "eps": 0.25,
+      "tail_weight": 1,
+      "reason": "전력 분석: 전체 경로 관찰"
+    }
+  }
+}
