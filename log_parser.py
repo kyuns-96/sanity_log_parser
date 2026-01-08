@@ -59,19 +59,82 @@ class SubutaiParser:
     def __init__(self, template_manager):
         self.var_pattern = re.compile(r"'(.*?)'")
         self.tm = template_manager
+        self.delimiters = [('/', 1), ('_', 2), ('-', 3)]  # (delimiter, priority)
+    
+    def extract_variable_stems(self, variable):
+        """
+        Extract semantic stems from variable respecting delimiter priority.
+        Priority: '/' (highest) > '_' > '-' (lowest)
+        
+        Strategy: Split by priority delimiters but keep meaningful components.
+        - '/' is hierarchy separator: splits into distinct components
+        - '_' is compound separator within a component: may keep together or split
+        - '-' is sub-component separator: splits into atoms
+        
+        Example: 'BLK_CPU/A/B/C/mem_top_ABC' -> ['BLK_CPU', 'A', 'B', 'C', 'mem_top', 'ABC']
+        Example: 'mem_top_ABC' -> ['mem_top', 'ABC']
+        
+        Returns list of stem components in hierarchical order.
+        """
+        if not variable:
+            return []
+        
+        # Step 1: Split by highest priority delimiter ('/')
+        parts = variable.split('/')
+        stems = []
+        
+        for part in parts:
+            if not part:
+                continue
+            
+            # Step 2: For each part, decide whether to split by '_' or '-'
+            # Strategy: If the part is a known hierarchy marker (A, B, C, X, Y, etc.) or very short, keep it
+            # Otherwise split by '_' (compound names like mem_top), then by '-'
+            
+            if len(part) <= 3 or part.isupper():
+                # Single letters or uppercase markers like BLK, CPU, SENSOR - keep as one stem
+                stems.append(part)
+            else:
+                # Compound names: split by '_' first, then '-'
+                sub_parts = part.split('_')
+                for sub_part in sub_parts:
+                    if sub_part:
+                        # Final split by '-' for components like 'ABC', '123-456'
+                        final_parts = sub_part.split('-')
+                        stems.extend([p for p in final_parts if p])
+        
+        return stems
 
     def parse_line(self, line):
         line = line.strip()
         if not line: return None
         
+        if re.search(r'\b\d+\s+of\s+\d+\b', line):
+            pass 
+        else:
+            return None
+
+        line = " ".join(line.split()[4:])
+
         variables = self.var_pattern.findall(line)
         var_tuple = tuple(variables) if variables else ("NO_VAR",)
+        
+        # Extract variable stems for hierarchical grouping
+        variable_stems = []
+        if var_tuple and var_tuple != ("NO_VAR",):
+            for var in var_tuple:
+                stems = self.extract_variable_stems(var)
+                variable_stems.extend(stems)
+        
+        stems_tuple = tuple(variable_stems) if variable_stems else ("NO_STEM",)
+        
         template = self.tm._get_pure_template(line)
         rule_id = self.tm.get_rule_id(template)
         
         return {
             "rule_id": rule_id,
             "variables": var_tuple,
+            "variable_stems": stems_tuple,
             "template": template,
             "raw_log": line  # <--- 원본 로그 저장됨
         }
@@ -84,20 +147,48 @@ class LogicClusterer:
         if not var_tuple or var_tuple == ("NO_VAR",): return "NO_VAR"
         sigs = [re.sub(r"\d+", "*", str(v)) for v in var_tuple]
         return " / ".join(sigs)
+    
+    def get_stem_signature(self, stem_tuple):
+        """
+        Create signature from variable stems, replacing numbers with wildcards.
+        Stems are already decomposed, so this focuses on semantic components.
+        
+        Example: ('mem_top', 'ABC', 'value', '123') -> 'mem_top ABC value *'
+        """
+        if not stem_tuple or stem_tuple == ("NO_STEM",): 
+            return "NO_STEM"
+        
+        # Replace numeric stems with wildcard, keep semantic stems
+        sigs = []
+        for stem in stem_tuple:
+            if stem.isdigit():
+                sigs.append("*")
+            else:
+                # Keep non-numeric stems as-is (they're already atomic)
+                sigs.append(stem)
+        
+        return " ".join(sigs)
 
     def run(self, parsed_logs):
         groups = defaultdict(list)
         for p in parsed_logs:
-            sig = self.get_logic_signature(p['variables'])
-            key = (p['rule_id'], sig, p['template'])
+            stem_sig = self.get_stem_signature(p['variable_stems'])
+            # Create composite key: prioritize stem signature for semantic grouping
+            # but include full signature and template for complete context
+            key = (p['rule_id'], stem_sig, p['template'])
             groups[key].append(p)
 
         results = []
-        for (rule_id, sig, temp), members in groups.items():
+        for (rule_id, stem_sig, temp), members in groups.items():
+            # Calculate full pattern for reference
+            full_sigs = [self.get_logic_signature(m['variables']) for m in members]
+            full_sig_representative = full_sigs[0] if full_sigs else "NO_VAR"
+            
             results.append({
                 "type": "LogicGroup",
                 "rule_id": rule_id,
-                "pattern": sig,
+                "stem_pattern": stem_sig,  # Primary pattern (hierarchical)
+                "full_pattern": full_sig_representative,  # Reference pattern
                 "template": temp,
                 "count": len(members),
                 "members": members  # <--- 여기에 raw_log가 포함된 파싱 객체들이 있음
@@ -110,21 +201,25 @@ class LogicClusterer:
 # ==============================================================================
 class AIClusterer:
     def __init__(self, model_path='all-MiniLM-L6-v2'):
+        global AI_AVAILABLE
         if AI_AVAILABLE:
             try:
                 self.model = SentenceTransformer(model_path)
             except:
-                global AI_AVAILABLE
                 AI_AVAILABLE = False
 
     def run(self, logic_groups):
         if not AI_AVAILABLE or not logic_groups: return []
 
         print(f"🤖 AI analyzing {len(logic_groups)} logic groups...")
-        embedding_inputs = [f"{g['template']} {g['pattern']}" for g in logic_groups]
+        # Use stem_pattern for embeddings to enable hierarchical similarity detection
+        # This allows logs with different depths to be recognized as similar
+        embedding_inputs = [f"{g['template']} {g['stem_pattern']}" for g in logic_groups]
         embeddings = self.model.encode(embedding_inputs, batch_size=128, show_progress_bar=False)
         
-        clustering = DBSCAN(eps=0.2, min_samples=1, metric='cosine').fit(embeddings)
+        # Increased eps from 0.2 to 0.3 for stem-based clustering
+        # Higher eps allows more semantic flexibility when matching hierarchically different logs
+        clustering = DBSCAN(eps=0.3, min_samples=1, metric='cosine').fit(embeddings)
         
         ai_grouped = defaultdict(lambda: {"total_count": 0, "logic_subgroups": []})
         for label, logic_group in zip(clustering.labels_, logic_groups):
@@ -147,8 +242,9 @@ class AIClusterer:
                 "type": "AISuperGroup",
                 "super_group_id": key,
                 "rule_id": main['rule_id'],
-                "representative_template": main['representative_template'] if 'representative_template' in main else main['template'],
-                "representative_pattern": main['representative_pattern'] if 'representative_pattern' in main else main['pattern'],
+                "representative_template": main['template'],
+                "representative_stem_pattern": main['stem_pattern'],  # Hierarchical pattern (primary)
+                "representative_full_pattern": main['full_pattern'],  # Full variable pattern (reference)
                 "total_count": data["total_count"],
                 "merged_variants_count": len(data["logic_subgroups"]),
                 "original_logs": all_raw_logs  # <--- 복구된 원본 로그 리스트
@@ -197,7 +293,8 @@ if __name__ == "__main__":
             results.append({
                 "type": "LogicGroup",
                 "rule_id": g['rule_id'],
-                "representative_pattern": g['pattern'],
+                "representative_stem_pattern": g['stem_pattern'],  # Hierarchical pattern (primary)
+                "representative_full_pattern": g['full_pattern'],  # Full variable pattern (reference)
                 "total_count": g['count'],
                 "original_logs": raw_logs
             })
@@ -209,7 +306,8 @@ if __name__ == "__main__":
     
     # 화면 출력 (샘플)
     for i, res in enumerate(results[:5]):
-        print(f"{i+1:02d}. [{res['rule_id']}] {res['representative_pattern']}")
+        pattern_display = res.get('representative_stem_pattern', res.get('representative_pattern', 'N/A'))
+        print(f"{i+1:02d}. [{res['rule_id']}] {pattern_display}")
         print(f"    Count: {res['total_count']:,}")
         print(f"    Original Logs Sample (Top 2):")
         for log in res['original_logs'][:2]:
