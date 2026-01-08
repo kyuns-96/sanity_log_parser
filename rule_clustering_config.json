@@ -15,11 +15,7 @@
     "RULE_003": {
       "eps": 0.25,
       "variable_position_weights": [3, 1],
-      "variable_value_weights": {
-        "top/u_cpu/decode/pipe_4": 3,
-        "top/u_cpu/decode/pipe_5": 1
-      },
-      "description": "위치별 + 값별 가중치 모두 사용"
+      "description": "위치별 가중치 사용"
     }
   },
   "settings_guide": {
@@ -32,12 +28,6 @@
       "type": "array",
       "example": "[3, 2, 1]",
       "meaning": "첫번째 변수 3배, 둘째 2배, 셋째 1배"
-    },
-    "variable_value_weights": {
-      "description": "변수 값별 가중치 객체 - 특정 변수 값에 대해서만 강조도 설정",
-      "type": "object",
-      "example": "{\"pipe_4\": 3, \"pipe_5\": 1}",
-      "meaning": "pipe_4는 3배, pipe_5는 1배"
     }
   },
   "examples": {
@@ -45,14 +35,6 @@
       "description": "변수 위치별 가중치: 위치 0 (첫변수) 중요, 나머지는 덜 중요",
       "variable_position_weights": [3, 1],
       "reason": "Template: Signal '<VAR>' float Signal '<VAR>' 형태에서 첫번째 변수만 강조"
-    },
-    "variable_value_weights_specific": {
-      "description": "특정 변수 값에 대한 가중치",
-      "variable_value_weights": {
-        "top/u_cpu/decode/pipe_4": 3,
-        "top/u_cpu/decode/pipe_5": 1
-      },
-      "reason": "pipe_4는 중요(3배), pipe_5는 일반(1배)"
     }
   }
 }
