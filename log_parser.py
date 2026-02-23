@@ -30,9 +30,9 @@ class RuleTemplateManager:
             self._load_templates(template_file)
 
     def get_pure_template(self, text: str) -> str:
-        # 1. 변수 영역 보호
+        # 1. Protect variable regions
         normalized_template = self.var_pattern.sub("'<VAR>'", text)
-        # 2. 독립된 숫자만 마스킹
+        # 2. Mask only standalone numbers
         normalized_template = re.sub(r"\b\d+\b", "<NUM>", normalized_template)
         return normalized_template.strip()
 
@@ -126,7 +126,7 @@ class SubutaiParser:
             "rule_id": rule_id,
             "variables": var_tuple,
             "template": template,
-            "raw_log": line  # <--- 원본 로그 저장됨
+            "raw_log": line  # Original log stored here
         }
 
 # ==============================================================================
@@ -141,7 +141,7 @@ class LogicClusterer:
     def run(self, parsed_logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         groups = defaultdict(list)
         for parsed_log in parsed_logs:
-            # [1차 그룹핑] 원래 방식: variables만 사용 (stem 무시)
+            # [1st grouping] Original method: using variables only (ignoring stem)
             full_sig = self.get_logic_signature(parsed_log['variables'])
             key = (parsed_log['rule_id'], full_sig, parsed_log['template'])
             groups[key].append(parsed_log)
@@ -151,10 +151,10 @@ class LogicClusterer:
             results.append({
                 "type": "LogicGroup",
                 "rule_id": rule_id,
-                "pattern": full_sig,  # 원본 방식: 변수 기반 패턴
+                "pattern": full_sig,  # Original method: variable-based pattern
                 "template": temp,
                 "count": len(members),
-                "members": members  # <--- 여기에 raw_log가 포함된 파싱 객체들이 있음
+                "members": members  # Parsed objects with raw_log included here
             })
         results.sort(key=lambda group: group['count'], reverse=True)
         return results
@@ -172,15 +172,15 @@ class AIClusterer:
             except:
                 AI_AVAILABLE = False
         
-        # 설정 파일에서 rule별 eps와 tail_weight 로드
+        # Load rule-specific eps and tail_weight from config file
         self.rule_config = self._load_config(config_file)
         
-        # 기본 설정 (모든 rule 적용)
+        # Default settings (apply to all rules)
         self.default_eps = 0.2
         self.default_tail_weight = 2
 
     def _load_config(self, config_file: str) -> dict[str, Any]:
-        """설정 파일에서 rule별 파라미터 로드"""
+        """Load rule-specific parameters from config file"""
         if not os.path.exists(config_file):
             print(f"   ⚠️  Config file '{config_file}' not found. Using default settings.")
             return {}
@@ -195,7 +195,7 @@ class AIClusterer:
             return {}
 
     def get_rule_config(self, rule_id: str) -> dict[str, Any]:
-        """Rule별 설정 조회, 없으면 기본값 반환"""
+        """Get rule config, return default if not found"""
         if rule_id in self.rule_config:
             config = self.rule_config[rule_id].copy()
             if 'eps' not in config:
@@ -213,19 +213,19 @@ class AIClusterer:
 
     def extract_variable_tail(self, full_pattern: str, tail_levels: int = 1, tail_weights: list[int] | None = None, variable_position_weights: list[int] | None = None) -> str:
         """
-        VLSI 변수의 뒷부분 추출 (뒷부분이 더 중요함)
-        변수 위치별 가중치도 지원
+        Extract tail part of VLSI variables (tail part is more important)
+        Also supports position-based weighting of variables
         
         Args:
-            full_pattern: 'BLK_CPU/A/B/C/mem_top_ABC' 형태
-            tail_levels: 뒷부분 몇 개 레벨을 추출할지 (기본 1)
-            tail_weights: 각 레벨별 가중치 리스트
-                          예: [2, 3] → 마지막은 2배, 그 앞은 3배
-            variable_position_weights: 변수 위치별 가중치
-                          예: [3, 2, 1] → 첫번째 변수는 3배, 둘째는 2배, 셋째는 1배
+            full_pattern: Form like 'BLK_CPU/A/B/C/mem_top_ABC'
+            tail_levels: How many levels from the tail to extract (default 1)
+            tail_weights: Weight list for each level
+                          Example: [2, 3] → last is 2x, previous is 3x
+            variable_position_weights: Position-based weights for variables
+                          Example: [3, 2, 1] → 1st variable 3x, 2nd 2x, 3rd 1x
         
         Returns:
-            가중치가 적용된 뒷부분 문자열
+            Tail string with weights applied
         
         Example:
             full_pattern = 'BLK_CPU/A/B/C/mem_top_ABC'
@@ -236,8 +236,8 @@ class AIClusterer:
             tail_levels=2, tail_weights=[3, 2]
             → 'mem_top mem_top mem_top ABC ABC'
             
-            변수 튜플이 ('var1', 'var2', 'var3')이고
-            variable_position_weights=[3, 2, 1]이면
+            If variable tuple is ('var1', 'var2', 'var3') and
+            variable_position_weights=[3, 2, 1], then
             → 'var1 var1 var1 var2 var2 var3'
         """
         if ' / ' not in full_pattern:
@@ -245,23 +245,23 @@ class AIClusterer:
         
         parts = full_pattern.split(' / ')
         
-        # 뒷부분 레벨 추출
+        # Extract tail levels
         tail_parts = parts[-tail_levels:] if tail_levels <= len(parts) else parts
         
-        # 가중치 설정 (기본값: 모두 1)
+        # Set weights (default: all 1)
         if tail_weights is None:
             tail_weights = [1] * len(tail_parts)
         else:
-            # tail_weights가 부족하면 마지막 값으로 채우기
+            # Pad tail_weights with last value if insufficient
             while len(tail_weights) < len(tail_parts):
                 tail_weights.append(tail_weights[-1] if tail_weights else 1)
         
-        # 각 부분을 가중치만큼 반복
+        # Repeat each part by its weight
         result = []
         for part, weight in zip(tail_parts, tail_weights):
             result.extend([part] * weight)
         
-        # 변수 위치별 가중치가 있으면 추가 적용
+        # Apply variable position weights if provided
         if variable_position_weights:
             result = self._apply_variable_position_weights(result, variable_position_weights)
         
@@ -269,8 +269,8 @@ class AIClusterer:
     
     def _apply_variable_position_weights(self, parts: list[str], variable_position_weights: list[int]) -> list[str]:
         """
-        변수 위치별 가중치를 부분 문자열들에 적용
-        예: parts=['mem_top', 'ABC'], variable_position_weights=[3, 2]
+        Apply position-based weights to variable substrings
+        Example: parts=['mem_top', 'ABC'], variable_position_weights=[3, 2]
         → ['mem_top', 'mem_top', 'mem_top', 'ABC', 'ABC']
         """
         if not parts or not variable_position_weights:
@@ -278,7 +278,7 @@ class AIClusterer:
         
         result = []
         for i, part in enumerate(parts):
-            # 위치별 가중치 조회 (부족하면 마지막 값 사용)
+            # Get position weight (use last if insufficient)
             weight_idx = min(i, len(variable_position_weights) - 1)
             weight = variable_position_weights[weight_idx]
             result.extend([part] * weight)
@@ -290,7 +290,7 @@ class AIClusterer:
 
         print(f"🤖 Stage 2 - AI Clustering: analyzing {len(logic_groups)} logic groups...")
         
-        # rule_id별로 그룹 분류
+        # Classify groups by rule_id
         groups_by_rule = defaultdict(list)
         for logic_group in logic_groups:
             groups_by_rule[logic_group['rule_id']].append(logic_group)
@@ -300,7 +300,7 @@ class AIClusterer:
         final_output = []
         ai_group_counter = 0
         
-        # Rule별로 따로 AI Clustering 수행
+        # Perform AI Clustering separately for each rule
         for rule_id, rule_groups in groups_by_rule.items():
             config = self.get_rule_config(rule_id)
             eps = config['eps']
@@ -308,7 +308,7 @@ class AIClusterer:
             variable_tail_configs = config.get('variable_tail_configs', None)
             
             if len(rule_groups) < 2:
-                # 그룹이 1개면 병합할 것이 없음
+                # No merging needed if only 1 group
                 for logic_group in rule_groups:
                     ai_group_counter += 1
                     all_raw_logs = [m['raw_log'] for m in logic_group['members']]
@@ -324,15 +324,15 @@ class AIClusterer:
                     })
                 continue
             
-            # 동일 rule_id 내에서만 embedding 및 clustering
+            # Perform embedding and clustering only within same rule_id
             embedding_inputs = []
             for logic_group in rule_groups:
-                # pattern에서 변수 추출
+                # Extract variables from pattern
 
                 pattern_text = logic_group['pattern'].replace(' / ', ' ')
                 variables = self._VAR_PATTERN.findall(pattern_text)
                 
-                # 변수 위치별 tail 설정이 있는 경우
+                # Handle position-based tail config if present
                 if variable_tail_configs:
                     var_texts = []
                     for idx, var in enumerate(variables):
@@ -340,21 +340,21 @@ class AIClusterer:
                         if var_config:
                             tail_levels = var_config.get('tail_levels', 1)
                             tail_weights = var_config.get('tail_weights', [1])
-                            # 변수를 " / " 형태로 복원
+                            # Restore variable in " / " format
                             var_with_sep = var.replace('/', ' / ')
                             tail_text = self.extract_variable_tail(var_with_sep, tail_levels, tail_weights, None)
                             var_texts.append(tail_text)
                         else:
-                            # 설정이 없으면 변수 그대로
+                            # Use variable as-is if no config
                             var_texts.append(var)
                     
-                    # 변수 위치별 가중치 적용
+                    # Apply position-based variable weights
                     if variable_position_weights:
                         var_texts = self._apply_variable_position_weights(var_texts, variable_position_weights)
                     
                     embedding_input = f"{logic_group['template']} {' '.join(var_texts)}"
                 else:
-                    # tail config 없으면 변수 그대로 사용
+                    # Use variables as-is without tail config
                     if variable_position_weights:
                         var_texts = self._apply_variable_position_weights(variables, variable_position_weights)
                         embedding_input = f"{logic_group['template']} {' '.join(var_texts)}"
@@ -365,7 +365,7 @@ class AIClusterer:
             
             embeddings = self.model.encode(embedding_inputs, batch_size=128, show_progress_bar=False)
             
-            # Rule별 설정된 eps로 clustering
+            # Perform clustering with rule-specific eps
             clustering = DBSCAN(eps=eps, min_samples=1, metric='cosine').fit(embeddings)
             
             ai_grouped = defaultdict(lambda: {"total_count": 0, "logic_subgroups": []})
@@ -374,7 +374,7 @@ class AIClusterer:
                 ai_grouped[cluster_key]["total_count"] += logic_group['count']
                 ai_grouped[cluster_key]["logic_subgroups"].append(logic_group)
 
-            # 결과 생성
+            # Generate results
             for key, data in ai_grouped.items():
                 ai_group_counter += 1
                 main = max(data["logic_subgroups"], key=lambda group: group['count'])
@@ -421,27 +421,27 @@ if __name__ == "__main__":
             res = parser.parse_line(stripped)
             if res: parsed_logs.append(res)
 
-    # 2. Logic Clustering [1차 그룹핑: 원래 방식]
+    # 2. Logic Clustering [1st grouping: original method]
     logic_results = LogicClusterer().run(parsed_logs)
     print(f"\n📊 Stage 1 - Logic Clustering (Original Method - Variables Only):")
     print(f"   Input logs: {len(parsed_logs):,}")
     print(f"   Output groups: {len(logic_results):,}")
     print(f"   Compression ratio: {len(parsed_logs) / len(logic_results):.2f}x")
 
-    # 3. AI Clustering [2차 그룹핑: 의미적 병합]
-    results = [] # <--- 여기에 모든 결과를 저장합니다.
+    # 3. AI Clustering [2nd grouping: semantic merging]
+    results = [] # Store all results here
 
     if AI_AVAILABLE:
-        # 2차 그룹핑: 1차 로직 그룹들을 AI로 의미적으로 재병합
+        # 2nd grouping: semantically re-merge 1st logic groups using AI
         results = AIClusterer().run(logic_results)
         print(f"\n🤖 Stage 2 - AI Clustering (Semantic Merging of 1st-Groups):")
         print(f"   Input 1st-groups: {len(logic_results):,}")
         print(f"   Output 2nd-groups: {len(results):,}")
         print(f"   Final compression ratio: {len(parsed_logs) / len(results):.2f}x")
     else:
-        # AI가 없으면 Logic 결과만 반환
+        # Return only Logic results if AI unavailable
         for logic_group in logic_results:
-            # Logic 그룹의 원본 로그 복구
+            # Recover original logs from Logic group
             raw_logs = [m['raw_log'] for m in logic_group['members']]
             results.append({
                 "type": "LogicGroup",
@@ -451,12 +451,12 @@ if __name__ == "__main__":
                 "original_logs": raw_logs
             })
 
-    # 4. 결과 출력 및 파일 저장
+    # 4. Output results and save to file
     print("\n" + "="*80)
     print(f"✅ Final Results: {len(results)} Groups Created.")
     print("="*80)
     
-    # 화면 출력 (샘플)
+    # Display on screen (sample)
     for i, result in enumerate(results[:5]):
         pattern_display = result.get('representative_pattern', 'N/A')
         merged_info = f" (merged {result.get('merged_variants_count', 1)} groups)" if result.get('merged_variants_count', 1) > 1 else ""
@@ -467,9 +467,9 @@ if __name__ == "__main__":
             print(f"      - {log}")
         print("-" * 60)
 
-    # 결과 파일 저장 (JSON)
+    # Save results to file (JSON)
     output_filename = "subutai_results.json"
     with open(output_filename, "w", encoding='utf-8') as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
     
-    print(f"\n💾 모든 결과(원본 로그 포함)가 '{output_filename}'에 저장되었습니다.")
+    print(f"\n💾 All results (including original logs) saved to '{output_filename}'.")
