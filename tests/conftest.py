@@ -1,6 +1,8 @@
 import pytest
 
-from log_parser import AIClusterer, RuleTemplateManager, SubutaiParser
+from ai_clusterer import AIClusterer
+from template_manager import RuleTemplateManager
+from parser import SubutaiParser
 
 
 @pytest.fixture

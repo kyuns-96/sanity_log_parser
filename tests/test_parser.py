@@ -1,3 +1,6 @@
+from parser import SubutaiParser
+from template_manager import RuleTemplateManager
+
 def test_parse_line_returns_none_for_non_matching_prefix(parser, sample_non_matching_line):
     assert parser.parse_line(sample_non_matching_line) is None
 

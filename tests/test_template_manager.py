@@ -1,3 +1,5 @@
+from template_manager import RuleTemplateManager
+
 import hashlib
 
 

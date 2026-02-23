@@ -1,4 +1,4 @@
-from log_parser import LogicClusterer
+from logic_clusterer import LogicClusterer
 
 
 def test_get_logic_signature_replaces_digits_with_wildcards():
