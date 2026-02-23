@@ -25,6 +25,8 @@ __pycache__/
 
 /*.log
 test_run.log
+test_results.txt
+subutai_results.json
 
 /.idea/
 /.vscode/
