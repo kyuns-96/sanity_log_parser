@@ -21,7 +21,6 @@ def test_parse_line_matching_prefix_with_no_quotes_yields_no_var(parser):
 
     assert parsed is not None
     assert parsed["variables"] == ("NO_VAR",)
-    assert parsed["variable_stems"] == ("NO_STEM",)
 
 
 def test_extract_variable_stems_respects_delimiter_priority_order(parser):

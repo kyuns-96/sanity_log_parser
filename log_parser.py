@@ -3,7 +3,6 @@ import sys
 import re
 import json
 import hashlib
-import time
 from collections import defaultdict
 
 # ==============================================================================
@@ -12,7 +11,6 @@ from collections import defaultdict
 try:
     from sentence_transformers import SentenceTransformer
     from sklearn.cluster import DBSCAN
-    import numpy as np
     AI_AVAILABLE = True
 except ImportError:
     AI_AVAILABLE = False
@@ -119,22 +117,12 @@ class SubutaiParser:
         variables = self.var_pattern.findall(line)
         var_tuple = tuple(variables) if variables else ("NO_VAR",)
         
-        # Extract variable stems for hierarchical grouping
-        variable_stems = []
-        if var_tuple and var_tuple != ("NO_VAR",):
-            for var in var_tuple:
-                stems = self.extract_variable_stems(var)
-                variable_stems.extend(stems)
-        
-        stems_tuple = tuple(variable_stems) if variable_stems else ("NO_STEM",)
-        
         template = self.tm._get_pure_template(line)
         rule_id = self.tm.get_rule_id(template)
         
         return {
             "rule_id": rule_id,
             "variables": var_tuple,
-            "variable_stems": stems_tuple,
             "template": template,
             "raw_log": line  # <--- 원본 로그 저장됨
         }
@@ -148,27 +136,6 @@ class LogicClusterer:
         sigs = [re.sub(r"\d+", "*", str(v)) for v in var_tuple]
         return " / ".join(sigs)
     
-    def get_stem_signature(self, stem_tuple):
-        """
-        Create signature from variable stems, replacing numbers with wildcards.
-        Stems are already decomposed, so this focuses on semantic components.
-        
-        Example: ('mem_top', 'ABC', 'value', '123') -> 'mem_top ABC value *'
-        """
-        if not stem_tuple or stem_tuple == ("NO_STEM",): 
-            return "NO_STEM"
-        
-        # Replace numeric stems with wildcard, keep semantic stems
-        sigs = []
-        for stem in stem_tuple:
-            if stem.isdigit():
-                sigs.append("*")
-            else:
-                # Keep non-numeric stems as-is (they're already atomic)
-                sigs.append(stem)
-        
-        return " ".join(sigs)
-
     def run(self, parsed_logs):
         groups = defaultdict(list)
         for p in parsed_logs:
@@ -315,24 +282,6 @@ class AIClusterer:
         
         return result
     
-    def _apply_variable_value_weights(self, variables, variable_value_weights):
-        """
-        변수 값 기반 가중치를 적용 (변수 값 자체별로 가중치 설정)
-        예: variables=['pipe_4', 'pipe_5', 'pipe_5']
-             variable_value_weights={'pipe_4': 3, 'pipe_5': 1}
-        → ['pipe_4', 'pipe_4', 'pipe_4', 'pipe_5', 'pipe_5']
-        """
-        if not variables or not variable_value_weights:
-            return variables
-        
-        result = []
-        for var in variables:
-            # 변수 값에 해당하는 가중치 조회 (없으면 1)
-            weight = variable_value_weights.get(var, 1)
-            result.extend([var] * weight)
-        
-        return result
-
     def run(self, logic_groups):
         if not AI_AVAILABLE or not logic_groups: return []
 
