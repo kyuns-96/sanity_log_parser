@@ -234,3 +234,123 @@ Instance-level error handling is better than mutating module globals:
 - `grep -n 'self.model.*None' log_parser.py` → 1 match (type annotation with None default) ✅
 
 **Evidence**: `.sisyphus/evidence/task-6-error-handling.txt`
+
+## T6: Extract RuleTemplateManager and SubutaiParser into separate modules
+
+### Files created
+- `template_manager.py` (41 lines) — Contains `RuleTemplateManager` class
+- `parser.py` (82 lines) — Contains `SubutaiParser` class
+
+### Imports structure
+**template_manager.py** requires:
+- `from __future__ import annotations`
+- `from typing import Any`
+- `os`, `re`, `hashlib`
+
+**parser.py** requires:
+- `from __future__ import annotations`
+- `from typing import Any`
+- `re`
+- `from template_manager import RuleTemplateManager` (circular import avoided by keeping classes separate)
+
+### Test file updates
+All three test files updated successfully:
+- `tests/conftest.py` — Split imports, now imports from `template_manager` and `parser` instead of `log_parser`
+- `tests/test_template_manager.py` — Added import from `template_manager`
+- `tests/test_parser.py` — Added imports from both `parser` and `template_manager`
+
+### Verification
+- ✅ All 17 tests pass
+- ✅ Direct imports work: `from template_manager import RuleTemplateManager; from parser import SubutaiParser`
+- ✅ Both files under 300 lines (41 and 82 respectively)
+- ✅ `log_parser.py` remains untouched (still contains original classes for backward compatibility)
+
+### Key patterns
+- Each class extracted with its exact section header comment (`# ==============================================================================`)
+- Only necessary imports included per file (no unused imports from original)
+- `SubutaiParser` correctly imports `RuleTemplateManager` from new module
+- Tests fixtures work correctly with new import structure
+
+
+## Task: Extract LogicClusterer class (T5)
+
+**Completed:** Mon Feb 23 2026
+
+**What was done:**
+- Created `/home/lee/workspace/sanity_log_parser/logic_clusterer.py` (36 lines)
+- Extracted `LogicClusterer` class (lines 136-161 from `log_parser.py`)
+- Updated `tests/test_logic_clusterer.py` to import from `logic_clusterer` instead of `log_parser`
+- `conftest.py` did not import `LogicClusterer`, no changes needed there
+
+**Key observations:**
+- The extracted class is fully self-contained — only uses standard library imports
+- Required imports: `from __future__ import annotations`, `from typing import Any`, `import re`, `from collections import defaultdict`
+- Preserved exact code including the `lambda group:` naming convention from T3
+- File is well under 300-line limit (36 lines)
+- All 17 tests pass after extraction
+- Module imports successfully: `from logic_clusterer import LogicClusterer`
+
+**Pattern validated:**
+- Additive extraction: created new file, updated imports, did NOT modify `log_parser.py`
+- This allows safe incremental refactoring with easy rollback if needed
+- Test imports updated to use new module, confirming independence
+
+## T7: AIClusterer split complete (`ai_weights.py` + `ai_clusterer.py`)
+- Extracted `extract_variable_tail` and `_apply_variable_position_weights` into standalone functions in `ai_weights.py` (renamed to `apply_variable_position_weights`).
+- Updated `tests/conftest.py` and `tests/test_ai_clusterer.py` imports; `python -m pytest tests/ -q` passes (17/17), and direct import verification command succeeds.
+
+## T10: Create main.py and Remove log_parser.py (COMPLETED)
+
+**What Was Done:**
+- Created `/home/lee/workspace/sanity_log_parser/main.py` (88 lines) as new CLI entry point
+- Copied exact logic from `log_parser.py` lines 406-477 (the `if __name__ == '__main__':` block)
+- Wrapped in `def main() -> None:` function with proper `if __name__ == "__main__":` guard
+- Deleted `log_parser.py` (478 lines → removed)
+- Made 2 git commits as required:
+  1. `2d00904` — "refactor: extract classes into separate modules (T7-T9)" (10 files, +438/-10)
+  2. `fb0ab8d` — "refactor: create main.py entry point and remove log_parser.py" (2 files, +88/-478)
+
+**Key Implementation Details:**
+- Variable name in main block: `res = parser.parse_line(stripped)` (not `result` — T3 rename did not affect main block)
+- AI availability check: `ai_clusterer.ai_available` (instance attribute, correctly used)
+- Output file: `subutai_results.json` (unchanged)
+- Usage message: `"Usage: python main.py <LOG_FILE> <TEMPLATE_FILE>"` (updated from subutai_reviewer.py)
+- Imports: Uses all new module files (template_manager, parser, logic_clusterer, ai_clusterer)
+
+**Verification Results:**
+✅ `python -m pytest tests/ -q` → 17 passed in 0.02s
+✅ `python main.py` → prints usage, exits non-zero (no ImportError)
+✅ `log_parser.py` → deleted (no longer exists)
+✅ `git log --oneline -3` → shows both commits
+✅ Line count: main.py = 88 lines (well under 300-line limit)
+
+**Test Import Status (FINAL):**
+- `tests/conftest.py` → imports from ai_clusterer, template_manager, parser ✅
+- `tests/test_*.py` → all import from new modules (T7-T9 already fixed) ✅
+- `grep -r "from log_parser" tests/` → 0 matches ✅
+
+**Remaining Files (Post-Refactor):**
+- `main.py` — NEW CLI entry point (88 lines)
+- `template_manager.py` — RuleTemplateManager (41 lines)
+- `parser.py` — SubutaiParser (82 lines)
+- `logic_clusterer.py` — LogicClusterer (36 lines)
+- `ai_weights.py` — extract_variable_tail + apply_variable_position_weights (77 lines)
+- `ai_clusterer.py` — AIClusterer (182 lines)
+- `view_log.py` — standalone viewer (unchanged, still uses own imports)
+
+**Critical Decision: Variable Name Preservation**
+- The main block in log_parser.py used `res` (NOT `result`)
+- T3 renamed `res` → `result` in the SubutaiParser.parse_line() DOCSTRING and local var inside parse_line()
+- T3 did NOT change the main block variable name
+- main.py correctly preserves `res` to match exact original behavior
+
+**Git Commit Strategy:**
+- Commit 1: New module files + test updates (T7-T9 work) — all functional changes
+- Commit 2: main.py creation + log_parser.py deletion — migration/cleanup
+- This separation makes history readable: "extract modules" → "migrate entry point"
+
+**Next Steps:**
+- T11 will update README.md to document new usage (`python main.py` instead of `python log_parser.py`)
+- Plan suggests T11 will also update directory structure documentation
+- All core refactoring tasks (T1-T10) now complete ✅
+
