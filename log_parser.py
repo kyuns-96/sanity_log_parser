@@ -27,12 +27,12 @@ class RuleTemplateManager:
             print(f"📂 Loading Rule Templates from: {template_file}")
             self._load_templates(template_file)
 
-    def _get_pure_template(self, text):
+    def get_pure_template(self, text):
         # 1. 변수 영역 보호
-        temp = self.var_pattern.sub("'<VAR>'", text)
+        normalized_template = self.var_pattern.sub("'<VAR>'", text)
         # 2. 독립된 숫자만 마스킹
-        temp = re.sub(r"\b\d+\b", "<NUM>", temp)
-        return temp.strip()
+        normalized_template = re.sub(r"\b\d+\b", "<NUM>", normalized_template)
+        return normalized_template.strip()
 
     def _load_templates(self, file_path):
         if not os.path.exists(file_path):
@@ -44,7 +44,7 @@ class RuleTemplateManager:
                 parts = line.split(maxsplit=3)
                 if len(parts) < 4: continue
                 rule_id, message = parts[0], parts[3]
-                pure_temp = self._get_pure_template(message)
+                pure_temp = self.get_pure_template(message)
                 self.template_dict[pure_temp] = rule_id
 
     def get_rule_id(self, log_template):
@@ -56,7 +56,7 @@ class RuleTemplateManager:
 class SubutaiParser:
     def __init__(self, template_manager):
         self.var_pattern = re.compile(r"'(.*?)'")
-        self.tm = template_manager
+        self.template_manager = template_manager
         self.delimiters = [('/', 1), ('_', 2), ('-', 3)]  # (delimiter, priority)
     
     def extract_variable_stems(self, variable):
@@ -117,8 +117,8 @@ class SubutaiParser:
         variables = self.var_pattern.findall(line)
         var_tuple = tuple(variables) if variables else ("NO_VAR",)
         
-        template = self.tm._get_pure_template(line)
-        rule_id = self.tm.get_rule_id(template)
+        template = self.template_manager.get_pure_template(line)
+        rule_id = self.template_manager.get_rule_id(template)
         
         return {
             "rule_id": rule_id,
@@ -133,16 +133,16 @@ class SubutaiParser:
 class LogicClusterer:
     def get_logic_signature(self, var_tuple):
         if not var_tuple or var_tuple == ("NO_VAR",): return "NO_VAR"
-        sigs = [re.sub(r"\d+", "*", str(v)) for v in var_tuple]
-        return " / ".join(sigs)
+        signatures = [re.sub(r"\d+", "*", str(v)) for v in var_tuple]
+        return " / ".join(signatures)
     
     def run(self, parsed_logs):
         groups = defaultdict(list)
-        for p in parsed_logs:
+        for parsed_log in parsed_logs:
             # [1차 그룹핑] 원래 방식: variables만 사용 (stem 무시)
-            full_sig = self.get_logic_signature(p['variables'])
-            key = (p['rule_id'], full_sig, p['template'])
-            groups[key].append(p)
+            full_sig = self.get_logic_signature(parsed_log['variables'])
+            key = (parsed_log['rule_id'], full_sig, parsed_log['template'])
+            groups[key].append(parsed_log)
 
         results = []
         for (rule_id, full_sig, temp), members in groups.items():
@@ -154,13 +154,14 @@ class LogicClusterer:
                 "count": len(members),
                 "members": members  # <--- 여기에 raw_log가 포함된 파싱 객체들이 있음
             })
-        results.sort(key=lambda x: x['count'], reverse=True)
+        results.sort(key=lambda group: group['count'], reverse=True)
         return results
 
 # ==============================================================================
 # 4. AI Clusterer
 # ==============================================================================
 class AIClusterer:
+    _VAR_PATTERN = re.compile(r"'(.*?)'")
     def __init__(self, model_path='all-MiniLM-L6-v2', config_file='rule_clustering_config.json'):
         global AI_AVAILABLE
         if AI_AVAILABLE:
@@ -289,8 +290,8 @@ class AIClusterer:
         
         # rule_id별로 그룹 분류
         groups_by_rule = defaultdict(list)
-        for g in logic_groups:
-            groups_by_rule[g['rule_id']].append(g)
+        for logic_group in logic_groups:
+            groups_by_rule[logic_group['rule_id']].append(logic_group)
         
         print(f"   Grouping by rule_id: {len(groups_by_rule)} different rules")
         
@@ -306,16 +307,16 @@ class AIClusterer:
             
             if len(rule_groups) < 2:
                 # 그룹이 1개면 병합할 것이 없음
-                for g in rule_groups:
+                for logic_group in rule_groups:
                     ai_group_counter += 1
-                    all_raw_logs = [m['raw_log'] for m in g['members']]
+                    all_raw_logs = [m['raw_log'] for m in logic_group['members']]
                     final_output.append({
                         "type": "AISuperGroup",
                         "super_group_id": f"{rule_id}_SG_{ai_group_counter}",
                         "rule_id": rule_id,
-                        "representative_template": g['template'],
-                        "representative_pattern": g['pattern'],
-                        "total_count": g['count'],
+                        "representative_template": logic_group['template'],
+                        "representative_pattern": logic_group['pattern'],
+                        "total_count": logic_group['count'],
                         "merged_variants_count": 1,
                         "original_logs": all_raw_logs
                     })
@@ -323,11 +324,11 @@ class AIClusterer:
             
             # 동일 rule_id 내에서만 embedding 및 clustering
             embedding_inputs = []
-            for g in rule_groups:
+            for logic_group in rule_groups:
                 # pattern에서 변수 추출
-                var_pattern = re.compile(r"'(.*?)'")
-                pattern_text = g['pattern'].replace(' / ', ' ')
-                variables = var_pattern.findall(pattern_text)
+
+                pattern_text = logic_group['pattern'].replace(' / ', ' ')
+                variables = self._VAR_PATTERN.findall(pattern_text)
                 
                 # 변수 위치별 tail 설정이 있는 경우
                 if variable_tail_configs:
@@ -349,14 +350,14 @@ class AIClusterer:
                     if variable_position_weights:
                         var_texts = self._apply_variable_position_weights(var_texts, variable_position_weights)
                     
-                    embedding_input = f"{g['template']} {' '.join(var_texts)}"
+                    embedding_input = f"{logic_group['template']} {' '.join(var_texts)}"
                 else:
                     # tail config 없으면 변수 그대로 사용
                     if variable_position_weights:
                         var_texts = self._apply_variable_position_weights(variables, variable_position_weights)
-                        embedding_input = f"{g['template']} {' '.join(var_texts)}"
+                        embedding_input = f"{logic_group['template']} {' '.join(var_texts)}"
                     else:
-                        embedding_input = f"{g['template']} {' '.join(variables)}"
+                        embedding_input = f"{logic_group['template']} {' '.join(variables)}"
                 
                 embedding_inputs.append(embedding_input)
             
@@ -374,7 +375,7 @@ class AIClusterer:
             # 결과 생성
             for key, data in ai_grouped.items():
                 ai_group_counter += 1
-                main = max(data["logic_subgroups"], key=lambda x: x['count'])
+                main = max(data["logic_subgroups"], key=lambda group: group['count'])
                 
                 all_raw_logs = []
                 for sub in data["logic_subgroups"]:
@@ -392,7 +393,7 @@ class AIClusterer:
                     "original_logs": all_raw_logs
                 })
         
-        final_output.sort(key=lambda x: x['total_count'], reverse=True)
+        final_output.sort(key=lambda group: group['total_count'], reverse=True)
         return final_output
 
 # ==============================================================================
@@ -437,14 +438,14 @@ if __name__ == "__main__":
         print(f"   Final compression ratio: {len(parsed_logs) / len(results):.2f}x")
     else:
         # AI가 없으면 Logic 결과만 반환
-        for g in logic_results:
+        for logic_group in logic_results:
             # Logic 그룹의 원본 로그 복구
-            raw_logs = [m['raw_log'] for m in g['members']]
+            raw_logs = [m['raw_log'] for m in logic_group['members']]
             results.append({
                 "type": "LogicGroup",
-                "rule_id": g['rule_id'],
-                "representative_pattern": g['pattern'],
-                "total_count": g['count'],
+                "rule_id": logic_group['rule_id'],
+                "representative_pattern": logic_group['pattern'],
+                "total_count": logic_group['count'],
                 "original_logs": raw_logs
             })
 
@@ -454,13 +455,13 @@ if __name__ == "__main__":
     print("="*80)
     
     # 화면 출력 (샘플)
-    for i, res in enumerate(results[:5]):
-        pattern_display = res.get('representative_pattern', 'N/A')
-        merged_info = f" (merged {res.get('merged_variants_count', 1)} groups)" if res.get('merged_variants_count', 1) > 1 else ""
-        print(f"{i+1:02d}. [{res['rule_id']}] {pattern_display}{merged_info}")
-        print(f"    Count: {res['total_count']:,}")
+    for i, result in enumerate(results[:5]):
+        pattern_display = result.get('representative_pattern', 'N/A')
+        merged_info = f" (merged {result.get('merged_variants_count', 1)} groups)" if result.get('merged_variants_count', 1) > 1 else ""
+        print(f"{i+1:02d}. [{result['rule_id']}] {pattern_display}{merged_info}")
+        print(f"    Count: {result['total_count']:,}")
         print(f"    Original Logs Sample (Top 2):")
-        for log in res['original_logs'][:2]:
+        for log in result['original_logs'][:2]:
             print(f"      - {log}")
         print("-" * 60)
 
