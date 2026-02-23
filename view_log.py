@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import sys
 import os
@@ -16,7 +18,7 @@ class Colors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-def print_pretty_report(json_file_path):
+def print_pretty_report(json_file_path: str) -> None:
     if not os.path.exists(json_file_path):
         print(f"{Colors.FAIL}❌ 파일을 찾을 수 없습니다: {json_file_path}{Colors.ENDC}")
         return

@@ -1,5 +1,7 @@
+from __future__ import annotations
+
+from typing import Any
 import os
-import sys
 import re
 import json
 import hashlib
@@ -19,7 +21,7 @@ except ImportError:
 # 1. Template Manager
 # ==============================================================================
 class RuleTemplateManager:
-    def __init__(self, template_file):
+    def __init__(self, template_file: str | None) -> None:
         self.template_dict = {} 
         self.var_pattern = re.compile(r"'(.*?)'")
         
@@ -27,14 +29,14 @@ class RuleTemplateManager:
             print(f"📂 Loading Rule Templates from: {template_file}")
             self._load_templates(template_file)
 
-    def get_pure_template(self, text):
+    def get_pure_template(self, text: str) -> str:
         # 1. 변수 영역 보호
         normalized_template = self.var_pattern.sub("'<VAR>'", text)
         # 2. 독립된 숫자만 마스킹
         normalized_template = re.sub(r"\b\d+\b", "<NUM>", normalized_template)
         return normalized_template.strip()
 
-    def _load_templates(self, file_path):
+    def _load_templates(self, file_path: str) -> None:
         if not os.path.exists(file_path):
             return
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -47,19 +49,19 @@ class RuleTemplateManager:
                 pure_temp = self.get_pure_template(message)
                 self.template_dict[pure_temp] = rule_id
 
-    def get_rule_id(self, log_template):
+    def get_rule_id(self, log_template: str) -> str:
         return self.template_dict.get(log_template, f"UNKNOWN_{hashlib.md5(log_template.encode()).hexdigest()[:6].upper()}")
 
 # ==============================================================================
 # 2. Parser
 # ==============================================================================
 class SubutaiParser:
-    def __init__(self, template_manager):
+    def __init__(self, template_manager: RuleTemplateManager) -> None:
         self.var_pattern = re.compile(r"'(.*?)'")
         self.template_manager = template_manager
         self.delimiters = [('/', 1), ('_', 2), ('-', 3)]  # (delimiter, priority)
     
-    def extract_variable_stems(self, variable):
+    def extract_variable_stems(self, variable: str) -> list[str]:
         """
         Extract semantic stems from variable respecting delimiter priority.
         Priority: '/' (highest) > '_' > '-' (lowest)
@@ -103,7 +105,7 @@ class SubutaiParser:
         
         return stems
 
-    def parse_line(self, line):
+    def parse_line(self, line: str) -> dict[str, Any] | None:
         line = line.strip()
         if not line: return None
         
@@ -131,12 +133,12 @@ class SubutaiParser:
 # 3. Logic Clusterer
 # ==============================================================================
 class LogicClusterer:
-    def get_logic_signature(self, var_tuple):
+    def get_logic_signature(self, var_tuple: tuple[str, ...]) -> str:
         if not var_tuple or var_tuple == ("NO_VAR",): return "NO_VAR"
         signatures = [re.sub(r"\d+", "*", str(v)) for v in var_tuple]
         return " / ".join(signatures)
     
-    def run(self, parsed_logs):
+    def run(self, parsed_logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         groups = defaultdict(list)
         for parsed_log in parsed_logs:
             # [1차 그룹핑] 원래 방식: variables만 사용 (stem 무시)
@@ -162,7 +164,7 @@ class LogicClusterer:
 # ==============================================================================
 class AIClusterer:
     _VAR_PATTERN = re.compile(r"'(.*?)'")
-    def __init__(self, model_path='all-MiniLM-L6-v2', config_file='rule_clustering_config.json'):
+    def __init__(self, model_path: str = 'all-MiniLM-L6-v2', config_file: str = 'rule_clustering_config.json') -> None:
         global AI_AVAILABLE
         if AI_AVAILABLE:
             try:
@@ -177,7 +179,7 @@ class AIClusterer:
         self.default_eps = 0.2
         self.default_tail_weight = 2
 
-    def _load_config(self, config_file):
+    def _load_config(self, config_file: str) -> dict[str, Any]:
         """설정 파일에서 rule별 파라미터 로드"""
         if not os.path.exists(config_file):
             print(f"   ⚠️  Config file '{config_file}' not found. Using default settings.")
@@ -192,7 +194,7 @@ class AIClusterer:
             print(f"   ⚠️  Error loading config: {e}. Using default settings.")
             return {}
 
-    def get_rule_config(self, rule_id):
+    def get_rule_config(self, rule_id: str) -> dict[str, Any]:
         """Rule별 설정 조회, 없으면 기본값 반환"""
         if rule_id in self.rule_config:
             config = self.rule_config[rule_id].copy()
@@ -209,7 +211,7 @@ class AIClusterer:
             'variable_tail_configs': None
         }
 
-    def extract_variable_tail(self, full_pattern, tail_levels=1, tail_weights=None, variable_position_weights=None):
+    def extract_variable_tail(self, full_pattern: str, tail_levels: int = 1, tail_weights: list[int] | None = None, variable_position_weights: list[int] | None = None) -> str:
         """
         VLSI 변수의 뒷부분 추출 (뒷부분이 더 중요함)
         변수 위치별 가중치도 지원
@@ -265,7 +267,7 @@ class AIClusterer:
         
         return ' '.join(result)
     
-    def _apply_variable_position_weights(self, parts, variable_position_weights):
+    def _apply_variable_position_weights(self, parts: list[str], variable_position_weights: list[int]) -> list[str]:
         """
         변수 위치별 가중치를 부분 문자열들에 적용
         예: parts=['mem_top', 'ABC'], variable_position_weights=[3, 2]
@@ -283,7 +285,7 @@ class AIClusterer:
         
         return result
     
-    def run(self, logic_groups):
+    def run(self, logic_groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not AI_AVAILABLE or not logic_groups: return []
 
         print(f"🤖 Stage 2 - AI Clustering: analyzing {len(logic_groups)} logic groups...")
