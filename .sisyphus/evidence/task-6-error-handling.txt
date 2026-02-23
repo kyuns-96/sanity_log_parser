@@ -1,0 +1,47 @@
+=== Task 6: Error Handling Refactoring Evidence ===
+
+1. Bare except clause fixed:
+   grep -n 'except:' log_parser.py
+   ✅ No bare except clauses found
+
+2. Global AI_AVAILABLE mutation removed:
+   grep -n 'global AI_AVAILABLE' log_parser.py
+   ✅ No global AI_AVAILABLE mutations found
+
+3. Instance attribute self.ai_available added:
+   grep -n 'self.ai_available' log_parser.py
+171:        self.ai_available: bool = False
+175:                self.ai_available = True
+178:                self.ai_available = False
+291:        if not self.ai_available or not logic_groups: return []
+
+4. Instance attribute self.model with None default:
+   grep -n 'self.model.*None' log_parser.py
+170:        self.model: SentenceTransformer | None = None
+
+5. All tests passing:
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-7.4.4, pluggy-1.4.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/lee/workspace/sanity_log_parser
+collecting ... collected 17 items
+
+tests/test_ai_clusterer.py::test_extract_variable_tail_doc_example_single_level PASSED [  5%]
+tests/test_ai_clusterer.py::test_extract_variable_tail_doc_example_two_levels PASSED [ 11%]
+tests/test_ai_clusterer.py::test_extract_variable_tail_with_variable_position_weights PASSED [ 17%]
+tests/test_ai_clusterer.py::test_apply_variable_position_weights_repeats_parts_by_position PASSED [ 23%]
+tests/test_logic_clusterer.py::test_get_logic_signature_replaces_digits_with_wildcards PASSED [ 29%]
+tests/test_logic_clusterer.py::test_get_logic_signature_handles_no_var_cases PASSED [ 35%]
+tests/test_logic_clusterer.py::test_run_groups_logs_with_same_rule_signature_and_template PASSED [ 41%]
+tests/test_logic_clusterer.py::test_run_sorts_groups_by_count_descending PASSED [ 47%]
+tests/test_parser.py::test_parse_line_returns_none_for_non_matching_prefix PASSED [ 52%]
+tests/test_parser.py::test_parse_line_parses_matching_line_and_extracts_variables PASSED [ 58%]
+tests/test_parser.py::test_parse_line_matching_prefix_with_no_quotes_yields_no_var PASSED [ 64%]
+tests/test_parser.py::test_extract_variable_stems_respects_delimiter_priority_order PASSED [ 70%]
+tests/test_parser.py::test_extract_variable_stems_complex_path_with_hierarchy_markers PASSED [ 76%]
+tests/test_template_manager.py::test_get_pure_template_replaces_quoted_vars_and_numbers PASSED [ 82%]
+tests/test_template_manager.py::test_get_pure_template_strips_outer_whitespace PASSED [ 88%]
+tests/test_template_manager.py::test_get_rule_id_returns_loaded_rule_for_known_template PASSED [ 94%]
+tests/test_template_manager.py::test_get_rule_id_returns_unknown_hash_prefix_for_missing_template PASSED [100%]
+
+============================== 17 passed in 0.02s ==============================

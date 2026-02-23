@@ -99,3 +99,138 @@ The `variable_stems` infrastructure was created but never actually used by any l
 **Evidence**: Saved to `.sisyphus/evidence/task-3-renames-applied.txt`
 
 **Commit**: `3a1d2fd - refactor: rename symbols for clarity across codebase`
+## Task 4: Type Hints (Completed)
+
+### Summary
+Added type hints to all function/method signatures in `log_parser.py` and `view_log.py`.
+
+### Changes Made
+- Added `from __future__ import annotations` at the top of both files (enables forward references)
+- Added `from typing import Any` to `log_parser.py` for dict[str, Any] return types
+- Added type hints to all function/method signatures:
+  - `RuleTemplateManager`: `__init__`, `get_pure_template`, `_load_templates`, `get_rule_id`
+  - `SubutaiParser`: `__init__`, `extract_variable_stems`, `parse_line`
+  - `LogicClusterer`: `get_logic_signature`, `run`
+  - `AIClusterer`: `__init__`, `_load_config`, `get_rule_config`, `extract_variable_tail`, `_apply_variable_position_weights`, `run`
+  - `view_log.py`: `print_pretty_report`
+
+### Type Hint Patterns Used
+- `str | None` for optional strings (using modern Python 3.10+ union syntax)
+- `-> None` for functions that don't return values (including `__init__`)
+- `list[str]`, `list[int]` for homogeneous lists
+- `dict[str, Any]` for parsed log dictionaries with heterogeneous values
+- `tuple[str, ...]` for variable-length tuples
+
+### Testing
+- All 17 tests pass after adding type hints
+- No runtime behavior changed - type hints are annotations only
+- Evidence saved to `.sisyphus/evidence/task-4-type-hints.txt`
+
+### Key Insights
+- `from __future__ import annotations` is essential - allows using `list[str]` instead of `List[str]` from typing
+- Modern Python (3.10+) union syntax `str | None` is cleaner than `Optional[str]`
+- Return type `-> None` is explicit and helpful for `__init__` and void functions
+- Using `Any` for heterogeneous dicts is pragmatic - full TypedDict would be overkill here
+
+
+## Task 5: Korean to English Translation (Completed)
+
+**Status**: ✅ COMPLETE
+
+**Translation Scope**:
+- `log_parser.py`: 35 lines with Korean text (comments, docstrings, print messages)
+- `view_log.py`: 3 lines with Korean text (error messages, comments)
+
+**Key Translations**:
+1. **Variable Protection Comments** (lines 33-35):
+   - "1. 변수 영역 보호" → "1. Protect variable regions"
+   - "2. 독립된 숫자만 마스킹" → "2. Mask only standalone numbers"
+
+2. **Large Docstrings**:
+   - `extract_variable_tail()`: Full 25-line docstring translated
+     - Examples preserved with English explanations
+     - "VLSI 변수의 뒷부분 추출" → "Extract tail part of VLSI variables (tail part is more important)"
+     - Variable position weight examples now in English
+   - `_apply_variable_position_weights()`: 5-line docstring translated with example
+
+3. **Inline Comments Throughout**:
+   - 1st/2nd grouping comments → "1st grouping" / "2nd grouping"
+   - AI clustering stage comments → English descriptions
+   - Logic clustering comments → English explanations
+   - Variable extraction comments → English with technical clarity
+
+4. **Error Messages & Output** (view_log.py):
+   - "파일을 찾을 수 없습니다" → "File not found"
+   - "JSON 읽기 실패" → "Failed to read JSON"
+   - Print statements translated while preserving emoji (📂, 🤖, ✅, ⚠️, 💾)
+
+**Test Results**:
+- All 17 tests pass after translation
+- No functional changes - only comments and strings modified
+- Verified 0 remaining Korean characters using regex pattern `[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f]`
+
+**Key Insight**:
+Translation required careful handling of:
+- Multi-line docstrings (used line-based replacement)
+- Emoji preservation (✅ all emoji preserved)
+- Print statement formatting (maintained f-string structure)
+- Code logic consistency (comments accurately describe code behavior)
+
+**Evidence**: `.sisyphus/evidence/task-5-korean-removed.txt`
+
+**Commit**: `8697116 - refactor: translate all Korean comments and strings to English`
+
+
+## Task 6: Error Handling Refactoring (Completed)
+
+**Status**: ✅ COMPLETE
+
+**Problem Statement**:
+1. Bare `except:` clause at line 172 catches all exceptions including `KeyboardInterrupt` and `SystemExit`
+2. Module-level `AI_AVAILABLE` flag mutated at runtime inside `AIClusterer.__init__` (anti-pattern for splitting into modules)
+
+**Changes Made**:
+1. **Fixed Bare Exception Handler**:
+   - Changed `except:` → `except (ImportError, OSError, RuntimeError) as exc:`
+   - Added explicit exception message: `print(f"⚠️  Failed to load SentenceTransformer model: {exc}")`
+   - Now catches only expected exceptions from model loading
+
+2. **Converted Global to Instance Attribute**:
+   - Added `self.model: SentenceTransformer | None = None` initialization before try block
+   - Added `self.ai_available: bool = False` instance attribute
+   - Set `self.ai_available = True` on successful model load
+   - Set `self.ai_available = False` on exception (instead of mutating global)
+   - Removed `global AI_AVAILABLE` statement from `__init__`
+
+3. **Updated Runtime Checks**:
+   - `AIClusterer.run()`: Changed `if not AI_AVAILABLE` → `if not self.ai_available`
+   - Main block: Created `ai_clusterer = AIClusterer()` instance, changed `if AI_AVAILABLE:` → `if ai_clusterer.ai_available:`
+   - Passed same instance to `ai_clusterer.run(logic_results)` instead of creating new instance
+
+4. **Added Missing Import**:
+   - Added `import sys` (line 5) - required by main block's `sys.argv` usage
+
+**Design Rationale**:
+- **Module-level `AI_AVAILABLE`**: Kept as import-time detection flag (set when `from sentence_transformers import...` succeeds)
+- **Instance `self.ai_available`**: Runtime truth source for whether this specific `AIClusterer` instance has a working model
+- This separation allows future flexibility: module could be available but instance initialization could fail (e.g., model file missing, memory issues)
+
+**Test Results**:
+- All 17 tests pass after refactoring
+- Tests in `test_ai_clusterer.py` use `AIClusterer.__new__(AIClusterer)` to bypass `__init__` - these continue to work correctly
+- No functional changes to clustering logic
+
+**Key Insight**:
+Instance-level error handling is better than mutating module globals:
+1. Allows multiple `AIClusterer` instances with different configurations
+2. Makes error state explicit per instance (easier debugging)
+3. Enables future module splitting without shared global state
+4. Specific exception types prevent masking critical errors
+
+**Verification**:
+- `grep -n 'except:' log_parser.py` → 0 matches ✅
+- `grep -n 'global AI_AVAILABLE' log_parser.py` → 0 matches ✅
+- `grep -n 'self.ai_available' log_parser.py` → 4 matches (init, run, main block) ✅
+- `grep -n 'self.model.*None' log_parser.py` → 1 match (type annotation with None default) ✅
+
+**Evidence**: `.sisyphus/evidence/task-6-error-handling.txt`

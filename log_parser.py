@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 import os
+import sys
 import re
 import json
 import hashlib
@@ -165,17 +166,18 @@ class LogicClusterer:
 class AIClusterer:
     _VAR_PATTERN = re.compile(r"'(.*?)'")
     def __init__(self, model_path: str = 'all-MiniLM-L6-v2', config_file: str = 'rule_clustering_config.json') -> None:
-        global AI_AVAILABLE
+        # Initialize instance attributes
+        self.model: SentenceTransformer | None = None
+        self.ai_available: bool = False
         if AI_AVAILABLE:
             try:
                 self.model = SentenceTransformer(model_path)
-            except:
-                AI_AVAILABLE = False
-        
+                self.ai_available = True
+            except (ImportError, OSError, RuntimeError) as exc:
+                print(f"⚠️  Failed to load SentenceTransformer model: {exc}")
+                self.ai_available = False
         # Load rule-specific eps and tail_weight from config file
         self.rule_config = self._load_config(config_file)
-        
-        # Default settings (apply to all rules)
         self.default_eps = 0.2
         self.default_tail_weight = 2
 
@@ -286,7 +288,7 @@ class AIClusterer:
         return result
     
     def run(self, logic_groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if not AI_AVAILABLE or not logic_groups: return []
+        if not self.ai_available or not logic_groups: return []
 
         print(f"🤖 Stage 2 - AI Clustering: analyzing {len(logic_groups)} logic groups...")
         
@@ -431,9 +433,10 @@ if __name__ == "__main__":
     # 3. AI Clustering [2nd grouping: semantic merging]
     results = [] # Store all results here
 
-    if AI_AVAILABLE:
+    ai_clusterer = AIClusterer()
+    if ai_clusterer.ai_available:
         # 2nd grouping: semantically re-merge 1st logic groups using AI
-        results = AIClusterer().run(logic_results)
+        results = ai_clusterer.run(logic_results)
         print(f"\n🤖 Stage 2 - AI Clustering (Semantic Merging of 1st-Groups):")
         print(f"   Input 1st-groups: {len(logic_results):,}")
         print(f"   Output 2nd-groups: {len(results):,}")
