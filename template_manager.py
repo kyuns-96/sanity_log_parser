@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Protocol
 import os
 import re
 import hashlib
@@ -9,13 +9,18 @@ import hashlib
 # 1. Template Manager
 # ==============================================================================
 class RuleTemplateManager:
-    def __init__(self, template_file: str | None) -> None:
+    def __init__(self, template_file: str | None, console: "_ConsoleLike | None" = None) -> None:
         self.template_dict = {} 
         self.var_pattern = re.compile(r"'(.*?)'")
+        self.console = console
         
         if template_file:
-            print(f"📂 Loading Rule Templates from: {template_file}")
+            self._info(f"📂 Loading Rule Templates from: {template_file}")
             self._load_templates(template_file)
+
+    def _info(self, message: str) -> None:
+        if self.console is not None:
+            self.console.info(message)
 
     def get_pure_template(self, text: str) -> str:
         # 1. Protect variable regions
@@ -39,3 +44,7 @@ class RuleTemplateManager:
 
     def get_rule_id(self, log_template: str) -> str:
         return self.template_dict.get(log_template, f"UNKNOWN_{hashlib.md5(log_template.encode()).hexdigest()[:6].upper()}")
+
+
+class _ConsoleLike(Protocol):
+    def info(self, message: str) -> None: ...

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+from importlib import import_module
+from typing import Any, Protocol, cast
 import os
 import json
 import re
@@ -8,27 +9,36 @@ from collections import defaultdict
 
 from ai_weights import extract_variable_tail, apply_variable_position_weights
 
+ai_dependencies_available = False
+SentenceTransformerFactory: Any | None = None
+DBSCANFactory: Any | None = None
 try:
-    from sentence_transformers import SentenceTransformer
-    from sklearn.cluster import DBSCAN
-    AI_AVAILABLE = True
+    SentenceTransformerFactory = import_module("sentence_transformers").SentenceTransformer
+    DBSCANFactory = import_module("sklearn.cluster").DBSCAN
+    ai_dependencies_available = True
 except ImportError:
-    AI_AVAILABLE = False
+    pass
 
 
 class AIClusterer:
     _VAR_PATTERN = re.compile(r"'(.*?)'")
 
-    def __init__(self, model_path: str = 'all-MiniLM-L6-v2', config_file: str = 'rule_clustering_config.json') -> None:
+    def __init__(
+        self,
+        model_path: str = 'all-MiniLM-L6-v2',
+        config_file: str = 'rule_clustering_config.json',
+        console: "_ConsoleLike | None" = None,
+    ) -> None:
         # Initialize instance attributes
-        self.model: SentenceTransformer | None = None
+        self.model: _SentenceModelLike | None = None
         self.ai_available: bool = False
-        if AI_AVAILABLE:
+        self.console = console
+        if ai_dependencies_available and SentenceTransformerFactory is not None:
             try:
-                self.model = SentenceTransformer(model_path)
-                self.ai_available = True
+                self.model = cast(_SentenceModelLike, SentenceTransformerFactory(model_path))
+                self.ai_available = DBSCANFactory is not None
             except (ImportError, OSError, RuntimeError) as exc:
-                print(f"⚠️  Failed to load SentenceTransformer model: {exc}")
+                self._warn(f"⚠️  Failed to load SentenceTransformer model: {exc}")
                 self.ai_available = False
         # Load rule-specific eps and tail_weight from config file
         self.rule_config = self._load_config(config_file)
@@ -38,17 +48,29 @@ class AIClusterer:
     def _load_config(self, config_file: str) -> dict[str, Any]:
         """Load rule-specific parameters from config file"""
         if not os.path.exists(config_file):
-            print(f"   ⚠️  Config file '{config_file}' not found. Using default settings.")
+            self._warn(f"Config file '{config_file}' not found. Using default settings.")
             return {}
 
         try:
             with open(config_file, 'r', encoding='utf-8') as f:
                 config = json.load(f)
-            print(f"   ✅ Loaded rule config from '{config_file}'")
+            self._success(f"Loaded rule config from '{config_file}'")
             return config.get('rules', {})
         except Exception as e:
-            print(f"   ⚠️  Error loading config: {e}. Using default settings.")
+            self._warn(f"Error loading config: {e}. Using default settings.")
             return {}
+
+    def _info(self, message: str) -> None:
+        if self.console is not None:
+            self.console.info(message)
+
+    def _warn(self, message: str) -> None:
+        if self.console is not None:
+            self.console.warn(message)
+
+    def _success(self, message: str) -> None:
+        if self.console is not None:
+            self.console.success(message)
 
     def get_rule_config(self, rule_id: str) -> dict[str, Any]:
         """Get rule config, return default if not found"""
@@ -70,15 +92,17 @@ class AIClusterer:
     def run(self, logic_groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not self.ai_available or not logic_groups:
             return []
+        if self.model is None or DBSCANFactory is None:
+            return []
 
-        print(f"🤖 Stage 2 - AI Clustering: analyzing {len(logic_groups)} logic groups...")
+        self._info(f"🤖 Stage 2 - AI Clustering: analyzing {len(logic_groups)} logic groups...")
 
         # Classify groups by rule_id
         groups_by_rule = defaultdict(list)
         for logic_group in logic_groups:
             groups_by_rule[logic_group['rule_id']].append(logic_group)
 
-        print(f"   Grouping by rule_id: {len(groups_by_rule)} different rules")
+        self._info(f"Grouping by rule_id: {len(groups_by_rule)} different rules")
 
         final_output = []
         ai_group_counter = 0
@@ -149,9 +173,9 @@ class AIClusterer:
             embeddings = self.model.encode(embedding_inputs, batch_size=128, show_progress_bar=False)
 
             # Perform clustering with rule-specific eps
-            clustering = DBSCAN(eps=eps, min_samples=1, metric='cosine').fit(embeddings)
+            clustering = DBSCANFactory(eps=eps, min_samples=1, metric='cosine').fit(embeddings)
 
-            ai_grouped = defaultdict(lambda: {"total_count": 0, "logic_subgroups": []})
+            ai_grouped: dict[str, dict[str, Any]] = defaultdict(lambda: {"total_count": 0, "logic_subgroups": []})
             for label, logic_group in zip(clustering.labels_, rule_groups):
                 cluster_key = f"{rule_id}_SG_{label}"
                 ai_grouped[cluster_key]["total_count"] += logic_group['count']
@@ -180,3 +204,18 @@ class AIClusterer:
 
         final_output.sort(key=lambda group: group['total_count'], reverse=True)
         return final_output
+
+
+class _ConsoleLike(Protocol):
+    def info(self, message: str) -> None: ...
+    def warn(self, message: str) -> None: ...
+    def success(self, message: str) -> None: ...
+
+
+class _SentenceModelLike(Protocol):
+    def encode(
+        self,
+        sentences: list[str],
+        batch_size: int,
+        show_progress_bar: bool,
+    ) -> Any: ...

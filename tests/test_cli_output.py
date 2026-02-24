@@ -1,0 +1,85 @@
+import re
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _run_main(
+    args: list[str], cwd: Path, *, set_no_color: bool = True
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    if set_no_color:
+        env["NO_COLOR"] = "1"
+    else:
+        if "NO_COLOR" in env:
+            del env["NO_COLOR"]
+    env["PYTHONUTF8"] = "1"
+    return subprocess.run(
+        [sys.executable, str(ROOT / "main.py"), *args],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _output(process: subprocess.CompletedProcess[str]) -> str:
+    return (process.stdout or "") + (process.stderr or "")
+
+
+def test_main_help_includes_usage_and_argument_placeholders(tmp_path: Path):
+    process = _run_main(["--help"], tmp_path)
+    output = _output(process)
+
+    assert process.returncode == 0
+    assert "usage:" in output
+    assert "LOG_FILE" in output
+    assert "TEMPLATE_FILE" in output
+
+
+def test_main_no_color_help_has_no_escape_codes(tmp_path: Path):
+    process = _run_main(["--help"], tmp_path)
+    output = _output(process)
+
+    assert "\x1b[" not in output
+
+
+def test_main_no_color_flag_has_no_escape_codes_without_no_color_env(tmp_path: Path):
+    process = _run_main(["--help", "--no-color"], tmp_path, set_no_color=False)
+    output = _output(process)
+
+    assert "\x1b[" not in output
+
+
+def test_main_requires_arguments(tmp_path: Path):
+    process = _run_main([], tmp_path)
+    output = _output(process)
+
+    assert process.returncode != 0
+    assert "usage:" in output
+
+
+def test_main_empty_input_runs_zero_logs(tmp_path: Path):
+    template_file = tmp_path / "rules.log"
+    _ = template_file.write_text(
+        "\n".join(
+            [
+                "Rule Severity Header Message",
+                "R001 HIGH INFO Signal 'u_top' not found",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    log_file = tmp_path / "empty.log"
+    _ = log_file.write_text("", encoding="utf-8")
+
+    process = _run_main([str(log_file), str(template_file)], tmp_path)
+    output = _output(process)
+
+    assert process.returncode == 0
+    assert re.search(r"Input logs:\s+0", output)
+    assert "Traceback" not in output
