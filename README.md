@@ -65,6 +65,24 @@ The tool writes results to `subutai_results.json`.
 
 If `sentence-transformers` and `scikit-learn` are installed, the tool performs a second stage of clustering to semantically merge similar groups. It uses cosine similarity on embeddings generated from log templates and variables.
 
+### Local Model Usage
+
+The AIClusterer uses all-MiniLM-L6-v2 by default. This model downloads and caches automatically via sentence-transformers.
+
+To use a local model instead, point model_path at a directory with your model files.
+
+1. Place your model files in a directory. The my_local_model/ folder is git-ignored, so it's a good spot for these files.
+2. Since there's no CLI flag for the model path yet, you'll need to edit main.py to pass the path to AIClusterer.
+
+Update this line in main.py:
+```python
+ai_clusterer = AIClusterer(console=console)
+```
+To:
+```python
+ai_clusterer = AIClusterer(model_path="my_local_model/", console=console)
+```
+
 ## Running Tests
 
 Run the test suite using pytest:
