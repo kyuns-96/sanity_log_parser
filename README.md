@@ -92,9 +92,10 @@ You can use an OpenAI-compatible API for embeddings by creating a `config.json` 
 
 1. `main.py` creates `AIClusterer`.
 2. `AIClusterer` calls `load_embeddings_config(config_path=...)`.
-3. By default this is `./config.json`, but you can override it with `--config`.
-4. If backend is `openai_compatible`, embeddings are requested from `{base_url}/embeddings`.
-5. If config is missing or invalid, backend falls back to `local`.
+3. If `--config` is provided, that path is used.
+4. If `--config` is omitted, the program tries `config.json` next to `main.py` first, then `./config.json`.
+5. If backend is `openai_compatible`, embeddings are requested from `{base_url}/embeddings`.
+6. If config is missing or invalid, backend falls back to `local`.
 
 Use `--config` to choose a different config file path.
 
@@ -122,7 +123,9 @@ Example `config.json`:
 
 #### Run examples (how to pass config through program)
 
-If `config.json` is next to your input files:
+If your source directory has `config.json`, that file is picked first when `--config` is omitted.
+
+If your `config.json` is in your working directory:
 ```bash
 cd /path/to/workdir
 python /path/to/sanity_log_parser/main.py LOG_FILE TEMPLATE_FILE
