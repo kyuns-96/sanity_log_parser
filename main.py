@@ -44,6 +44,18 @@ def _ratio(numerator: int, denominator: int) -> str:
     return f"{numerator / denominator:.2f}x"
 
 
+def _resolve_embeddings_config_path(config_arg: str | None) -> str:
+    if config_arg:
+        return config_arg
+
+    source_dir = os.path.dirname(os.path.abspath(__file__))
+    source_default = os.path.join(source_dir, "config.json")
+    if os.path.isfile(source_default):
+        return source_default
+
+    return "config.json"
+
+
 def main() -> None:
     parser = _build_parser()
     _ = parser.add_argument(
@@ -61,8 +73,11 @@ def main() -> None:
     )
     _ = parser.add_argument(
         "--config",
-        default="config.json",
-        help="Path to embeddings config JSON (default: config.json).",
+        default=None,
+        help=(
+            "Path to embeddings config JSON. "
+            "If omitted: try config.json next to main.py, then ./config.json."
+        ),
     )
 
     args = parser.parse_args()
@@ -70,6 +85,7 @@ def main() -> None:
 
     log_file = _check_readable(cast(str, args.log_file), "Log file", parser)
     rule_file = _check_readable(cast(str, args.template_file), "Template file", parser)
+    embeddings_config_path = _resolve_embeddings_config_path(cast(str | None, args.config))
 
     tm = RuleTemplateManager(rule_file, console)
     parser = SubutaiParser(tm)
@@ -95,7 +111,7 @@ def main() -> None:
 
     ai_clusterer = AIClusterer(
         console=console,
-        embeddings_config_file=cast(str, args.config),
+        embeddings_config_file=embeddings_config_path,
     )
     if ai_clusterer.ai_available:
         # 2nd grouping: semantically re-merge 1st logic groups using AI
