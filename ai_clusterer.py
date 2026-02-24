@@ -7,17 +7,30 @@ import json
 import re
 from collections import defaultdict
 
+from api_config import load_embeddings_config
 from ai_weights import extract_variable_tail, apply_variable_position_weights
+from openai_compat_embeddings import (
+    EmbeddingsRequestError,
+    OpenAICompatibleEmbeddingsClient,
+)
 
-ai_dependencies_available = False
 SentenceTransformerFactory: Any | None = None
 DBSCANFactory: Any | None = None
+sentence_transformers_available = False
+dbscan_available = False
 try:
     SentenceTransformerFactory = import_module("sentence_transformers").SentenceTransformer
-    DBSCANFactory = import_module("sklearn.cluster").DBSCAN
-    ai_dependencies_available = True
 except ImportError:
     pass
+else:
+    sentence_transformers_available = True
+
+try:
+    DBSCANFactory = import_module("sklearn.cluster").DBSCAN
+except ImportError:
+    pass
+else:
+    dbscan_available = True
 
 
 class AIClusterer:
@@ -31,12 +44,31 @@ class AIClusterer:
     ) -> None:
         # Initialize instance attributes
         self.model: _SentenceModelLike | None = None
+        self.remote_embeddings_client: OpenAICompatibleEmbeddingsClient | None = None
         self.ai_available: bool = False
         self.console = console
-        if ai_dependencies_available and SentenceTransformerFactory is not None:
+
+        embeddings_config = load_embeddings_config(
+            config_path="config.json",
+            warn=self._warn if self.console is not None else None,
+        )
+
+        if embeddings_config.backend == "openai_compatible":
+            if not dbscan_available:
+                self._warn("⚠️  OpenAI-compatible embeddings selected, but scikit-learn is unavailable.")
+                self.ai_available = False
+            elif embeddings_config.openai_compatible is not None:
+                openai_settings = embeddings_config.openai_compatible
+                self.remote_embeddings_client = OpenAICompatibleEmbeddingsClient(
+                    base_url=openai_settings.base_url,
+                    model=openai_settings.model,
+                    api_key=openai_settings.api_key,
+                )
+                self.ai_available = True
+        elif sentence_transformers_available and dbscan_available and SentenceTransformerFactory is not None:
             try:
                 self.model = cast(_SentenceModelLike, SentenceTransformerFactory(model_path))
-                self.ai_available = DBSCANFactory is not None
+                self.ai_available = True
             except (ImportError, OSError, RuntimeError) as exc:
                 self._warn(f"⚠️  Failed to load SentenceTransformer model: {exc}")
                 self.ai_available = False
@@ -92,7 +124,7 @@ class AIClusterer:
     def run(self, logic_groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not self.ai_available or not logic_groups:
             return []
-        if self.model is None or DBSCANFactory is None:
+        if DBSCANFactory is None:
             return []
 
         self._info(f"🤖 Stage 2 - AI Clustering: analyzing {len(logic_groups)} logic groups...")
@@ -170,7 +202,17 @@ class AIClusterer:
 
                 embedding_inputs.append(embedding_input)
 
-            embeddings = self.model.encode(embedding_inputs, batch_size=128, show_progress_bar=False)
+            if self.remote_embeddings_client is not None:
+                try:
+                    embeddings = self.remote_embeddings_client.embed(embedding_inputs)
+                except EmbeddingsRequestError as exc:
+                    self._warn(f"⚠️  Remote embeddings failed, disabling AI clustering: {exc}")
+                    self.ai_available = False
+                    return []
+            else:
+                if self.model is None:
+                    return []
+                embeddings = self.model.encode(embedding_inputs, batch_size=128, show_progress_bar=False)
 
             # Perform clustering with rule-specific eps
             clustering = DBSCANFactory(eps=eps, min_samples=1, metric='cosine').fit(embeddings)
