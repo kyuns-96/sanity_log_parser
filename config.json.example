@@ -1,0 +1,8 @@
+{
+  "embeddings_backend": "openai_compatible",
+  "openai_compatible": {
+    "base_url": "https://api.openai.com/v1",
+    "model": "text-embedding-3-small",
+    "api_key": "YOUR_API_KEY_HERE"
+  }
+}

@@ -83,6 +83,30 @@ To:
 ai_clusterer = AIClusterer(model_path="my_local_model/", console=console)
 ```
 
+### OpenAI-Compatible Embeddings
+
+You can use an OpenAI-compatible API for embeddings by creating a `config.json` file in your current working directory. The tool automatically reads this file if it exists.
+
+Example `config.json`:
+```json
+{
+  "embeddings_backend": "openai_compatible",
+  "openai_compatible": {
+    "base_url": "https://api.openai.com/v1",
+    "model": "text-embedding-3-small",
+    "api_key": "YOUR_API_KEY_HERE"
+  }
+}
+```
+
+#### Configuration Keys
+- `embeddings_backend`: Set to `openai_compatible` to use a remote API, or `local` (default) for local models.
+- `openai_compatible.base_url`: The base URL of the OpenAI-compatible API.
+- `openai_compatible.model`: The model name to use for embeddings.
+- `openai_compatible.api_key`: Your API key. If omitted, the tool looks for the `OPENAI_API_KEY` environment variable.
+
+Note: There are no CLI flags for these settings; the tool always looks for `config.json` in the current directory.
+
 ## Running Tests
 
 Run the test suite using pytest:
