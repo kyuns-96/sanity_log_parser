@@ -40,6 +40,7 @@ class AIClusterer:
         self,
         model_path: str = 'all-MiniLM-L6-v2',
         config_file: str = 'rule_clustering_config.json',
+        embeddings_config_file: str = 'config.json',
         console: "_ConsoleLike | None" = None,
     ) -> None:
         # Initialize instance attributes
@@ -49,7 +50,7 @@ class AIClusterer:
         self.console = console
 
         embeddings_config = load_embeddings_config(
-            config_path="config.json",
+            config_path=embeddings_config_file,
             warn=self._warn if self.console is not None else None,
         )
 

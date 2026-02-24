@@ -59,6 +59,11 @@ def main() -> None:
         action="store_true",
         help="Disable colored output (the NO_COLOR env var is also respected).",
     )
+    _ = parser.add_argument(
+        "--config",
+        default="config.json",
+        help="Path to embeddings config JSON (default: config.json).",
+    )
 
     args = parser.parse_args()
     console = cli_ui.Console(use_color=False if cast(bool, args.no_color) else None)
@@ -88,7 +93,10 @@ def main() -> None:
     # 3. AI Clustering [2nd grouping: semantic merging]
     results: list[dict[str, object]] = []
 
-    ai_clusterer = AIClusterer(console=console)
+    ai_clusterer = AIClusterer(
+        console=console,
+        embeddings_config_file=cast(str, args.config),
+    )
     if ai_clusterer.ai_available:
         # 2nd grouping: semantically re-merge 1st logic groups using AI
         results = ai_clusterer.run(logic_results)

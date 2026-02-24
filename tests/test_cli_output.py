@@ -39,6 +39,7 @@ def test_main_help_includes_usage_and_argument_placeholders(tmp_path: Path):
     assert "usage:" in output
     assert "LOG_FILE" in output
     assert "TEMPLATE_FILE" in output
+    assert "--config" in output
 
 
 def test_main_no_color_help_has_no_escape_codes(tmp_path: Path):
@@ -78,6 +79,34 @@ def test_main_empty_input_runs_zero_logs(tmp_path: Path):
     _ = log_file.write_text("", encoding="utf-8")
 
     process = _run_main([str(log_file), str(template_file)], tmp_path)
+    output = _output(process)
+
+    assert process.returncode == 0
+    assert re.search(r"Input logs:\s+0", output)
+    assert "Traceback" not in output
+
+
+def test_main_accepts_custom_config_path(tmp_path: Path):
+    config_file = tmp_path / "custom-config.json"
+    _ = config_file.write_text('{"embeddings_backend": "local"}', encoding="utf-8")
+
+    template_file = tmp_path / "rules.log"
+    _ = template_file.write_text(
+        "\n".join(
+            [
+                "Rule Severity Header Message",
+                "R001 HIGH INFO Signal 'u_top' not found",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    log_file = tmp_path / "empty.log"
+    _ = log_file.write_text("", encoding="utf-8")
+
+    process = _run_main(
+        ["--config", str(config_file), str(log_file), str(template_file)],
+        tmp_path,
+    )
     output = _output(process)
 
     assert process.returncode == 0
