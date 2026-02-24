@@ -27,6 +27,7 @@ The tool works without AI dependencies by falling back to logic-only clustering.
 - `python main.py --help`: Show usage and options.
 - `python main.py --no-color ...`: Disable colored output.
 - `NO_COLOR=1 python main.py ...`: Also disables colored output.
+- `python main.py --config /path/to/config.json ...`: Use a specific embeddings config file.
 
 ## Input Formats
 
@@ -87,6 +88,16 @@ ai_clusterer = AIClusterer(model_path="my_local_model/", console=console)
 
 You can use an OpenAI-compatible API for embeddings by creating a `config.json` file in your current working directory. The tool automatically reads this file if it exists.
 
+#### How config is loaded at runtime
+
+1. `main.py` creates `AIClusterer`.
+2. `AIClusterer` calls `load_embeddings_config(config_path=...)`.
+3. By default this is `./config.json`, but you can override it with `--config`.
+4. If backend is `openai_compatible`, embeddings are requested from `{base_url}/embeddings`.
+5. If config is missing or invalid, backend falls back to `local`.
+
+Use `--config` to choose a different config file path.
+
 Example `config.json`:
 ```json
 {
@@ -105,7 +116,30 @@ Example `config.json`:
 - `openai_compatible.model`: The model name to use for embeddings.
 - `openai_compatible.api_key`: Your API key. If omitted, the tool looks for the `OPENAI_API_KEY` environment variable.
 
-Note: There are no CLI flags for these settings; the tool always looks for `config.json` in the current directory.
+#### Loading precedence
+- `embeddings_backend`: default `local` -> overridden by `config.json`.
+- `openai_compatible.api_key`: `config.json` value first, otherwise `OPENAI_API_KEY` environment variable.
+
+#### Run examples (how to pass config through program)
+
+If `config.json` is next to your input files:
+```bash
+cd /path/to/workdir
+python /path/to/sanity_log_parser/main.py LOG_FILE TEMPLATE_FILE
+```
+
+If your config is in another location, pass it explicitly:
+```bash
+python /path/to/sanity_log_parser/main.py --config /path/to/my-config.json LOG_FILE TEMPLATE_FILE
+```
+
+#### Fallback and warnings
+- Missing `config.json`: uses local embeddings backend.
+- Invalid `embeddings_backend`: warning, then fallback to local backend.
+- `embeddings_backend=openai_compatible` but missing `base_url`: warning, then fallback to local backend.
+- Invalid JSON in `config.json`: warning, then fallback to defaults.
+
+Tip: `--config` is the safest way to avoid current-directory confusion.
 
 ## Running Tests
 
