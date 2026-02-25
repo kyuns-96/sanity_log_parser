@@ -1,8 +1,8 @@
 import pytest
 
-from ai_clusterer import AIClusterer
-from template_manager import RuleTemplateManager
-from parser import SubutaiParser
+from sanity_log_parser.clustering.ai.clusterer import AIClusterer
+from sanity_log_parser.parsing.template_manager import RuleTemplateManager
+from sanity_log_parser.parsing.log_parser import SubutaiParser
 
 
 @pytest.fixture

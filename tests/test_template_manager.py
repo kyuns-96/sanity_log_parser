@@ -1,4 +1,4 @@
-from template_manager import RuleTemplateManager
+from sanity_log_parser.parsing.template_manager import RuleTemplateManager
 
 import hashlib
 

@@ -1,4 +1,4 @@
-from ai_weights import apply_variable_position_weights, extract_variable_tail
+from sanity_log_parser.clustering.ai.weights import apply_variable_position_weights, extract_variable_tail
 
 
 def test_extract_variable_tail_doc_example_single_level():

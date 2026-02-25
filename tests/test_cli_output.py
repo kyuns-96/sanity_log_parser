@@ -19,7 +19,7 @@ def _run_main(
             del env["NO_COLOR"]
     env["PYTHONUTF8"] = "1"
     return subprocess.run(
-        [sys.executable, str(ROOT / "main.py"), *args],
+        [sys.executable, "-m", "sanity_log_parser", *args],
         cwd=cwd,
         env=env,
         capture_output=True,
@@ -32,7 +32,7 @@ def _output(process: subprocess.CompletedProcess[str]) -> str:
 
 
 def test_main_help_includes_usage_and_argument_placeholders(tmp_path: Path):
-    process = _run_main(["--help"], tmp_path)
+    process = _run_main(["cluster", "--help"], tmp_path)
     output = _output(process)
 
     assert process.returncode == 0
@@ -43,21 +43,21 @@ def test_main_help_includes_usage_and_argument_placeholders(tmp_path: Path):
 
 
 def test_main_no_color_help_has_no_escape_codes(tmp_path: Path):
-    process = _run_main(["--help"], tmp_path)
+    process = _run_main(["cluster", "--help"], tmp_path)
     output = _output(process)
 
     assert "\x1b[" not in output
 
 
 def test_main_no_color_flag_has_no_escape_codes_without_no_color_env(tmp_path: Path):
-    process = _run_main(["--help", "--no-color"], tmp_path, set_no_color=False)
+    process = _run_main(["cluster", "--help", "--no-color"], tmp_path, set_no_color=False)
     output = _output(process)
 
     assert "\x1b[" not in output
 
 
 def test_main_requires_arguments(tmp_path: Path):
-    process = _run_main([], tmp_path)
+    process = _run_main(["cluster"], tmp_path)
     output = _output(process)
 
     assert process.returncode != 0
@@ -78,7 +78,7 @@ def test_main_empty_input_runs_zero_logs(tmp_path: Path):
     log_file = tmp_path / "empty.log"
     _ = log_file.write_text("", encoding="utf-8")
 
-    process = _run_main([str(log_file), str(template_file)], tmp_path)
+    process = _run_main(["cluster", str(log_file), str(template_file)], tmp_path)
     output = _output(process)
 
     assert process.returncode == 0
@@ -104,7 +104,7 @@ def test_main_accepts_custom_config_path(tmp_path: Path):
     _ = log_file.write_text("", encoding="utf-8")
 
     process = _run_main(
-        ["--config", str(config_file), str(log_file), str(template_file)],
+        ["cluster", str(log_file), str(template_file), "--config", str(config_file)],
         tmp_path,
     )
     output = _output(process)

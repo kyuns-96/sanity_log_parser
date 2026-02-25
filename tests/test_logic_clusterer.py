@@ -1,4 +1,4 @@
-from logic_clusterer import LogicClusterer
+from sanity_log_parser.clustering.logic import LogicClusterer
 
 
 def test_get_logic_signature_replaces_digits_with_wildcards():

@@ -1,7 +1,7 @@
 import pytest
 
-from openai_compat_embeddings import EmbeddingsRequestError
-from openai_compat_embeddings import _parse_openai_embeddings_response  # pyright: ignore[reportPrivateUsage]
+from sanity_log_parser.embeddings.openai_compat import EmbeddingsRequestError
+from sanity_log_parser.embeddings.openai_compat import _parse_openai_embeddings_response  # pyright: ignore[reportPrivateUsage]
 
 
 def test_parse_response_happy_path_returns_ordered_vectors():

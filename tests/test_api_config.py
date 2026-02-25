@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from api_config import load_embeddings_config
+from sanity_log_parser.config.embeddings import load_embeddings_config
 
 
 def _write_config(tmp_path: Path, payload: dict[str, object]) -> str:

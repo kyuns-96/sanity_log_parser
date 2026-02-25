@@ -1,27 +1,23 @@
-import os
-
-import main
+from sanity_log_parser.config.resolution import (
+    EMBEDDINGS_CONFIG_ENV_VAR,
+    resolve_embeddings_config_path,
+)
 
 
 def test_resolve_embeddings_config_path_prefers_explicit_arg() -> None:
-    assert main._resolve_embeddings_config_path("/tmp/custom.json") == "/tmp/custom.json"
+    resolved = resolve_embeddings_config_path(embeddings_config_arg="/tmp/custom.json")
+    assert resolved == "/tmp/custom.json"
 
 
-def test_resolve_embeddings_config_path_uses_source_location_first(monkeypatch) -> None:
-    monkeypatch.setattr(main, "__file__", "/repo/sanity_log_parser/main.py")
-
-    source_config = os.path.join("/repo/sanity_log_parser", "config.json")
-
-    def fake_isfile(path: str) -> bool:
-        return path == source_config
-
-    monkeypatch.setattr(main.os.path, "isfile", fake_isfile)
-
-    assert main._resolve_embeddings_config_path(None) == source_config
+def test_resolve_embeddings_config_path_uses_env_variable() -> None:
+    resolved = resolve_embeddings_config_path(
+        embeddings_config_arg=None, environ={EMBEDDINGS_CONFIG_ENV_VAR: "/tmp/from-env.json"}
+    )
+    assert resolved == "/tmp/from-env.json"
 
 
-def test_resolve_embeddings_config_path_falls_back_to_cwd(monkeypatch) -> None:
-    monkeypatch.setattr(main, "__file__", "/repo/sanity_log_parser/main.py")
-    monkeypatch.setattr(main.os.path, "isfile", lambda _path: False)
-
-    assert main._resolve_embeddings_config_path(None) == "config.json"
+def test_resolve_embeddings_config_path_falls_back_to_none_when_no_sources(tmp_path) -> None:
+    resolved = resolve_embeddings_config_path(
+        embeddings_config_arg=None, environ={}, cwd=tmp_path
+    )
+    assert resolved is None
