@@ -4,37 +4,75 @@ A tool for clustering log files using a two-stage workflow: logic-based grouping
 
 ## Requirements
 
-- Python 3.8+
-- Optional: `sentence-transformers`, `scikit-learn` (required for AI-based semantic clustering)
+- Python 3.11+
+- Optional: `sentence-transformers`, `scikit-learn` (for local AI-based semantic clustering)
+- Optional: `scikit-learn` (for remote OpenAI-compatible embeddings)
 
 The tool works without AI dependencies by falling back to logic-only clustering.
 
+## Installation
+
+```bash
+pip install .                  # base (logic clustering only)
+pip install ".[ai-local]"     # + local sentence-transformers model
+pip install ".[ai-remote]"    # + remote OpenAI-compatible embeddings
+pip install ".[dev]"          # + pytest
+```
+
 ## Quickstart
 
-1. Run the parser on your log file and template file:
+1. Cluster a log file:
    ```bash
-   python main.py LOG_FILE TEMPLATE_FILE
+   sanity-log-parser cluster LOG_FILE TEMPLATE_FILE
    ```
-   This generates `subutai_results.json` in the current directory.
+   This writes `subutai_results.json` to the current directory.
 
-2. View the results in a pretty report:
+2. View the results:
    ```bash
-   python view_log.py [subutai_results.json]
+   sanity-log-parser view [subutai_results.json]
    ```
 
 ## CLI Usage
 
-- `python main.py --help`: Show usage and options.
-- `python main.py --no-color ...`: Disable colored output.
-- `NO_COLOR=1 python main.py ...`: Also disables colored output.
-- `python main.py --config /path/to/config.json ...`: Use a specific embeddings config file.
+The CLI has two subcommands: `cluster` and `view`.
+
+### `cluster`
+
+```
+sanity-log-parser cluster LOG_FILE TEMPLATE_FILE [OPTIONS]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--out PATH` | `subutai_results.json` | Output JSON path |
+| `--config PATH` | auto-detected | Embeddings config file path |
+| `--rule-config PATH` | auto-detected | Rule clustering config path |
+| `--ai {auto,on,off}` | `auto` | AI clustering mode |
+| `--json-indent N` | `2` | JSON output indentation |
+| `--max-original-logs N` | `0` (all) | Max original logs stored per group |
+| `--no-color` | | Disable ANSI color output |
+| `-v, --verbose` | | Enable INFO-level logging |
+
+`NO_COLOR=1` also disables colored output.
+
+### `view`
+
+```
+sanity-log-parser view [RESULTS_JSON] [OPTIONS]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--top N` | `50` | Maximum number of groups to show |
+| `--no-color` | | Disable ANSI color output |
 
 ## Input Formats
 
 ### LOG_FILE
+
 A standard text log file. The parser skips empty lines and lines starting with `-`, `=`, `Rule`, or `Severity`.
 
-Parsing note: the current parser only considers lines that contain a counter like `N of M`, and it uses the text after the first 4 whitespace-separated fields as the message.
+Only lines containing a counter like `N of M` are parsed. The text after the first 4 whitespace-separated fields is used as the message.
 
 Example line:
 ```
@@ -42,6 +80,7 @@ Example line:
 ```
 
 ### TEMPLATE_FILE
+
 A whitespace-separated file where each line defines a rule.
 - Field 1: `rule_id`
 - Field 4+: Message template
@@ -53,7 +92,7 @@ R001 HIGH INFO Signal 'u_top' not found
 
 ## Output
 
-The tool writes results to `subutai_results.json`.
+Results are written to `subutai_results.json` (or the path given by `--out`).
 
 ### Schema Overview
 - `rule_id`: The ID from the template file or a generated hash.
@@ -64,42 +103,21 @@ The tool writes results to `subutai_results.json`.
 
 ## AI Clustering
 
-If `sentence-transformers` and `scikit-learn` are installed, the tool performs a second stage of clustering to semantically merge similar groups. It uses cosine similarity on embeddings generated from log templates and variables.
+If `sentence-transformers` and `scikit-learn` are installed, the tool performs a second stage of clustering to semantically merge similar groups using cosine similarity on embeddings.
+
+Control AI behavior with `--ai`:
+- `auto` (default): use AI if dependencies are available
+- `on`: require AI (fails if dependencies are missing)
+- `off`: skip AI stage entirely
 
 ### Local Model Usage
 
-The AIClusterer uses all-MiniLM-L6-v2 by default. This model downloads and caches automatically via sentence-transformers.
-
-To use a local model instead, point model_path at a directory with your model files.
-
-1. Place your model files in a directory. The my_local_model/ folder is git-ignored, so it's a good spot for these files.
-2. Since there's no CLI flag for the model path yet, you'll need to edit main.py to pass the path to AIClusterer.
-
-Update this line in main.py:
-```python
-ai_clusterer = AIClusterer(console=console)
-```
-To:
-```python
-ai_clusterer = AIClusterer(model_path="my_local_model/", console=console)
-```
+The AIClusterer uses `all-MiniLM-L6-v2` by default, downloaded and cached automatically via sentence-transformers.
 
 ### OpenAI-Compatible Embeddings
 
-You can use an OpenAI-compatible API for embeddings by creating a `config.json` file in your current working directory. The tool automatically reads this file if it exists.
+Use a remote API for embeddings by creating a `config.json` (see `config.json.example`):
 
-#### How config is loaded at runtime
-
-1. `main.py` creates `AIClusterer`.
-2. `AIClusterer` calls `load_embeddings_config(config_path=...)`.
-3. If `--config` is provided, that path is used.
-4. If `--config` is omitted, the program tries `config.json` next to `main.py` first, then `./config.json`.
-5. If backend is `openai_compatible`, embeddings are requested from `{base_url}/embeddings`.
-6. If config is missing or invalid, backend falls back to `local`.
-
-Use `--config` to choose a different config file path.
-
-Example `config.json`:
 ```json
 {
   "embeddings_backend": "openai_compatible",
@@ -112,47 +130,41 @@ Example `config.json`:
 ```
 
 #### Configuration Keys
-- `embeddings_backend`: Set to `openai_compatible` to use a remote API, or `local` (default) for local models.
+- `embeddings_backend`: `openai_compatible` for a remote API, or `local` (default) for local models.
 - `openai_compatible.base_url`: The base URL of the OpenAI-compatible API.
 - `openai_compatible.model`: The model name to use for embeddings.
-- `openai_compatible.api_key`: Your API key. If omitted, the tool looks for the `OPENAI_API_KEY` environment variable.
+- `openai_compatible.api_key`: Your API key. Falls back to the `OPENAI_API_KEY` environment variable if omitted.
 
-#### Loading precedence
-- `embeddings_backend`: default `local` -> overridden by `config.json`.
-- `openai_compatible.api_key`: `config.json` value first, otherwise `OPENAI_API_KEY` environment variable.
+#### Config Resolution
 
-#### Run examples (how to pass config through program)
+1. If `--config` is provided, that path is used.
+2. Otherwise, the tool looks for `config.json` next to the package, then in the current directory.
+3. If no config is found or `embeddings_backend` is invalid, the tool falls back to local embeddings.
 
-If your source directory has `config.json`, that file is picked first when `--config` is omitted.
-
-If your `config.json` is in your working directory:
+Pass `--config` explicitly to avoid current-directory ambiguity:
 ```bash
-cd /path/to/workdir
-python /path/to/sanity_log_parser/main.py LOG_FILE TEMPLATE_FILE
+sanity-log-parser cluster LOG_FILE TEMPLATE_FILE --config /path/to/config.json
 ```
-
-If your config is in another location, pass it explicitly:
-```bash
-python /path/to/sanity_log_parser/main.py --config /path/to/my-config.json LOG_FILE TEMPLATE_FILE
-```
-
-#### Fallback and warnings
-- Missing `config.json`: uses local embeddings backend.
-- Invalid `embeddings_backend`: warning, then fallback to local backend.
-- `embeddings_backend=openai_compatible` but missing `base_url`: warning, then fallback to local backend.
-- Invalid JSON in `config.json`: warning, then fallback to defaults.
-
-Tip: `--config` is the safest way to avoid current-directory confusion.
 
 ## Running Tests
 
-Run the test suite using pytest:
 ```bash
+pip install ".[dev]"
 python -m pytest -q
 ```
 
-## Notes
+## Project Structure
 
-- Output is always saved to `subutai_results.json` in the current working directory.
-- `view_log.py` provides a colorized summary of the analysis.
-- The tool handles variable regions (quoted text) and standalone numbers during normalization.
+```
+src/
+  sanity_log_parser/
+    cli.py              # CLI entry point
+    clustering/         # Logic and AI clustering
+    config/             # Config loading and resolution
+    parsing/            # Log and template parsing
+    results/            # Output schema and writing
+    embeddings/         # Embedding backends
+    view.py             # Report rendering
+tests/
+pyproject.toml
+```
