@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import logging
 import os
 import sys
 from typing import cast, Literal
@@ -60,6 +61,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Maximum original logs per group (0 = all).",
     )
     _ = cluster.add_argument("--no-color", action="store_true", help="Disable ANSI color output.")
+    _ = cluster.add_argument("-v", "--verbose", action="store_true", help="Enable verbose (INFO-level) logging.")
 
     view = subparsers.add_parser("view", help="Render report from a results JSON file.")
     _ = view.add_argument(
@@ -90,10 +92,9 @@ def _validate_input_files(log_file: str, template_file: str) -> str | None:
 def _parse_log_file(
     log_file: str,
     template_file: str,
-    console: Console,
 ) -> list[dict[str, object]]:
     """Load templates, parse log lines, return parsed logs."""
-    tm = RuleTemplateManager(template_file, console)
+    tm = RuleTemplateManager(template_file)
     parser = SubutaiParser(tm)
     parsed_logs: list[dict[str, object]] = []
 
@@ -166,6 +167,12 @@ def _run_cluster(args: argparse.Namespace) -> int:
     no_color = cast(bool, args.no_color)
     console = Console(use_color=False if no_color else None)
 
+    verbose = cast(bool, args.verbose)
+    logging.basicConfig(
+        level=logging.INFO if verbose else logging.WARNING,
+        format="%(levelname)s: %(message)s",
+    )
+
     loaded_embeddings = load_resolved_embeddings_config(
         embeddings_config_arg=cast(str | None, args.embeddings_config),
     )
@@ -176,7 +183,7 @@ def _run_cluster(args: argparse.Namespace) -> int:
         rule_config_arg=cast(str | None, args.rule_config),
     )
 
-    parsed_logs = _parse_log_file(log_file, template_file, console)
+    parsed_logs = _parse_log_file(log_file, template_file)
 
     logic_results = cast(list[dict[str, object]], LogicClusterer().run(parsed_logs))
     console.section("📊 Stage 1 - Logic Clustering (Original Method - Variables Only):")
@@ -184,7 +191,6 @@ def _run_cluster(args: argparse.Namespace) -> int:
     console.kv("Output groups", f"{len(logic_results):,}")
 
     ai_clusterer = AIClusterer(
-        console=console,
         embeddings_config_file=loaded_embeddings.config_path or "",
         config_file=rule_config_path,
     )

@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+import logging
 from importlib import import_module
 from typing import Any, Protocol, cast
-import os
-import json
 from collections import defaultdict
 
 from sanity_log_parser.config.embeddings import load_embeddings_config
+from sanity_log_parser.config.rules import load_rule_config
 from sanity_log_parser.patterns import VAR_PATTERN
 from .weights import extract_variable_tail, apply_variable_position_weights
 from sanity_log_parser.embeddings.openai_compat import (
     EmbeddingsRequestError,
     OpenAICompatibleEmbeddingsClient,
 )
+
+logger = logging.getLogger(__name__)
 
 SentenceTransformerFactory: Any | None = None
 DBSCANFactory: Any | None = None
@@ -39,21 +41,19 @@ class AIClusterer:
         model_path: str = 'all-MiniLM-L6-v2',
         config_file: str = 'rule_clustering_config.json',
         embeddings_config_file: str = 'config.json',
-        console: "_ConsoleLike | None" = None,
     ) -> None:
         self.model: _SentenceModelLike | None = None
         self.remote_embeddings_client: OpenAICompatibleEmbeddingsClient | None = None
         self.ai_available: bool = False
-        self.console = console
 
         embeddings_config = load_embeddings_config(
             config_path=embeddings_config_file,
-            warn=self._warn if self.console is not None else None,
+            warn=lambda msg: logger.warning("%s", msg),
         )
 
         if embeddings_config.backend == "openai_compatible":
             if not dbscan_available:
-                self._warn("⚠️  OpenAI-compatible embeddings selected, but scikit-learn is unavailable.")
+                logger.warning("OpenAI-compatible embeddings selected, but scikit-learn is unavailable.")
                 self.ai_available = False
             elif embeddings_config.openai_compatible is not None:
                 openai_settings = embeddings_config.openai_compatible
@@ -68,37 +68,11 @@ class AIClusterer:
                 self.model = cast(_SentenceModelLike, SentenceTransformerFactory(model_path))
                 self.ai_available = True
             except (ImportError, OSError, RuntimeError) as exc:
-                self._warn(f"⚠️  Failed to load SentenceTransformer model: {exc}")
+                logger.warning("Failed to load SentenceTransformer model: %s", exc)
                 self.ai_available = False
 
-        self.rule_config = self._load_config(config_file)
+        self.rule_config = load_rule_config(config_file)
         self.default_eps = 0.2
-
-    def _load_config(self, config_file: str) -> dict[str, Any]:
-        if not os.path.exists(config_file):
-            self._warn(f"Config file '{config_file}' not found. Using default settings.")
-            return {}
-
-        try:
-            with open(config_file, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-            self._success(f"Loaded rule config from '{config_file}'")
-            return config.get('rules', {})
-        except Exception as e:
-            self._warn(f"Error loading config: {e}. Using default settings.")
-            return {}
-
-    def _info(self, message: str) -> None:
-        if self.console is not None:
-            self.console.info(message)
-
-    def _warn(self, message: str) -> None:
-        if self.console is not None:
-            self.console.warn(message)
-
-    def _success(self, message: str) -> None:
-        if self.console is not None:
-            self.console.success(message)
 
     def get_rule_config(self, rule_id: str) -> dict[str, Any]:
         if rule_id in self.rule_config:
@@ -120,13 +94,13 @@ class AIClusterer:
         if not self.ai_available or not logic_groups or DBSCANFactory is None:
             return []
 
-        self._info(f"🤖 Stage 2 - AI Clustering: analyzing {len(logic_groups)} logic groups...")
+        logger.info("AI Clustering: analyzing %d logic groups...", len(logic_groups))
 
         groups_by_rule: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for logic_group in logic_groups:
             groups_by_rule[logic_group['rule_id']].append(logic_group)
 
-        self._info(f"Grouping by rule_id: {len(groups_by_rule)} different rules")
+        logger.info("Grouping by rule_id: %d different rules", len(groups_by_rule))
 
         final_output: list[dict[str, Any]] = []
         group_counter = 0
@@ -221,7 +195,7 @@ class AIClusterer:
             try:
                 return self.remote_embeddings_client.embed(inputs)
             except EmbeddingsRequestError as exc:
-                self._warn(f"⚠️  Remote embeddings failed, disabling AI clustering: {exc}")
+                logger.warning("Remote embeddings failed, disabling AI clustering: %s", exc)
                 self.ai_available = False
                 return None
 
@@ -265,12 +239,6 @@ class AIClusterer:
             })
 
         return results, counter
-
-
-class _ConsoleLike(Protocol):
-    def info(self, message: str) -> None: ...
-    def warn(self, message: str) -> None: ...
-    def success(self, message: str) -> None: ...
 
 
 class _SentenceModelLike(Protocol):

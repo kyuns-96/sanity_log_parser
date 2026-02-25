@@ -64,41 +64,8 @@ class Console:
         self._status("OK", message, Ansi.GREEN)
 
 
-_console = Console()
-
-
-def section(title: str) -> None:
-    _console.section(title)
-
-
-def kv(key: str, value: object) -> None:
-    _console.kv(key, value)
-
-
-def info(message: str) -> None:
-    _console.info(message)
-
-
-def warn(message: str) -> None:
-    _console.warn(message)
-
-
-def error(message: str) -> None:
-    _console.error(message)
-
-
-def success(message: str) -> None:
-    _console.success(message)
-
-
 __all__ = [
     "Ansi",
     "Console",
     "supports_color",
-    "section",
-    "kv",
-    "info",
-    "warn",
-    "error",
-    "success",
 ]

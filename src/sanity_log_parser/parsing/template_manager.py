@@ -1,24 +1,21 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
-from typing import Protocol
 
 from ..patterns import NUM_PATTERN, VAR_PATTERN
 
+logger = logging.getLogger(__name__)
+
 
 class RuleTemplateManager:
-    def __init__(self, template_file: str | None, console: "_ConsoleLike | None" = None) -> None:
+    def __init__(self, template_file: str | None) -> None:
         self.template_dict: dict[str, str] = {}
-        self.console = console
 
         if template_file:
-            self._info(f"Loading Rule Templates from: {template_file}")
+            logger.info("Loading Rule Templates from: %s", template_file)
             self._load_templates(template_file)
-
-    def _info(self, message: str) -> None:
-        if self.console is not None:
-            self.console.info(message)
 
     def get_pure_template(self, text: str) -> str:
         normalized_template = VAR_PATTERN.sub("'<VAR>'", text)
@@ -45,7 +42,3 @@ class RuleTemplateManager:
             log_template,
             f"UNKNOWN_{hashlib.md5(log_template.encode()).hexdigest()[:6].upper()}",
         )
-
-
-class _ConsoleLike(Protocol):
-    def info(self, message: str) -> None: ...
