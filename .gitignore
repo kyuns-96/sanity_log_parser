@@ -21,6 +21,7 @@ __pycache__/
 /dist/
 /my_local_model/
 /*.egg-info/
+src/*.egg-info/
 /.eggs/
 
 /*.log

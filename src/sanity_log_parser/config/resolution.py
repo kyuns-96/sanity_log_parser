@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from .embeddings import EmbeddingsConfig, load_embeddings_config
+from .._util import trim_to_none
 
 
 EMBEDDINGS_CONFIG_ENV_VAR = "SANITY_LOG_PARSER_EMBEDDINGS_CONFIG"
@@ -31,7 +32,7 @@ def resolve_embeddings_config_path(
         return explicit_arg
 
     env = os.environ if environ is None else environ
-    env_path = _trim_to_none(env.get(EMBEDDINGS_CONFIG_ENV_VAR))
+    env_path = trim_to_none(env.get(EMBEDDINGS_CONFIG_ENV_VAR))
     if env_path is not None:
         return env_path
 
@@ -47,7 +48,7 @@ def resolve_rule_config_path(
     rule_config_arg: str | None,
     repo_root: str | Path | None = None,
 ) -> str:
-    explicit_arg = _trim_to_none(rule_config_arg)
+    explicit_arg = trim_to_none(rule_config_arg)
     if explicit_arg is not None:
         return explicit_arg
 
@@ -79,14 +80,7 @@ def load_resolved_embeddings_config(
 
 def _first_non_empty(*values: str | None) -> str | None:
     for value in values:
-        trimmed = _trim_to_none(value)
+        trimmed = trim_to_none(value)
         if trimmed is not None:
             return trimmed
-    return None
-
-
-def _trim_to_none(value: str | None) -> str | None:
-    if isinstance(value, str):
-        trimmed = value.strip()
-        return trimmed if trimmed else None
     return None

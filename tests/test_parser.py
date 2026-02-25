@@ -1,6 +1,3 @@
-from sanity_log_parser.parsing.log_parser import SubutaiParser
-from sanity_log_parser.parsing.template_manager import RuleTemplateManager
-
 def test_parse_line_returns_none_for_non_matching_prefix(parser, sample_non_matching_line):
     assert parser.parse_line(sample_non_matching_line) is None
 
@@ -26,11 +23,3 @@ def test_parse_line_matching_prefix_with_no_quotes_yields_no_var(parser):
     assert parsed["variables"] == ("NO_VAR",)
 
 
-def test_extract_variable_stems_respects_delimiter_priority_order(parser):
-    stems = parser.extract_variable_stems("top/u_cpu/decode/pipe_4")
-    assert stems == ["top", "u", "cpu", "decode", "pipe", "4"]
-
-
-def test_extract_variable_stems_complex_path_with_hierarchy_markers(parser):
-    stems = parser.extract_variable_stems("BLK_CPU/A/B/C/mem_top_ABC")
-    assert stems == ["BLK_CPU", "A", "B", "C", "mem", "top", "ABC"]

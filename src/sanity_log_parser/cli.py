@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import datetime
 import os
+import sys
 from typing import cast, Literal
 
 from .config.resolution import (
+    LoadedEmbeddingsConfig,
     load_resolved_embeddings_config,
     resolve_rule_config_path,
 )
@@ -72,108 +74,127 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run_cluster(args: argparse.Namespace) -> int:
-    """Cluster logs: validate → parse → logic cluster → AI cluster → write results."""
-    # 1. Validate input files
-    log_file = cast(str, args.log_file)
-    template_file = cast(str, args.template_file)
-    
+def _validate_input_files(log_file: str, template_file: str) -> str | None:
+    """Return error message or None if valid."""
     if not os.path.isfile(log_file):
-        print(f"Error: Log file '{log_file}' does not exist or is not a file.", file=__import__('sys').stderr)
-        return 1
+        return f"Error: Log file '{log_file}' does not exist or is not a file."
     if not os.access(log_file, os.R_OK):
-        print(f"Error: Log file '{log_file}' is not readable.", file=__import__('sys').stderr)
-        return 1
+        return f"Error: Log file '{log_file}' is not readable."
     if not os.path.isfile(template_file):
-        print(f"Error: Template file '{template_file}' does not exist or is not a file.", file=__import__('sys').stderr)
-        return 1
+        return f"Error: Template file '{template_file}' does not exist or is not a file."
     if not os.access(template_file, os.R_OK):
-        print(f"Error: Template file '{template_file}' is not readable.", file=__import__('sys').stderr)
-        return 1
-    
-    # 2. Initialize console
-    no_color = cast(bool, args.no_color)
-    console = Console(use_color=False if no_color else None)
-    
-    # 3. Load configs
-    loaded_embeddings = load_resolved_embeddings_config(
-        embeddings_config_arg=cast(str | None, args.embeddings_config)
-    )
-    for warning in loaded_embeddings.warnings:
-        console.warn(warning)
-    
-    rule_config_path = resolve_rule_config_path(
-        rule_config_arg=cast(str | None, args.rule_config)
-    )
-    
-    # 4. Load templates and parse logs
+        return f"Error: Template file '{template_file}' is not readable."
+    return None
+
+
+def _parse_log_file(
+    log_file: str,
+    template_file: str,
+    console: Console,
+) -> list[dict[str, object]]:
+    """Load templates, parse log lines, return parsed logs."""
     tm = RuleTemplateManager(template_file, console)
     parser = SubutaiParser(tm)
     parsed_logs: list[dict[str, object]] = []
-    
-    with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+
+    with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
             stripped = line.strip()
-            if not stripped or stripped.startswith(('-', '=', 'Rule', 'Severity')):
+            if not stripped or stripped.startswith(("-", "=", "Rule", "Severity")):
                 continue
             res = parser.parse_line(stripped)
             if res:
                 parsed_logs.append(cast(dict[str, object], res))
-    
-    # 5. Logic clustering
+
+    return parsed_logs
+
+
+def _run_ai_stage(
+    ai_mode: str,
+    ai_clusterer: AIClusterer,
+    logic_results: list[dict[str, object]],
+    loaded_embeddings: LoadedEmbeddingsConfig,
+    console: Console,
+) -> tuple[list[dict[str, object]], bool, Literal["local", "openai_compatible"] | None]:
+    """Run AI clustering stage. Returns (results, ai_enabled, ai_backend)."""
+    if ai_mode == "off":
+        return logic_results, False, None
+
+    if ai_clusterer.ai_available and ai_mode in ("on", "auto"):
+        results = ai_clusterer.run(logic_results)
+        backend = cast(Literal["local", "openai_compatible"], loaded_embeddings.config.backend)
+        console.section("🤖 Stage 2 - AI Clustering (Semantic Merging of 1st-Groups):")
+        console.kv("Input 1st-groups", f"{len(logic_results):,}")
+        console.kv("Output 2nd-groups", f"{len(results):,}")
+        return results, True, backend
+
+    return logic_results, False, None
+
+
+def _build_final_groups(results: list[dict[str, object]]) -> list[Group]:
+    """Convert raw clustering results to Group TypedDict format."""
+    final_groups: list[Group] = []
+    for group in results:
+        raw_members = cast(list[dict[str, object]], group.get("members", []))
+        raw_logs = [str(m.get("raw_log")) for m in raw_members]
+        rule_id = cast(str, group.get("rule_id", "UNKNOWN"))
+        group_id = f"{rule_id}::logic::{len(final_groups) + 1:06d}"
+
+        final_groups.append({
+            "group_type": "logic",
+            "group_id": group_id,
+            "rule_id": rule_id,
+            "representative_template": cast(str, group.get("template", "N/A")),
+            "representative_pattern": cast(str, group.get("pattern", "N/A")),
+            "total_count": cast(int, group.get("count", 0)),
+            "merged_variants_count": 1,
+            "original_logs": raw_logs,
+        })
+    return final_groups
+
+
+def _run_cluster(args: argparse.Namespace) -> int:
+    """Cluster logs: validate -> parse -> logic cluster -> AI cluster -> write results."""
+    log_file = cast(str, args.log_file)
+    template_file = cast(str, args.template_file)
+
+    error = _validate_input_files(log_file, template_file)
+    if error:
+        print(error, file=sys.stderr)
+        return 1
+
+    no_color = cast(bool, args.no_color)
+    console = Console(use_color=False if no_color else None)
+
+    loaded_embeddings = load_resolved_embeddings_config(
+        embeddings_config_arg=cast(str | None, args.embeddings_config),
+    )
+    for warning in loaded_embeddings.warnings:
+        console.warn(warning)
+
+    rule_config_path = resolve_rule_config_path(
+        rule_config_arg=cast(str | None, args.rule_config),
+    )
+
+    parsed_logs = _parse_log_file(log_file, template_file, console)
+
     logic_results = cast(list[dict[str, object]], LogicClusterer().run(parsed_logs))
     console.section("📊 Stage 1 - Logic Clustering (Original Method - Variables Only):")
     console.kv("Input logs", f"{len(parsed_logs):,}")
     console.kv("Output groups", f"{len(logic_results):,}")
-    
-    # 6. AI clustering
-    ai_mode = cast(str, args.ai)
-    results: list[dict[str, object]] = []
-    ai_enabled = False
-    ai_backend: Literal["local", "openai_compatible"] | None = None
-    ai_warnings: list[str] = []
-    
+
     ai_clusterer = AIClusterer(
         console=console,
         embeddings_config_file=loaded_embeddings.config_path or "",
         config_file=rule_config_path,
     )
-    
-    if ai_mode == "off":
-        # Skip AI, convert logic results to Group list
-        results = logic_results
-    elif ai_clusterer.ai_available and ai_mode in ("on", "auto"):
-        # Run AI clustering
-        results = ai_clusterer.run(logic_results)
-        ai_enabled = True
-        ai_backend = cast(Literal["local", "openai_compatible"], loaded_embeddings.config.backend)
-        console.section("🤖 Stage 2 - AI Clustering (Semantic Merging of 1st-Groups):")
-        console.kv("Input 1st-groups", f"{len(logic_results):,}")
-        console.kv("Output 2nd-groups", f"{len(results):,}")
-    else:
-        # AI not available, use logic results
-        results = logic_results
-    
-    # 7. Convert results to Group TypedDict format
-    final_groups: list[Group] = []
-    for group in results:
-        raw_members = cast(list[dict[str, object]], group.get("members", []))
-        raw_logs = [str(m.get('raw_log')) for m in raw_members]
-        rule_id = cast(str, group.get('rule_id', 'UNKNOWN'))
-        group_id = f"{rule_id}::logic::{len(final_groups)+1:06d}"
-        
-        final_groups.append({
-            "group_type": "logic",
-            "group_id": group_id,
-            "rule_id": rule_id,
-            "representative_template": cast(str, group.get('template', 'N/A')),
-            "representative_pattern": cast(str, group.get('pattern', 'N/A')),
-            "total_count": cast(int, group.get('count', 0)),
-            "merged_variants_count": 1,
-            "original_logs": raw_logs,
-        })
-    
-    # 8. Build RunMetadata
+    ai_mode = cast(str, args.ai)
+    results, ai_enabled, ai_backend = _run_ai_stage(
+        ai_mode, ai_clusterer, logic_results, loaded_embeddings, console,
+    )
+
+    final_groups = _build_final_groups(results)
+
     run_meta: RunMetadata = {
         "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "log_file": log_file,
@@ -186,16 +207,14 @@ def _run_cluster(args: argparse.Namespace) -> int:
         "ai": {
             "enabled": ai_enabled,
             "backend": ai_backend,
-            "warnings": ai_warnings,
+            "warnings": [],
         },
     }
-    
-    # 9. Write results
+
     out_path = cast(str, args.out)
     json_indent = cast(int, args.json_indent)
     write_results_v2(path=out_path, run=run_meta, groups=final_groups, indent=json_indent)
-    
-    # 10. Print summary
+
     console.section("✅ Final Results")
     console.kv("Groups Created", f"{len(final_groups):,}")
     console.info(f"💾 Results saved to '{out_path}'.")

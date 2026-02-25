@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ._util import as_int, as_optional_str, as_str, as_str_list, first_non_empty
 from .console import Console
 from .results.schema_v2 import read_results
 
@@ -26,7 +27,7 @@ def print_report(
 
     groups = parsed["groups"]
     total_groups = len(groups)
-    total_logs = sum(_as_int(group.get("total_count"), 0) for group in groups)
+    total_logs = sum(as_int(group.get("total_count"), 0) for group in groups)
     shown = min(total_groups, max(0, top))
 
     console.section("Subutai Analysis Report")
@@ -62,17 +63,17 @@ def print_report(
 
 
 def _print_group(console: Console, rank: int, group: dict[str, object]) -> None:
-    rule_id = _as_str(group.get("rule_id"), "UNKNOWN")
-    group_type = _as_str(group.get("group_type"), _as_str(group.get("type"), "logic"))
-    total_count = _as_int(group.get("total_count"), 0)
-    pattern = _as_str(group.get("representative_pattern"), "N/A")
-    template = _first_non_empty(
-        _as_optional_str(group.get("representative_template")),
-        _as_optional_str(group.get("template")),
+    rule_id = as_str(group.get("rule_id"), "UNKNOWN")
+    group_type = as_str(group.get("group_type"), as_str(group.get("type"), "logic"))
+    total_count = as_int(group.get("total_count"), 0)
+    pattern = as_str(group.get("representative_pattern"), "N/A")
+    template = first_non_empty(
+        as_optional_str(group.get("representative_template")),
+        as_optional_str(group.get("template")),
         "N/A",
     )
-    merged = _as_int(group.get("merged_variants_count"), 1)
-    original_logs = _as_str_list(group.get("original_logs"))
+    merged = as_int(group.get("merged_variants_count"), 1)
+    original_logs = as_str_list(group.get("original_logs"))
 
     console.section(f"[{rank:02d}] {rule_id}")
     console.kv("Group type", group_type)
@@ -87,38 +88,3 @@ def _print_group(console: Console, rank: int, group: dict[str, object]) -> None:
         console.info(f"- {log}")
     if len(original_logs) > preview_limit:
         console.info(f"... (+{len(original_logs) - preview_limit:,} more)")
-
-
-def _as_int(value: object, default: int) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    return default
-
-
-def _as_str(value: object, default: str) -> str:
-    return value if isinstance(value, str) and value else default
-
-
-def _as_optional_str(value: object) -> str | None:
-    if isinstance(value, str) and value:
-        return value
-    return None
-
-
-def _as_str_list(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    out: list[str] = []
-    for item in value:
-        if isinstance(item, str):
-            out.append(item)
-    return out
-
-
-def _first_non_empty(*values: str | None) -> str:
-    for value in values:
-        if value:
-            return value
-    return ""

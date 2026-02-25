@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
 from typing import Protocol
+
+from ..patterns import NUM_PATTERN, VAR_PATTERN
 
 
 class RuleTemplateManager:
     def __init__(self, template_file: str | None, console: "_ConsoleLike | None" = None) -> None:
-        self.template_dict = {}
-        self.var_pattern = re.compile(r"'(.*?)'")
+        self.template_dict: dict[str, str] = {}
         self.console = console
 
         if template_file:
@@ -21,8 +21,8 @@ class RuleTemplateManager:
             self.console.info(message)
 
     def get_pure_template(self, text: str) -> str:
-        normalized_template = self.var_pattern.sub("'<VAR>'", text)
-        normalized_template = re.sub(r"\b\d+\b", "<NUM>", normalized_template)
+        normalized_template = VAR_PATTERN.sub("'<VAR>'", text)
+        normalized_template = NUM_PATTERN.sub("<NUM>", normalized_template)
         return normalized_template.strip()
 
     def _load_templates(self, file_path: str) -> None:
