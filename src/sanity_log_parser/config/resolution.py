@@ -11,7 +11,6 @@ from .._util import trim_to_none
 
 EMBEDDINGS_CONFIG_ENV_VAR = "SANITY_LOG_PARSER_EMBEDDINGS_CONFIG"
 EMBEDDINGS_CONFIG_FILENAME = "config.json"
-RULE_CONFIG_FILENAME = "rule_clustering_config.json"
 
 
 @dataclass(frozen=True)
@@ -42,20 +41,6 @@ def resolve_embeddings_config_path(
         return str(candidate)
 
     return None
-
-
-def resolve_rule_config_path(
-    rule_config_arg: str | None,
-    repo_root: str | Path | None = None,
-) -> str:
-    explicit_arg = trim_to_none(rule_config_arg)
-    if explicit_arg is not None:
-        return explicit_arg
-
-    base_dir = (
-        Path(__file__).resolve().parents[3] if repo_root is None else Path(repo_root)
-    )
-    return str(base_dir / RULE_CONFIG_FILENAME)
 
 
 def load_resolved_embeddings_config(
