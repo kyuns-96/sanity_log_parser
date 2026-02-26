@@ -243,6 +243,20 @@ def test_main_gca_exit_code_on_parse_error(tmp_path: Path):
     assert "Traceback" not in _output(process)
 
 
+def test_gca_strict_rule_config_failure(tmp_path: Path):
+    """gca with --rule-config pointing to malformed JSON → exit 1, stderr has 'Error'."""
+    rpt = tmp_path / "sample.rpt"
+    rpt.write_text(_sample_rpt_content(), encoding="utf-8")
+    bad_config = tmp_path / "bad_config.json"
+    bad_config.write_text("{not valid json", encoding="utf-8")
+
+    process = _run_main(["gca", str(rpt), "--rule-config", str(bad_config)], tmp_path)
+
+    assert process.returncode == 1
+    assert "Error" in (process.stderr or "")
+    assert "Traceback" not in _output(process)
+
+
 def test_cluster_defaults_unchanged():
     """Regression: cluster subparser defaults and choices are unchanged."""
     sys.path.insert(0, str(ROOT / "src"))

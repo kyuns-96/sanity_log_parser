@@ -1,0 +1,6 @@
+{
+  "default_eps": 0.2,
+  "default_template_weight": 0.3,
+  "default_variable_weight": 0.7,
+  "rules": {}
+}

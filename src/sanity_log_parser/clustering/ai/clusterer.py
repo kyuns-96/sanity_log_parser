@@ -6,9 +6,14 @@ from typing import Any, Protocol, cast
 from collections import defaultdict
 
 from sanity_log_parser.config.embeddings import load_embeddings_config
-from sanity_log_parser.config.rules import load_rule_config
+from sanity_log_parser.gca.config import (
+    GcaConfig,
+    GcaRuleConfig,
+    VariableConfig,
+    get_gca_rule_config,
+)
 from sanity_log_parser.patterns import VAR_PATTERN
-from .weights import extract_variable_tail, apply_variable_position_weights
+from .weights import select_levels
 from sanity_log_parser.embeddings.openai_compat import (
     EmbeddingsRequestError,
     OpenAICompatibleEmbeddingsClient,
@@ -41,12 +46,13 @@ class AIClusterer:
     def __init__(
         self,
         model_path: str = "all-MiniLM-L6-v2",
-        config_file: str = "rule_clustering_config.json",
         embeddings_config_file: str = "config.json",
+        gca_config: GcaConfig | None = None,
     ) -> None:
         self.model: _SentenceModelLike | None = None
         self.remote_embeddings_client: OpenAICompatibleEmbeddingsClient | None = None
         self.ai_available: bool = False
+        self.gca_config = gca_config
 
         embeddings_config = load_embeddings_config(
             config_path=embeddings_config_file,
@@ -81,25 +87,6 @@ class AIClusterer:
                 logger.warning("Failed to load SentenceTransformer model: %s", exc)
                 self.ai_available = False
 
-        self.rule_config = load_rule_config(config_file)
-        self.default_eps = 0.2
-
-    def get_rule_config(self, rule_id: str) -> dict[str, Any]:
-        if rule_id in self.rule_config:
-            config = self.rule_config[rule_id].copy()
-            if "eps" not in config:
-                config["eps"] = self.default_eps
-            if "variable_position_weights" not in config:
-                config["variable_position_weights"] = None
-            if "variable_tail_configs" not in config:
-                config["variable_tail_configs"] = None
-            return config
-        return {
-            "eps": self.default_eps,
-            "variable_position_weights": None,
-            "variable_tail_configs": None,
-        }
-
     def run(self, logic_groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not self.ai_available or not logic_groups or DBSCANFactory is None:
             return []
@@ -112,12 +99,19 @@ class AIClusterer:
 
         logger.info("Grouping by rule_id: %d different rules", len(groups_by_rule))
 
+        if self.gca_config is not None:
+            return self._run_weighted(groups_by_rule)
+        return self._run_template_only(groups_by_rule)
+
+    def _run_template_only(
+        self,
+        groups_by_rule: dict[str, list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
+        """Template-only clustering path (no GCA config)."""
         final_output: list[dict[str, Any]] = []
         group_counter = 0
 
         for rule_id, rule_groups in groups_by_rule.items():
-            config = self.get_rule_config(rule_id)
-
             if len(rule_groups) < 2:
                 for lg in rule_groups:
                     group_counter += 1
@@ -126,8 +120,8 @@ class AIClusterer:
                     )
                 continue
 
-            embedding_inputs = self._prepare_embedding_inputs(rule_groups, config)
-            embeddings = self._compute_embeddings(embedding_inputs)
+            templates = [lg["template"] for lg in rule_groups]
+            embeddings = self._compute_embeddings(templates)
             if embeddings is None:
                 logger.warning(
                     "Embeddings failed for rule '%s'; keeping unclustered groups.",
@@ -141,7 +135,7 @@ class AIClusterer:
                 continue
 
             clustering = DBSCANFactory(
-                eps=config["eps"],
+                eps=0.2,
                 min_samples=1,
                 metric="cosine",
             ).fit(embeddings)
@@ -153,6 +147,100 @@ class AIClusterer:
                 group_counter,
             )
             final_output.extend(new_groups)
+
+        final_output.sort(key=lambda g: g["total_count"], reverse=True)
+        return final_output
+
+    def _run_weighted(
+        self,
+        groups_by_rule: dict[str, list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
+        """Multi-embedding weighted distance clustering path (GCA config present)."""
+        assert self.gca_config is not None
+        final_output: list[dict[str, Any]] = []
+        group_counter = 0
+
+        for rule_id, rule_groups in groups_by_rule.items():
+            if len(rule_groups) < 2:
+                for lg in rule_groups:
+                    group_counter += 1
+                    final_output.append(
+                        self._build_single_group(rule_id, lg, group_counter)
+                    )
+                continue
+
+            rule_config = get_gca_rule_config(self.gca_config, rule_id)
+            components = _prepare_embedding_components(
+                rule_groups, rule_config, self.gca_config.default_variable_weight
+            )
+
+            # Batch-embed per component position
+            n = len(rule_groups)
+            template_texts = [c["template"] for c in components]
+            template_embs = self._compute_embeddings(template_texts)
+            if template_embs is None:
+                logger.warning(
+                    "Embeddings failed for rule '%s'; keeping unclustered groups.",
+                    rule_id,
+                )
+                for lg in rule_groups:
+                    group_counter += 1
+                    final_output.append(
+                        self._build_single_group(rule_id, lg, group_counter)
+                    )
+                continue
+
+            max_vars = max(len(c["variables"]) for c in components)
+            var_embeddings: list[tuple[Any, list[bool]]] = []
+            for i in range(max_vars):
+                texts: list[str] = []
+                active_mask: list[bool] = []
+                for c in components:
+                    if i < len(c["variables"]) and c["variables"][i].strip():
+                        texts.append(c["variables"][i])
+                        active_mask.append(True)
+                    else:
+                        texts.append("_")
+                        active_mask.append(False)
+                embs = self._compute_embeddings(texts)
+                if embs is None:
+                    logger.warning(
+                        "Variable embeddings failed for rule '%s'; keeping unclustered.",
+                        rule_id,
+                    )
+                    break
+                var_embeddings.append((embs, active_mask))
+            else:
+                # All embeddings succeeded — compute distance matrix
+                distance_matrix = _compute_distance_matrix(
+                    n,
+                    template_embs,
+                    var_embeddings,
+                    rule_config,
+                    self.gca_config.default_variable_weight,
+                )
+
+                clustering = DBSCANFactory(
+                    eps=rule_config.eps,
+                    min_samples=1,
+                    metric="precomputed",
+                ).fit(distance_matrix)
+
+                new_groups, group_counter = self._build_cluster_results(
+                    rule_id,
+                    clustering.labels_,
+                    rule_groups,
+                    group_counter,
+                )
+                final_output.extend(new_groups)
+                continue
+
+            # Fallback: embeddings failed partway
+            for lg in rule_groups:
+                group_counter += 1
+                final_output.append(
+                    self._build_single_group(rule_id, lg, group_counter)
+                )
 
         final_output.sort(key=lambda g: g["total_count"], reverse=True)
         return final_output
@@ -173,52 +261,6 @@ class AIClusterer:
             "merged_variants_count": 1,
             "original_logs": [m["raw_log"] for m in logic_group["members"]],
         }
-
-    def _prepare_embedding_inputs(
-        self,
-        rule_groups: list[dict[str, Any]],
-        config: dict[str, Any],
-    ) -> list[str]:
-        variable_position_weights = config.get("variable_position_weights")
-        variable_tail_configs = config.get("variable_tail_configs")
-
-        inputs: list[str] = []
-        for logic_group in rule_groups:
-            pattern_text = logic_group["pattern"].replace(" / ", " ")
-            variables = VAR_PATTERN.findall(pattern_text)
-
-            if variable_tail_configs:
-                var_texts = self._apply_tail_configs(variables, variable_tail_configs)
-            else:
-                var_texts = list(variables)
-
-            if variable_position_weights:
-                var_texts = apply_variable_position_weights(
-                    var_texts, variable_position_weights
-                )
-
-            inputs.append(f"{logic_group['template']} {' '.join(var_texts)}")
-
-        return inputs
-
-    def _apply_tail_configs(
-        self,
-        variables: list[str],
-        tail_configs: dict[str, Any],
-    ) -> list[str]:
-        var_texts: list[str] = []
-        for idx, var in enumerate(variables):
-            var_config = tail_configs.get(str(idx))
-            if var_config:
-                tail_levels = var_config.get("tail_levels", 1)
-                tail_weights = var_config.get("tail_weights", [1])
-                var_with_sep = var.replace("/", " / ")
-                var_texts.append(
-                    extract_variable_tail(var_with_sep, tail_levels, tail_weights, None)
-                )
-            else:
-                var_texts.append(var)
-        return var_texts
 
     def _compute_embeddings(self, inputs: list[str]) -> Any | None:
         if self.remote_embeddings_client is not None:
@@ -273,6 +315,82 @@ class AIClusterer:
             )
 
         return results, counter
+
+
+def _prepare_embedding_components(
+    rule_groups: list[dict[str, Any]],
+    rule_config: GcaRuleConfig,
+    default_variable_weight: float,
+) -> list[dict[str, Any]]:
+    """Prepare template + variable texts for each group."""
+    components: list[dict[str, Any]] = []
+    for lg in rule_groups:
+        pattern_text = lg["pattern"].replace(" / ", " ")
+        variables = VAR_PATTERN.findall(pattern_text)
+
+        processed_vars: list[str] = []
+        for idx, var_text in enumerate(variables):
+            var_cfg = rule_config.variables.get(
+                idx, VariableConfig(weight=default_variable_weight)
+            )
+            processed_vars.append(select_levels(var_text, var_cfg.levels))
+
+        components.append(
+            {
+                "template": lg["template"],
+                "variables": processed_vars,
+            }
+        )
+    return components
+
+
+def _compute_distance_matrix(
+    n: int,
+    template_embs: Any,
+    var_embeddings: list[tuple[Any, list[bool]]],
+    rule_config: GcaRuleConfig,
+    default_variable_weight: float,
+) -> Any:
+    """Build NxN distance matrix with per-pair renormalization."""
+    import numpy as np
+    from scipy.spatial.distance import cosine as cosine_distance
+
+    d = np.zeros((n, n))
+    for a in range(n):
+        for b in range(a + 1, n):
+            active_weights: list[float] = []
+            active_distances: list[float] = []
+
+            # Template: always active
+            active_weights.append(rule_config.template_weight)
+            active_distances.append(
+                float(cosine_distance(template_embs[a], template_embs[b]))
+            )
+
+            # Variables: active only if BOTH groups have non-empty text
+            for i, (embs_i, mask_i) in enumerate(var_embeddings):
+                if mask_i[a] and mask_i[b]:
+                    var_cfg = rule_config.variables.get(
+                        i, VariableConfig(weight=default_variable_weight)
+                    )
+                    active_weights.append(var_cfg.weight)
+                    active_distances.append(
+                        float(cosine_distance(embs_i[a], embs_i[b]))
+                    )
+
+            # Per-pair normalization
+            total = sum(active_weights)
+            if total == 0:
+                n_active = len(active_weights)
+                normalized = [1.0 / n_active] * n_active if n_active > 0 else []
+            else:
+                normalized = [w / total for w in active_weights]
+
+            d[a][b] = d[b][a] = sum(
+                w * dist for w, dist in zip(normalized, active_distances)
+            )
+
+    return d
 
 
 class _SentenceModelLike(Protocol):

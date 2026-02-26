@@ -1,44 +1,27 @@
 from __future__ import annotations
 
 
-def extract_variable_tail(
-    full_pattern: str,
-    tail_levels: int = 1,
-    tail_weights: list[int] | None = None,
-    variable_position_weights: list[int] | None = None,
+def select_levels(
+    path: str,
+    levels: list[int] | None = None,
+    separator: str = "/",
 ) -> str:
-    if " / " not in full_pattern:
-        return full_pattern
+    """Select specific hierarchy levels from a path string.
 
-    parts = full_pattern.split(" / ")
-    tail_parts = parts[-tail_levels:] if tail_levels <= len(parts) else parts
+    ``levels`` uses Python-style indexing (negative indices count from the end).
+    Returns space-separated selected parts.  If ``levels`` is ``None``, all
+    parts are returned (with the separator replaced by spaces).
+    """
+    parts = [p.strip() for p in path.split(separator)]
 
-    if tail_weights is None:
-        tail_weights = [1] * len(tail_parts)
-    else:
-        while len(tail_weights) < len(tail_parts):
-            tail_weights.append(tail_weights[-1] if tail_weights else 1)
+    if levels is None:
+        return " ".join(parts)
 
-    result = []
-    for part, weight in zip(tail_parts, tail_weights):
-        result.extend([part] * weight)
+    selected: list[str] = []
+    for idx in levels:
+        try:
+            selected.append(parts[idx])
+        except IndexError:
+            continue
 
-    if variable_position_weights:
-        result = apply_variable_position_weights(result, variable_position_weights)
-
-    return " ".join(result)
-
-
-def apply_variable_position_weights(
-    parts: list[str], variable_position_weights: list[int]
-) -> list[str]:
-    if not parts or not variable_position_weights:
-        return parts
-
-    result = []
-    for i, part in enumerate(parts):
-        weight_idx = min(i, len(variable_position_weights) - 1)
-        weight = variable_position_weights[weight_idx]
-        result.extend([part] * weight)
-
-    return result
+    return " ".join(selected)

@@ -11,7 +11,6 @@ from typing import Any, cast, Literal
 from .config.resolution import (
     LoadedEmbeddingsConfig,
     load_resolved_embeddings_config,
-    resolve_rule_config_path,
 )
 from .console import Console
 from .clustering.logic import LogicClusterer
@@ -249,9 +248,23 @@ def _run_pipeline(parsed_logs: list[dict[str, Any]], opts: PipelineOptions) -> i
     for warning in loaded_embeddings.warnings:
         console.warn(warning)
 
-    rule_config_path = resolve_rule_config_path(
-        rule_config_arg=opts.rule_config,
-    )
+    gca_config: Any = None
+    if opts.sanity_item == "gca":
+        from .gca import GCA_DEFAULT_CONFIG_PATH
+        from .gca.config import ConfigError, load_gca_config
+
+        config_path = opts.rule_config or str(GCA_DEFAULT_CONFIG_PATH)
+        strict = opts.rule_config is not None
+        try:
+            gca_config = load_gca_config(config_path, strict=strict)
+        except ConfigError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    elif opts.rule_config is not None:
+        print(
+            "Warning: --rule-config is only supported by the 'gca' subcommand; ignoring.",
+            file=sys.stderr,
+        )
 
     logic_results = cast(list[dict[str, object]], LogicClusterer().run(parsed_logs))
     console.section("📊 Stage 1 - Logic Clustering (Original Method - Variables Only):")
@@ -260,7 +273,7 @@ def _run_pipeline(parsed_logs: list[dict[str, Any]], opts: PipelineOptions) -> i
 
     ai_clusterer = AIClusterer(
         embeddings_config_file=loaded_embeddings.config_path or "",
-        config_file=rule_config_path,
+        gca_config=gca_config,
     )
     results, ai_enabled, ai_backend = _run_ai_stage(
         opts.ai_mode,
