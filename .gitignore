@@ -56,3 +56,7 @@ Thumbs.db
 
 # Claude Code
 .claude/
+
+# Local working files
+/conversation/
+/example/
