@@ -1,13 +1,11 @@
 import json
 from pathlib import Path
-from typing import Literal, TypedDict, cast
+from typing import cast
 
 from sanity_log_parser.results.schema_v2 import (
     write_results_v2,
     read_results,
     RunMetadata,
-    RunCounts,
-    RunAI,
     Group,
 )
 
@@ -98,3 +96,59 @@ def test_read_results_accepts_legacy_list_root(tmp_path: Path) -> None:
     assert parsed["run"] is None
     assert len(parsed["groups"]) == 1
     assert parsed["groups"][0]["rule_id"] == "R001"
+
+
+def _sample_run_no_template() -> RunMetadata:
+    return {
+        "timestamp_utc": "2026-02-26T00:00:00Z",
+        "log_file": "report.rpt",
+        "counts": {
+            "parsed_logs": 1,
+            "logic_groups": 1,
+            "final_groups": 1,
+        },
+        "ai": {
+            "enabled": False,
+            "backend": None,
+            "warnings": [],
+        },
+    }
+
+
+def test_template_file_absent_in_single_file_mode(tmp_path: Path) -> None:
+    """In single-file mode, template_file key should be absent from JSON."""
+    output_path = tmp_path / "single_file.json"
+    write_results_v2(output_path, _sample_run_no_template(), _sample_groups(), indent=2)
+
+    with output_path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    run = payload["run"]
+    assert "template_file" not in run
+
+
+def test_template_file_present_in_legacy_mode(tmp_path: Path) -> None:
+    """In legacy two-file mode, template_file key should be present as string."""
+    output_path = tmp_path / "legacy.json"
+    write_results_v2(output_path, _sample_run(), _sample_groups(), indent=2)
+
+    with output_path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    run = payload["run"]
+    assert "template_file" in run
+    assert isinstance(run["template_file"], str)
+    assert run["template_file"] == "rules.log"
+
+
+def test_template_file_never_null(tmp_path: Path) -> None:
+    """template_file should never be null/None in JSON output."""
+    for run_fn in (_sample_run, _sample_run_no_template):
+        output_path = tmp_path / f"{run_fn.__name__}.json"
+        write_results_v2(output_path, run_fn(), _sample_groups(), indent=2)
+
+        with output_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+
+        run = payload["run"]
+        assert run.get("template_file") is not None or "template_file" not in run

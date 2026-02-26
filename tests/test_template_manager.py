@@ -1,5 +1,3 @@
-from sanity_log_parser.parsing.template_manager import RuleTemplateManager
-
 import hashlib
 
 
@@ -26,5 +24,7 @@ def test_get_rule_id_returns_loaded_rule_for_known_template(template_manager):
 
 def test_get_rule_id_returns_unknown_hash_prefix_for_missing_template(template_manager):
     missing_template = "Completely unseen '<VAR>' with count <NUM>"
-    expected = f"UNKNOWN_{hashlib.md5(missing_template.encode()).hexdigest()[:6].upper()}"
+    expected = (
+        f"UNKNOWN_{hashlib.md5(missing_template.encode()).hexdigest()[:6].upper()}"
+    )
     assert template_manager.get_rule_id(missing_template) == expected

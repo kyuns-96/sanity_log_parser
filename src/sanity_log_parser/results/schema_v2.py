@@ -20,7 +20,7 @@ class RunAI(TypedDict):
 class RunMetadata(TypedDict):
     timestamp_utc: str
     log_file: str
-    template_file: str
+    template_file: NotRequired[str]
     counts: RunCounts
     ai: RunAI
 
@@ -82,14 +82,18 @@ def read_results(path: str | Path) -> ParsedResults:
         }
 
     if not isinstance(loaded, dict):
-        raise ValueError("Results JSON root must be an object (v2) or list (legacy v1).")
+        raise ValueError(
+            "Results JSON root must be an object (v2) or list (legacy v1)."
+        )
 
     loaded_obj = cast(dict[str, object], loaded)
     schema_version = loaded_obj.get("schema_version")
     run = loaded_obj.get("run")
     groups = loaded_obj.get("groups")
     if schema_version != 2 or not isinstance(run, dict) or not isinstance(groups, list):
-        raise ValueError("Invalid schema-v2 results payload: expected schema_version/run/groups.")
+        raise ValueError(
+            "Invalid schema-v2 results payload: expected schema_version/run/groups."
+        )
 
     return {
         "schema_version": 2,

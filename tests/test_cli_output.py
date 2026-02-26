@@ -12,6 +12,7 @@ def _run_main(
     args: list[str], cwd: Path, *, set_no_color: bool = True
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
     if set_no_color:
         env["NO_COLOR"] = "1"
     else:
@@ -50,13 +51,15 @@ def test_main_no_color_help_has_no_escape_codes(tmp_path: Path):
 
 
 def test_main_no_color_flag_has_no_escape_codes_without_no_color_env(tmp_path: Path):
-    process = _run_main(["cluster", "--help", "--no-color"], tmp_path, set_no_color=False)
+    process = _run_main(
+        ["cluster", "--help", "--no-color"], tmp_path, set_no_color=False
+    )
     output = _output(process)
 
     assert "\x1b[" not in output
 
 
-def test_main_requires_arguments(tmp_path: Path):
+def test_main_requires_at_least_log_file(tmp_path: Path):
     process = _run_main(["cluster"], tmp_path)
     output = _output(process)
 
@@ -83,6 +86,43 @@ def test_main_empty_input_runs_zero_logs(tmp_path: Path):
 
     assert process.returncode == 0
     assert re.search(r"Input logs:\s+0", output)
+    assert "Traceback" not in output
+
+
+def test_main_single_file_primetime_mode(tmp_path: Path):
+    """cluster command works with only LOG_FILE (no TEMPLATE_FILE)."""
+    rpt = tmp_path / "sample.rpt"
+    rpt.write_text(
+        " error                  1   0\n"
+        "  CGR_0018          1    0 Clock 'clk1' from 'clk2'\n"
+        "       1 of 1          0    Clock 'GEN_A' from 'MSTR'\n",
+        encoding="utf-8",
+    )
+    process = _run_main(["cluster", str(rpt)], tmp_path)
+    output = _output(process)
+
+    assert process.returncode == 0
+    assert re.search(r"Input logs:\s+1", output)
+    assert "Traceback" not in output
+
+
+def test_main_legacy_two_file_mode_still_works(tmp_path: Path):
+    """cluster command still works with LOG_FILE + TEMPLATE_FILE."""
+    template_file = tmp_path / "rules.log"
+    template_file.write_text(
+        "Rule Severity Header Message\nR001 HIGH INFO Signal 'u_top' not found\n",
+        encoding="utf-8",
+    )
+    log_file = tmp_path / "test.log"
+    log_file.write_text(
+        "4 of 4 0 Signal 'u_top' not found\n",
+        encoding="utf-8",
+    )
+    process = _run_main(["cluster", str(log_file), str(template_file)], tmp_path)
+    output = _output(process)
+
+    assert process.returncode == 0
+    assert re.search(r"Input logs:\s+1", output)
     assert "Traceback" not in output
 
 
