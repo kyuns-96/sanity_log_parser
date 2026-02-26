@@ -24,4 +24,4 @@ sanity-log-parser = "sanity_log_parser.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-sanity_log_parser = ["data/*.json"]
+sanity_log_parser = ["data/*.json", "gca/*.json"]

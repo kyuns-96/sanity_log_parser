@@ -7,7 +7,6 @@ from sanity_log_parser.config.resolution import (
     EMBEDDINGS_CONFIG_ENV_VAR,
     load_resolved_embeddings_config,
     resolve_embeddings_config_path,
-    resolve_rule_config_path,
 )
 
 
@@ -81,18 +80,6 @@ def test_resolve_embeddings_config_path_returns_none_when_no_source(
     )
 
     assert resolved is None
-
-
-def test_resolve_rule_config_path_prefers_explicit_arg() -> None:
-    assert (
-        resolve_rule_config_path("/tmp/custom-rule-config.json")
-        == "/tmp/custom-rule-config.json"
-    )
-
-
-def test_resolve_rule_config_path_defaults_to_repo_rule_config(tmp_path: Path) -> None:
-    resolved = resolve_rule_config_path(None, repo_root=tmp_path)
-    assert resolved == str(tmp_path / "rule_clustering_config.json")
 
 
 def test_load_resolved_embeddings_config_collects_warnings(tmp_path: Path) -> None:
