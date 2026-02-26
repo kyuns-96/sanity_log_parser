@@ -26,7 +26,9 @@ def test_resolve_embeddings_config_path_prefers_explicit_arg() -> None:
     assert resolved == "/tmp/explicit.json"
 
 
-def test_resolve_embeddings_config_path_uses_legacy_alias_when_primary_missing() -> None:
+def test_resolve_embeddings_config_path_uses_legacy_alias_when_primary_missing() -> (
+    None
+):
     resolved = resolve_embeddings_config_path(
         embeddings_config_arg=None,
         legacy_config_arg="/tmp/legacy.json",
@@ -37,7 +39,9 @@ def test_resolve_embeddings_config_path_uses_legacy_alias_when_primary_missing()
     assert resolved == "/tmp/legacy.json"
 
 
-def test_resolve_embeddings_config_path_uses_env_before_cwd_config(tmp_path: Path) -> None:
+def test_resolve_embeddings_config_path_uses_env_before_cwd_config(
+    tmp_path: Path,
+) -> None:
     _write_config(tmp_path / "config.json", {"embeddings_backend": "local"})
 
     resolved = resolve_embeddings_config_path(
@@ -50,7 +54,9 @@ def test_resolve_embeddings_config_path_uses_env_before_cwd_config(tmp_path: Pat
     assert resolved == "/tmp/from-env.json"
 
 
-def test_resolve_embeddings_config_path_uses_cwd_config_when_present(tmp_path: Path) -> None:
+def test_resolve_embeddings_config_path_uses_cwd_config_when_present(
+    tmp_path: Path,
+) -> None:
     config_path = tmp_path / "config.json"
     _write_config(config_path, {"embeddings_backend": "local"})
 
@@ -64,7 +70,9 @@ def test_resolve_embeddings_config_path_uses_cwd_config_when_present(tmp_path: P
     assert resolved == str(config_path)
 
 
-def test_resolve_embeddings_config_path_returns_none_when_no_source(tmp_path: Path) -> None:
+def test_resolve_embeddings_config_path_returns_none_when_no_source(
+    tmp_path: Path,
+) -> None:
     resolved = resolve_embeddings_config_path(
         embeddings_config_arg=None,
         legacy_config_arg=None,
@@ -76,7 +84,10 @@ def test_resolve_embeddings_config_path_returns_none_when_no_source(tmp_path: Pa
 
 
 def test_resolve_rule_config_path_prefers_explicit_arg() -> None:
-    assert resolve_rule_config_path("/tmp/custom-rule-config.json") == "/tmp/custom-rule-config.json"
+    assert (
+        resolve_rule_config_path("/tmp/custom-rule-config.json")
+        == "/tmp/custom-rule-config.json"
+    )
 
 
 def test_resolve_rule_config_path_defaults_to_repo_rule_config(tmp_path: Path) -> None:
@@ -95,10 +106,14 @@ def test_load_resolved_embeddings_config_collects_warnings(tmp_path: Path) -> No
 
     assert loaded.config_path == str(tmp_path / "config.json")
     assert loaded.config.backend == "local"
-    assert loaded.warnings == ["Invalid embeddings_backend 'invalid'. Falling back to 'local'."]
+    assert loaded.warnings == [
+        "Invalid embeddings_backend 'invalid'. Falling back to 'local'."
+    ]
 
 
-def test_load_resolved_embeddings_config_preserves_openai_api_key_fallback(tmp_path: Path) -> None:
+def test_load_resolved_embeddings_config_preserves_openai_api_key_fallback(
+    tmp_path: Path,
+) -> None:
     _write_config(
         tmp_path / "config.json",
         {

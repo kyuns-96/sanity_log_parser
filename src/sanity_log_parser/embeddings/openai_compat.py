@@ -41,27 +41,39 @@ class OpenAICompatibleEmbeddingsClient:
                 response_body = response.read().decode("utf-8")
         except HTTPError as exc:
             details = _read_http_error_body(exc)
-            raise EmbeddingsRequestError(f"HTTP {exc.code} calling embeddings endpoint: {details}") from exc
+            raise EmbeddingsRequestError(
+                f"HTTP {exc.code} calling embeddings endpoint: {details}"
+            ) from exc
         except URLError as exc:
-            raise EmbeddingsRequestError(f"Network error calling embeddings endpoint: {exc.reason}") from exc
+            raise EmbeddingsRequestError(
+                f"Network error calling embeddings endpoint: {exc.reason}"
+            ) from exc
         except OSError as exc:
-            raise EmbeddingsRequestError(f"I/O error calling embeddings endpoint: {exc}") from exc
+            raise EmbeddingsRequestError(
+                f"I/O error calling embeddings endpoint: {exc}"
+            ) from exc
 
         try:
             parsed = json.loads(response_body)
         except json.JSONDecodeError as exc:
-            raise EmbeddingsRequestError(f"Embeddings response is not valid JSON: {exc}") from exc
+            raise EmbeddingsRequestError(
+                f"Embeddings response is not valid JSON: {exc}"
+            ) from exc
 
         return _parse_openai_embeddings_response(parsed, len(inputs))
 
 
-def _parse_openai_embeddings_response(payload: Any, expected_size: int) -> list[list[float]]:
+def _parse_openai_embeddings_response(
+    payload: Any, expected_size: int
+) -> list[list[float]]:
     if not isinstance(payload, dict):
         raise EmbeddingsRequestError("Embeddings response must be a JSON object.")
 
     raw_data = payload.get("data")
     if not isinstance(raw_data, list):
-        raise EmbeddingsRequestError("Embeddings response is missing a valid 'data' list.")
+        raise EmbeddingsRequestError(
+            "Embeddings response is missing a valid 'data' list."
+        )
 
     indexed_vectors: dict[int, list[float]] = {}
     for entry in raw_data:
@@ -71,11 +83,17 @@ def _parse_openai_embeddings_response(payload: Any, expected_size: int) -> list[
         index = entry.get("index")
         embedding = entry.get("embedding")
         if not isinstance(index, int) or index < 0:
-            raise EmbeddingsRequestError("Each embedding item requires a non-negative integer 'index'.")
+            raise EmbeddingsRequestError(
+                "Each embedding item requires a non-negative integer 'index'."
+            )
         if not isinstance(embedding, list) or not embedding:
-            raise EmbeddingsRequestError("Each embedding item requires a non-empty 'embedding' list.")
+            raise EmbeddingsRequestError(
+                "Each embedding item requires a non-empty 'embedding' list."
+            )
         if not all(isinstance(value, (int, float)) for value in embedding):
-            raise EmbeddingsRequestError("Embedding vectors must contain only numeric values.")
+            raise EmbeddingsRequestError(
+                "Embedding vectors must contain only numeric values."
+            )
 
         indexed_vectors[index] = [float(value) for value in embedding]
 

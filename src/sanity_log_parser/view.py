@@ -58,7 +58,9 @@ def print_report(
         _print_group(console, index, group)
 
     if total_groups > shown:
-        console.info(f"... omitted {total_groups - shown:,} groups (use --top to increase)")
+        console.info(
+            f"... omitted {total_groups - shown:,} groups (use --top to increase)"
+        )
     return 0
 
 

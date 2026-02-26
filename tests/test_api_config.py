@@ -12,16 +12,22 @@ def _write_config(tmp_path: Path, payload: dict[str, object]) -> str:
     return str(path)
 
 
-def test_load_embeddings_config_defaults_to_local_when_config_missing(tmp_path: Path) -> None:
+def test_load_embeddings_config_defaults_to_local_when_config_missing(
+    tmp_path: Path,
+) -> None:
     warnings: list[str] = []
-    config = load_embeddings_config(str(tmp_path / "missing.json"), warn=warnings.append)
+    config = load_embeddings_config(
+        str(tmp_path / "missing.json"), warn=warnings.append
+    )
 
     assert config.backend == "local"
     assert config.openai_compatible is None
     assert warnings == []
 
 
-def test_load_embeddings_config_invalid_backend_falls_back_to_local_with_warning(tmp_path: Path) -> None:
+def test_load_embeddings_config_invalid_backend_falls_back_to_local_with_warning(
+    tmp_path: Path,
+) -> None:
     config_path = _write_config(tmp_path, {"embeddings_backend": "nonsense"})
     warnings: list[str] = []
 
@@ -29,10 +35,14 @@ def test_load_embeddings_config_invalid_backend_falls_back_to_local_with_warning
 
     assert config.backend == "local"
     assert config.openai_compatible is None
-    assert warnings == ["Invalid embeddings_backend 'nonsense'. Falling back to 'local'."]
+    assert warnings == [
+        "Invalid embeddings_backend 'nonsense'. Falling back to 'local'."
+    ]
 
 
-def test_load_embeddings_config_openai_compatible_requires_base_url(tmp_path: Path) -> None:
+def test_load_embeddings_config_openai_compatible_requires_base_url(
+    tmp_path: Path,
+) -> None:
     config_path = _write_config(
         tmp_path,
         {

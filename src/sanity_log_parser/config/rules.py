@@ -19,5 +19,7 @@ def load_rule_config(config_file: str) -> dict[str, Any]:
         logger.info("Loaded rule config from '%s'.", config_file)
         return config.get("rules", {})
     except (OSError, json.JSONDecodeError, ValueError) as exc:
-        logger.warning("Error loading rule config '%s': %s. Using defaults.", config_file, exc)
+        logger.warning(
+            "Error loading rule config '%s': %s. Using defaults.", config_file, exc
+        )
         return {}

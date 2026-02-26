@@ -52,7 +52,9 @@ def resolve_rule_config_path(
     if explicit_arg is not None:
         return explicit_arg
 
-    base_dir = Path(__file__).resolve().parents[3] if repo_root is None else Path(repo_root)
+    base_dir = (
+        Path(__file__).resolve().parents[3] if repo_root is None else Path(repo_root)
+    )
     return str(base_dir / RULE_CONFIG_FILENAME)
 
 
@@ -75,7 +77,9 @@ def load_resolved_embeddings_config(
         environ=environ,
         warn=warnings.append,
     )
-    return LoadedEmbeddingsConfig(config=config, config_path=config_path, warnings=warnings)
+    return LoadedEmbeddingsConfig(
+        config=config, config_path=config_path, warnings=warnings
+    )
 
 
 def _first_non_empty(*values: str | None) -> str | None:

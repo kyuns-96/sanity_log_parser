@@ -29,7 +29,9 @@ def supports_color(override: bool | None = None, stream: TextIO | None = None) -
 class Console:
     _KEY_WIDTH: int = 24
 
-    def __init__(self, use_color: bool | None = None, stream: TextIO | None = None) -> None:
+    def __init__(
+        self, use_color: bool | None = None, stream: TextIO | None = None
+    ) -> None:
         self.stream: TextIO = stream if stream is not None else sys.stdout
         self.use_color: bool = supports_color(use_color, self.stream)
 

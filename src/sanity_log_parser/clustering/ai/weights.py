@@ -29,7 +29,9 @@ def extract_variable_tail(
     return " ".join(result)
 
 
-def apply_variable_position_weights(parts: list[str], variable_position_weights: list[int]) -> list[str]:
+def apply_variable_position_weights(
+    parts: list[str], variable_position_weights: list[int]
+) -> list[str]:
     if not parts or not variable_position_weights:
         return parts
 

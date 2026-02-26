@@ -40,16 +40,23 @@ def load_embeddings_config(
 
     base_url = _as_string(openai_data.get("base_url"), default="").rstrip("/")
     model = _as_string(openai_data.get("model"), default="text-embedding-3-small")
-    api_key = _as_optional_string(openai_data.get("api_key")) or _as_optional_string(env.get("OPENAI_API_KEY"))
+    api_key = _as_optional_string(openai_data.get("api_key")) or _as_optional_string(
+        env.get("OPENAI_API_KEY")
+    )
 
     if backend == "openai_compatible" and not base_url:
-        _warn(warn, "Missing openai_compatible.base_url in config.json. Falling back to 'local'.")
+        _warn(
+            warn,
+            "Missing openai_compatible.base_url in config.json. Falling back to 'local'.",
+        )
         backend = "local"
 
     if backend == "openai_compatible":
         return EmbeddingsConfig(
             backend=backend,
-            openai_compatible=OpenAICompatibleConfig(base_url=base_url, model=model, api_key=api_key),
+            openai_compatible=OpenAICompatibleConfig(
+                base_url=base_url, model=model, api_key=api_key
+            ),
         )
 
     return EmbeddingsConfig(backend="local", openai_compatible=None)
@@ -70,7 +77,10 @@ def _load_json_config(
         return {}
 
     if not isinstance(loaded, dict):
-        _warn(warn, f"'{config_path}' must contain a JSON object. Falling back to defaults.")
+        _warn(
+            warn,
+            f"'{config_path}' must contain a JSON object. Falling back to defaults.",
+        )
         return {}
     return loaded
 
