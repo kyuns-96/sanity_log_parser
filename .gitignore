@@ -1,40 +1,50 @@
+# Python bytecode
 *.pyc
 *.pyo
 *.pyd
 *.pyc.*
 __pycache__/
 *$py.class
+
+# Virtual environments
 .sisyphus*
 /.venv/
 /venv/
 /.env
 /.env.*
 
+# Tool caches
 /.mypy_cache/
 /.ruff_cache/
 /.pytest_cache/
 /.tox/
 /.coverage
 .coverage.*
+htmlcov/
 
+# Build artifacts
 /build/
 /dist/
 /my_local_model/
 /*.egg-info/
 src/*.egg-info/
 /.eggs/
+*.whl
 
+# Project outputs
 /*.log
 test_run.log
 test_results.txt
 subutai_results.json
 config.json
 
+# Editor / IDE
 /.idea/
 /.vscode/
 *.swp
 *.swo
 *.sln.docstates
+*~
 
 # Local OS files
 .DS_Store
@@ -43,3 +53,6 @@ Thumbs.db
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Claude Code
+.claude/

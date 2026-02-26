@@ -1,6 +1,6 @@
 # Sanity Log Parser
 
-A tool for clustering log files using a two-stage workflow: logic-based grouping followed by semantic AI merging. It compresses large log files into manageable groups of similar events.
+A tool for parsing and clustering Synopsys PrimeTime constraint reports (and similar log files) using a two-stage workflow: logic-based grouping followed by semantic AI merging. It compresses large reports into manageable groups of similar events.
 
 ## Requirements
 
@@ -21,13 +21,17 @@ pip install ".[dev]"          # + pytest
 
 ## Quickstart
 
-1. Cluster a log file:
+1. Cluster a PrimeTime constraint report (single-file mode):
+   ```bash
+   sanity-log-parser cluster REPORT_FILE
+   ```
+
+2. Or use legacy two-file mode with a separate template:
    ```bash
    sanity-log-parser cluster LOG_FILE TEMPLATE_FILE
    ```
-   This writes `subutai_results.json` to the current directory.
 
-2. View the results:
+3. View the results:
    ```bash
    sanity-log-parser view [subutai_results.json]
    ```
@@ -39,8 +43,10 @@ The CLI has two subcommands: `cluster` and `view`.
 ### `cluster`
 
 ```
-sanity-log-parser cluster LOG_FILE TEMPLATE_FILE [OPTIONS]
+sanity-log-parser cluster LOG_FILE [TEMPLATE_FILE] [OPTIONS]
 ```
+
+When `TEMPLATE_FILE` is omitted, the tool uses the built-in PrimeTime parser which extracts rule IDs and severity from the report's own structure (severity sections and parent/rule lines). When provided, it falls back to the legacy two-file parsing mode.
 
 | Option | Default | Description |
 |---|---|---|
@@ -68,18 +74,42 @@ sanity-log-parser view [RESULTS_JSON] [OPTIONS]
 
 ## Input Formats
 
-### LOG_FILE
+### Single-File Mode (PrimeTime Reports)
 
-A standard text log file. The parser skips empty lines and lines starting with `-`, `=`, `Rule`, or `Severity`.
+A Synopsys PrimeTime constraint report (`.rpt`) containing severity sections, rule/parent lines, and instance lines. The parser uses the report's own structure to extract rule IDs and severity.
 
-Only lines containing a counter like `N of M` are parsed. The text after the first 4 whitespace-separated fields is used as the message.
+Report structure:
+```
+****************************************
+  Report : ...
+  Version: ...
+  Date   : ...
+****************************************
+
+  error    5   0
+    CGR_0018    3   0   Some rule description
+        1 of 3   0   Instance message for 'signal_a'
+        2 of 3   0   Instance message for 'signal_b'
+        3 of 3   0   Instance message for 'signal_c'
+
+  warning    12   0
+    CLK_0042    4   0   Another rule description
+        1 of 4   0   Clock 'clk_main' has issue
+        ...
+```
+
+### Legacy Two-File Mode
+
+#### LOG_FILE
+
+A text log file where lines containing `N of M` are parsed. The text after the first 4 whitespace-separated fields is used as the message.
 
 Example line:
 ```
 1 of 10 foo bar Signal 'u_top' not found
 ```
 
-### TEMPLATE_FILE
+#### TEMPLATE_FILE
 
 A whitespace-separated file where each line defines a rule.
 - Field 1: `rule_id`
@@ -95,11 +125,13 @@ R001 HIGH INFO Signal 'u_top' not found
 Results are written to `subutai_results.json` (or the path given by `--out`).
 
 ### Schema Overview
-- `rule_id`: The ID from the template file or a generated hash.
+- `rule_id`: The ID from the report structure (single-file) or template file (legacy), or a generated hash.
 - `representative_pattern`: A sample log line representing the group.
 - `total_count`: Number of logs in this group.
 - `original_logs`: List of all raw log lines belonging to this group.
 - `merged_variants_count`: (AI only) Number of logic groups merged into this super group.
+
+In single-file mode, `template_file` is omitted from the run metadata.
 
 ## AI Clustering
 
@@ -162,8 +194,13 @@ src/
     clustering/         # Logic and AI clustering
     config/             # Config loading and resolution
     parsing/            # Log and template parsing
+      __init__.py       # Shared parse_log_file() entry point
+      primetime_parser.py  # Single-file PrimeTime report parser
+      subutai_parser.py    # Legacy two-file parser
+      template_manager.py  # Rule template handling
     results/            # Output schema and writing
     embeddings/         # Embedding backends
+    patterns.py         # Shared regex patterns
     view.py             # Report rendering
 tests/
 pyproject.toml
