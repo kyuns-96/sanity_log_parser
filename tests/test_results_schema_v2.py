@@ -152,3 +152,43 @@ def test_template_file_never_null(tmp_path: Path) -> None:
 
         run = payload["run"]
         assert run.get("template_file") is not None or "template_file" not in run
+
+
+def _sample_run_gca() -> RunMetadata:
+    return {
+        "timestamp_utc": "2026-02-26T00:00:00Z",
+        "log_file": "report.rpt",
+        "sanity_item": "gca",
+        "counts": {
+            "parsed_logs": 1,
+            "logic_groups": 1,
+            "final_groups": 1,
+        },
+        "ai": {
+            "enabled": False,
+            "backend": None,
+            "warnings": [],
+        },
+    }
+
+
+def test_sanity_item_present_in_gca_mode(tmp_path: Path) -> None:
+    """sanity_item: 'gca' appears in metadata when set."""
+    output_path = tmp_path / "gca_results.json"
+    write_results_v2(output_path, _sample_run_gca(), _sample_groups(), indent=2)
+
+    with output_path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    assert payload["run"]["sanity_item"] == "gca"
+
+
+def test_sanity_item_absent_in_legacy_mode(tmp_path: Path) -> None:
+    """sanity_item key should not be present in legacy cluster mode metadata."""
+    output_path = tmp_path / "legacy_results.json"
+    write_results_v2(output_path, _sample_run(), _sample_groups(), indent=2)
+
+    with output_path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    assert "sanity_item" not in payload["run"]

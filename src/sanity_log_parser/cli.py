@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import datetime
 import logging
 import os
 import sys
-from typing import cast, Literal
+from typing import Any, cast, Literal
 
 from .config.resolution import (
     LoadedEmbeddingsConfig,
@@ -24,8 +25,71 @@ from .results.schema_v2 import (
 from .view import print_report
 
 
+class ParseError(Exception):
+    """Raised when input validation or log parsing fails."""
+
+
+@dataclasses.dataclass(frozen=True)
+class PipelineOptions:
+    out: str
+    ai_mode: str
+    embeddings_config: str | None
+    rule_config: str | None
+    json_indent: int
+    max_original_logs: int
+    no_color: bool
+    verbose: bool
+    log_file: str
+    template_file: str | None = None
+    sanity_item: str | None = None
+
+
+def _add_common_options(parser: argparse.ArgumentParser) -> None:
+    """Attach shared clustering options to a subparser."""
+    _ = parser.add_argument(
+        "--out", default="subutai_results.json", help="Output JSON path."
+    )
+    _ = parser.add_argument(
+        "--embeddings-config",
+        "--config",
+        dest="embeddings_config",
+        default=None,
+        help="Embeddings config path (alias: --config).",
+    )
+    _ = parser.add_argument(
+        "--rule-config", default=None, help="Rule clustering config path."
+    )
+    _ = parser.add_argument(
+        "--ai",
+        choices=("auto", "on", "off"),
+        default="auto",
+        help="AI mode: auto, on, off.",
+    )
+    _ = parser.add_argument(
+        "--json-indent",
+        type=int,
+        default=2,
+        help="Indent used when writing JSON output.",
+    )
+    _ = parser.add_argument(
+        "--max-original-logs",
+        type=int,
+        default=0,
+        help="Maximum original logs per group (0 = all).",
+    )
+    _ = parser.add_argument(
+        "--no-color", action="store_true", help="Disable ANSI color output."
+    )
+    _ = parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose (INFO-level) logging.",
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    epilog = """Examples:\n  sanity-log-parser cluster REPORT_FILE\n  sanity-log-parser cluster LOG_FILE TEMPLATE_FILE --config config.json --no-color"""
+    epilog = """Examples:\n  sanity-log-parser gca REPORT_FILE\n  sanity-log-parser cluster LOG_FILE TEMPLATE_FILE --config config.json --no-color"""
     parser = argparse.ArgumentParser(
         prog="sanity-log-parser",
         description="Parse logs and render clustering reports.",
@@ -34,6 +98,17 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    # --- gca subcommand ---
+    gca = subparsers.add_parser(
+        "gca",
+        help="Cluster a PrimeTime Constraints (GCA) report.",
+    )
+    _ = gca.add_argument(
+        "log_file", metavar="REPORT_FILE", help="Path to the PrimeTime report file."
+    )
+    _add_common_options(gca)
+
+    # --- cluster subcommand (legacy/generic) ---
     cluster = subparsers.add_parser(
         "cluster", help="Cluster a log file into JSON results."
     )
@@ -47,47 +122,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to the template file. Omit for single-file PrimeTime reports.",
     )
-    _ = cluster.add_argument(
-        "--out", default="subutai_results.json", help="Output JSON path."
-    )
-    _ = cluster.add_argument(
-        "--embeddings-config",
-        "--config",
-        dest="embeddings_config",
-        default=None,
-        help="Embeddings config path (alias: --config).",
-    )
-    _ = cluster.add_argument(
-        "--rule-config", default=None, help="Rule clustering config path."
-    )
-    _ = cluster.add_argument(
-        "--ai",
-        choices=("auto", "on", "off"),
-        default="auto",
-        help="AI mode: auto, on, off.",
-    )
-    _ = cluster.add_argument(
-        "--json-indent",
-        type=int,
-        default=2,
-        help="Indent used when writing JSON output.",
-    )
-    _ = cluster.add_argument(
-        "--max-original-logs",
-        type=int,
-        default=0,
-        help="Maximum original logs per group (0 = all).",
-    )
-    _ = cluster.add_argument(
-        "--no-color", action="store_true", help="Disable ANSI color output."
-    )
-    _ = cluster.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help="Enable verbose (INFO-level) logging.",
-    )
+    _add_common_options(cluster)
 
+    # --- view subcommand ---
     view = subparsers.add_parser("view", help="Render report from a results JSON file.")
     _ = view.add_argument(
         "results_json",
@@ -117,6 +154,19 @@ def _validate_input_files(log_file: str, template_file: str | None) -> str | Non
         if not os.access(template_file, os.R_OK):
             return f"Error: Template file '{template_file}' is not readable."
     return None
+
+
+def _validate_and_parse(
+    log_file: str, template_file: str | None
+) -> list[dict[str, Any]]:
+    """Validate input files and parse logs. Raises ParseError on failure."""
+    error = _validate_input_files(log_file, template_file)
+    if error:
+        raise ParseError(error)
+    try:
+        return cast(list[dict[str, Any]], parse_log_file(log_file, template_file))
+    except Exception as exc:
+        raise ParseError(f"Failed to parse '{log_file}': {exc}") from exc
 
 
 def _run_ai_stage(
@@ -184,36 +234,24 @@ def _build_final_groups(results: list[dict[str, object]]) -> list[Group]:
     return final_groups
 
 
-def _run_cluster(args: argparse.Namespace) -> int:
-    """Cluster logs: validate -> parse -> logic cluster -> AI cluster -> write results."""
-    log_file = cast(str, args.log_file)
-    template_file = cast(str | None, args.template_file)
+def _run_pipeline(parsed_logs: list[dict[str, Any]], opts: PipelineOptions) -> int:
+    """Run the clustering pipeline: config → logic cluster → AI cluster → write."""
+    console = Console(use_color=False if opts.no_color else None)
 
-    error = _validate_input_files(log_file, template_file)
-    if error:
-        print(error, file=sys.stderr)
-        return 1
-
-    no_color = cast(bool, args.no_color)
-    console = Console(use_color=False if no_color else None)
-
-    verbose = cast(bool, args.verbose)
     logging.basicConfig(
-        level=logging.INFO if verbose else logging.WARNING,
+        level=logging.INFO if opts.verbose else logging.WARNING,
         format="%(levelname)s: %(message)s",
     )
 
     loaded_embeddings = load_resolved_embeddings_config(
-        embeddings_config_arg=cast(str | None, args.embeddings_config),
+        embeddings_config_arg=opts.embeddings_config,
     )
     for warning in loaded_embeddings.warnings:
         console.warn(warning)
 
     rule_config_path = resolve_rule_config_path(
-        rule_config_arg=cast(str | None, args.rule_config),
+        rule_config_arg=opts.rule_config,
     )
-
-    parsed_logs = cast(list[dict[str, object]], parse_log_file(log_file, template_file))
 
     logic_results = cast(list[dict[str, object]], LogicClusterer().run(parsed_logs))
     console.section("📊 Stage 1 - Logic Clustering (Original Method - Variables Only):")
@@ -224,9 +262,8 @@ def _run_cluster(args: argparse.Namespace) -> int:
         embeddings_config_file=loaded_embeddings.config_path or "",
         config_file=rule_config_path,
     )
-    ai_mode = cast(str, args.ai)
     results, ai_enabled, ai_backend = _run_ai_stage(
-        ai_mode,
+        opts.ai_mode,
         ai_clusterer,
         logic_results,
         loaded_embeddings,
@@ -239,8 +276,9 @@ def _run_cluster(args: argparse.Namespace) -> int:
         "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         ),
-        "log_file": log_file,
-        **({"template_file": template_file} if template_file else {}),
+        "log_file": opts.log_file,
+        **({"template_file": opts.template_file} if opts.template_file else {}),
+        **({"sanity_item": opts.sanity_item} if opts.sanity_item else {}),
         "counts": {
             "parsed_logs": len(parsed_logs),
             "logic_groups": len(logic_results),
@@ -253,16 +291,59 @@ def _run_cluster(args: argparse.Namespace) -> int:
         },
     }
 
-    out_path = cast(str, args.out)
-    json_indent = cast(int, args.json_indent)
     write_results_v2(
-        path=out_path, run=run_meta, groups=final_groups, indent=json_indent
+        path=opts.out, run=run_meta, groups=final_groups, indent=opts.json_indent
     )
 
     console.section("✅ Final Results")
     console.kv("Groups Created", f"{len(final_groups):,}")
-    console.info(f"💾 Results saved to '{out_path}'.")
+    console.info(f"💾 Results saved to '{opts.out}'.")
     return 0
+
+
+def _run_cluster(args: argparse.Namespace) -> int:
+    """Cluster logs via the legacy/generic subcommand."""
+    opts = PipelineOptions(
+        out=cast(str, args.out),
+        ai_mode=cast(str, args.ai),
+        embeddings_config=cast(str | None, args.embeddings_config),
+        rule_config=cast(str | None, args.rule_config),
+        json_indent=cast(int, args.json_indent),
+        max_original_logs=cast(int, args.max_original_logs),
+        no_color=cast(bool, args.no_color),
+        verbose=cast(bool, args.verbose),
+        log_file=cast(str, args.log_file),
+        template_file=cast(str | None, args.template_file),
+    )
+    try:
+        parsed_logs = _validate_and_parse(opts.log_file, opts.template_file)
+    except ParseError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    return _run_pipeline(parsed_logs, opts)
+
+
+def _run_gca(args: argparse.Namespace) -> int:
+    """Cluster a PrimeTime Constraints (GCA) report."""
+    opts = PipelineOptions(
+        out=cast(str, args.out),
+        ai_mode=cast(str, args.ai),
+        embeddings_config=cast(str | None, args.embeddings_config),
+        rule_config=cast(str | None, args.rule_config),
+        json_indent=cast(int, args.json_indent),
+        max_original_logs=cast(int, args.max_original_logs),
+        no_color=cast(bool, args.no_color),
+        verbose=cast(bool, args.verbose),
+        log_file=cast(str, args.log_file),
+        template_file=None,
+        sanity_item="gca",
+    )
+    try:
+        parsed_logs = _validate_and_parse(opts.log_file, opts.template_file)
+    except ParseError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    return _run_pipeline(parsed_logs, opts)
 
 
 def _run_view(args: argparse.Namespace) -> int:
@@ -278,6 +359,8 @@ def main() -> int:
     args = parser.parse_args()
 
     command = cast(str, args.command)
+    if command == "gca":
+        return _run_gca(args)
     if command == "cluster":
         return _run_cluster(args)
     return _run_view(args)

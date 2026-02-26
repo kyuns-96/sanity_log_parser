@@ -21,6 +21,7 @@ class RunMetadata(TypedDict):
     timestamp_utc: str
     log_file: str
     template_file: NotRequired[str]
+    sanity_item: NotRequired[str]
     counts: RunCounts
     ai: RunAI
 

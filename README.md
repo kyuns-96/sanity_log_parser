@@ -1,6 +1,6 @@
 # Sanity Log Parser
 
-A tool for parsing and clustering Synopsys PrimeTime constraint reports (and similar log files) using a two-stage workflow: logic-based grouping followed by semantic AI merging. It compresses large reports into manageable groups of similar events.
+A tool for parsing and clustering Synopsys PrimeTime constraint reports (and similar log files) using a two-stage workflow: logic-based grouping followed by optional semantic AI merging. It compresses large reports into manageable groups of similar events.
 
 ## Requirements
 
@@ -21,32 +21,32 @@ pip install ".[dev]"          # + pytest
 
 ## Quickstart
 
-1. Cluster a PrimeTime constraint report (single-file mode):
+1. Cluster a PrimeTime Constraints (GCA) report:
    ```bash
-   sanity-log-parser cluster REPORT_FILE
+   sanity-log-parser gca REPORT_FILE
    ```
 
-2. Or use legacy two-file mode with a separate template:
+2. View the results:
+   ```bash
+   sanity-log-parser view
+   ```
+
+3. Or use the generic `cluster` subcommand with a separate template:
    ```bash
    sanity-log-parser cluster LOG_FILE TEMPLATE_FILE
    ```
 
-3. View the results:
-   ```bash
-   sanity-log-parser view [subutai_results.json]
-   ```
-
 ## CLI Usage
 
-The CLI has two subcommands: `cluster` and `view`.
+The CLI provides item-specific subcommands (e.g. `gca`) for each sanity item type, plus a generic `cluster` subcommand and a `view` subcommand for rendering results.
 
-### `cluster`
+### `gca`
 
 ```
-sanity-log-parser cluster LOG_FILE [TEMPLATE_FILE] [OPTIONS]
+sanity-log-parser gca REPORT_FILE [OPTIONS]
 ```
 
-When `TEMPLATE_FILE` is omitted, the tool uses the built-in PrimeTime parser which extracts rule IDs and severity from the report's own structure (severity sections and parent/rule lines). When provided, it falls back to the legacy two-file parsing mode.
+Parses and clusters a PrimeTime Constraints ("GCA") report. Uses the built-in PrimeTime parser to extract rule IDs and severity from the report's own structure. The output metadata includes `"sanity_item": "gca"`.
 
 | Option | Default | Description |
 |---|---|---|
@@ -59,7 +59,15 @@ When `TEMPLATE_FILE` is omitted, the tool uses the built-in PrimeTime parser whi
 | `--no-color` | | Disable ANSI color output |
 | `-v, --verbose` | | Enable INFO-level logging |
 
-`NO_COLOR=1` also disables colored output.
+### `cluster`
+
+```
+sanity-log-parser cluster LOG_FILE [TEMPLATE_FILE] [OPTIONS]
+```
+
+Generic/legacy clustering subcommand. When `TEMPLATE_FILE` is omitted, the tool uses the built-in PrimeTime parser (same as `gca`). When provided, it uses the legacy two-file parsing mode.
+
+Accepts the same options as `gca`, plus an optional `TEMPLATE_FILE` positional argument.
 
 ### `view`
 
@@ -67,18 +75,23 @@ When `TEMPLATE_FILE` is omitted, the tool uses the built-in PrimeTime parser whi
 sanity-log-parser view [RESULTS_JSON] [OPTIONS]
 ```
 
+Renders a human-readable report from a results JSON file.
+
 | Option | Default | Description |
 |---|---|---|
 | `--top N` | `50` | Maximum number of groups to show |
 | `--no-color` | | Disable ANSI color output |
 
+### Environment Variables
+
+- `NO_COLOR=1` disables colored output (equivalent to `--no-color`).
+
 ## Input Formats
 
-### Single-File Mode (PrimeTime Reports)
+### PrimeTime Constraint Reports (used by `gca` and single-file `cluster`)
 
-A Synopsys PrimeTime constraint report (`.rpt`) containing severity sections, rule/parent lines, and instance lines. The parser uses the report's own structure to extract rule IDs and severity.
+A Synopsys PrimeTime constraint report (`.rpt`) containing severity sections, rule/parent lines, and instance lines. The parser extracts rule IDs, severity, and instance messages from the report's own structure.
 
-Report structure:
 ```
 ****************************************
   Report : ...
@@ -98,13 +111,12 @@ Report structure:
         ...
 ```
 
-### Legacy Two-File Mode
+### Legacy Two-File Mode (used by `cluster` with `TEMPLATE_FILE`)
 
 #### LOG_FILE
 
 A text log file where lines containing `N of M` are parsed. The text after the first 4 whitespace-separated fields is used as the message.
 
-Example line:
 ```
 1 of 10 foo bar Signal 'u_top' not found
 ```
@@ -115,7 +127,6 @@ A whitespace-separated file where each line defines a rule.
 - Field 1: `rule_id`
 - Field 4+: Message template
 
-Example line:
 ```
 R001 HIGH INFO Signal 'u_top' not found
 ```
@@ -124,14 +135,58 @@ R001 HIGH INFO Signal 'u_top' not found
 
 Results are written to `subutai_results.json` (or the path given by `--out`).
 
-### Schema Overview
-- `rule_id`: The ID from the report structure (single-file) or template file (legacy), or a generated hash.
-- `representative_pattern`: A sample log line representing the group.
-- `total_count`: Number of logs in this group.
-- `original_logs`: List of all raw log lines belonging to this group.
-- `merged_variants_count`: (AI only) Number of logic groups merged into this super group.
+### Schema (v2)
 
-In single-file mode, `template_file` is omitted from the run metadata.
+The output JSON has this structure:
+
+```json
+{
+  "schema_version": 2,
+  "run": {
+    "timestamp_utc": "2026-02-26T12:00:00Z",
+    "log_file": "report.rpt",
+    "sanity_item": "gca",
+    "counts": { "parsed_logs": 100, "logic_groups": 25, "final_groups": 18 },
+    "ai": { "enabled": true, "backend": "local", "warnings": [] }
+  },
+  "groups": [
+    {
+      "group_type": "logic",
+      "group_id": "CGR_0018::logic::000001",
+      "rule_id": "CGR_0018",
+      "representative_template": "Clock 'clk1' from 'clk2'",
+      "representative_pattern": "'clk1'",
+      "total_count": 3,
+      "merged_variants_count": 1,
+      "original_logs": ["..."]
+    }
+  ]
+}
+```
+
+### Run Metadata Fields
+
+| Field | Presence | Description |
+|---|---|---|
+| `timestamp_utc` | Always | ISO 8601 timestamp |
+| `log_file` | Always | Path to the input file |
+| `template_file` | Legacy two-file mode only | Path to the template file |
+| `sanity_item` | Item-specific subcommands only | Sanity item type (e.g. `"gca"`) |
+| `counts` | Always | Parsed logs, logic groups, and final groups |
+| `ai` | Always | AI clustering status, backend, and warnings |
+
+### Group Fields
+
+| Field | Description |
+|---|---|
+| `group_type` | `"logic"` or `"ai_super"` |
+| `group_id` | Unique ID: `{rule_id}::{type}::{seq}` |
+| `rule_id` | Rule ID from the report or template, or a generated hash |
+| `representative_template` | Representative message template for the group |
+| `representative_pattern` | A sample log line representing the group |
+| `total_count` | Number of logs in this group |
+| `merged_variants_count` | Number of logic groups merged (AI only; 1 for logic groups) |
+| `original_logs` | All raw log lines belonging to this group |
 
 ## AI Clustering
 
@@ -142,9 +197,9 @@ Control AI behavior with `--ai`:
 - `on`: require AI (fails if dependencies are missing)
 - `off`: skip AI stage entirely
 
-### Local Model Usage
+### Local Model
 
-The AIClusterer uses `all-MiniLM-L6-v2` by default, downloaded and cached automatically via sentence-transformers.
+The AI clusterer uses `all-MiniLM-L6-v2` by default, downloaded and cached automatically via sentence-transformers.
 
 ### OpenAI-Compatible Embeddings
 
@@ -162,10 +217,13 @@ Use a remote API for embeddings by creating a `config.json` (see `config.json.ex
 ```
 
 #### Configuration Keys
-- `embeddings_backend`: `openai_compatible` for a remote API, or `local` (default) for local models.
-- `openai_compatible.base_url`: The base URL of the OpenAI-compatible API.
-- `openai_compatible.model`: The model name to use for embeddings.
-- `openai_compatible.api_key`: Your API key. Falls back to the `OPENAI_API_KEY` environment variable if omitted.
+
+| Key | Description |
+|---|---|
+| `embeddings_backend` | `"openai_compatible"` for remote API, or `"local"` (default) |
+| `openai_compatible.base_url` | Base URL of the OpenAI-compatible API |
+| `openai_compatible.model` | Model name for embeddings |
+| `openai_compatible.api_key` | API key (falls back to `OPENAI_API_KEY` env var) |
 
 #### Config Resolution
 
@@ -173,9 +231,8 @@ Use a remote API for embeddings by creating a `config.json` (see `config.json.ex
 2. Otherwise, the tool looks for `config.json` next to the package, then in the current directory.
 3. If no config is found or `embeddings_backend` is invalid, the tool falls back to local embeddings.
 
-Pass `--config` explicitly to avoid current-directory ambiguity:
 ```bash
-sanity-log-parser cluster LOG_FILE TEMPLATE_FILE --config /path/to/config.json
+sanity-log-parser gca REPORT_FILE --config /path/to/config.json
 ```
 
 ## Running Tests
@@ -190,18 +247,25 @@ python -m pytest -q
 ```
 src/
   sanity_log_parser/
-    cli.py              # CLI entry point
-    clustering/         # Logic and AI clustering
-    config/             # Config loading and resolution
-    parsing/            # Log and template parsing
-      __init__.py       # Shared parse_log_file() entry point
+    cli.py                 # CLI entry point, subcommand routing, pipeline
+    console.py             # Colored terminal output
+    patterns.py            # Shared regex patterns
+    view.py                # Report rendering
+    clustering/
+      logic.py             # Logic-based clustering (stage 1)
+      ai/
+        clusterer.py       # AI semantic clustering (stage 2)
+    config/
+      resolution.py        # Config loading and resolution
+    parsing/
+      __init__.py          # parse_log_file() entry point
       primetime_parser.py  # Single-file PrimeTime report parser
       subutai_parser.py    # Legacy two-file parser
       template_manager.py  # Rule template handling
-    results/            # Output schema and writing
-    embeddings/         # Embedding backends
-    patterns.py         # Shared regex patterns
-    view.py             # Report rendering
+    results/
+      schema_v2.py         # Output schema, TypedDicts, read/write
+    embeddings/            # Embedding backends (local, OpenAI-compatible)
+    data/                  # Bundled config files
 tests/
 pyproject.toml
 ```
