@@ -58,5 +58,7 @@ Thumbs.db
 .claude/
 
 # Local working files
+/AGENTS.md
+/AGENTS_AIRGAPPED.md
 /conversation/
 /example/
