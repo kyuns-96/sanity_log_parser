@@ -283,6 +283,7 @@ def _run_pipeline(parsed_logs: list[dict[str, Any]], opts: PipelineOptions) -> i
     ai_clusterer = AIClusterer(
         embeddings_config_file=loaded_embeddings.config_path or "",
         gca_config=gca_config,
+        embed_batch_size=loaded_embeddings.config.embed_batch_size,
     )
     logger.info("[timing] AI clusterer init: %.3fs", time.perf_counter() - t0)
 
