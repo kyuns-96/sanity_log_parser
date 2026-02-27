@@ -197,6 +197,18 @@ Control AI behavior with `--ai`:
 - `on`: require AI (fails if dependencies are missing)
 - `off`: skip AI stage entirely
 
+### Batched Embeddings
+
+All embedding texts across all rules are collected into a single flat batch, then sent to the model in bounded chunks (default 512 texts per chunk). This minimizes HTTP round-trips when using a remote embedding server.
+
+Set `embed_batch_size` in `config.json` to tune chunk size. Use `-v` to see per-chunk timing:
+
+```
+INFO: [timing] embed chunk 1/2 (512 texts): 1.234s
+INFO: [timing] embed chunk 2/2 (88 texts): 0.456s
+INFO: [timing] embeddings total: 600 texts in 2 chunks, 1.690s
+```
+
 ### Local Model
 
 The AI clusterer uses `all-MiniLM-L6-v2` by default, downloaded and cached automatically via sentence-transformers.
@@ -208,6 +220,7 @@ Use a remote API for embeddings by creating a `config.json` (see `config.json.ex
 ```json
 {
   "embeddings_backend": "openai_compatible",
+  "embed_batch_size": 512,
   "openai_compatible": {
     "base_url": "https://api.openai.com/v1",
     "model": "text-embedding-3-small",
@@ -221,6 +234,7 @@ Use a remote API for embeddings by creating a `config.json` (see `config.json.ex
 | Key | Description |
 |---|---|
 | `embeddings_backend` | `"openai_compatible"` for remote API, or `"local"` (default) |
+| `embed_batch_size` | Max texts per embedding API call (default `512`). Tune to find the optimal throughput for your server. |
 | `openai_compatible.base_url` | Base URL of the OpenAI-compatible API |
 | `openai_compatible.model` | Model name for embeddings |
 | `openai_compatible.api_key` | API key (falls back to `OPENAI_API_KEY` env var) |
@@ -234,6 +248,16 @@ Use a remote API for embeddings by creating a `config.json` (see `config.json.ex
 ```bash
 sanity-log-parser gca REPORT_FILE --config /path/to/config.json
 ```
+
+## Performance Profiling
+
+Run with `-v` to see `[timing]` logs for each pipeline stage:
+
+```bash
+sanity-log-parser gca REPORT_FILE -v
+```
+
+Output includes timing for: parsing, config loading, logic clustering, AI clusterer init, embedding chunks, distance matrix per rule, DBSCAN per rule, result writing, and pipeline total.
 
 ## Running Tests
 
@@ -256,7 +280,10 @@ src/
       ai/
         clusterer.py       # AI semantic clustering (stage 2)
     config/
+      embeddings.py        # Embeddings config (backend, batch size)
       resolution.py        # Config loading and resolution
+    gca/
+      config.py            # GCA rule clustering config (weights, eps)
     parsing/
       __init__.py          # parse_log_file() entry point
       primetime_parser.py  # Single-file PrimeTime report parser
