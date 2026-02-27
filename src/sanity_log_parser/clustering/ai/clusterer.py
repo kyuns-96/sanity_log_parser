@@ -433,7 +433,12 @@ def _merge_patterns(patterns: list[str]) -> str:
     """Create a representative pattern from multiple logic group patterns.
 
     Compares variable positions (split by ' / '). Positions where all
-    subgroups agree are kept; positions that differ become '*'.
+    subgroups agree are kept; positions that differ are generalized by
+    finding common prefix/suffix within the quoted values.
+
+    Examples:
+        ["'clk_a' / 'sig'", "'clk_b' / 'sig'"]     → "'clk_*' / 'sig'"
+        ["'u_top/clk_a'", "'u_top/clk_b'"]          → "'u_top/clk_*'"
     """
     if len(patterns) == 1:
         return patterns[0]
@@ -445,10 +450,54 @@ def _merge_patterns(patterns: list[str]) -> str:
     for i in range(max_len):
         values: set[str] = set()
         for s in split:
-            values.add(s[i] if i < len(s) else "*")
-        merged.append(values.pop() if len(values) == 1 else "*")
+            values.add(s[i] if i < len(s) else "")
+        values.discard("")
+        if len(values) == 1:
+            merged.append(values.pop())
+        else:
+            merged.append(_generalize_values(sorted(values)))
 
     return " / ".join(merged)
+
+
+def _generalize_values(values: list[str]) -> str:
+    """Generalize differing quoted variable values into a glob pattern.
+
+    Finds common prefix/suffix within the quoted content so that
+    "'u_top/clk_a'" and "'u_top/clk_b'" become "'u_top/clk_*'" rather
+    than just "'*'".
+    """
+    if not values:
+        return "*"
+
+    all_quoted = all(v.startswith("'") and v.endswith("'") for v in values)
+    inner = [v[1:-1] for v in values] if all_quoted else list(values)
+
+    prefix = inner[0]
+    for s in inner[1:]:
+        while not s.startswith(prefix):
+            prefix = prefix[:-1]
+            if not prefix:
+                break
+
+    suffix = inner[0]
+    for s in inner[1:]:
+        while not s.endswith(suffix):
+            suffix = suffix[1:]
+            if not suffix:
+                break
+
+    # Avoid overlap between prefix and suffix
+    min_len = min(len(s) for s in inner)
+    if len(prefix) + len(suffix) > min_len:
+        suffix = ""
+
+    if prefix or suffix:
+        glob = f"{prefix}*{suffix}"
+    else:
+        glob = "*"
+
+    return f"'{glob}'" if all_quoted else glob
 
 
 def _prepare_embedding_components(
