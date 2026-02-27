@@ -462,54 +462,45 @@ def _compute_distance_matrix(
     rule_config: GcaRuleConfig,
     default_variable_weight: float,
 ) -> Any:
-    """Build NxN distance matrix with per-pair renormalization.
-
-    Uses scipy.cdist (C-level vectorized, numerically identical to per-pair
-    cosine_distance) plus numpy broadcasting for weight accumulation.
-    """
+    """Build NxN distance matrix with per-pair renormalization."""
     import numpy as np
-    from scipy.spatial.distance import cdist
+    from scipy.spatial.distance import cosine as cosine_distance
 
-    template_dist = cdist(
-        np.asarray(template_embs), np.asarray(template_embs), metric="cosine"
-    )
+    d = np.zeros((n, n))
+    for a in range(n):
+        for b in range(a + 1, n):
+            active_weights: list[float] = []
+            active_distances: list[float] = []
 
-    # Accumulate weighted and unweighted distance sums
-    w_t = rule_config.template_weight
-    weight_sum = np.full((n, n), w_t)
-    weighted_dist = w_t * template_dist
-    unweighted_dist = template_dist.copy()
-    n_active = np.ones((n, n))
+            # Template: always active
+            active_weights.append(rule_config.template_weight)
+            active_distances.append(
+                float(cosine_distance(template_embs[a], template_embs[b]))
+            )
 
-    for i, (embs_i, mask_i) in enumerate(var_embeddings):
-        var_cfg = rule_config.variables.get(
-            i, VariableConfig(weight=default_variable_weight)
-        )
-        w = var_cfg.weight
-        mask_arr = np.asarray(mask_i, dtype=bool)
-        active = np.outer(mask_arr, mask_arr)
+            # Variables: active only if BOTH groups have non-empty text
+            for i, (embs_i, mask_i) in enumerate(var_embeddings):
+                if mask_i[a] and mask_i[b]:
+                    var_cfg = rule_config.variables.get(
+                        i, VariableConfig(weight=default_variable_weight)
+                    )
+                    active_weights.append(var_cfg.weight)
+                    active_distances.append(
+                        float(cosine_distance(embs_i[a], embs_i[b]))
+                    )
 
-        var_dist = cdist(
-            np.asarray(embs_i), np.asarray(embs_i), metric="cosine"
-        )
+            # Per-pair normalization
+            total = sum(active_weights)
+            if total == 0:
+                n_active = len(active_weights)
+                normalized = [1.0 / n_active] * n_active if n_active > 0 else []
+            else:
+                normalized = [w / total for w in active_weights]
 
-        weight_sum += active * w
-        weighted_dist += active * w * var_dist
-        unweighted_dist += active * var_dist
-        n_active += active
+            d[a][b] = d[b][a] = sum(
+                w * dist for w, dist in zip(normalized, active_distances)
+            )
 
-    # Per-pair normalization: use weighted when weight_sum > 0,
-    # else uniform (mean of active distances)
-    zero_mask = weight_sum == 0
-    safe_weight_sum = np.where(zero_mask, 1.0, weight_sum)
-    safe_n_active = np.where(n_active == 0, 1.0, n_active)
-
-    d = np.where(
-        zero_mask,
-        unweighted_dist / safe_n_active,
-        weighted_dist / safe_weight_sum,
-    )
-    np.fill_diagonal(d, 0.0)
     return d
 
 
