@@ -21,6 +21,8 @@ from sanity_log_parser.embeddings.openai_compat import (
 
 logger = logging.getLogger(__name__)
 
+_EMBED_BATCH_SIZE = 512
+
 SentenceTransformerFactory: Any | None = None
 DBSCANFactory: Any | None = None
 sentence_transformers_available = False
@@ -111,6 +113,8 @@ class AIClusterer:
         final_output: list[dict[str, Any]] = []
         group_counter = 0
 
+        # Phase 1: Handle single groups, collect multi-group rules
+        multi_rules: dict[str, list[dict[str, Any]]] = {}
         for rule_id, rule_groups in groups_by_rule.items():
             if len(rule_groups) < 2:
                 for lg in rule_groups:
@@ -119,20 +123,39 @@ class AIClusterer:
                         self._build_single_group(rule_id, lg, group_counter)
                     )
                 continue
+            multi_rules[rule_id] = rule_groups
 
-            templates = [lg["template"] for lg in rule_groups]
-            embeddings = self._compute_embeddings(templates)
-            if embeddings is None:
-                logger.warning(
-                    "Embeddings failed for rule '%s'; keeping unclustered groups.",
-                    rule_id,
-                )
+        if not multi_rules:
+            final_output.sort(key=lambda g: g["total_count"], reverse=True)
+            return final_output
+
+        # Phase 2: Collect all templates into one flat batch
+        batch_texts: list[str] = []
+        template_index: dict[str, tuple[int, int]] = {}
+        for rule_id, rule_groups in multi_rules.items():
+            t_start = len(batch_texts)
+            batch_texts.extend(lg["template"] for lg in rule_groups)
+            template_index[rule_id] = (t_start, len(batch_texts))
+
+        # Phase 3: Batch embed, then slice and cluster
+        all_embs = self._compute_embeddings_batched(batch_texts)
+        if all_embs is None:
+            logger.warning(
+                "Embeddings failed for %d rules; keeping all groups unclustered.",
+                len(multi_rules),
+            )
+            for rule_id, rule_groups in multi_rules.items():
                 for lg in rule_groups:
                     group_counter += 1
                     final_output.append(
                         self._build_single_group(rule_id, lg, group_counter)
                     )
-                continue
+            final_output.sort(key=lambda g: g["total_count"], reverse=True)
+            return final_output
+
+        for rule_id, rule_groups in multi_rules.items():
+            t_start, t_end = template_index[rule_id]
+            embeddings = all_embs[t_start:t_end]
 
             clustering = DBSCANFactory(
                 eps=0.2,
@@ -160,6 +183,8 @@ class AIClusterer:
         final_output: list[dict[str, Any]] = []
         group_counter = 0
 
+        # Phase 1: Handle single groups, prepare components for multi-group rules
+        prepared: dict[str, tuple[GcaRuleConfig, list[dict[str, Any]]]] = {}
         for rule_id, rule_groups in groups_by_rule.items():
             if len(rule_groups) < 2:
                 for lg in rule_groups:
@@ -168,79 +193,90 @@ class AIClusterer:
                         self._build_single_group(rule_id, lg, group_counter)
                     )
                 continue
-
             rule_config = get_gca_rule_config(self.gca_config, rule_id)
             components = _prepare_embedding_components(
                 rule_groups, rule_config, self.gca_config.default_variable_weight
             )
+            prepared[rule_id] = (rule_config, components)
 
-            # Batch-embed per component position
-            n = len(rule_groups)
-            template_texts = [c["template"] for c in components]
-            template_embs = self._compute_embeddings(template_texts)
-            if template_embs is None:
-                logger.warning(
-                    "Embeddings failed for rule '%s'; keeping unclustered groups.",
-                    rule_id,
-                )
-                for lg in rule_groups:
+        if not prepared:
+            final_output.sort(key=lambda g: g["total_count"], reverse=True)
+            return final_output
+
+        # Phase 2: Collect all texts into one flat batch with index tracking
+        batch_texts: list[str] = []
+        template_index: dict[str, tuple[int, int]] = {}
+        var_index: dict[str, list[tuple[int, int, list[bool]]]] = {}
+
+        for rule_id, (rule_config, components) in prepared.items():
+            # Templates
+            t_start = len(batch_texts)
+            batch_texts.extend(c["template"] for c in components)
+            template_index[rule_id] = (t_start, len(batch_texts))
+
+            # Variables per position
+            max_vars = max(len(c["variables"]) for c in components)
+            var_index[rule_id] = []
+            for i in range(max_vars):
+                v_start = len(batch_texts)
+                mask: list[bool] = []
+                for c in components:
+                    if i < len(c["variables"]) and c["variables"][i].strip():
+                        batch_texts.append(c["variables"][i])
+                        mask.append(True)
+                    else:
+                        batch_texts.append("_")
+                        mask.append(False)
+                var_index[rule_id].append((v_start, len(batch_texts), mask))
+
+        # Phase 3: Batch embed, then slice and cluster
+        all_embs = self._compute_embeddings_batched(batch_texts)
+        if all_embs is None:
+            logger.warning(
+                "Embeddings failed for %d rules; keeping all groups unclustered.",
+                len(prepared),
+            )
+            for rule_id in prepared:
+                for lg in groups_by_rule[rule_id]:
                     group_counter += 1
                     final_output.append(
                         self._build_single_group(rule_id, lg, group_counter)
                     )
-                continue
+            final_output.sort(key=lambda g: g["total_count"], reverse=True)
+            return final_output
 
-            max_vars = max(len(c["variables"]) for c in components)
+        for rule_id in prepared:
+            rule_config, components = prepared[rule_id]
+            n = len(components)
+
+            t_start, t_end = template_index[rule_id]
+            template_embs = all_embs[t_start:t_end]
+
             var_embeddings: list[tuple[Any, list[bool]]] = []
-            for i in range(max_vars):
-                texts: list[str] = []
-                active_mask: list[bool] = []
-                for c in components:
-                    if i < len(c["variables"]) and c["variables"][i].strip():
-                        texts.append(c["variables"][i])
-                        active_mask.append(True)
-                    else:
-                        texts.append("_")
-                        active_mask.append(False)
-                embs = self._compute_embeddings(texts)
-                if embs is None:
-                    logger.warning(
-                        "Variable embeddings failed for rule '%s'; keeping unclustered.",
-                        rule_id,
-                    )
-                    break
-                var_embeddings.append((embs, active_mask))
-            else:
-                # All embeddings succeeded — compute distance matrix
-                distance_matrix = _compute_distance_matrix(
-                    n,
-                    template_embs,
-                    var_embeddings,
-                    rule_config,
-                    self.gca_config.default_variable_weight,
-                )
+            for v_start, v_end, mask in var_index[rule_id]:
+                var_embeddings.append((all_embs[v_start:v_end], mask))
 
-                clustering = DBSCANFactory(
-                    eps=rule_config.eps,
-                    min_samples=1,
-                    metric="precomputed",
-                ).fit(distance_matrix)
+            distance_matrix = _compute_distance_matrix(
+                n,
+                template_embs,
+                var_embeddings,
+                rule_config,
+                self.gca_config.default_variable_weight,
+            )
 
-                new_groups, group_counter = self._build_cluster_results(
-                    rule_id,
-                    clustering.labels_,
-                    rule_groups,
-                    group_counter,
-                )
-                final_output.extend(new_groups)
-                continue
+            clustering = DBSCANFactory(
+                eps=rule_config.eps,
+                min_samples=1,
+                metric="precomputed",
+            ).fit(distance_matrix)
 
-            # Fallback: embeddings failed partway
-            for lg in rule_groups:
-                group_counter += 1
-                final_output.append(
-                    self._build_single_group(rule_id, lg, group_counter)
-                )
+            new_groups, group_counter = self._build_cluster_results(
+                rule_id,
+                clustering.labels_,
+                groups_by_rule[rule_id],
+                group_counter,
+            )
+            final_output.extend(new_groups)
 
         final_output.sort(key=lambda g: g["total_count"], reverse=True)
         return final_output
@@ -276,6 +312,23 @@ class AIClusterer:
         if self.model is None:
             return None
         return self.model.encode(inputs, batch_size=128, show_progress_bar=False)
+
+    def _compute_embeddings_batched(self, texts: list[str]) -> Any | None:
+        """Embed texts in bounded chunks, concatenate into one ndarray."""
+        import numpy as np
+
+        if not texts:
+            return np.empty((0, 0))
+
+        chunks: list[Any] = []
+        for start in range(0, len(texts), _EMBED_BATCH_SIZE):
+            chunk = texts[start : start + _EMBED_BATCH_SIZE]
+            result = self._compute_embeddings(chunk)
+            if result is None:
+                return None
+            chunks.append(np.asarray(result))
+
+        return np.vstack(chunks)
 
     def _build_cluster_results(
         self,
