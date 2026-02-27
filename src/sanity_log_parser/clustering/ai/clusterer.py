@@ -412,13 +412,14 @@ class AIClusterer:
                 for sub in data["logic_subgroups"]
                 for member in sub["members"]
             ]
+            patterns = [sub["pattern"] for sub in data["logic_subgroups"]]
             results.append(
                 {
                     "type": "AISuperGroup",
                     "super_group_id": key,
                     "rule_id": rule_id,
                     "representative_template": main["template"],
-                    "representative_pattern": main["pattern"],
+                    "representative_pattern": _merge_patterns(patterns),
                     "total_count": data["total_count"],
                     "merged_variants_count": len(data["logic_subgroups"]),
                     "original_logs": all_raw_logs,
@@ -426,6 +427,28 @@ class AIClusterer:
             )
 
         return results, counter
+
+
+def _merge_patterns(patterns: list[str]) -> str:
+    """Create a representative pattern from multiple logic group patterns.
+
+    Compares variable positions (split by ' / '). Positions where all
+    subgroups agree are kept; positions that differ become '*'.
+    """
+    if len(patterns) == 1:
+        return patterns[0]
+
+    split = [p.split(" / ") for p in patterns]
+    max_len = max(len(s) for s in split)
+
+    merged: list[str] = []
+    for i in range(max_len):
+        values: set[str] = set()
+        for s in split:
+            values.add(s[i] if i < len(s) else "*")
+        merged.append(values.pop() if len(values) == 1 else "*")
+
+    return " / ".join(merged)
 
 
 def _prepare_embedding_components(
