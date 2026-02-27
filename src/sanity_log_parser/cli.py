@@ -6,6 +6,7 @@ import datetime
 import logging
 import os
 import sys
+import time
 from typing import Any, cast, Literal
 
 from .config.resolution import (
@@ -22,6 +23,8 @@ from .results.schema_v2 import (
     write_results_v2,
 )
 from .view import print_report
+
+logger = logging.getLogger(__name__)
 
 
 class ParseError(Exception):
@@ -235,6 +238,7 @@ def _build_final_groups(results: list[dict[str, object]]) -> list[Group]:
 
 def _run_pipeline(parsed_logs: list[dict[str, Any]], opts: PipelineOptions) -> int:
     """Run the clustering pipeline: config → logic cluster → AI cluster → write."""
+    pipeline_t0 = time.perf_counter()
     console = Console(use_color=False if opts.no_color else None)
 
     logging.basicConfig(
@@ -242,6 +246,7 @@ def _run_pipeline(parsed_logs: list[dict[str, Any]], opts: PipelineOptions) -> i
         format="%(levelname)s: %(message)s",
     )
 
+    t0 = time.perf_counter()
     loaded_embeddings = load_resolved_embeddings_config(
         embeddings_config_arg=opts.embeddings_config,
     )
@@ -265,16 +270,23 @@ def _run_pipeline(parsed_logs: list[dict[str, Any]], opts: PipelineOptions) -> i
             "Warning: --rule-config is only supported by the 'gca' subcommand; ignoring.",
             file=sys.stderr,
         )
+    logger.info("[timing] config loading: %.3fs", time.perf_counter() - t0)
 
+    t0 = time.perf_counter()
     logic_results = cast(list[dict[str, object]], LogicClusterer().run(parsed_logs))
+    logger.info("[timing] logic clustering: %.3fs", time.perf_counter() - t0)
     console.section("📊 Stage 1 - Logic Clustering (Original Method - Variables Only):")
     console.kv("Input logs", f"{len(parsed_logs):,}")
     console.kv("Output groups", f"{len(logic_results):,}")
 
+    t0 = time.perf_counter()
     ai_clusterer = AIClusterer(
         embeddings_config_file=loaded_embeddings.config_path or "",
         gca_config=gca_config,
     )
+    logger.info("[timing] AI clusterer init: %.3fs", time.perf_counter() - t0)
+
+    t0 = time.perf_counter()
     results, ai_enabled, ai_backend = _run_ai_stage(
         opts.ai_mode,
         ai_clusterer,
@@ -282,8 +294,11 @@ def _run_pipeline(parsed_logs: list[dict[str, Any]], opts: PipelineOptions) -> i
         loaded_embeddings,
         console,
     )
+    logger.info("[timing] AI clustering total: %.3fs", time.perf_counter() - t0)
 
+    t0 = time.perf_counter()
     final_groups = _build_final_groups(results)
+    logger.info("[timing] build final groups: %.3fs", time.perf_counter() - t0)
 
     run_meta: RunMetadata = {
         "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).strftime(
@@ -304,10 +319,13 @@ def _run_pipeline(parsed_logs: list[dict[str, Any]], opts: PipelineOptions) -> i
         },
     }
 
+    t0 = time.perf_counter()
     write_results_v2(
         path=opts.out, run=run_meta, groups=final_groups, indent=opts.json_indent
     )
+    logger.info("[timing] write results: %.3fs", time.perf_counter() - t0)
 
+    logger.info("[timing] pipeline total: %.3fs", time.perf_counter() - pipeline_t0)
     console.section("✅ Final Results")
     console.kv("Groups Created", f"{len(final_groups):,}")
     console.info(f"💾 Results saved to '{opts.out}'.")
@@ -329,7 +347,9 @@ def _run_cluster(args: argparse.Namespace) -> int:
         template_file=cast(str | None, args.template_file),
     )
     try:
+        t0 = time.perf_counter()
         parsed_logs = _validate_and_parse(opts.log_file, opts.template_file)
+        logger.info("[timing] parsing: %.3fs", time.perf_counter() - t0)
     except ParseError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -352,7 +372,9 @@ def _run_gca(args: argparse.Namespace) -> int:
         sanity_item="gca",
     )
     try:
+        t0 = time.perf_counter()
         parsed_logs = _validate_and_parse(opts.log_file, opts.template_file)
+        logger.info("[timing] parsing: %.3fs", time.perf_counter() - t0)
     except ParseError as exc:
         print(str(exc), file=sys.stderr)
         return 1
