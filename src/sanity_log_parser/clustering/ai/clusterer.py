@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from importlib import import_module
 from typing import Any, Protocol, cast
@@ -429,75 +430,81 @@ class AIClusterer:
         return results, counter
 
 
+_SLOT_SPLIT_RE = re.compile(r"\s+/\s+")
+_MAX_ALT_SEG = 4
+_MAX_ALT_SLOT = 6
+
+
 def _merge_patterns(patterns: list[str]) -> str:
     """Create a representative pattern from multiple logic group patterns.
 
-    Compares variable positions (split by ' / '). Positions where all
-    subgroups agree are kept; positions that differ are generalized by
-    finding common prefix/suffix within the quoted values.
+    Performs structural merge at the path-segment level to avoid
+    double-wildcarding already-wildcarded patterns.
 
     Examples:
-        ["'clk_a' / 'sig'", "'clk_b' / 'sig'"]     → "'clk_*' / 'sig'"
-        ["'u_top/clk_a'", "'u_top/clk_b'"]          → "'u_top/clk_*'"
+        ["'u_top/clk_gen_*' / 'master_*'",
+         "'u_top/sig_out_*' / 'master_*'"]
+        → "'u_top/{clk_gen_*|sig_out_*}' / 'master_*'"
     """
     if len(patterns) == 1:
         return patterns[0]
 
-    split = [p.split(" / ") for p in patterns]
-    max_len = max(len(s) for s in split)
+    pats = [p for p in patterns if p and p != "NO_VAR"]
+    if not pats:
+        return "NO_VAR"
 
-    merged: list[str] = []
-    for i in range(max_len):
-        values: set[str] = set()
-        for s in split:
-            values.add(s[i] if i < len(s) else "")
-        values.discard("")
-        if len(values) == 1:
-            merged.append(values.pop())
+    split = [_SLOT_SPLIT_RE.split(p.strip()) for p in pats]
+    slot_count = max(len(s) for s in split)
+    split = [s + ["NO_VAR"] * (slot_count - len(s)) for s in split]
+
+    merged_slots: list[str] = []
+    for i in range(slot_count):
+        vals = [s[i] for s in split if s[i] != "NO_VAR"]
+        if not vals:
+            merged_slots.append("NO_VAR")
         else:
-            merged.append(_generalize_values(sorted(values)))
+            merged_slots.append(_merge_slot(vals))
 
-    return " / ".join(merged)
+    return " / ".join(merged_slots)
 
 
-def _generalize_values(values: list[str]) -> str:
-    """Generalize differing quoted variable values into a glob pattern.
+def _merge_slot(values: list[str]) -> str:
+    """Merge a single variable-position slot across subgroups."""
+    cores: list[str] = []
+    quotes: list[str] = []
+    for v in values:
+        v = v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+            cores.append(v[1:-1])
+            quotes.append(v[0])
+        else:
+            cores.append(v)
 
-    Finds common prefix/suffix within the quoted content so that
-    "'u_top/clk_a'" and "'u_top/clk_b'" become "'u_top/clk_*'" rather
-    than just "'*'".
-    """
-    if not values:
-        return "*"
+    quote = quotes[0] if quotes and len(set(quotes)) == 1 else ""
 
-    all_quoted = all(v.startswith("'") and v.endswith("'") for v in values)
-    inner = [v[1:-1] for v in values] if all_quoted else list(values)
-
-    prefix = inner[0]
-    for s in inner[1:]:
-        while not s.startswith(prefix):
-            prefix = prefix[:-1]
-            if not prefix:
-                break
-
-    suffix = inner[0]
-    for s in inner[1:]:
-        while not s.endswith(suffix):
-            suffix = suffix[1:]
-            if not suffix:
-                break
-
-    # Avoid overlap between prefix and suffix
-    min_len = min(len(s) for s in inner)
-    if len(prefix) + len(suffix) > min_len:
-        suffix = ""
-
-    if prefix or suffix:
-        glob = f"{prefix}*{suffix}"
+    unique = list(dict.fromkeys(cores))  # dedupe, preserve order
+    if len(unique) == 1:
+        merged_core = unique[0]
     else:
-        glob = "*"
+        seg_lists = [u.split("/") for u in unique]
+        if all(len(s) == len(seg_lists[0]) for s in seg_lists):
+            merged_core = "/".join(
+                _merge_atom(list(col)) for col in zip(*seg_lists)
+            )
+        else:
+            merged_core = _merge_atom(unique, max_alt=_MAX_ALT_SLOT)
 
-    return f"'{glob}'" if all_quoted else glob
+    return f"{quote}{merged_core}{quote}" if quote else merged_core
+
+
+def _merge_atom(values: list[str], max_alt: int = _MAX_ALT_SEG) -> str:
+    """Merge a single path segment or slot into one representative value."""
+    unique = list(dict.fromkeys(values))
+    if len(unique) == 1:
+        return unique[0]
+    if len(unique) <= max_alt:
+        return "{" + "|".join(unique) + "}"
+    return "*"
 
 
 def _prepare_embedding_components(

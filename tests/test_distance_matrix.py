@@ -112,44 +112,63 @@ def test_merge_patterns_single() -> None:
 
 def test_merge_patterns_identical() -> None:
     """Identical patterns merge to the same pattern."""
-    assert _merge_patterns(["'clk1' / 'sig_a'", "'clk1' / 'sig_a'"]) == "'clk1' / 'sig_a'"
-
-
-def test_merge_patterns_common_prefix() -> None:
-    """Differing positions use common prefix glob."""
-    result = _merge_patterns(["'clk_a' / 'sig_x'", "'clk_b' / 'sig_x'"])
-    assert result == "'clk_*' / 'sig_x'"
-
-
-def test_merge_patterns_hierarchical_path() -> None:
-    """Common path prefix is preserved."""
-    result = _merge_patterns(["'u_top/clk_a'", "'u_top/clk_b'"])
-    assert result == "'u_top/clk_*'"
-
-
-def test_merge_patterns_common_suffix() -> None:
-    """Common suffix is preserved."""
-    result = _merge_patterns(["'master_clk'", "'slave_clk'"])
-    assert result == "'*_clk'"
-
-
-def test_merge_patterns_no_common() -> None:
-    """No common prefix/suffix falls back to '*'."""
-    result = _merge_patterns(["'abc'", "'xyz'"])
-    assert result == "'*'"
-
-
-def test_merge_patterns_multi_position_mixed() -> None:
-    """Mixed: one position matches, another differs with common prefix."""
-    result = _merge_patterns(
-        ["'u_top/sig_a' / 'clk1'", "'u_top/sig_b' / 'clk1'"]
+    assert (
+        _merge_patterns(["'clk1' / 'sig_a'", "'clk1' / 'sig_a'"])
+        == "'clk1' / 'sig_a'"
     )
-    assert result == "'u_top/sig_*' / 'clk1'"
+
+
+def test_merge_patterns_path_segment_merge() -> None:
+    """Differing path segments show alternatives."""
+    result = _merge_patterns([
+        "'u_top/clk_gen_*' / 'master_*'",
+        "'u_top/sig_out_*' / 'master_*'",
+    ])
+    assert result == "'u_top/{clk_gen_*|sig_out_*}' / 'master_*'"
+
+
+def test_merge_patterns_single_segment_alternatives() -> None:
+    """Single-segment slots list alternatives."""
+    result = _merge_patterns(["'clk_a'", "'clk_b'"])
+    assert result == "'{clk_a|clk_b}'"
+
+
+def test_merge_patterns_matching_slot_kept() -> None:
+    """Matching slot stays, differing slot shows alternatives."""
+    result = _merge_patterns([
+        "'u_top/sig_a' / 'clk1'",
+        "'u_top/sig_b' / 'clk1'",
+    ])
+    assert result == "'u_top/{sig_a|sig_b}' / 'clk1'"
+
+
+def test_merge_patterns_all_segments_differ() -> None:
+    """All path segments differ → alternatives at each level."""
+    result = _merge_patterns([
+        "'u_*/clk_gen_*' / 'master_*'",
+        "'u_*/sig_out_*' / 'slave_*'",
+    ])
+    assert result == "'u_*/{clk_gen_*|sig_out_*}' / '{master_*|slave_*}'"
 
 
 def test_merge_patterns_three_subgroups() -> None:
-    """Three subgroups: common prefix across all three."""
-    result = _merge_patterns(
-        ["'clk_gen_a' / 'sig'", "'clk_gen_b' / 'sig'", "'clk_gen_c' / 'sig'"]
-    )
-    assert result == "'clk_gen_*' / 'sig'"
+    """Three subgroups: alternatives list all variants."""
+    result = _merge_patterns([
+        "'u_top/clk_a' / 'sig'",
+        "'u_top/clk_b' / 'sig'",
+        "'u_top/clk_c' / 'sig'",
+    ])
+    assert result == "'u_top/{clk_a|clk_b|clk_c}' / 'sig'"
+
+
+def test_merge_patterns_too_many_alternatives_becomes_star() -> None:
+    """More than max_alt unique segments collapse to '*'."""
+    result = _merge_patterns([
+        f"'seg_{i}'" for i in range(10)
+    ])
+    assert result == "'*'"
+
+
+def test_merge_patterns_no_var() -> None:
+    """NO_VAR patterns return NO_VAR."""
+    assert _merge_patterns(["NO_VAR", "NO_VAR"]) == "NO_VAR"
