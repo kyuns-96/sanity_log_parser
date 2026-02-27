@@ -231,3 +231,29 @@ class TestBatchChunking:
         )
         total = sum(g["total_count"] for g in result)
         assert total == 300 * 3
+
+    def test_custom_batch_size_from_config(self) -> None:
+        """Custom embed_batch_size splits at the configured boundary."""
+        clusterer = _make_clusterer(gca_config=None)
+        clusterer.embed_batch_size = 4  # very small batch
+        clusterer._compute_embeddings = MagicMock(side_effect=_fake_embed)
+
+        # 5 rules x 2 groups = 10 template texts → ceil(10/4) = 3 chunks
+        groups = []
+        for i in range(5):
+            groups.append(
+                _make_logic_group(f"R{i}", f"tmpl_{i}_a", f"'v{i}a' rest", count=2)
+            )
+            groups.append(
+                _make_logic_group(f"R{i}", f"tmpl_{i}_b", f"'v{i}b' rest", count=1)
+            )
+
+        result = clusterer.run(groups)
+
+        expected_calls = math.ceil(10 / 4)
+        call_count = clusterer._compute_embeddings.call_count
+        assert call_count == expected_calls, (
+            f"Expected {expected_calls} embed calls for batch_size=4, got {call_count}"
+        )
+        total = sum(g["total_count"] for g in result)
+        assert total == 15

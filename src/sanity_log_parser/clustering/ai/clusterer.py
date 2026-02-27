@@ -51,11 +51,13 @@ class AIClusterer:
         model_path: str = "all-MiniLM-L6-v2",
         embeddings_config_file: str = "config.json",
         gca_config: GcaConfig | None = None,
+        embed_batch_size: int = _EMBED_BATCH_SIZE,
     ) -> None:
         self.model: _SentenceModelLike | None = None
         self.remote_embeddings_client: OpenAICompatibleEmbeddingsClient | None = None
         self.ai_available: bool = False
         self.gca_config = gca_config
+        self.embed_batch_size = embed_batch_size
 
         embeddings_config = load_embeddings_config(
             config_path=embeddings_config_file,
@@ -357,17 +359,18 @@ class AIClusterer:
         if not texts:
             return np.empty((0, 0))
 
+        batch_size = self.embed_batch_size
         t0 = time.perf_counter()
         n_chunks = 0
         chunks: list[Any] = []
-        for start in range(0, len(texts), _EMBED_BATCH_SIZE):
-            chunk = texts[start : start + _EMBED_BATCH_SIZE]
+        for start in range(0, len(texts), batch_size):
+            chunk = texts[start : start + batch_size]
             chunk_t0 = time.perf_counter()
             result = self._compute_embeddings(chunk)
             logger.info(
                 "[timing] embed chunk %d/%d (%d texts): %.3fs",
-                start // _EMBED_BATCH_SIZE + 1,
-                -(-len(texts) // _EMBED_BATCH_SIZE),  # ceil division
+                start // batch_size + 1,
+                -(-len(texts) // batch_size),  # ceil division
                 len(chunk),
                 time.perf_counter() - chunk_t0,
             )

@@ -20,6 +20,7 @@ class OpenAICompatibleConfig:
 class EmbeddingsConfig:
     backend: str
     openai_compatible: OpenAICompatibleConfig | None
+    embed_batch_size: int = 512
 
 
 def load_embeddings_config(
@@ -34,6 +35,11 @@ def load_embeddings_config(
     if backend not in _SUPPORTED_EMBEDDINGS_BACKENDS:
         _warn(warn, f"Invalid embeddings_backend '{backend}'. Falling back to 'local'.")
         backend = "local"
+
+    embed_batch_size = _as_positive_int(raw_config.get("embed_batch_size"), default=512)
+    if embed_batch_size < 1:
+        _warn(warn, f"Invalid embed_batch_size {embed_batch_size}. Using default 512.")
+        embed_batch_size = 512
 
     openai_config = raw_config.get("openai_compatible")
     openai_data = openai_config if isinstance(openai_config, dict) else {}
@@ -57,9 +63,12 @@ def load_embeddings_config(
             openai_compatible=OpenAICompatibleConfig(
                 base_url=base_url, model=model, api_key=api_key
             ),
+            embed_batch_size=embed_batch_size,
         )
 
-    return EmbeddingsConfig(backend="local", openai_compatible=None)
+    return EmbeddingsConfig(
+        backend="local", openai_compatible=None, embed_batch_size=embed_batch_size
+    )
 
 
 def _load_json_config(
@@ -102,3 +111,9 @@ def _as_optional_string(value: Any) -> str | None:
         trimmed = value.strip()
         return trimmed if trimmed else None
     return None
+
+
+def _as_positive_int(value: Any, default: int) -> int:
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return default
