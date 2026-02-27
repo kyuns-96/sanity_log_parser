@@ -115,25 +115,41 @@ def test_merge_patterns_identical() -> None:
     assert _merge_patterns(["'clk1' / 'sig_a'", "'clk1' / 'sig_a'"]) == "'clk1' / 'sig_a'"
 
 
-def test_merge_patterns_differing_positions() -> None:
-    """Differing positions become '*'."""
-    result = _merge_patterns(["'clk1' / 'sig_a'", "'clk2' / 'sig_a'"])
-    assert result == "* / 'sig_a'"
+def test_merge_patterns_common_prefix() -> None:
+    """Differing positions use common prefix glob."""
+    result = _merge_patterns(["'clk_a' / 'sig_x'", "'clk_b' / 'sig_x'"])
+    assert result == "'clk_*' / 'sig_x'"
 
 
-def test_merge_patterns_all_differ() -> None:
-    """All positions differ → all become '*'."""
-    result = _merge_patterns(["'clk1' / 'sig_a'", "'clk2' / 'sig_b'"])
-    assert result == "* / *"
+def test_merge_patterns_hierarchical_path() -> None:
+    """Common path prefix is preserved."""
+    result = _merge_patterns(["'u_top/clk_a'", "'u_top/clk_b'"])
+    assert result == "'u_top/clk_*'"
 
 
-def test_merge_patterns_different_lengths() -> None:
-    """Shorter patterns get '*' for missing positions."""
-    result = _merge_patterns(["'a' / 'b' / 'c'", "'a' / 'b'"])
-    assert result == "'a' / 'b' / *"
+def test_merge_patterns_common_suffix() -> None:
+    """Common suffix is preserved."""
+    result = _merge_patterns(["'master_clk'", "'slave_clk'"])
+    assert result == "'*_clk'"
+
+
+def test_merge_patterns_no_common() -> None:
+    """No common prefix/suffix falls back to '*'."""
+    result = _merge_patterns(["'abc'", "'xyz'"])
+    assert result == "'*'"
+
+
+def test_merge_patterns_multi_position_mixed() -> None:
+    """Mixed: one position matches, another differs with common prefix."""
+    result = _merge_patterns(
+        ["'u_top/sig_a' / 'clk1'", "'u_top/sig_b' / 'clk1'"]
+    )
+    assert result == "'u_top/sig_*' / 'clk1'"
 
 
 def test_merge_patterns_three_subgroups() -> None:
-    """Three subgroups: position matches only if all three agree."""
-    result = _merge_patterns(["'x' / 'y'", "'x' / 'z'", "'x' / 'y'"])
-    assert result == "'x' / *"
+    """Three subgroups: common prefix across all three."""
+    result = _merge_patterns(
+        ["'clk_gen_a' / 'sig'", "'clk_gen_b' / 'sig'", "'clk_gen_c' / 'sig'"]
+    )
+    assert result == "'clk_gen_*' / 'sig'"
