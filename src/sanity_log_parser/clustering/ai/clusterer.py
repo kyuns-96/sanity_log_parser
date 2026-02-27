@@ -455,17 +455,6 @@ def _prepare_embedding_components(
     return components
 
 
-def _cosine_distance_matrix(embs: Any) -> Any:
-    """Compute NxN cosine distance matrix via vectorized dot product."""
-    import numpy as np
-
-    embs = np.asarray(embs, dtype=np.float64)
-    norms = np.linalg.norm(embs, axis=1, keepdims=True)
-    norms = np.where(norms == 0, 1.0, norms)
-    normed = embs / norms
-    return np.clip(1.0 - normed @ normed.T, 0.0, 2.0)
-
-
 def _compute_distance_matrix(
     n: int,
     template_embs: Any,
@@ -475,11 +464,15 @@ def _compute_distance_matrix(
 ) -> Any:
     """Build NxN distance matrix with per-pair renormalization.
 
-    Uses vectorized numpy matrix ops instead of per-pair Python loops.
+    Uses scipy.cdist (C-level vectorized, numerically identical to per-pair
+    cosine_distance) plus numpy broadcasting for weight accumulation.
     """
     import numpy as np
+    from scipy.spatial.distance import cdist
 
-    template_dist = _cosine_distance_matrix(template_embs)
+    template_dist = cdist(
+        np.asarray(template_embs), np.asarray(template_embs), metric="cosine"
+    )
 
     # Accumulate weighted and unweighted distance sums
     w_t = rule_config.template_weight
@@ -496,7 +489,9 @@ def _compute_distance_matrix(
         mask_arr = np.asarray(mask_i, dtype=bool)
         active = np.outer(mask_arr, mask_arr)
 
-        var_dist = _cosine_distance_matrix(embs_i)
+        var_dist = cdist(
+            np.asarray(embs_i), np.asarray(embs_i), metric="cosine"
+        )
 
         weight_sum += active * w
         weighted_dist += active * w * var_dist
