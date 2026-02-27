@@ -197,17 +197,66 @@ Control AI behavior with `--ai`:
 - `on`: require AI (fails if dependencies are missing)
 - `off`: skip AI stage entirely
 
-### Batched Embeddings
+### Batch Size Handling
 
-All embedding texts across all rules are collected into a single flat batch, then sent to the model in bounded chunks (default 512 texts per chunk). This minimizes HTTP round-trips when using a remote embedding server.
+Embedding is the most expensive step in the pipeline. Without batching, the tool would make one embedding API call per rule per component (template + each variable position), resulting in dozens of sequential HTTP round-trips. Instead, the tool uses a **batch-then-slice** strategy:
 
-Set `embed_batch_size` in `config.json` to tune chunk size. Use `-v` to see per-chunk timing:
+#### How It Works
+
+The embedding pipeline runs in three phases:
+
+1. **Prepare** — For each rule with 2+ groups, extract the texts that need embedding (templates and per-variable-position texts). Rules with only 1 group skip embedding entirely.
+
+2. **Collect** — All texts from all rules are appended into a single flat list. An index map tracks which slice of the list belongs to which rule and component (template vs. variable position N).
+
+3. **Embed & Slice** — The flat list is sent to the embedding model in bounded chunks of `embed_batch_size` texts (default 512). The returned embeddings are concatenated into one array, then sliced back per rule using the index map.
+
+```
+Rule A: [tmpl_a1, tmpl_a2, var0_a1, var0_a2]   ← 4 texts
+Rule B: [tmpl_b1, tmpl_b2, tmpl_b3]              ← 3 texts
+                    ↓
+Flat batch: [tmpl_a1, tmpl_a2, var0_a1, var0_a2, tmpl_b1, tmpl_b2, tmpl_b3]
+                    ↓
+One embed call (7 texts < 512 batch size)
+                    ↓
+Slice back: Rule A templates=[0:2], vars=[2:4]
+            Rule B templates=[4:7]
+```
+
+This reduces ~80 sequential API calls (20 rules × ~4 components each) to 1-2 calls.
+
+#### Two Clustering Paths
+
+| Path | When | What Gets Batched |
+|---|---|---|
+| **Template-only** (`cluster` subcommand, no GCA config) | `gca_config` is None | Templates only. DBSCAN uses cosine metric directly on embeddings. |
+| **Weighted** (`gca` subcommand with rule config) | `gca_config` is set | Templates + per-variable-position texts. A weighted distance matrix is computed from the sliced embeddings, then DBSCAN uses `metric="precomputed"`. |
+
+#### Configuring Batch Size
+
+Set `embed_batch_size` in `config.json` to control the maximum number of texts per API call:
+
+```json
+{
+  "embed_batch_size": 256
+}
+```
+
+- **Default:** 512
+- **Smaller values** (64, 128): lower per-request latency and memory, more round-trips
+- **Larger values** (512, 1024): fewer round-trips, but may hit server timeouts or memory limits
+
+Use `-v` to see per-chunk timing and find the optimal value for your embedding server:
 
 ```
 INFO: [timing] embed chunk 1/2 (512 texts): 1.234s
 INFO: [timing] embed chunk 2/2 (88 texts): 0.456s
 INFO: [timing] embeddings total: 600 texts in 2 chunks, 1.690s
 ```
+
+#### Failure Behavior
+
+If any embedding chunk fails (server down, timeout, etc.), the entire batch returns `None` and **all rules fall back to unclustered output**. This is all-or-nothing by design — if the server can't handle a bounded chunk, individual per-rule calls would also fail.
 
 ### Local Model
 
