@@ -1,4 +1,4 @@
-"""Tests for the multi-embedding weighted distance matrix."""
+"""Tests for the multi-embedding weighted distance matrix and pattern merging."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import numpy as np
 
 from sanity_log_parser.clustering.ai.clusterer import (
     _compute_distance_matrix,
+    _merge_patterns,
     _prepare_embedding_components,
 )
 from sanity_log_parser.gca.config import GcaRuleConfig, VariableConfig
@@ -99,3 +100,40 @@ def test_distance_matrix_template_only_no_vars() -> None:
 
     expected = cosine_distance(template_embs[0], template_embs[1])
     np.testing.assert_almost_equal(d[0][1], expected)
+
+
+# --- _merge_patterns tests ---
+
+
+def test_merge_patterns_single() -> None:
+    """Single pattern returned as-is."""
+    assert _merge_patterns(["'clk1' / 'sig_a'"]) == "'clk1' / 'sig_a'"
+
+
+def test_merge_patterns_identical() -> None:
+    """Identical patterns merge to the same pattern."""
+    assert _merge_patterns(["'clk1' / 'sig_a'", "'clk1' / 'sig_a'"]) == "'clk1' / 'sig_a'"
+
+
+def test_merge_patterns_differing_positions() -> None:
+    """Differing positions become '*'."""
+    result = _merge_patterns(["'clk1' / 'sig_a'", "'clk2' / 'sig_a'"])
+    assert result == "* / 'sig_a'"
+
+
+def test_merge_patterns_all_differ() -> None:
+    """All positions differ → all become '*'."""
+    result = _merge_patterns(["'clk1' / 'sig_a'", "'clk2' / 'sig_b'"])
+    assert result == "* / *"
+
+
+def test_merge_patterns_different_lengths() -> None:
+    """Shorter patterns get '*' for missing positions."""
+    result = _merge_patterns(["'a' / 'b' / 'c'", "'a' / 'b'"])
+    assert result == "'a' / 'b' / *"
+
+
+def test_merge_patterns_three_subgroups() -> None:
+    """Three subgroups: position matches only if all three agree."""
+    result = _merge_patterns(["'x' / 'y'", "'x' / 'z'", "'x' / 'y'"])
+    assert result == "'x' / *"
