@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from importlib import import_module
 from typing import Any, Protocol, cast
 from collections import defaultdict
@@ -153,15 +154,23 @@ class AIClusterer:
             final_output.sort(key=lambda g: g["total_count"], reverse=True)
             return final_output
 
+        cluster_t0 = time.perf_counter()
         for rule_id, rule_groups in multi_rules.items():
             t_start, t_end = template_index[rule_id]
             embeddings = all_embs[t_start:t_end]
 
+            dbscan_t0 = time.perf_counter()
             clustering = DBSCANFactory(
                 eps=0.2,
                 min_samples=1,
                 metric="cosine",
             ).fit(embeddings)
+            logger.info(
+                "[timing] DBSCAN for '%s' (%d groups): %.3fs",
+                rule_id,
+                len(rule_groups),
+                time.perf_counter() - dbscan_t0,
+            )
 
             new_groups, group_counter = self._build_cluster_results(
                 rule_id,
@@ -171,6 +180,10 @@ class AIClusterer:
             )
             final_output.extend(new_groups)
 
+        logger.info(
+            "[timing] clustering (all rules): %.3fs",
+            time.perf_counter() - cluster_t0,
+        )
         final_output.sort(key=lambda g: g["total_count"], reverse=True)
         return final_output
 
@@ -184,6 +197,7 @@ class AIClusterer:
         group_counter = 0
 
         # Phase 1: Handle single groups, prepare components for multi-group rules
+        prep_t0 = time.perf_counter()
         prepared: dict[str, tuple[GcaRuleConfig, list[dict[str, Any]]]] = {}
         for rule_id, rule_groups in groups_by_rule.items():
             if len(rule_groups) < 2:
@@ -198,6 +212,11 @@ class AIClusterer:
                 rule_groups, rule_config, self.gca_config.default_variable_weight
             )
             prepared[rule_id] = (rule_config, components)
+        logger.info(
+            "[timing] prepare components (%d rules): %.3fs",
+            len(prepared),
+            time.perf_counter() - prep_t0,
+        )
 
         if not prepared:
             final_output.sort(key=lambda g: g["total_count"], reverse=True)
@@ -245,6 +264,7 @@ class AIClusterer:
             final_output.sort(key=lambda g: g["total_count"], reverse=True)
             return final_output
 
+        cluster_t0 = time.perf_counter()
         for rule_id in prepared:
             rule_config, components = prepared[rule_id]
             n = len(components)
@@ -256,6 +276,7 @@ class AIClusterer:
             for v_start, v_end, mask in var_index[rule_id]:
                 var_embeddings.append((all_embs[v_start:v_end], mask))
 
+            dm_t0 = time.perf_counter()
             distance_matrix = _compute_distance_matrix(
                 n,
                 template_embs,
@@ -263,12 +284,24 @@ class AIClusterer:
                 rule_config,
                 self.gca_config.default_variable_weight,
             )
+            logger.info(
+                "[timing] distance matrix for '%s' (%d groups): %.3fs",
+                rule_id,
+                n,
+                time.perf_counter() - dm_t0,
+            )
 
+            dbscan_t0 = time.perf_counter()
             clustering = DBSCANFactory(
                 eps=rule_config.eps,
                 min_samples=1,
                 metric="precomputed",
             ).fit(distance_matrix)
+            logger.info(
+                "[timing] DBSCAN for '%s': %.3fs",
+                rule_id,
+                time.perf_counter() - dbscan_t0,
+            )
 
             new_groups, group_counter = self._build_cluster_results(
                 rule_id,
@@ -278,6 +311,10 @@ class AIClusterer:
             )
             final_output.extend(new_groups)
 
+        logger.info(
+            "[timing] clustering (all rules): %.3fs",
+            time.perf_counter() - cluster_t0,
+        )
         final_output.sort(key=lambda g: g["total_count"], reverse=True)
         return final_output
 
@@ -320,15 +357,33 @@ class AIClusterer:
         if not texts:
             return np.empty((0, 0))
 
+        t0 = time.perf_counter()
+        n_chunks = 0
         chunks: list[Any] = []
         for start in range(0, len(texts), _EMBED_BATCH_SIZE):
             chunk = texts[start : start + _EMBED_BATCH_SIZE]
+            chunk_t0 = time.perf_counter()
             result = self._compute_embeddings(chunk)
+            logger.info(
+                "[timing] embed chunk %d/%d (%d texts): %.3fs",
+                start // _EMBED_BATCH_SIZE + 1,
+                -(-len(texts) // _EMBED_BATCH_SIZE),  # ceil division
+                len(chunk),
+                time.perf_counter() - chunk_t0,
+            )
             if result is None:
                 return None
             chunks.append(np.asarray(result))
+            n_chunks += 1
 
-        return np.vstack(chunks)
+        result = np.vstack(chunks)
+        logger.info(
+            "[timing] embeddings total: %d texts in %d chunks, %.3fs",
+            len(texts),
+            n_chunks,
+            time.perf_counter() - t0,
+        )
+        return result
 
     def _build_cluster_results(
         self,
