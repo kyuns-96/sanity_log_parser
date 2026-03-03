@@ -83,6 +83,24 @@ def test_rule_id_inherited_from_parent(real_rpt: str) -> None:
     assert results[6]["rule_id"] == "CLK_0035"
 
 
+def test_rule_id_inherited_from_three_digit_parent_suffix(tmp_path: Path) -> None:
+    rpt = _write_rpt(
+        tmp_path,
+        """\
+         error    2   0
+          HIER_001    1   0 Hier msg 'a'
+               1 of 1   0   Hier instance 'sig_h'
+          CGR_0018    1   0 Cgr msg 'b'
+               1 of 1   0   Cgr instance 'sig_c'
+    """,
+    )
+    results = PrimeTimeParser().parse_file(rpt)
+
+    assert len(results) == 2
+    assert results[0]["rule_id"] == "HIER_001"
+    assert results[1]["rule_id"] == "CGR_0018"
+
+
 # ---------------------------------------------------------------------------
 # Severity propagation and reset
 # ---------------------------------------------------------------------------
