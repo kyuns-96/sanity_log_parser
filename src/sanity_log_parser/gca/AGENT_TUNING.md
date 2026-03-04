@@ -112,54 +112,113 @@ Any unknown key causes a validation error.
 
 ### Step 1: Establish Baseline
 
-Run the tool with current config and compare to ground truth:
+Run the tool with AI off and AI on to get both stages:
 
 ```bash
-sanity-log-parser gca REPORT --rule-config rule_clustering_config.json --out baseline.json
+# Stage-1 only (logic groups — the input to AI clustering)
+sanity-log-parser gca REPORT --ai off --out logic.json
+
+# Stage-2 with current config
+sanity-log-parser gca REPORT --rule-config rule_clustering_config.json --ai on --out ai.json
 ```
 
-### Step 2: Identify Problem Rules
+### Step 2: Identify the Discriminator
 
-For each rule_id in the ground truth, compare:
-- **Under-clustering**: groups that should be merged are in separate clusters → **increase `eps`** or **decrease weights** on noisy variables
-- **Over-clustering**: groups that should be separate are merged → **decrease `eps`** or **increase weights** on discriminating variables
+For each rule_id in the ground truth, examine the logic groups and ask:
 
-### Step 3: Analyze Variables
+1. **Are all templates identical?** Check `representative_template` across groups for the same rule_id.
+   - If yes → set `template_weight: 0`. Templates carry zero signal.
+   - If no → templates may be the discriminator. Keep `template_weight` > 0.
 
-For a problem rule, examine its log patterns. Variables are extracted by splitting the logic group's `representative_pattern` on ` / ` (whitespace-slash-whitespace), 0-indexed left to right.
+2. **Which variable separates the ground truth clusters?** Split each group's `representative_pattern` on ` / ` to extract variables (0-indexed). Compare variable values across ground truth clusters:
+   - If a variable has the **same value** across groups that belong to **different** ground truth clusters → it is noise. Set `weight: 0`.
+   - If a variable has **different values** that align with ground truth cluster boundaries → it is the discriminator. Set `weight: 1.0`.
 
-Example pattern: `clk_gen/pll/output / top/io/pad_ring`
-- Variable 0: `clk_gen/pll/output`
-- Variable 1: `top/io/pad_ring`
+**Worked example — CGR_0018**:
+```
+Pattern: GEN_SECU_SCLK / P_CMU_SPLL_VP_CLK
+         ^^^^^^^^^^^^^^   ^^^^^^^^^^^^^^^^^^
+         Variable 0        Variable 1 (source clock)
+```
+Ground truth has 5 clusters grouped by source clock (variable 1). Variable 0 (dest clock) varies within each cluster → noise.
+Result: `template_weight: 0`, `variable 0 weight: 0`, `variable 1 weight: 1.0`.
 
-Ask:
-- Which variable distinguishes groups that should be separate? → **increase its weight**
-- Which variable is noise (same across different groups or irrelevant)? → **decrease its weight** or set to 0
-- Which hierarchy levels of a variable carry the signal? → set `levels` accordingly
+### Step 3: Probe Pairwise Distances
 
-### Step 4: Adjust and Re-run
+**This is the critical step.** Do not guess `eps` — measure it.
 
-Edit the config, re-run, compare. One rule at a time.
+Collect the unique values of the discriminating variable from each ground truth cluster. Compute pairwise cosine distances using the embedding model (nomic-embed-text-v1.5).
 
-### Step 5: Iterate
+```python
+from sentence_transformers import SentenceTransformer
+from scipy.spatial.distance import cosine
 
-Repeat Steps 2-4 until the output matches ground truth for all rules.
+model = SentenceTransformer("nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True)
+values = ["P_CMU_SPLL_VP_CLK", "P_CMU_SPLL_OP_CLK", "GEN_SECU_SCLK",
+          "GEN_SECU_AHB_CLK", "GEN_SENSOR_AHB_CLK"]
+embs = model.encode(values)
+
+for i in range(len(values)):
+    for j in range(i + 1, len(values)):
+        print(f"{values[i]} vs {values[j]}: {cosine(embs[i], embs[j]):.4f}")
+```
+
+This produces a distance table:
+
+| Pair | Distance | Same cluster? |
+|---|---|---|
+| VP_CLK vs OP_CLK | 0.0495 | No |
+| SECU_SCLK vs SECU_AHB_CLK | 0.1646 | No |
+| SECU_AHB_CLK vs SENSOR_AHB_CLK | 0.1659 | No |
+| VP_CLK vs SECU_SCLK | 0.3724 | No |
+
+### Step 4: Set eps from the Distance Gap
+
+Groups with **identical** variable values (same source clock) have distance **0.0** — any `eps > 0` merges them. The constraint is that `eps` must stay **below** the smallest cross-cluster distance.
+
+From the table above, the smallest cross-cluster distance is **0.0495** (VP vs OP). So:
+
+```
+eps < 0.0495  →  set eps = 0.04
+```
+
+This keeps all 5 clusters separate while merging all groups within each cluster (distance 0).
+
+**General rule**: Set `eps` to roughly 80% of the smallest cross-cluster distance to leave margin.
+
+### Step 5: Validate and Iterate
+
+Run with the computed `eps`, compare output group count to ground truth:
+
+```bash
+sanity-log-parser gca REPORT --rule-config rule_clustering_config.json --ai on --out result.json
+```
+
+If the count doesn't match:
+- **Too few groups** (over-clustering) → `eps` is too high. A cross-cluster pair is below `eps`. Re-probe distances and lower `eps`.
+- **Too many groups** (under-clustering) → `eps` is too low, or the wrong variable is weighted. Check that the discriminating variable is correct.
+
+Repeat Steps 3-5 one rule at a time until all rules match.
 
 ## Tuning Heuristics
 
-1. **Start with `eps`**. If all groups for a rule are separate when they should merge, `eps` is too low. If unrelated groups merge, `eps` is too high. Adjust in increments of 0.02-0.05.
+1. **Identify the discriminator first, tune eps second.** Weight configuration determines *what* the distance measures. `eps` determines *where* to cut. Getting weights wrong makes `eps` tuning meaningless.
 
-2. **Weights are relative**. `template_weight=0.3, variable_0_weight=0.7` means "variables matter more than templates". The absolute values don't matter because of per-pair renormalization — only the ratios.
+2. **Probe distances, don't guess.** Computing cosine distances between the discriminating variable's unique values gives you the exact gap to place `eps` in. This avoids blind trial-and-error.
 
-3. **Set weight to 0 for noise variables**. If a variable position contains random instance numbers or timestamps, set `"weight": 0.0` to exclude it entirely.
+3. **Weights are relative.** `template_weight=0.3, variable_0_weight=0.7` means "variables matter more than templates". Absolute values don't matter due to per-pair renormalization — only the ratios.
 
-4. **Use `levels` for long paths**. If a variable like `top/subsys/block/subblock/leaf/instance` is 6 levels deep, probably only 2-3 levels are meaningful. Try `[0, 1]` (top-level block) or `[-2, -1]` (leaf) first.
+4. **Set weight to 0 for noise variables.** If a variable position contains values that vary within a ground truth cluster, it is noise. Set `"weight": 0.0` to exclude it entirely.
 
-5. **When all variables look the same**, the template is the discriminator. Set `template_weight` high (0.7-0.9) and variable weights low.
+5. **Use `levels` for long paths.** If a variable like `top/subsys/block/subblock/leaf/instance` is 6 levels deep, probably only 2-3 levels are meaningful. Try `[0, 1]` (top-level block) or `[-2, -1]` (leaf) first.
 
-6. **When templates are identical**, variables are the only discriminator. Set `template_weight` low (0.0-0.1) and focus on variable weights and levels.
+6. **When all variables look the same**, the template is the discriminator. Set `template_weight` high (0.7-0.9) and variable weights low.
 
-7. **Fewer rules in config is better**. Only add a per-rule entry when the defaults don't work for that rule. The `default_*` values apply to all unspecified rules.
+7. **When templates are identical**, variables are the only discriminator. Set `template_weight` to `0` and focus on variable weights and levels.
+
+8. **Fewer rules in config is better.** Only add a per-rule entry when the defaults don't work for that rule. The `default_*` values apply to all unspecified rules.
+
+9. **Precision over recall.** It is better to under-cluster (miss some merges) than to over-cluster (merge unrelated groups). When in doubt, use a lower `eps`.
 
 ## Ground Truth Format
 

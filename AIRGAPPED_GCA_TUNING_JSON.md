@@ -77,15 +77,69 @@ To measure accuracy, compare `ai.json` against the ground truth JSON.
    - **Recall** = TP / (TP + FN)
    - **F1** = 2 * Precision * Recall / (Precision + Recall)
 
-## 6. Optimization Loop
-1. **Tune `eps` first**:
-   - If Precision is low (over-clustering), decrease `eps`.
-   - If Recall is low (under-clustering), increase `eps`.
-2. **Tune weights/levels**:
-   - Only perform this if a preflight (Section 8) confirms variable extraction is active for the rule.
-   - Increase weight for variables that distinguish groups that should be separate.
-   - Decrease weight (or set to 0) for noisy variables.
-   - Use `levels` to focus on specific hierarchy parts of a path.
+## 6. Optimization Strategy
+
+Work one rule at a time. For each rule, follow these three phases in order.
+
+### Phase 1: Identify the Discriminator (Weights)
+
+Before touching `eps`, determine what the distance should measure.
+
+1. **Check templates.** Are all `representative_template` values identical for this rule?
+   - If yes → `template_weight: 0` (templates carry no signal).
+   - If no → templates may be the discriminator; keep `template_weight` > 0.
+
+2. **Check variables.** Split each group's `representative_pattern` on ` / ` to extract variables (0-indexed). Compare variable values across ground truth clusters:
+   - Variable whose values **vary within** a ground truth cluster → noise. Set `weight: 0`.
+   - Variable whose values **align with** cluster boundaries → discriminator. Set `weight: 1.0`.
+
+**Example — CGR_0018**:
+```
+Pattern: GEN_SECU_SCLK / P_CMU_SPLL_VP_CLK
+         ^^^^^^^^^^^^^^   ^^^^^^^^^^^^^^^^^^
+         Variable 0        Variable 1 (source clock)
+```
+Ground truth has 5 clusters grouped by source clock (variable 1). Variable 0 varies within clusters → noise.
+Result: `template_weight: 0`, `var 0 weight: 0`, `var 1 weight: 1.0`.
+
+### Phase 2: Probe Distances (eps)
+
+**Do not guess eps — measure it.** Use the embedding API to compute cosine distances between the discriminating variable's unique values.
+
+Send a request to the embeddings endpoint for each unique value of the discriminating variable:
+```bash
+curl -s http://EMBEDDING_SERVER/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{"input": ["P_CMU_SPLL_VP_CLK", "P_CMU_SPLL_OP_CLK", "GEN_SECU_SCLK", "GEN_SECU_AHB_CLK", "GEN_SENSOR_AHB_CLK"], "model": "nomic-embed-text-v1.5"}'
+```
+
+Then compute pairwise cosine distances between all embeddings. Build a table:
+
+| Pair | Distance | Same cluster? |
+|---|---|---|
+| VP_CLK vs OP_CLK | 0.0495 | No |
+| SECU_SCLK vs SECU_AHB_CLK | 0.1646 | No |
+| SECU_AHB vs SENSOR_AHB | 0.1659 | No |
+
+**Key insight**: Groups with identical variable values have distance **0.0** — any `eps > 0` merges them. The only constraint is that `eps` must stay below the smallest cross-cluster distance.
+
+Set `eps` to roughly **80% of the smallest cross-cluster distance**:
+```
+Smallest cross-cluster distance = 0.0495
+eps = 0.0495 × 0.8 ≈ 0.04
+```
+
+### Phase 3: Validate and Iterate
+
+Run and compare group count to ground truth:
+```bash
+sanity-log-parser gca REPORT.rpt --rule-config rule_clustering_config.json --ai on --out result.json
+```
+
+- **Too few groups** → `eps` is too high. A cross-cluster pair merged. Lower `eps`.
+- **Too many groups** → wrong variable weighted, or `eps` too low. Re-check Phase 1.
+
+Repeat until all rules match. Prefer precision over recall (under-cluster rather than over-cluster).
 
 ## 7. What to Return
 Do not return large JSON files. Return a compact summary:
@@ -93,12 +147,18 @@ Do not return large JSON files. Return a compact summary:
 ### Per-Rule Overrides
 | Rule ID | eps | template_weight | variable_weights/levels |
 | :--- | :--- | :--- | :--- |
-| CGR_0018 | 0.15 | 0.1 | var0: {weight: 0.7, levels: [0, 1]} |
+| CGR_0018 | 0.04 | 0 | var0: {weight: 0}, var1: {weight: 1.0} |
 
 ### Metrics Table
 | Rule ID | Precision | Recall | F1 | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| CGR_0018 | 1.00 | 0.95 | 0.97 | PASS |
+| CGR_0018 | 1.00 | 1.00 | 1.00 | PASS |
+
+### Distance Probe Table (per rule)
+| Pair | Distance | Same cluster? |
+| :--- | :--- | :--- |
+| VP_CLK vs OP_CLK | 0.0495 | No |
+| SECU_SCLK vs SECU_AHB_CLK | 0.1646 | No |
 
 ## 8. Preflight: Variable Tuning Risk
 **Risk**: If the logic groups for a rule all have the same `representative_pattern` (or patterns with only one slot after splitting on ` / `), tuning individual variable weights or `levels` may be a **no-op**.
