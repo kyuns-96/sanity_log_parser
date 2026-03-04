@@ -1,6 +1,9 @@
 # GCA Rule Clustering Config Tuning Guide
 
-You are optimizing the `rule_clustering_config.json` file for the `sanity-log-parser gca` subcommand.
+**Target agent**: Kimi-K2.5 (air-gapped environment)
+**Embedding model**: nomic-embed-text-v1.5
+
+You are optimizing `rule_clustering_config.json` for the `sanity-log-parser gca` subcommand.
 Your goal is to adjust clustering parameters so that the tool's output matches a human-labeled ground truth.
 
 ## How the Tool Works
@@ -14,7 +17,7 @@ The tool parses a PrimeTime Constraints report and clusters log messages in two 
 1. **Logic Clustering** — groups identical templates (deterministic, not tunable)
 2. **AI Clustering** — merges logic groups by semantic similarity using embeddings
 
-You are tuning Stage 2. The embedding model is **nomic-embed-text-v1.5**.
+You are tuning Stage 2.
 
 ## Distance Computation
 
@@ -30,6 +33,14 @@ Weights are **renormalized per pair** — only components where both groups have
 
 Then DBSCAN clusters the resulting NxN distance matrix with `metric="precomputed"`.
 
+### How Variables Are Extracted
+
+Variables are extracted by splitting a logic group's `representative_pattern` on ` / ` (whitespace-slash-whitespace), 0-indexed left to right.
+
+Example pattern: `clk_gen/pll/output / top/io/pad_ring`
+- Variable 0: `clk_gen/pll/output`
+- Variable 1: `top/io/pad_ring`
+
 ## Config Schema
 
 ```json
@@ -39,11 +50,11 @@ Then DBSCAN clusters the resulting NxN distance matrix with `metric="precomputed
   "default_variable_weight": 0.7,
   "rules": {
     "CGR_0018": {
-      "eps": 0.15,
-      "template_weight": 0.1,
+      "eps": 0.04,
+      "template_weight": 0,
       "variables": {
-        "0": { "weight": 0.7, "levels": [0, 1] },
-        "1": { "weight": 0.2, "levels": [-2, -1] }
+        "0": { "weight": 0 },
+        "1": { "weight": 1.0 }
       }
     }
   }
@@ -89,7 +100,7 @@ Variables in VLSI logs are typically `/`-separated hierarchical paths like `top/
 
 If all selected indices are out of bounds, the variable becomes empty and is **masked inactive** for that pair (its weight is excluded from renormalization).
 
-## Allowed Keys
+### Allowed Keys
 
 The config uses strict validation. Only these keys are accepted:
 
@@ -99,40 +110,70 @@ The config uses strict validation. Only these keys are accepted:
 
 Any unknown key causes a validation error.
 
-## Parameter Bounds
+### Parameter Bounds
 
 | Parameter | Min | Max (practical) | Notes |
 |---|---|---|---|
-| `eps` | 0.01 | 0.5 | 0.05-0.3 is typical. Below 0.05 clusters almost nothing. Above 0.4 merges too aggressively. |
+| `eps` | 0.01 | 0.5 | 0.03-0.3 is typical. Below 0.03 clusters almost nothing. Above 0.4 merges too aggressively. |
 | `template_weight` | 0.0 | 1.0 | 0.0 = ignore template. Higher = more influence from rule message text. |
 | `variable weight` | 0.0 | 1.0 | 0.0 = ignore this variable. Weights are renormalized per pair, so ratios matter, not absolutes. |
 | `levels` indices | any int | any int | Python indexing. Out-of-bounds silently skipped. |
 
-## Optimization Workflow
+## Baseline Commands
 
-### Step 1: Establish Baseline
-
-Run the tool with AI off and AI on to get both stages:
+Generate two files: Stage-1 logic groups (AI off) and current Stage-2 results (AI on).
 
 ```bash
 # Stage-1 only (logic groups — the input to AI clustering)
-sanity-log-parser gca REPORT --ai off --out logic.json
+sanity-log-parser gca REPORT.rpt --ai off --out logic.json --max-original-logs 0
 
 # Stage-2 with current config
-sanity-log-parser gca REPORT --rule-config rule_clustering_config.json --ai on --out ai.json
+sanity-log-parser gca REPORT.rpt --ai on --rule-config rule_clustering_config.json --out ai.json --max-original-logs 0
 ```
 
-### Step 2: Identify the Discriminator
+## Ground Truth Format
 
-For each rule_id in the ground truth, examine the logic groups and ask:
+The human expert provides ground truth as a JSON object mapping `rule_id` to a list of clusters. Each cluster is a list of `logic_group_id` strings from `logic.json`.
 
-1. **Are all templates identical?** Check `representative_template` across groups for the same rule_id.
-   - If yes → set `template_weight: 0`. Templates carry zero signal.
-   - If no → templates may be the discriminator. Keep `template_weight` > 0.
+### Schema
+```json
+{
+  "rule_id": [
+    ["logic_group_id_1", "logic_group_id_2"],
+    ["logic_group_id_3"]
+  ]
+}
+```
 
-2. **Which variable separates the ground truth clusters?** Split each group's `representative_pattern` on ` / ` to extract variables (0-indexed). Compare variable values across ground truth clusters:
-   - If a variable has the **same value** across groups that belong to **different** ground truth clusters → it is noise. Set `weight: 0`.
-   - If a variable has **different values** that align with ground truth cluster boundaries → it is the discriminator. Set `weight: 1.0`.
+### Example
+```json
+{
+  "CGR_0018": [
+    ["CGR_0018::logic::000001", "CGR_0018::logic::000002"],
+    ["CGR_0018::logic::000003"]
+  ]
+}
+```
+
+### Labeling Rules
+- Use `group_id` from `logic.json` where `group_type == "logic"`.
+- For any labeled `rule_id`, **every** logic `group_id` for that rule in `logic.json` must appear exactly once across the clusters for that rule.
+
+## Optimization Strategy
+
+Work one rule at a time. For each rule, follow these three phases in order.
+
+### Phase 1: Identify the Discriminator (Weights)
+
+Before touching `eps`, determine what the distance should measure.
+
+1. **Check templates.** Are all `representative_template` values identical for this rule?
+   - If yes → `template_weight: 0` (templates carry no signal).
+   - If no → templates may be the discriminator; keep `template_weight` > 0.
+
+2. **Check variables.** Split each group's `representative_pattern` on ` / ` to extract variables (0-indexed). Compare variable values across ground truth clusters:
+   - Variable whose values **vary within** a ground truth cluster → noise. Set `weight: 0`.
+   - Variable whose values **align with** cluster boundaries → discriminator. Set `weight: 1.0`.
 
 **Worked example — CGR_0018**:
 ```
@@ -141,64 +182,71 @@ Pattern: GEN_SECU_SCLK / P_CMU_SPLL_VP_CLK
          Variable 0        Variable 1 (source clock)
 ```
 Ground truth has 5 clusters grouped by source clock (variable 1). Variable 0 (dest clock) varies within each cluster → noise.
-Result: `template_weight: 0`, `variable 0 weight: 0`, `variable 1 weight: 1.0`.
+Result: `template_weight: 0`, `var 0 weight: 0`, `var 1 weight: 1.0`.
 
-### Step 3: Probe Pairwise Distances
+### Phase 2: Probe Distances (eps)
 
-**This is the critical step.** Do not guess `eps` — measure it.
+**Do not guess eps — measure it.** Use the embedding API to compute cosine distances between the discriminating variable's unique values.
 
-Collect the unique values of the discriminating variable from each ground truth cluster. Compute pairwise cosine distances using the embedding model (nomic-embed-text-v1.5).
-
-```python
-from sentence_transformers import SentenceTransformer
-from scipy.spatial.distance import cosine
-
-model = SentenceTransformer("nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True)
-values = ["P_CMU_SPLL_VP_CLK", "P_CMU_SPLL_OP_CLK", "GEN_SECU_SCLK",
-          "GEN_SECU_AHB_CLK", "GEN_SENSOR_AHB_CLK"]
-embs = model.encode(values)
-
-for i in range(len(values)):
-    for j in range(i + 1, len(values)):
-        print(f"{values[i]} vs {values[j]}: {cosine(embs[i], embs[j]):.4f}")
+Send a request to the embeddings endpoint for each unique value of the discriminating variable:
+```bash
+curl -s http://EMBEDDING_SERVER/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{"input": ["P_CMU_SPLL_VP_CLK", "P_CMU_SPLL_OP_CLK", "GEN_SECU_SCLK", "GEN_SECU_AHB_CLK", "GEN_SENSOR_AHB_CLK"], "model": "nomic-embed-text-v1.5"}'
 ```
 
-This produces a distance table:
+Then compute pairwise cosine distances between all embeddings. Build a table:
 
 | Pair | Distance | Same cluster? |
 |---|---|---|
 | VP_CLK vs OP_CLK | 0.0495 | No |
 | SECU_SCLK vs SECU_AHB_CLK | 0.1646 | No |
-| SECU_AHB_CLK vs SENSOR_AHB_CLK | 0.1659 | No |
-| VP_CLK vs SECU_SCLK | 0.3724 | No |
+| SECU_AHB vs SENSOR_AHB | 0.1659 | No |
 
-### Step 4: Set eps from the Distance Gap
+**Key insight**: Groups with identical variable values have distance **0.0** — any `eps > 0` merges them. The only constraint is that `eps` must stay below the smallest cross-cluster distance.
 
-Groups with **identical** variable values (same source clock) have distance **0.0** — any `eps > 0` merges them. The constraint is that `eps` must stay **below** the smallest cross-cluster distance.
-
-From the table above, the smallest cross-cluster distance is **0.0495** (VP vs OP). So:
-
+Set `eps` to roughly **80% of the smallest cross-cluster distance**:
 ```
-eps < 0.0495  →  set eps = 0.04
+Smallest cross-cluster distance = 0.0495
+eps = 0.0495 × 0.8 ≈ 0.04
 ```
 
-This keeps all 5 clusters separate while merging all groups within each cluster (distance 0).
+### Phase 3: Validate and Iterate
 
-**General rule**: Set `eps` to roughly 80% of the smallest cross-cluster distance to leave margin.
-
-### Step 5: Validate and Iterate
-
-Run with the computed `eps`, compare output group count to ground truth:
-
+Run and compare group count to ground truth:
 ```bash
-sanity-log-parser gca REPORT --rule-config rule_clustering_config.json --ai on --out result.json
+sanity-log-parser gca REPORT.rpt --rule-config rule_clustering_config.json --ai on --out result.json
 ```
 
-If the count doesn't match:
-- **Too few groups** (over-clustering) → `eps` is too high. A cross-cluster pair is below `eps`. Re-probe distances and lower `eps`.
-- **Too many groups** (under-clustering) → `eps` is too low, or the wrong variable is weighted. Check that the discriminating variable is correct.
+- **Too few groups** → `eps` is too high. A cross-cluster pair merged. Lower `eps`.
+- **Too many groups** → wrong variable weighted, or `eps` too low. Re-check Phase 1.
 
-Repeat Steps 3-5 one rule at a time until all rules match.
+Repeat until all rules match. Prefer precision over recall (under-cluster rather than over-cluster).
+
+## Evaluation Algorithm
+
+To measure accuracy, compare `ai.json` against the ground truth JSON.
+
+1. **Map Raw Logs to Logic Groups**:
+   - From `logic.json`, build a map: `raw_log_text -> logic_group_id`.
+2. **Convert AI Clusters to Logic Group Sets**:
+   - For each `ai_super` group in `ai.json`:
+     - Map its `original_logs` back to `logic_group_id` using the map from step 1.
+     - The result is a set of `logic_group_ids` that the AI merged.
+   - **Fail** if any AI raw log cannot map back to a logic group.
+3. **Compute Pairwise Metrics (Per Rule)**:
+   - For each `rule_id` in ground truth:
+     - Let L be the set of all logic group IDs for this rule.
+     - Consider all pairs (a, b) where a, b in L and a < b.
+     - **True Positive (TP)**: a, b are in the same cluster in both ground truth and AI results.
+     - **False Positive (FP)**: a, b are in the same cluster in AI results but different in ground truth (over-clustering).
+     - **False Negative (FN)**: a, b are in different clusters in AI results but the same in ground truth (under-clustering).
+4. **Calculate Scores**:
+   - **Precision** = TP / (TP + FP) — "when we merge, is it correct?"
+   - **Recall** = TP / (TP + FN) — "do we find all merges?"
+   - **F1** = 2 * Precision * Recall / (Precision + Recall)
+
+Optimize for **F1 >= 0.9** per rule. If you must choose, **precision > recall**.
 
 ## Tuning Heuristics
 
@@ -220,44 +268,36 @@ Repeat Steps 3-5 one rule at a time until all rules match.
 
 9. **Precision over recall.** It is better to under-cluster (miss some merges) than to over-cluster (merge unrelated groups). When in doubt, use a lower `eps`.
 
-## Ground Truth Format
+## What to Return
 
-The human provides ground truth as groups of log messages that should cluster together. Compare by examining the `groups` array in the output JSON:
+Do not return large JSON files. Return a compact summary:
 
-```json
-{
-  "groups": [
-    {
-      "group_type": "ai_super",
-      "group_id": "CGR_0018::ai::000001",
-      "rule_id": "CGR_0018",
-      "representative_template": "Clock ... from source ...",
-      "representative_pattern": "Clock 'clk_gen/pll/output' from source 'top/io/pad'",
-      "total_count": 42,
-      "merged_variants_count": 3,
-      "original_logs": ["raw log line 1", "raw log line 2", ...]
-    }
-  ]
-}
-```
+### Per-Rule Overrides
+| Rule ID | eps | template_weight | variable_weights/levels |
+| :--- | :--- | :--- | :--- |
+| CGR_0018 | 0.04 | 0 | var0: {weight: 0}, var1: {weight: 1.0} |
 
-- `merged_variants_count > 1` means multiple logic groups were merged by AI clustering
-- `original_logs` contains the actual log lines in each cluster
-- Compare these against ground truth clusters to measure accuracy
+### Metrics Table
+| Rule ID | Precision | Recall | F1 | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| CGR_0018 | 1.00 | 1.00 | 1.00 | PASS |
 
-## Evaluation Metrics
+### Distance Probe Table (per rule)
+| Pair | Distance | Same cluster? |
+| :--- | :--- | :--- |
+| VP_CLK vs OP_CLK | 0.0495 | No |
+| SECU_SCLK vs SECU_AHB_CLK | 0.1646 | No |
 
-For each rule_id, count:
-- **True Positive (TP)**: pair of messages correctly in the same cluster
-- **False Positive (FP)**: pair incorrectly in the same cluster (over-clustering)
-- **False Negative (FN)**: pair incorrectly in different clusters (under-clustering)
+## Preflight: Variable Tuning Risk
 
-Then:
-- **Precision** = TP / (TP + FP) — "when we merge, is it correct?"
-- **Recall** = TP / (TP + FN) — "do we find all merges?"
-- **F1** = 2 * Precision * Recall / (Precision + Recall)
+**Risk**: If the logic groups for a rule all have the same `representative_pattern` (or patterns with only one slot after splitting on ` / `), tuning individual variable weights or `levels` may be a **no-op**.
 
-Optimize for **F1 >= 0.9** per rule. If you must choose, **precision > recall** — it is better to under-cluster (miss some merges) than to over-cluster (merge unrelated groups).
+**Detection**:
+- Check `logic.json` for the rule.
+- Split each group's `representative_pattern` on ` / ` to see how many variable slots exist.
+- If all patterns are identical, the AI only sees the `representative_template`.
+- In this case, only `eps` and `template_weight` will have any effect.
+- If patterns differ only in one slot, focus tuning on that slot's weight.
 
 ## Common Failure Modes
 
