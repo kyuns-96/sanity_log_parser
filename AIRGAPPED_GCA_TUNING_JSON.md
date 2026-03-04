@@ -1,7 +1,16 @@
 # Air-Gapped GCA Tuning Runbook (JSON Ground Truth)
 
+**Target agent**: Kimi-K2.5 (air-gapped environment)
+
 ## 1. Goal
 Tune `src/sanity_log_parser/gca/rule_clustering_config.json` so that AI-based semantic merging matches human-labeled ground truth.
+
+### How Variables Are Extracted
+Variables are extracted by splitting a logic group's `representative_pattern` on ` / ` (whitespace-slash-whitespace), 0-indexed left to right.
+
+Example pattern: `clk_gen/pll/output / top/io/pad_ring`
+- Variable 0: `clk_gen/pll/output`
+- Variable 1: `top/io/pad_ring`
 
 ## 2. Inputs/Outputs
 - **Input**: PrimeTime Constraints report (`REPORT.rpt`).
@@ -92,10 +101,11 @@ Do not return large JSON files. Return a compact summary:
 | CGR_0018 | 1.00 | 0.95 | 0.97 | PASS |
 
 ## 8. Preflight: Variable Tuning Risk
-**Risk**: If the logic groups for a rule all have the same `representative_pattern` (or no variables extracted), tuning `variable_weight` or `levels` is a **no-op**.
+**Risk**: If the logic groups for a rule all have the same `representative_pattern` (or patterns with only one slot after splitting on ` / `), tuning individual variable weights or `levels` may be a **no-op**.
 
 **Detection**:
 - Check `logic.json` for the rule.
-- If all `representative_pattern` values are identical, the AI only sees the `representative_template`.
+- Split each group's `representative_pattern` on ` / ` to see how many variable slots exist.
+- If all patterns are identical, the AI only sees the `representative_template`.
 - In this case, only `eps` and `template_weight` will have any effect.
-- If you need to separate these groups, the parser's logic-clustering stage must be improved first (out of scope for this runbook).
+- If patterns differ only in one slot, focus tuning on that slot's weight.

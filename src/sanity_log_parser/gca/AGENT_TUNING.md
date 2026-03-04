@@ -126,9 +126,9 @@ For each rule_id in the ground truth, compare:
 
 ### Step 3: Analyze Variables
 
-For a problem rule, examine its log patterns. Variables are extracted by `'...'` quoting in the pattern text (regex: `'(.*?)'`), 0-indexed left to right.
+For a problem rule, examine its log patterns. Variables are extracted by splitting the logic group's `representative_pattern` on ` / ` (whitespace-slash-whitespace), 0-indexed left to right.
 
-Example pattern: `Clock 'clk_gen/pll/output' from source 'top/io/pad_ring'`
+Example pattern: `clk_gen/pll/output / top/io/pad_ring`
 - Variable 0: `clk_gen/pll/output`
 - Variable 1: `top/io/pad_ring`
 
