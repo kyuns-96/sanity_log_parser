@@ -502,9 +502,27 @@ def _merge_atom(values: list[str], max_alt: int = _MAX_ALT_SEG) -> str:
     unique = list(dict.fromkeys(values))
     if len(unique) == 1:
         return unique[0]
+    prefix = _common_prefix(unique)
+    if prefix:
+        return f"{prefix}*"
     if len(unique) <= max_alt:
         return "{" + "|".join(unique) + "}"
     return "*"
+
+
+def _common_prefix(values: list[str]) -> str:
+    """Return the longest common prefix snapped to a '_' boundary."""
+    if not values:
+        return ""
+    prefix = values[0]
+    for v in values[1:]:
+        while not v.startswith(prefix):
+            prefix = prefix[:-1]
+            if not prefix:
+                return ""
+    # Snap to last '_' boundary (inclusive) so we get 'GEN_SECU_' not 'GEN_'
+    idx = prefix.rfind("_")
+    return prefix[: idx + 1] if idx >= 0 else ""
 
 
 def _prepare_embedding_components(
