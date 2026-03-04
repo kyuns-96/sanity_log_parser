@@ -561,46 +561,57 @@ def _compute_distance_matrix(
     rule_config: GcaRuleConfig,
     default_variable_weight: float,
 ) -> Any:
-    """Build NxN distance matrix with per-pair renormalization."""
+    """Build NxN distance matrix with per-pair renormalization (vectorized)."""
     import numpy as np
-    from scipy.spatial.distance import cosine as cosine_distance
+    from scipy.spatial.distance import cdist
 
-    d = np.zeros((n, n))
-    for a in range(n):
-        for b in range(a + 1, n):
-            active_weights: list[float] = []
-            active_distances: list[float] = []
+    tw = float(rule_config.template_weight)
 
-            # Template: always active
-            active_weights.append(rule_config.template_weight)
-            active_distances.append(
-                float(cosine_distance(template_embs[a], template_embs[b]))
-            )
+    # Template: NxN cosine distance in one vectorized call (always active)
+    template_dist = np.nan_to_num(
+        cdist(template_embs, template_embs, metric="cosine"), nan=0.0
+    )
 
-            # Variables: active only if BOTH groups have non-empty text
-            for i, (embs_i, mask_i) in enumerate(var_embeddings):
-                if mask_i[a] and mask_i[b]:
-                    var_cfg = rule_config.variables.get(
-                        i, VariableConfig(weight=default_variable_weight)
-                    )
-                    active_weights.append(var_cfg.weight)
-                    active_distances.append(
-                        float(cosine_distance(embs_i[a], embs_i[b]))
-                    )
+    # Variable components: NxN cosine distance + pair-wise activity mask
+    comp_dists: list[Any] = []
+    comp_weights: list[float] = []
+    comp_pair_masks: list[Any] = []
+    for i, (embs_i, mask_i) in enumerate(var_embeddings):
+        var_cfg = rule_config.variables.get(
+            i, VariableConfig(weight=default_variable_weight)
+        )
+        dist_i = np.nan_to_num(
+            cdist(embs_i, embs_i, metric="cosine"), nan=0.0
+        )
+        mask_arr = np.array(mask_i, dtype=np.float64)
+        pair_mask = np.outer(mask_arr, mask_arr)  # 1.0 where both active
+        comp_dists.append(dist_i)
+        comp_weights.append(var_cfg.weight)
+        comp_pair_masks.append(pair_mask)
 
-            # Per-pair normalization
-            total = sum(active_weights)
-            if total == 0:
-                n_active = len(active_weights)
-                normalized = [1.0 / n_active] * n_active if n_active > 0 else []
-            else:
-                normalized = [w / total for w in active_weights]
+    # Accumulate: weighted numerator and weight denominator
+    weight_sum = np.full((n, n), tw)
+    numerator = tw * template_dist
 
-            d[a][b] = d[b][a] = sum(
-                w * dist for w, dist in zip(normalized, active_distances)
-            )
+    for dist_i, w_i, pm_i in zip(comp_dists, comp_weights, comp_pair_masks):
+        weight_sum += w_i * pm_i
+        numerator += w_i * dist_i * pm_i
 
-    return d
+    # Uniform fallback: count active components per pair
+    n_active = np.ones((n, n))  # template always counts
+    uniform_num = template_dist.copy()
+    for dist_i, pm_i in zip(comp_dists, comp_pair_masks):
+        n_active += pm_i
+        uniform_num += dist_i * pm_i
+
+    # Per-pair normalization: weighted if total > 0, else uniform
+    zero_weight = weight_sum == 0
+    safe_weight = np.where(zero_weight, 1.0, weight_sum)
+    safe_active = np.maximum(n_active, 1.0)
+    result = np.where(zero_weight, uniform_num / safe_active, numerator / safe_weight)
+    np.fill_diagonal(result, 0.0)
+
+    return result
 
 
 class _SentenceModelLike(Protocol):
