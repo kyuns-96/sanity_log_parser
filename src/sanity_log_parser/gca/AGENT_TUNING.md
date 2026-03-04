@@ -246,7 +246,7 @@ To measure accuracy, compare `ai.json` against the ground truth JSON.
    - **Recall** = TP / (TP + FN) — "do we find all merges?"
    - **F1** = 2 * Precision * Recall / (Precision + Recall)
 
-Optimize for **F1 >= 0.9** per rule. If you must choose, **precision > recall**.
+Optimize for **F1 >= 0.97** per rule. If you must choose, **precision > recall**.
 
 ## Tuning Heuristics
 
