@@ -230,14 +230,15 @@ class AIClusterer:
 
         # Phase 2: Collect all texts into one flat batch with index tracking
         batch_texts: list[str] = []
-        template_index: dict[str, tuple[int, int]] = {}
-        var_index: dict[str, list[tuple[int, int, list[bool]]]] = {}
+        template_index: dict[str, tuple[int, int, list[str]]] = {}
+        var_index: dict[str, list[tuple[int, int, list[bool], list[str]]]] = {}
 
         for rule_id, (rule_config, components) in prepared.items():
             # Templates
             t_start = len(batch_texts)
-            batch_texts.extend(c["template"] for c in components)
-            template_index[rule_id] = (t_start, len(batch_texts))
+            t_keys: list[str] = [c["template"] for c in components]
+            batch_texts.extend(t_keys)
+            template_index[rule_id] = (t_start, len(batch_texts), t_keys)
 
             # Variables per position
             max_vars = max(len(c["variables"]) for c in components)
@@ -245,14 +246,18 @@ class AIClusterer:
             for i in range(max_vars):
                 v_start = len(batch_texts)
                 mask: list[bool] = []
+                v_keys: list[str] = []
                 for c in components:
                     if i < len(c["variables"]) and c["variables"][i].strip():
-                        batch_texts.append(c["variables"][i])
+                        text = c["variables"][i]
+                        batch_texts.append(text)
                         mask.append(True)
+                        v_keys.append(text)
                     else:
                         batch_texts.append("_")
                         mask.append(False)
-                var_index[rule_id].append((v_start, len(batch_texts), mask))
+                        v_keys.append("_")
+                var_index[rule_id].append((v_start, len(batch_texts), mask, v_keys))
 
         # Phase 3: Batch embed, then slice and cluster
         all_embs = self._compute_embeddings_batched(batch_texts)
@@ -275,17 +280,18 @@ class AIClusterer:
             rule_config, components = prepared[rule_id]
             n = len(components)
 
-            t_start, t_end = template_index[rule_id]
+            t_start, t_end, t_keys = template_index[rule_id]
             template_embs = all_embs[t_start:t_end]
 
-            var_embeddings: list[tuple[Any, list[bool]]] = []
-            for v_start, v_end, mask in var_index[rule_id]:
-                var_embeddings.append((all_embs[v_start:v_end], mask))
+            var_embeddings: list[tuple[Any, list[bool], list[str]]] = []
+            for v_start, v_end, mask, v_keys in var_index[rule_id]:
+                var_embeddings.append((all_embs[v_start:v_end], mask, v_keys))
 
             dm_t0 = time.perf_counter()
             distance_matrix = _compute_distance_matrix(
                 n,
                 template_embs,
+                t_keys,
                 var_embeddings,
                 rule_config,
                 self.gca_config.default_variable_weight,
@@ -554,43 +560,98 @@ def _prepare_embedding_components(
     return components
 
 
+def _cosine_distance_matrix_unique(
+    embeddings: Any, text_keys: list[str]
+) -> Any:
+    """Compute NxN cosine distance, deduplicating identical texts.
+
+    Groups sharing the same text get the same embedding row, so we only
+    compute the unique-by-unique matmul and expand back to NxN via indexing.
+    """
+    import numpy as np
+
+    n = len(text_keys)
+
+    # Deduplicate: map each row to a unique index
+    unique_map: dict[str, int] = {}
+    row_to_unique = np.empty(n, dtype=np.intp)
+    for i, key in enumerate(text_keys):
+        if key not in unique_map:
+            unique_map[key] = len(unique_map)
+        row_to_unique[i] = unique_map[key]
+
+    n_unique = len(unique_map)
+    if n_unique == n:
+        # No duplicates — compute full NxN directly
+        return _cosine_distance_matrix_raw(np.asarray(embeddings, dtype=np.float32))
+
+    # Gather one embedding per unique text
+    unique_indices = np.empty(n_unique, dtype=np.intp)
+    for idx, uid in enumerate(unique_map.values()):
+        unique_indices[uid] = 0  # placeholder
+    for i, uid in enumerate(row_to_unique):
+        unique_indices[uid] = i  # last occurrence wins (all same)
+
+    X_unique = np.asarray(embeddings, dtype=np.float32)[unique_indices]
+    unique_dist = _cosine_distance_matrix_raw(X_unique)
+
+    # Expand unique distances back to NxN via fancy indexing
+    return unique_dist[np.ix_(row_to_unique, row_to_unique)]
+
+
+def _cosine_distance_matrix_raw(X: Any) -> Any:
+    """Cosine distance NxN via normalized matmul (BLAS, float32)."""
+    import numpy as np
+
+    norms = np.linalg.norm(X, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    X_norm = X / norms
+    sim = X_norm @ X_norm.T
+    np.clip(sim, -1.0, 1.0, out=sim)
+    dist = 1.0 - sim
+    np.fill_diagonal(dist, 0.0)
+    return dist
+
+
 def _compute_distance_matrix(
     n: int,
     template_embs: Any,
-    var_embeddings: list[tuple[Any, list[bool]]],
+    template_keys: list[str],
+    var_embeddings: list[tuple[Any, list[bool], list[str]]],
     rule_config: GcaRuleConfig,
     default_variable_weight: float,
 ) -> Any:
     """Build NxN distance matrix with per-pair renormalization (vectorized)."""
     import numpy as np
-    from scipy.spatial.distance import cdist
 
     tw = float(rule_config.template_weight)
 
-    # Template: NxN cosine distance in one vectorized call (always active)
-    template_dist = np.nan_to_num(
-        cdist(template_embs, template_embs, metric="cosine"), nan=0.0
-    )
+    # Template: NxN cosine distance (skip if weight is 0)
+    if tw > 0:
+        template_dist = _cosine_distance_matrix_unique(template_embs, template_keys)
+    else:
+        template_dist = np.zeros((n, n), dtype=np.float32)
 
-    # Variable components: NxN cosine distance + pair-wise activity mask
+    # Variable components: skip zero-weight variables entirely
     comp_dists: list[Any] = []
     comp_weights: list[float] = []
     comp_pair_masks: list[Any] = []
-    for i, (embs_i, mask_i) in enumerate(var_embeddings):
+    for i, (embs_i, mask_i, keys_i) in enumerate(var_embeddings):
         var_cfg = rule_config.variables.get(
             i, VariableConfig(weight=default_variable_weight)
         )
-        dist_i = np.nan_to_num(
-            cdist(embs_i, embs_i, metric="cosine"), nan=0.0
-        )
-        mask_arr = np.array(mask_i, dtype=np.float64)
+        w = float(var_cfg.weight)
+        if w == 0:
+            continue
+        dist_i = _cosine_distance_matrix_unique(embs_i, keys_i)
+        mask_arr = np.array(mask_i, dtype=np.float32)
         pair_mask = np.outer(mask_arr, mask_arr)  # 1.0 where both active
         comp_dists.append(dist_i)
-        comp_weights.append(var_cfg.weight)
+        comp_weights.append(w)
         comp_pair_masks.append(pair_mask)
 
     # Accumulate: weighted numerator and weight denominator
-    weight_sum = np.full((n, n), tw)
+    weight_sum = np.full((n, n), tw, dtype=np.float32)
     numerator = tw * template_dist
 
     for dist_i, w_i, pm_i in zip(comp_dists, comp_weights, comp_pair_masks):
@@ -598,7 +659,7 @@ def _compute_distance_matrix(
         numerator += w_i * dist_i * pm_i
 
     # Uniform fallback: count active components per pair
-    n_active = np.ones((n, n))  # template always counts
+    n_active = np.ones((n, n), dtype=np.float32)  # template always counts
     uniform_num = template_dist.copy()
     for dist_i, pm_i in zip(comp_dists, comp_pair_masks):
         n_active += pm_i
