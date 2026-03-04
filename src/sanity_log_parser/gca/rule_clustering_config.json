@@ -4,7 +4,7 @@
   "default_variable_weight": 0.7,
   "rules": {
     "CGR_0018": {
-      "eps": 0.06,
+      "eps": 0.04,
       "template_weight": 0,
       "variables": {
         "0": { "weight": 0 },

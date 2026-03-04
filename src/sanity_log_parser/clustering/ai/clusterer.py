@@ -49,7 +49,7 @@ else:
 class AIClusterer:
     def __init__(
         self,
-        model_path: str = "nomic-ai/nomic-embed-text-v1",
+        model_path: str = "nomic-ai/nomic-embed-text-v1.5",
         embeddings_config_file: str = "config.json",
         gca_config: GcaConfig | None = None,
         embed_batch_size: int = _EMBED_BATCH_SIZE,
