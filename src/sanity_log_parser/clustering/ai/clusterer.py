@@ -49,7 +49,7 @@ else:
 class AIClusterer:
     def __init__(
         self,
-        model_path: str = "all-MiniLM-L6-v2",
+        model_path: str = "nomic-ai/nomic-embed-text-v1",
         embeddings_config_file: str = "config.json",
         gca_config: GcaConfig | None = None,
         embed_batch_size: int = _EMBED_BATCH_SIZE,
@@ -86,7 +86,10 @@ class AIClusterer:
         ):
             try:
                 self.model = cast(
-                    _SentenceModelLike, SentenceTransformerFactory(model_path)
+                    _SentenceModelLike,
+                    SentenceTransformerFactory(
+                        model_path, trust_remote_code=True
+                    ),
                 )
                 self.ai_available = True
             except (ImportError, OSError, RuntimeError) as exc:

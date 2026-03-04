@@ -14,7 +14,7 @@ The tool parses a PrimeTime Constraints report and clusters log messages in two 
 1. **Logic Clustering** — groups identical templates (deterministic, not tunable)
 2. **AI Clustering** — merges logic groups by semantic similarity using embeddings
 
-You are tuning Stage 2. The embedding model is **Qwen-Embedding-4B** (last-token pooling).
+You are tuning Stage 2. The embedding model is **nomic-embed-text-v1**.
 
 ## Distance Computation
 
