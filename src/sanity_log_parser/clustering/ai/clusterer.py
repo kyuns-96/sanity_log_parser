@@ -515,8 +515,7 @@ def _prepare_embedding_components(
     """Prepare template + variable texts for each group."""
     components: list[dict[str, Any]] = []
     for lg in rule_groups:
-        pattern_text = lg["pattern"].replace(" / ", " ")
-        variables = VAR_PATTERN.findall(pattern_text)
+        variables = _SLOT_SPLIT_RE.split(lg["pattern"].strip())
 
         processed_vars: list[str] = []
         for idx, var_text in enumerate(variables):

@@ -2,5 +2,14 @@
   "default_eps": 0.2,
   "default_template_weight": 0.3,
   "default_variable_weight": 0.7,
-  "rules": {}
+  "rules": {
+    "CGR_0018": {
+      "eps": 0.08,
+      "template_weight": 0,
+      "variables": {
+        "0": { "weight": 0 },
+        "1": { "weight": 1.0 }
+      }
+    }
+  }
 }
