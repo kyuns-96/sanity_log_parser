@@ -14,7 +14,7 @@ _ALLOWED_TOP_KEYS = {
     "rules",
 }
 _ALLOWED_RULE_KEYS = {"eps", "template_weight", "variables"}
-_ALLOWED_VARIABLE_KEYS = {"weight", "levels"}
+_ALLOWED_VARIABLE_KEYS = {"weight", "levels", "level_weights"}
 
 
 class ConfigError(Exception):
@@ -25,6 +25,7 @@ class ConfigError(Exception):
 class VariableConfig:
     weight: float = 0.7
     levels: list[int] | None = None
+    level_weights: dict[int, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -156,7 +157,27 @@ def _parse_variable(raw: object, rule_id: str, var_key: str) -> VariableConfig:
                 msg = f"Rule '{rule_id}', variable '{var_key}': levels[{i}] must be an int, got {type(level).__name__}"
                 raise ConfigError(msg)
 
-    return VariableConfig(weight=weight, levels=levels)
+    level_weights_raw = raw.get("level_weights")
+    level_weights: dict[int, float] | None = None
+    if level_weights_raw is not None:
+        ctx = f"rule '{rule_id}', variable '{var_key}'"
+        if not isinstance(level_weights_raw, dict):
+            msg = f"{ctx}: 'level_weights' must be a dict, got {type(level_weights_raw).__name__}"
+            raise ConfigError(msg)
+        if levels is not None:
+            msg = f"{ctx}: 'levels' and 'level_weights' are mutually exclusive"
+            raise ConfigError(msg)
+        level_weights = {}
+        for k, v in level_weights_raw.items():
+            try:
+                level_idx = int(k)
+            except (ValueError, TypeError):
+                msg = f"{ctx}: level_weights key '{k}' must be an integer"
+                raise ConfigError(msg) from None
+            _validate_non_negative_float(v, f"{ctx} level_weights[{k}]")
+            level_weights[level_idx] = float(v)
+
+    return VariableConfig(weight=weight, levels=levels, level_weights=level_weights)
 
 
 def _reject_unknown_keys(

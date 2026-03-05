@@ -24,16 +24,18 @@ def _mock_embeddings(n: int, dim: int = 4) -> np.ndarray:
 def test_distance_matrix_symmetric() -> None:
     n = 3
     template_embs = _mock_embeddings(n)
+    t_keys = [f"t{i}" for i in range(n)]
     rule_config = GcaRuleConfig(eps=0.2, template_weight=1.0)
-    d = _compute_distance_matrix(n, template_embs, [], rule_config, 0.7)
+    d = _compute_distance_matrix(n, template_embs, t_keys, [], rule_config, 0.7)
     np.testing.assert_array_almost_equal(d, d.T)
 
 
 def test_distance_matrix_diagonal_zero() -> None:
     n = 3
     template_embs = _mock_embeddings(n)
+    t_keys = [f"t{i}" for i in range(n)]
     rule_config = GcaRuleConfig(eps=0.2, template_weight=1.0)
-    d = _compute_distance_matrix(n, template_embs, [], rule_config, 0.7)
+    d = _compute_distance_matrix(n, template_embs, t_keys, [], rule_config, 0.7)
     for i in range(n):
         assert d[i][i] == 0.0
 
@@ -42,8 +44,9 @@ def test_distance_matrix_uniform_weights_on_zero_total() -> None:
     """When all weights are 0, uniform 1/n_active is used."""
     n = 2
     template_embs = _mock_embeddings(n)
+    t_keys = [f"t{i}" for i in range(n)]
     rule_config = GcaRuleConfig(eps=0.2, template_weight=0.0)
-    d = _compute_distance_matrix(n, template_embs, [], rule_config, 0.0)
+    d = _compute_distance_matrix(n, template_embs, t_keys, [], rule_config, 0.0)
     # Should not raise and should produce a valid distance
     assert d[0][1] >= 0
     assert d[0][1] == d[1][0]
@@ -53,18 +56,20 @@ def test_distance_matrix_per_pair_renorm_asymmetric_vars() -> None:
     """Different pairs have different active variable sets."""
     n = 3
     template_embs = _mock_embeddings(n)
+    t_keys = [f"t{i}" for i in range(n)]
 
     # One variable position: group 0 and 1 active, group 2 inactive
     var_embs = _mock_embeddings(n)
     mask = [True, True, False]
-    var_embeddings = [(var_embs, mask)]
+    v_keys = [f"v{i}" for i in range(n)]
+    var_embeddings = [(var_embs, mask, v_keys)]
 
     rule_config = GcaRuleConfig(
         eps=0.2,
         template_weight=0.3,
         variables={0: VariableConfig(weight=0.7)},
     )
-    d = _compute_distance_matrix(n, template_embs, var_embeddings, rule_config, 0.7)
+    d = _compute_distance_matrix(n, template_embs, t_keys, var_embeddings, rule_config, 0.7)
 
     # Pair (0,1) uses both template and variable
     # Pair (0,2) and (1,2) use only template
@@ -83,7 +88,7 @@ def test_distance_matrix_empty_select_levels_marks_inactive() -> None:
         {"template": "T1", "pattern": "'a/b' rest", "count": 1, "members": []},
         {"template": "T2", "pattern": "'c/d' rest", "count": 1, "members": []},
     ]
-    components = _prepare_embedding_components(groups, rule_config, 0.7)
+    components, _vw = _prepare_embedding_components(groups, rule_config, 0.7)
     # levels=[99] on "a/b" → empty string → should be masked
     assert components[0]["variables"][0] == ""
     assert components[1]["variables"][0] == ""
@@ -93,8 +98,9 @@ def test_distance_matrix_template_only_no_vars() -> None:
     """Distance matrix with no variables is pure template distance."""
     n = 2
     template_embs = _mock_embeddings(n)
+    t_keys = [f"t{i}" for i in range(n)]
     rule_config = GcaRuleConfig(eps=0.2, template_weight=1.0)
-    d = _compute_distance_matrix(n, template_embs, [], rule_config, 0.7)
+    d = _compute_distance_matrix(n, template_embs, t_keys, [], rule_config, 0.7)
     # With only template, the distance should equal the cosine distance
     from scipy.spatial.distance import cosine as cosine_distance
 
@@ -103,6 +109,53 @@ def test_distance_matrix_template_only_no_vars() -> None:
 
 
 # --- _merge_patterns tests ---
+
+
+def test_prepare_components_level_weights_expansion() -> None:
+    """level_weights expands a single variable into per-level slots."""
+    rule_config = GcaRuleConfig(
+        eps=0.2,
+        template_weight=0.3,
+        variables={0: VariableConfig(level_weights={-3: 0.5, -2: 1.0})},
+    )
+    groups = [
+        {"template": "T", "pattern": "'top/sub/block_a/reg_1/CK' / clk", "count": 1, "members": []},
+        {"template": "T", "pattern": "'top/sub/block_b/reg_2/Q' / clk", "count": 1, "members": []},
+    ]
+    components, var_weights = _prepare_embedding_components(groups, rule_config, 0.7)
+
+    # Variable 0 expands into 2 slots (level -3 and -2), variable 1 stays as 1 slot
+    assert len(components[0]["variables"]) == 3
+    # Level -3 (index 2 in depth-5 path) = block_a
+    assert components[0]["variables"][0] == "block_a"
+    assert components[1]["variables"][0] == "block_b"
+    # Level -2 (index 3) = reg_1
+    assert components[0]["variables"][1] == "reg_1"
+    assert components[1]["variables"][1] == "reg_2"
+    # Variable 1 (clk) kept intact
+    assert components[0]["variables"][2] == "clk"
+    # Weights match expansion
+    assert var_weights == [0.5, 1.0, 0.7]
+
+
+def test_distance_matrix_with_var_weights() -> None:
+    """_compute_distance_matrix uses var_weights when provided."""
+    n = 2
+    template_embs = _mock_embeddings(n)
+    t_keys = [f"t{i}" for i in range(n)]
+    var_embs = _mock_embeddings(n)
+    mask = [True, True]
+    v_keys = [f"v{i}" for i in range(n)]
+    var_embeddings = [(var_embs, mask, v_keys)]
+
+    rule_config = GcaRuleConfig(eps=0.2, template_weight=0.3)
+    # Pass explicit var_weights instead of relying on rule_config lookup
+    d = _compute_distance_matrix(
+        n, template_embs, t_keys, var_embeddings, rule_config, 0.0,
+        var_weights=[0.7],
+    )
+    np.testing.assert_array_almost_equal(d, d.T)
+    assert d[0][1] > 0
 
 
 def test_merge_patterns_single() -> None:

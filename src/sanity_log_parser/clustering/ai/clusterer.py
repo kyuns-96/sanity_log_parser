@@ -204,7 +204,7 @@ class AIClusterer:
 
         # Phase 1: Handle single groups, prepare components for multi-group rules
         prep_t0 = time.perf_counter()
-        prepared: dict[str, tuple[GcaRuleConfig, list[dict[str, Any]]]] = {}
+        prepared: dict[str, tuple[GcaRuleConfig, list[dict[str, Any]], list[float]]] = {}
         for rule_id, rule_groups in groups_by_rule.items():
             if len(rule_groups) < 2:
                 for lg in rule_groups:
@@ -214,10 +214,10 @@ class AIClusterer:
                     )
                 continue
             rule_config = get_gca_rule_config(self.gca_config, rule_id)
-            components = _prepare_embedding_components(
+            components, vw = _prepare_embedding_components(
                 rule_groups, rule_config, self.gca_config.default_variable_weight
             )
-            prepared[rule_id] = (rule_config, components)
+            prepared[rule_id] = (rule_config, components, vw)
         logger.info(
             "[timing] prepare components (%d rules): %.3fs",
             len(prepared),
@@ -233,7 +233,7 @@ class AIClusterer:
         template_index: dict[str, tuple[int, int, list[str]]] = {}
         var_index: dict[str, list[tuple[int, int, list[bool], list[str]]]] = {}
 
-        for rule_id, (rule_config, components) in prepared.items():
+        for rule_id, (rule_config, components, _vw) in prepared.items():
             # Templates
             t_start = len(batch_texts)
             t_keys: list[str] = [c["template"] for c in components]
@@ -277,7 +277,7 @@ class AIClusterer:
 
         cluster_t0 = time.perf_counter()
         for rule_id in prepared:
-            rule_config, components = prepared[rule_id]
+            rule_config, components, vw = prepared[rule_id]
             n = len(components)
 
             t_start, t_end, t_keys = template_index[rule_id]
@@ -295,6 +295,7 @@ class AIClusterer:
                 var_embeddings,
                 rule_config,
                 self.gca_config.default_variable_weight,
+                var_weights=vw,
             )
             logger.info(
                 "[timing] distance matrix for '%s' (%d groups): %.3fs",
@@ -538,18 +539,46 @@ def _prepare_embedding_components(
     rule_groups: list[dict[str, Any]],
     rule_config: GcaRuleConfig,
     default_variable_weight: float,
-) -> list[dict[str, Any]]:
-    """Prepare template + variable texts for each group."""
+) -> tuple[list[dict[str, Any]], list[float]]:
+    """Prepare template + variable texts for each group.
+
+    Returns (components, var_weights) where var_weights[i] is the weight
+    for expanded variable slot i.  When a variable has ``level_weights``,
+    it is expanded into one slot per level key (sorted), each with its own
+    weight.
+    """
+    # Determine max original variable count across all groups
+    max_orig_vars = 0
+    for lg in rule_groups:
+        n_vars = len(_SLOT_SPLIT_RE.split(lg["pattern"].strip()))
+        max_orig_vars = max(max_orig_vars, n_vars)
+
+    # Build expansion plan: list of (orig_var_idx, levels_arg_for_select_levels)
+    slot_specs: list[tuple[int, list[int] | None]] = []
+    var_weights: list[float] = []
+    for idx in range(max_orig_vars):
+        var_cfg = rule_config.variables.get(
+            idx, VariableConfig(weight=default_variable_weight)
+        )
+        if var_cfg.level_weights is not None:
+            for level_key in sorted(var_cfg.level_weights.keys()):
+                slot_specs.append((idx, [level_key]))
+                var_weights.append(var_cfg.level_weights[level_key])
+        else:
+            slot_specs.append((idx, var_cfg.levels))
+            var_weights.append(var_cfg.weight)
+
+    # Process each group using the expansion plan
     components: list[dict[str, Any]] = []
     for lg in rule_groups:
         variables = _SLOT_SPLIT_RE.split(lg["pattern"].strip())
 
         processed_vars: list[str] = []
-        for idx, var_text in enumerate(variables):
-            var_cfg = rule_config.variables.get(
-                idx, VariableConfig(weight=default_variable_weight)
-            )
-            processed_vars.append(select_levels(var_text, var_cfg.levels))
+        for orig_idx, levels in slot_specs:
+            if orig_idx < len(variables):
+                processed_vars.append(select_levels(variables[orig_idx], levels))
+            else:
+                processed_vars.append("")
 
         components.append(
             {
@@ -557,7 +586,7 @@ def _prepare_embedding_components(
                 "variables": processed_vars,
             }
         )
-    return components
+    return components, var_weights
 
 
 def _cosine_distance_matrix_unique(
@@ -620,8 +649,13 @@ def _compute_distance_matrix(
     var_embeddings: list[tuple[Any, list[bool], list[str]]],
     rule_config: GcaRuleConfig,
     default_variable_weight: float,
+    var_weights: list[float] | None = None,
 ) -> Any:
-    """Build NxN distance matrix with per-pair renormalization (vectorized)."""
+    """Build NxN distance matrix with per-pair renormalization (vectorized).
+
+    When *var_weights* is provided, ``var_weights[i]`` is used as the weight
+    for variable slot *i* instead of looking up from *rule_config*.
+    """
     import numpy as np
 
     tw = float(rule_config.template_weight)
@@ -637,10 +671,13 @@ def _compute_distance_matrix(
     comp_weights: list[float] = []
     comp_pair_masks: list[Any] = []
     for i, (embs_i, mask_i, keys_i) in enumerate(var_embeddings):
-        var_cfg = rule_config.variables.get(
-            i, VariableConfig(weight=default_variable_weight)
-        )
-        w = float(var_cfg.weight)
+        if var_weights is not None:
+            w = float(var_weights[i])
+        else:
+            var_cfg = rule_config.variables.get(
+                i, VariableConfig(weight=default_variable_weight)
+            )
+            w = float(var_cfg.weight)
         if w == 0:
             continue
         dist_i = _cosine_distance_matrix_unique(embs_i, keys_i)

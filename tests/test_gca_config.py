@@ -96,6 +96,88 @@ def test_load_gca_config_with_rules(tmp_path: Path) -> None:
     assert rule.variables[1] == VariableConfig(weight=0.2, levels=[-2, -1])
 
 
+def test_load_gca_config_with_level_weights(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        {
+            "default_eps": 0.2,
+            "default_template_weight": 0.3,
+            "default_variable_weight": 0.7,
+            "rules": {
+                "R001": {
+                    "variables": {
+                        "0": {"level_weights": {"-3": 0.5, "-2": 1.0}},
+                    },
+                },
+            },
+        },
+    )
+    cfg = load_gca_config(path, strict=True)
+    vc = cfg.rules["R001"].variables[0]
+    assert vc.level_weights == {-3: 0.5, -2: 1.0}
+    assert vc.levels is None  # levels not set
+
+
+def test_strict_level_weights_and_levels_mutual_exclusion(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        {
+            "default_eps": 0.2,
+            "default_template_weight": 0.3,
+            "default_variable_weight": 0.7,
+            "rules": {
+                "R001": {
+                    "variables": {
+                        "0": {"levels": [-1], "level_weights": {"-1": 0.5}},
+                    },
+                },
+            },
+        },
+    )
+    with pytest.raises(ConfigError, match="mutually exclusive"):
+        load_gca_config(path, strict=True)
+
+
+def test_strict_level_weights_bad_key(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        {
+            "default_eps": 0.2,
+            "default_template_weight": 0.3,
+            "default_variable_weight": 0.7,
+            "rules": {
+                "R001": {
+                    "variables": {
+                        "0": {"level_weights": {"abc": 0.5}},
+                    },
+                },
+            },
+        },
+    )
+    with pytest.raises(ConfigError, match="integer"):
+        load_gca_config(path, strict=True)
+
+
+def test_strict_level_weights_negative_value(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        {
+            "default_eps": 0.2,
+            "default_template_weight": 0.3,
+            "default_variable_weight": 0.7,
+            "rules": {
+                "R001": {
+                    "variables": {
+                        "0": {"level_weights": {"-1": -0.5}},
+                    },
+                },
+            },
+        },
+    )
+    with pytest.raises(ConfigError, match="non-negative"):
+        load_gca_config(path, strict=True)
+
+
 def test_load_gca_config_partial_rule(tmp_path: Path) -> None:
     """Rule with only eps inherits template_weight from top-level default."""
     path = _write_config(

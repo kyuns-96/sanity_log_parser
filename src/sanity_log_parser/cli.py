@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime
+import json
 import logging
 import os
 import sys
@@ -125,6 +126,55 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to the template file. Omit for single-file PrimeTime reports.",
     )
     _add_common_options(cluster)
+
+    # --- gca-eval subcommand ---
+    gca_eval = subparsers.add_parser(
+        "gca-eval",
+        help="Evaluate AI clustering results against a ground truth.",
+    )
+    _ = gca_eval.add_argument(
+        "--logic", required=True, help="Path to logic.json (AI-off output)."
+    )
+    _ = gca_eval.add_argument(
+        "--ai", required=True, dest="ai_json", help="Path to ai.json (AI-on output)."
+    )
+    _ = gca_eval.add_argument(
+        "--ground-truth", required=True, help="Path to ground truth JSON."
+    )
+    _ = gca_eval.add_argument(
+        "--f1-threshold",
+        type=float,
+        default=0.97,
+        help="F1 threshold for PASS/FAIL (default: 0.97).",
+    )
+
+    # --- gca-distances subcommand ---
+    gca_dist = subparsers.add_parser(
+        "gca-distances",
+        help="Show pairwise distance matrix for a GCA rule.",
+    )
+    _ = gca_dist.add_argument(
+        "--logic", required=True, help="Path to logic.json (AI-off output)."
+    )
+    _ = gca_dist.add_argument(
+        "--rule-config", default=None, help="Rule clustering config path."
+    )
+    _ = gca_dist.add_argument(
+        "--rule-id", required=True, help="Rule ID to analyze."
+    )
+    _ = gca_dist.add_argument(
+        "--embeddings-config",
+        "--config",
+        dest="embeddings_config",
+        default=None,
+        help="Embeddings config path.",
+    )
+    _ = gca_dist.add_argument(
+        "--ground-truth", default=None, help="Optional ground truth JSON for annotation."
+    )
+    _ = gca_dist.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable verbose logging."
+    )
 
     # --- view subcommand ---
     view = subparsers.add_parser("view", help="Render report from a results JSON file.")
@@ -382,6 +432,90 @@ def _run_gca(args: argparse.Namespace) -> int:
     return _run_pipeline(parsed_logs, opts)
 
 
+def _run_gca_eval(args: argparse.Namespace) -> int:
+    """Evaluate AI clustering against ground truth."""
+    from .gca.eval import evaluate, format_results
+
+    logic = cast(str, args.logic)
+    ai_json = cast(str, args.ai_json)
+    gt = cast(str, args.ground_truth)
+    threshold = cast(float, args.f1_threshold)
+
+    try:
+        results = evaluate(logic, ai_json, gt, f1_threshold=threshold)
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_results(results))
+
+    all_pass = all(r["status"] == "PASS" for r in results)
+    return 0 if all_pass else 1
+
+
+def _run_gca_distances(args: argparse.Namespace) -> int:
+    """Show pairwise distance matrix for a rule."""
+    from .gca.config import ConfigError, load_gca_config
+    from .gca.distances import compute_distances, format_distances
+    from .gca import GCA_DEFAULT_CONFIG_PATH
+
+    logging.basicConfig(
+        level=logging.INFO if cast(bool, args.verbose) else logging.WARNING,
+        format="%(levelname)s: %(message)s",
+    )
+
+    config_path = cast(str | None, args.rule_config) or str(GCA_DEFAULT_CONFIG_PATH)
+    strict = args.rule_config is not None
+    try:
+        gca_config = load_gca_config(config_path, strict=strict)
+    except ConfigError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    # Set up embeddings
+    loaded_embeddings = load_resolved_embeddings_config(
+        embeddings_config_arg=cast(str | None, args.embeddings_config),
+    )
+    for warning in loaded_embeddings.warnings:
+        print(f"Warning: {warning}", file=sys.stderr)
+
+    ai_clusterer = AIClusterer(
+        embeddings_config_file=loaded_embeddings.config_path or "",
+        gca_config=gca_config,
+        embed_batch_size=loaded_embeddings.config.embed_batch_size,
+    )
+    if not ai_clusterer.ai_available:
+        print("Error: AI embeddings not available. Check embeddings config.", file=sys.stderr)
+        return 1
+
+    def embed_fn(texts: list[str]) -> Any:
+        result = ai_clusterer._compute_embeddings_batched(texts)
+        if result is None:
+            raise RuntimeError("Embedding computation failed")
+        return result
+
+    gt: dict[str, list[list[str]]] | None = None
+    gt_path = cast(str | None, args.ground_truth)
+    if gt_path:
+        with open(gt_path, encoding="utf-8") as f:
+            gt = json.load(f)
+
+    try:
+        result = compute_distances(
+            logic_path=cast(str, args.logic),
+            rule_id=cast(str, args.rule_id),
+            gca_config=gca_config,
+            embed_fn=embed_fn,
+            ground_truth=gt,
+        )
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_distances(result))
+    return 0
+
+
 def _run_view(args: argparse.Namespace) -> int:
     """Render report from results JSON file."""
     results_json = cast(str, args.results_json)
@@ -399,4 +533,8 @@ def main() -> int:
         return _run_gca(args)
     if command == "cluster":
         return _run_cluster(args)
+    if command == "gca-eval":
+        return _run_gca_eval(args)
+    if command == "gca-distances":
+        return _run_gca_distances(args)
     return _run_view(args)
