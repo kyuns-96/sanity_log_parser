@@ -237,6 +237,78 @@ def test_format_distances_level_weights(tmp_path: Path) -> None:
     assert "level_weights" in output
 
 
+# --- Jaccard match_mode tests ---
+
+
+def test_compute_distances_jaccard_mode(tmp_path: Path) -> None:
+    """Jaccard mode gives clean 0/1 distances on structured paths."""
+    logic = _make_logic_json(
+        [
+            _logic_group("R1", 1, "T", "'top/sub/block_a/reg_1' / clk", ["a"]),
+            _logic_group("R1", 2, "T", "'top/sub/block_a/reg_1' / clk", ["b"]),
+            _logic_group("R1", 3, "T", "'top/sub/block_b/reg_2' / clk", ["c"]),
+        ]
+    )
+    lp = _write_json(tmp_path, "logic.json", logic)
+
+    config = GcaConfig(
+        default_eps=0.5,
+        default_template_weight=0.0,
+        default_variable_weight=0.0,
+        rules={
+            "R1": GcaRuleConfig(
+                eps=0.5,
+                template_weight=0.0,
+                variables={
+                    0: VariableConfig(weight=1.0, match_mode="jaccard"),
+                    1: VariableConfig(weight=0.0),
+                },
+            )
+        },
+    )
+
+    result = compute_distances(lp, "R1", config, _mock_embed_fn)
+    # Groups 1 and 2 have identical var 0 → Jaccard distance 0
+    pair_12 = next(p for p in result["pairs"] if "000001" in p["a"] and "000002" in p["b"])
+    assert pair_12["distance"] == 0.0
+    assert pair_12["merge"] is True
+    # Groups 1 and 3 differ → positive Jaccard distance
+    pair_13 = next(p for p in result["pairs"] if "000001" in p["a"] and "000003" in p["b"])
+    assert pair_13["distance"] > 0.0
+
+
+def test_compute_distances_jaccard_with_levels(tmp_path: Path) -> None:
+    """Jaccard + levels: only selected levels used for Jaccard comparison."""
+    logic = _make_logic_json(
+        [
+            # Same block, different pin → levels=[-2] strips pin noise
+            _logic_group("R1", 1, "T", "'top/block_a/CK' / clk", ["a"]),
+            _logic_group("R1", 2, "T", "'top/block_a/Q' / clk", ["b"]),
+        ]
+    )
+    lp = _write_json(tmp_path, "logic.json", logic)
+
+    config = GcaConfig(
+        default_eps=0.5,
+        default_template_weight=0.0,
+        default_variable_weight=0.0,
+        rules={
+            "R1": GcaRuleConfig(
+                eps=0.5,
+                template_weight=0.0,
+                variables={
+                    0: VariableConfig(weight=1.0, levels=[-2], match_mode="jaccard"),
+                    1: VariableConfig(weight=0.0),
+                },
+            )
+        },
+    )
+
+    result = compute_distances(lp, "R1", config, _mock_embed_fn)
+    # After levels=[-2], both are "block_a" → Jaccard distance 0
+    assert result["pairs"][0]["distance"] == 0.0
+
+
 # --- Level Analysis tests ---
 
 

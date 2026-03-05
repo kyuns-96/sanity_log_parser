@@ -14,7 +14,8 @@ _ALLOWED_TOP_KEYS = {
     "rules",
 }
 _ALLOWED_RULE_KEYS = {"eps", "template_weight", "variables"}
-_ALLOWED_VARIABLE_KEYS = {"weight", "levels", "level_weights"}
+_ALLOWED_VARIABLE_KEYS = {"weight", "levels", "level_weights", "match_mode"}
+_VALID_MATCH_MODES = {"embedding", "jaccard"}
 
 
 class ConfigError(Exception):
@@ -26,6 +27,7 @@ class VariableConfig:
     weight: float = 0.7
     levels: list[int] | None = None
     level_weights: dict[int, float] | None = None
+    match_mode: str = "embedding"
 
 
 @dataclass(frozen=True)
@@ -177,7 +179,15 @@ def _parse_variable(raw: object, rule_id: str, var_key: str) -> VariableConfig:
             _validate_non_negative_float(v, f"{ctx} level_weights[{k}]")
             level_weights[level_idx] = float(v)
 
-    return VariableConfig(weight=weight, levels=levels, level_weights=level_weights)
+    match_mode = raw.get("match_mode", "embedding")
+    if match_mode not in _VALID_MATCH_MODES:
+        ctx = f"rule '{rule_id}', variable '{var_key}'"
+        msg = f"{ctx}: 'match_mode' must be one of {sorted(_VALID_MATCH_MODES)}, got '{match_mode}'"
+        raise ConfigError(msg)
+
+    return VariableConfig(
+        weight=weight, levels=levels, level_weights=level_weights, match_mode=match_mode
+    )
 
 
 def _reject_unknown_keys(

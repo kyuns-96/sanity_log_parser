@@ -84,6 +84,7 @@ Example pattern: `clk_gen/pll/output / top/io/pad_ring`
 | `weight` | float | >= 0 | How much this variable matters (relative to other components) |
 | `levels` | list[int] or null | Python-style indices | Which hierarchy levels of the `/`-separated path to embed |
 | `level_weights` | dict or null | keys: int strings, values: >= 0 | Per-level weights — each level gets its own embedding and weight |
+| `match_mode` | string | `"embedding"` or `"jaccard"` | Distance metric for this variable (default: `"embedding"`) |
 
 **`levels` vs `level_weights`**: These are mutually exclusive. Use `levels` when all selected levels should share one weight. Use `level_weights` when different hierarchy levels need different weights (e.g., block name matters more than register name).
 
@@ -129,13 +130,48 @@ Example for path `top/cpu/alu/reg_bank/CK`:
 
 **Keys must be integer strings** (negative recommended for portability). Values must be non-negative floats. `level_weights` and `levels` cannot be used together on the same variable.
 
+### `match_mode` — Jaccard Distance for Structured Variables
+
+By default, variables are compared using **cosine distance on embeddings** (`match_mode: "embedding"`). For structured identifiers like VLSI hierarchy paths, embeddings give noisy distances — `block_a` and `block_b` may have cosine distance 0.03, making eps tuning nearly impossible.
+
+Set `match_mode: "jaccard"` to use **Jaccard distance on token sets** instead:
+
+```json
+"0": { "weight": 1.0, "levels": [-3, -2], "match_mode": "jaccard" }
+```
+
+How it works:
+1. The variable text is split into tokens (whitespace-separated, quotes stripped)
+2. Jaccard distance = 1 - |intersection| / |union| of the token sets
+3. Identical token sets → distance **exactly 0**. Completely disjoint → distance **exactly 1**.
+
+Example with `levels=[-3, -2]` on paths of depth 5:
+| Group A | Group B | Tokens A | Tokens B | Jaccard |
+|---------|---------|----------|----------|---------|
+| `block_a/reg_1` | `block_a/reg_1` | {block_a, reg_1} | {block_a, reg_1} | **0.0** |
+| `block_a/reg_1` | `block_a/reg_2` | {block_a, reg_1} | {block_a, reg_2} | **0.333** |
+| `block_a/reg_1` | `block_b/reg_2` | {block_a, reg_1} | {block_b, reg_2} | **1.0** |
+
+Distances are **discrete and predictable** — set eps between the "should merge" and "should not merge" values.
+
+**When to use Jaccard:**
+- Variables are structured identifiers (hierarchy paths, signal names, instance paths)
+- `gca-distances` shows that embedding distances between different values are very small (< 0.1)
+- eps tuning is stuck: can't find a threshold that separates same-cluster from different-cluster pairs
+
+**When to keep embeddings:**
+- Variables contain natural language (template text, error messages)
+- You need fuzzy semantic matching (e.g., `clk_gen` ≈ `clock_generator`)
+
+`match_mode` works with `levels`, `level_weights`, and `weight`. With `level_weights` + `match_mode: "jaccard"`, each level becomes a single token — Jaccard of single-token sets is exact match (0 or 1).
+
 ### Allowed Keys
 
 The config uses strict validation. Only these keys are accepted:
 
 - **Top-level**: `default_eps`, `default_template_weight`, `default_variable_weight`, `rules`
 - **Per-rule**: `eps`, `template_weight`, `variables`
-- **Per-variable**: `weight`, `levels`, `level_weights`
+- **Per-variable**: `weight`, `levels`, `level_weights`, `match_mode`
 
 Any unknown key causes a validation error.
 

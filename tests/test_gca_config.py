@@ -178,6 +178,47 @@ def test_strict_level_weights_negative_value(tmp_path: Path) -> None:
         load_gca_config(path, strict=True)
 
 
+def test_load_gca_config_with_match_mode(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        {
+            "default_eps": 0.2,
+            "default_template_weight": 0.3,
+            "default_variable_weight": 0.7,
+            "rules": {
+                "R001": {
+                    "variables": {
+                        "0": {"weight": 1.0, "match_mode": "jaccard"},
+                    },
+                },
+            },
+        },
+    )
+    cfg = load_gca_config(path, strict=True)
+    vc = cfg.rules["R001"].variables[0]
+    assert vc.match_mode == "jaccard"
+
+
+def test_strict_invalid_match_mode(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        {
+            "default_eps": 0.2,
+            "default_template_weight": 0.3,
+            "default_variable_weight": 0.7,
+            "rules": {
+                "R001": {
+                    "variables": {
+                        "0": {"match_mode": "invalid_mode"},
+                    },
+                },
+            },
+        },
+    )
+    with pytest.raises(ConfigError, match="match_mode"):
+        load_gca_config(path, strict=True)
+
+
 def test_load_gca_config_partial_rule(tmp_path: Path) -> None:
     """Rule with only eps inherits template_weight from top-level default."""
     path = _write_config(

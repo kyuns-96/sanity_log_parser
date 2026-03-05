@@ -88,7 +88,7 @@ def test_distance_matrix_empty_select_levels_marks_inactive() -> None:
         {"template": "T1", "pattern": "'a/b' rest", "count": 1, "members": []},
         {"template": "T2", "pattern": "'c/d' rest", "count": 1, "members": []},
     ]
-    components, _vw = _prepare_embedding_components(groups, rule_config, 0.7)
+    components, _vw, _vm = _prepare_embedding_components(groups, rule_config, 0.7)
     # levels=[99] on "a/b" → empty string → should be masked
     assert components[0]["variables"][0] == ""
     assert components[1]["variables"][0] == ""
@@ -122,7 +122,7 @@ def test_prepare_components_level_weights_expansion() -> None:
         {"template": "T", "pattern": "'top/sub/block_a/reg_1/CK' / clk", "count": 1, "members": []},
         {"template": "T", "pattern": "'top/sub/block_b/reg_2/Q' / clk", "count": 1, "members": []},
     ]
-    components, var_weights = _prepare_embedding_components(groups, rule_config, 0.7)
+    components, var_weights, _vm = _prepare_embedding_components(groups, rule_config, 0.7)
 
     # Variable 0 expands into 2 slots (level -3 and -2), variable 1 stays as 1 slot
     assert len(components[0]["variables"]) == 3
@@ -136,6 +136,56 @@ def test_prepare_components_level_weights_expansion() -> None:
     assert components[0]["variables"][2] == "clk"
     # Weights match expansion
     assert var_weights == [0.5, 1.0, 0.7]
+
+
+def test_prepare_components_jaccard_mode() -> None:
+    """match_mode='jaccard' is propagated in var_modes."""
+    rule_config = GcaRuleConfig(
+        eps=0.2,
+        template_weight=0.3,
+        variables={0: VariableConfig(weight=0.7, match_mode="jaccard")},
+    )
+    groups = [
+        {"template": "T", "pattern": "'a/b' / x", "count": 1, "members": []},
+        {"template": "T", "pattern": "'c/d' / x", "count": 1, "members": []},
+    ]
+    _components, _vw, vm = _prepare_embedding_components(groups, rule_config, 0.7)
+    assert vm[0] == "jaccard"
+    assert vm[1] == "embedding"  # default
+
+
+def test_jaccard_distance_identical() -> None:
+    """Identical texts have Jaccard distance 0."""
+    from sanity_log_parser.clustering.ai.clusterer import _jaccard_distance_matrix
+    d = _jaccard_distance_matrix(["block_a reg_1", "block_a reg_1", "block_b reg_2"])
+    assert d[0][1] == 0.0  # identical
+    assert d[0][2] > 0.0   # different
+
+
+def test_jaccard_distance_partial_overlap() -> None:
+    """Partial overlap gives intermediate Jaccard distance."""
+    from sanity_log_parser.clustering.ai.clusterer import _jaccard_distance_matrix
+    # {block_a, reg_1} vs {block_a, reg_2}: intersection={block_a}, union={block_a,reg_1,reg_2}
+    d = _jaccard_distance_matrix(["block_a reg_1", "block_a reg_2"])
+    expected = 1.0 - 1 / 3  # ~0.6667
+    np.testing.assert_almost_equal(d[0][1], expected)
+
+
+def test_distance_matrix_jaccard_mode() -> None:
+    """_compute_distance_matrix uses Jaccard when var_modes specifies it."""
+    n = 3
+    template_embs = _mock_embeddings(n)
+    t_keys = [f"t{i}" for i in range(n)]
+    # No real embeddings needed for Jaccard — pass None
+    var_embeddings = [(None, [True, True, True], ["block_a reg_1", "block_a reg_1", "block_b reg_2"])]
+    rule_config = GcaRuleConfig(eps=0.5, template_weight=0.0)
+    d = _compute_distance_matrix(
+        n, template_embs, t_keys, var_embeddings, rule_config, 0.0,
+        var_weights=[1.0], var_modes=["jaccard"],
+    )
+    assert d[0][1] == 0.0  # identical → distance 0
+    assert d[0][2] > 0.0   # different → positive distance
+    np.testing.assert_array_almost_equal(d, d.T)
 
 
 def test_distance_matrix_with_var_weights() -> None:

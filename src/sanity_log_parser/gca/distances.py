@@ -73,11 +73,11 @@ def compute_distances(
     group_ids = [g["group_id"] for g in rule_groups]
 
     # Prepare embedding components
-    components, var_weights = _prepare_embedding_components(
+    components, var_weights, var_modes = _prepare_embedding_components(
         internal_groups, rule_config, gca_config.default_variable_weight
     )
 
-    # Collect all texts for embedding
+    # Collect texts for embedding (skip Jaccard slots)
     batch_texts: list[str] = []
     t_keys: list[str] = [c["template"] for c in components]
     batch_texts.extend(t_keys)
@@ -85,21 +85,25 @@ def compute_distances(
     n = len(components)
     max_vars = max(len(c["variables"]) for c in components) if components else 0
 
-    var_slices: list[tuple[int, int, list[bool], list[str]]] = []
+    # var_slices: (v_start, v_end, mask, v_keys, mode)
+    var_slices: list[tuple[int, int, list[bool], list[str], str]] = []
     for i in range(max_vars):
-        v_start = len(batch_texts)
+        mode = var_modes[i] if i < len(var_modes) else "embedding"
         mask: list[bool] = []
         v_keys: list[str] = []
         for c in components:
             if i < len(c["variables"]) and c["variables"][i].strip():
-                batch_texts.append(c["variables"][i])
                 mask.append(True)
                 v_keys.append(c["variables"][i])
             else:
-                batch_texts.append("_")
                 mask.append(False)
                 v_keys.append("_")
-        var_slices.append((v_start, len(batch_texts), mask, v_keys))
+        if mode != "jaccard":
+            v_start = len(batch_texts)
+            batch_texts.extend(v_keys)
+            var_slices.append((v_start, len(batch_texts), mask, v_keys, mode))
+        else:
+            var_slices.append((-1, -1, mask, v_keys, mode))
 
     # Embed
     all_embs = np.asarray(embed_fn(batch_texts))
@@ -107,8 +111,11 @@ def compute_distances(
     # Slice embeddings
     template_embs = all_embs[: len(t_keys)]
     var_embeddings: list[tuple[Any, list[bool], list[str]]] = []
-    for v_start, v_end, mask, v_keys in var_slices:
-        var_embeddings.append((all_embs[v_start:v_end], mask, v_keys))
+    for v_start, v_end, mask, v_keys, mode in var_slices:
+        if mode != "jaccard":
+            var_embeddings.append((all_embs[v_start:v_end], mask, v_keys))
+        else:
+            var_embeddings.append((None, mask, v_keys))
 
     # Compute distance matrix
     dist_matrix = _compute_distance_matrix(
@@ -119,6 +126,7 @@ def compute_distances(
         rule_config,
         gca_config.default_variable_weight,
         var_weights=var_weights,
+        var_modes=var_modes,
     )
 
     # Build ground-truth cluster lookup (group_id -> cluster_index)
@@ -166,6 +174,8 @@ def compute_distances(
             entry["levels"] = vc.levels
         if vc.level_weights is not None:
             entry["level_weights"] = {str(k): v for k, v in vc.level_weights.items()}
+        if vc.match_mode != "embedding":
+            entry["match_mode"] = vc.match_mode
         var_summary[str(idx)] = entry
 
     # Level analysis: decompose each variable by hierarchy level
@@ -383,7 +393,9 @@ def format_distances(result: dict[str, Any]) -> str:
         lw = var_info.get("level_weights")
         lvl_str = f"  levels={lvl}" if lvl is not None else ""
         lw_str = f"  level_weights={lw}" if lw is not None else ""
-        lines.append(f"  var_{var_idx}: weight={w}{lvl_str}{lw_str}")
+        mm = var_info.get("match_mode")
+        mm_str = f"  match_mode={mm}" if mm is not None else ""
+        lines.append(f"  var_{var_idx}: weight={w}{lvl_str}{lw_str}{mm_str}")
 
     lines.append(f"  {result['n_groups']} logic groups")
     lines.append("")
