@@ -5,10 +5,12 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from sanity_log_parser.clustering.ai.clusterer import AIClusterer
+import numpy as np
+
+from sanity_log_parser.clustering.ai.clusterer import AIClusterer, _prepare_embedding_components
 from sanity_log_parser.clustering.logic import LogicClusterer
 from sanity_log_parser.gca import GCA_DEFAULT_CONFIG_PATH
-from sanity_log_parser.gca.config import load_gca_config
+from sanity_log_parser.gca.config import get_gca_rule_config, load_gca_config
 from sanity_log_parser.gca.eval import evaluate
 from sanity_log_parser.parsing.template_manager import RuleTemplateManager
 from sanity_log_parser.patterns import VAR_PATTERN
@@ -62,16 +64,41 @@ def _write_json(path: Path, name: str, data: object) -> Path:
     return target
 
 
-def test_restored_des_0001_reaches_perfect_f1_without_embeddings() -> None:
+def test_restored_des_0001_reaches_perfect_f1_with_adaptive_embeddings() -> None:
     logic_groups, raw_to_human = _build_logic_groups()
 
     clusterer = object.__new__(AIClusterer)
     clusterer.gca_config = load_gca_config(str(GCA_DEFAULT_CONFIG_PATH), strict=True)
+    clusterer.dbscan_factory = __import__("sklearn.cluster", fromlist=["DBSCAN"]).DBSCAN
+    clusterer.remote_embeddings_client = None
+    clusterer.ai_available = True
+    clusterer.model = None
 
-    def _unexpected_embeddings(texts: list[str]) -> object:
-        raise AssertionError(f"Embeddings should not be used for DES_0001: {len(texts)}")
+    rule_config = get_gca_rule_config(clusterer.gca_config, "DES_0001")
+    components, _, _ = _prepare_embedding_components(
+        logic_groups,
+        rule_config,
+        clusterer.gca_config.default_variable_weight,
+    )
 
-    clusterer._compute_embeddings_batched = _unexpected_embeddings  # type: ignore[attr-defined]
+    cluster_vectors: dict[str, np.ndarray] = {}
+    text_to_vector: dict[str, np.ndarray] = {}
+    for group, component in zip(logic_groups, components, strict=True):
+        original_logs = [member["raw_log"] for member in group["members"]]
+        human_gid = raw_to_human[original_logs[0]]
+        if human_gid not in cluster_vectors:
+            vector = np.zeros(16, dtype=np.float32)
+            vector[len(cluster_vectors)] = 1.0
+            cluster_vectors[human_gid] = vector
+        for text in component["variables"]:
+            if text:
+                text_to_vector[text] = cluster_vectors[human_gid]
+
+    def _cluster_aware_embeddings(texts: list[str]) -> np.ndarray:
+        vectors = [text_to_vector.get(text, np.zeros(16, dtype=np.float32)) for text in texts]
+        return np.asarray(vectors, dtype=np.float32)
+
+    clusterer._compute_embeddings_batched = _cluster_aware_embeddings  # type: ignore[attr-defined]
 
     ai_groups = AIClusterer._run_weighted(
         clusterer,

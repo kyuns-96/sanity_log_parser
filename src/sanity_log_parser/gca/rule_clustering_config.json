@@ -16,9 +16,9 @@
       }
     },
     "DES_0001": {
-      "eps": 0.5,
+      "eps": 1.0,
       "template_weight": 0,
-      "pairwise_tree": {
+      "adaptive_eps_tree": {
         "features": [
           {
             "kind": "path_tfidf_char_wb",
@@ -35,131 +35,9 @@
           {
             "kind": "level_jaccard",
             "levels": [
-              -2
-            ]
-          },
-          {
-            "kind": "level_exact",
-            "levels": [
-              -2
-            ]
-          },
-          {
-            "kind": "level_jaccard",
-            "levels": [
-              -3
-            ]
-          },
-          {
-            "kind": "level_exact",
-            "levels": [
-              -3
-            ]
-          },
-          {
-            "kind": "level_jaccard",
-            "levels": [
-              -4
-            ]
-          },
-          {
-            "kind": "level_exact",
-            "levels": [
-              -4
-            ]
-          },
-          {
-            "kind": "level_jaccard",
-            "levels": [
-              -5
-            ]
-          },
-          {
-            "kind": "level_exact",
-            "levels": [
-              -5
-            ]
-          },
-          {
-            "kind": "level_jaccard",
-            "levels": [
-              -6
-            ]
-          },
-          {
-            "kind": "level_exact",
-            "levels": [
-              -6
-            ]
-          },
-          {
-            "kind": "level_jaccard",
-            "levels": [
-              -7
-            ]
-          },
-          {
-            "kind": "level_exact",
-            "levels": [
-              -7
-            ]
-          },
-          {
-            "kind": "level_jaccard",
-            "levels": [
-              -8
-            ]
-          },
-          {
-            "kind": "level_exact",
-            "levels": [
-              -8
-            ]
-          },
-          {
-            "kind": "level_jaccard",
-            "levels": [
               -4,
               -3
             ]
-          },
-          {
-            "kind": "level_exact",
-            "levels": [
-              -4,
-              -3
-            ]
-          },
-          {
-            "kind": "level_jaccard",
-            "levels": [
-              -3,
-              -2
-            ]
-          },
-          {
-            "kind": "level_exact",
-            "levels": [
-              -3,
-              -2
-            ]
-          },
-          {
-            "kind": "level_jaccard",
-            "levels": [
-              -5,
-              -4
-            ]
-          },
-          {
-            "kind": "level_exact",
-            "levels": [
-              -5,
-              -4
-            ]
-          },
-          {
-            "kind": "path_length_equal"
           },
           {
             "kind": "path_length_diff"
@@ -170,98 +48,61 @@
             "feature": 0,
             "threshold": 0.369,
             "left": 1,
-            "right": 6
+            "right": 4
           },
           {
-            "feature": 1,
-            "threshold": 0.675,
+            "feature": 0,
+            "threshold": 0.306,
             "left": 2,
             "right": 3
           },
           {
-            "value": 0
+            "value": 0.001
           },
           {
-            "feature": 10,
-            "threshold": 0.5,
-            "left": 4,
-            "right": 5
-          },
-          {
-            "value": 0
-          },
-          {
-            "value": 1
+            "value": 0.147
           },
           {
             "feature": 0,
             "threshold": 0.563,
-            "left": 7,
-            "right": 16
+            "left": 5,
+            "right": 8
           },
           {
-            "feature": 16,
-            "threshold": 0.167,
-            "left": 8,
-            "right": 11
+            "feature": 1,
+            "threshold": 0.621,
+            "left": 6,
+            "right": 7
           },
           {
-            "feature": 23,
-            "threshold": 1.5,
-            "left": 9,
-            "right": 10
+            "value": 0.543
           },
           {
-            "value": 1
-          },
-          {
-            "value": 0
-          },
-          {
-            "feature": 15,
-            "threshold": 0.5,
-            "left": 12,
-            "right": 15
-          },
-          {
-            "feature": 0,
-            "threshold": 0.378,
-            "left": 13,
-            "right": 14
-          },
-          {
-            "value": 1
-          },
-          {
-            "value": 0
-          },
-          {
-            "value": 1
+            "value": 0.014
           },
           {
             "feature": 0,
             "threshold": 0.611,
-            "left": 17,
-            "right": 20
+            "left": 9,
+            "right": 10
           },
           {
-            "feature": 11,
-            "threshold": 0.5,
-            "left": 18,
-            "right": 19
+            "value": 0.393
           },
           {
-            "value": 1
-          },
-          {
-            "value": 0
-          },
-          {
-            "value": 1
+            "value": 0.396
           }
         ]
       },
-      "variables": {}
+      "variables": {
+        "0": {
+          "weight": 1.0,
+          "levels": [
+            -2
+          ],
+          "match_mode": "embedding"
+        }
+      }
     }
   }
 }

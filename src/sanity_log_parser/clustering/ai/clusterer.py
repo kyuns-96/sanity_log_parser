@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from functools import lru_cache
 from importlib import import_module
 from typing import Any, Protocol, cast
 from collections import defaultdict
@@ -28,26 +29,24 @@ from sanity_log_parser.embeddings.openai_compat import (
 logger = logging.getLogger(__name__)
 
 _EMBED_BATCH_SIZE = 512
+_REMOTE_EMBED_MAX_ATTEMPTS = 3
+_REMOTE_EMBED_RETRY_BASE_SECONDS = 0.5
 
-SentenceTransformerFactory: Any | None = None
-DBSCANFactory: Any | None = None
-sentence_transformers_available = False
-dbscan_available = False
-try:
-    SentenceTransformerFactory = import_module(
-        "sentence_transformers"
-    ).SentenceTransformer
-except ImportError:
-    pass
-else:
-    sentence_transformers_available = True
 
-try:
-    DBSCANFactory = import_module("sklearn.cluster").DBSCAN
-except ImportError:
-    pass
-else:
-    dbscan_available = True
+@lru_cache(maxsize=1)
+def _get_sentence_transformer_factory() -> Any | None:
+    try:
+        return import_module("sentence_transformers").SentenceTransformer
+    except ImportError:
+        return None
+
+
+@lru_cache(maxsize=1)
+def _get_dbscan_factory() -> Any | None:
+    try:
+        return import_module("sklearn.cluster").DBSCAN
+    except ImportError:
+        return None
 
 
 class AIClusterer:
@@ -63,6 +62,7 @@ class AIClusterer:
         self.ai_available: bool = False
         self.gca_config = gca_config
         self.embed_batch_size = embed_batch_size
+        self.dbscan_factory = _get_dbscan_factory()
 
         embeddings_config = load_embeddings_config(
             config_path=embeddings_config_file,
@@ -70,7 +70,7 @@ class AIClusterer:
         )
 
         if embeddings_config.backend == "openai_compatible":
-            if not dbscan_available:
+            if self.dbscan_factory is None:
                 logger.warning(
                     "OpenAI-compatible embeddings selected, but scikit-learn is unavailable."
                 )
@@ -83,15 +83,14 @@ class AIClusterer:
                     api_key=openai_settings.api_key,
                 )
                 self.ai_available = True
-        elif (
-            sentence_transformers_available
-            and dbscan_available
-            and SentenceTransformerFactory is not None
-        ):
+        elif self.dbscan_factory is not None:
+            sentence_transformer_factory = _get_sentence_transformer_factory()
+            if sentence_transformer_factory is None:
+                return
             try:
                 self.model = cast(
                     _SentenceModelLike,
-                    SentenceTransformerFactory(
+                    sentence_transformer_factory(
                         model_path, trust_remote_code=True
                     ),
                 )
@@ -106,7 +105,7 @@ class AIClusterer:
         *,
         strict: bool = False,
     ) -> list[dict[str, Any]]:
-        if not self.ai_available or not logic_groups or DBSCANFactory is None:
+        if not self.ai_available or not logic_groups or self.dbscan_factory is None:
             return []
 
         logger.info("AI Clustering: analyzing %d logic groups...", len(logic_groups))
@@ -179,7 +178,7 @@ class AIClusterer:
             embeddings = all_embs[t_start:t_end]
 
             dbscan_t0 = time.perf_counter()
-            clustering = DBSCANFactory(
+            clustering = self.dbscan_factory(
                 eps=0.2,
                 min_samples=1,
                 metric="cosine",
@@ -234,7 +233,7 @@ class AIClusterer:
                     rule_groups,
                     rule_config.pairwise_tree,
                 )
-                clustering = DBSCANFactory(
+                clustering = self.dbscan_factory(
                     eps=rule_config.eps,
                     min_samples=1,
                     metric="precomputed",
@@ -357,7 +356,7 @@ class AIClusterer:
             )
 
             dbscan_t0 = time.perf_counter()
-            clustering = DBSCANFactory(
+            clustering = self.dbscan_factory(
                 eps=dbscan_eps,
                 min_samples=1,
                 metric="precomputed",
@@ -402,14 +401,7 @@ class AIClusterer:
 
     def _compute_embeddings(self, inputs: list[str]) -> Any | None:
         if self.remote_embeddings_client is not None:
-            try:
-                return self.remote_embeddings_client.embed(inputs)
-            except EmbeddingsRequestError as exc:
-                logger.warning(
-                    "Remote embeddings failed, disabling AI clustering: %s", exc
-                )
-                self.ai_available = False
-                return None
+            return self.remote_embeddings_client.embed(inputs)
 
         if self.model is None:
             return None
@@ -420,36 +412,111 @@ class AIClusterer:
         import numpy as np
 
         if not texts:
-            return np.empty((0, 0))
+            return np.empty((0, 0), dtype=np.float32)
 
         batch_size = self.embed_batch_size
         t0 = time.perf_counter()
         n_chunks = 0
+        unique_texts: list[str] = []
+        row_to_unique = np.empty(len(texts), dtype=np.intp)
+        unique_index_by_text: dict[str, int] = {}
+        for index, text in enumerate(texts):
+            unique_index = unique_index_by_text.get(text)
+            if unique_index is None:
+                unique_index = len(unique_texts)
+                unique_index_by_text[text] = unique_index
+                unique_texts.append(text)
+            row_to_unique[index] = unique_index
+
         chunks: list[Any] = []
-        for start in range(0, len(texts), batch_size):
-            chunk = texts[start : start + batch_size]
+        for start in range(0, len(unique_texts), batch_size):
+            chunk = unique_texts[start : start + batch_size]
             chunk_t0 = time.perf_counter()
-            result = self._compute_embeddings(chunk)
+            result = self._embed_chunk_resilient(chunk)
             logger.info(
                 "[timing] embed chunk %d/%d (%d texts): %.3fs",
                 start // batch_size + 1,
-                -(-len(texts) // batch_size),  # ceil division
+                -(-len(unique_texts) // batch_size),  # ceil division
                 len(chunk),
                 time.perf_counter() - chunk_t0,
             )
             if result is None:
                 return None
-            chunks.append(np.asarray(result))
+            chunks.append(np.asarray(result, dtype=np.float32))
             n_chunks += 1
 
-        result = np.vstack(chunks)
+        unique_embeddings = np.vstack(chunks)
+        result = unique_embeddings[row_to_unique]
         logger.info(
-            "[timing] embeddings total: %d texts in %d chunks, %.3fs",
+            "[timing] embeddings total: %d texts (%d unique) in %d chunks, %.3fs",
             len(texts),
+            len(unique_texts),
             n_chunks,
             time.perf_counter() - t0,
         )
         return result
+
+    def _embed_chunk_resilient(self, chunk: list[str]) -> Any | None:
+        import numpy as np
+
+        if self.remote_embeddings_client is None:
+            try:
+                return self._compute_embeddings(chunk)
+            except EmbeddingsRequestError as exc:
+                logger.warning(
+                    "Remote embeddings failed, disabling AI clustering: %s", exc
+                )
+                self.ai_available = False
+                return None
+
+        last_exc: EmbeddingsRequestError | None = None
+        for attempt in range(1, _REMOTE_EMBED_MAX_ATTEMPTS + 1):
+            try:
+                return self._compute_embeddings(chunk)
+            except EmbeddingsRequestError as exc:
+                last_exc = exc
+                if (
+                    attempt >= _REMOTE_EMBED_MAX_ATTEMPTS
+                    or not _is_retryable_remote_embeddings_error(exc)
+                ):
+                    break
+                delay = _REMOTE_EMBED_RETRY_BASE_SECONDS * attempt
+                logger.warning(
+                    "Remote embeddings chunk attempt %d/%d failed for %d texts: %s. Retrying in %.1fs.",
+                    attempt,
+                    _REMOTE_EMBED_MAX_ATTEMPTS,
+                    len(chunk),
+                    exc,
+                    delay,
+                )
+                time.sleep(delay)
+
+        if len(chunk) > 1:
+            split_at = len(chunk) // 2
+            logger.warning(
+                "Remote embeddings chunk failed for %d texts: %s. Retrying as split chunks (%d + %d).",
+                len(chunk),
+                last_exc,
+                split_at,
+                len(chunk) - split_at,
+            )
+            left = self._embed_chunk_resilient(chunk[:split_at])
+            right = self._embed_chunk_resilient(chunk[split_at:])
+            if left is None or right is None:
+                self.ai_available = False
+                return None
+            return np.vstack(
+                [
+                    np.asarray(left, dtype=np.float32),
+                    np.asarray(right, dtype=np.float32),
+                ]
+            )
+
+        logger.warning(
+            "Remote embeddings failed, disabling AI clustering: %s", last_exc
+        )
+        self.ai_available = False
+        return None
 
     def _build_cluster_results(
         self,
@@ -581,13 +648,11 @@ def _prepare_embedding_components(
     or ``"jaccard"``.
     """
     # Determine max original variable count across all groups
-    max_orig_vars = 0
-    for lg in rule_groups:
-        n_vars = len(_SLOT_SPLIT_RE.split(lg["pattern"].strip()))
-        max_orig_vars = max(max_orig_vars, n_vars)
+    split_variables = [_split_pattern_slots(lg["pattern"]) for lg in rule_groups]
+    max_orig_vars = max((len(variables) for variables in split_variables), default=0)
 
     # Build expansion plan: list of (orig_var_idx, levels_arg_for_select_levels)
-    slot_specs: list[tuple[int, list[int] | None]] = []
+    slot_specs: list[tuple[int, tuple[int, ...] | None]] = []
     var_weights: list[float] = []
     var_modes: list[str] = []
     for idx in range(max_orig_vars):
@@ -596,23 +661,29 @@ def _prepare_embedding_components(
         )
         if var_cfg.level_weights is not None:
             for level_key in sorted(var_cfg.level_weights.keys()):
-                slot_specs.append((idx, [level_key]))
-                var_weights.append(var_cfg.level_weights[level_key])
+                level_weight = var_cfg.level_weights[level_key]
+                if level_weight == 0:
+                    continue
+                slot_specs.append((idx, (level_key,)))
+                var_weights.append(level_weight)
                 var_modes.append(var_cfg.match_mode)
         else:
-            slot_specs.append((idx, var_cfg.levels))
+            if var_cfg.weight == 0:
+                continue
+            levels_key = tuple(var_cfg.levels) if var_cfg.levels is not None else None
+            slot_specs.append((idx, levels_key))
             var_weights.append(var_cfg.weight)
             var_modes.append(var_cfg.match_mode)
 
     # Process each group using the expansion plan
     components: list[dict[str, Any]] = []
-    for lg in rule_groups:
-        variables = _SLOT_SPLIT_RE.split(lg["pattern"].strip())
-
+    for lg, variables in zip(rule_groups, split_variables, strict=True):
         processed_vars: list[str] = []
         for orig_idx, levels in slot_specs:
             if orig_idx < len(variables):
-                processed_vars.append(select_levels(variables[orig_idx], levels))
+                processed_vars.append(
+                    _select_levels_cached(variables[orig_idx], levels)
+                )
             else:
                 processed_vars.append("")
 
@@ -623,6 +694,39 @@ def _prepare_embedding_components(
             }
         )
     return components, var_weights, var_modes
+
+
+@lru_cache(maxsize=131072)
+def _split_pattern_slots(pattern: str) -> tuple[str, ...]:
+    return tuple(_SLOT_SPLIT_RE.split(pattern.strip()))
+
+
+@lru_cache(maxsize=262144)
+def _select_levels_cached(
+    path: str,
+    levels: tuple[int, ...] | None,
+) -> str:
+    return select_levels(path, list(levels) if levels is not None else None)
+
+
+def _is_retryable_remote_embeddings_error(exc: EmbeddingsRequestError) -> bool:
+    message = str(exc).lower()
+    return any(
+        token in message
+        for token in (
+            "response size mismatch",
+            "missing indices",
+            "network error",
+            "i/o error",
+            "timeout",
+            "timed out",
+            "http 429",
+            "http 500",
+            "http 502",
+            "http 503",
+            "http 504",
+        )
+    )
 
 
 def _cosine_distance_matrix_unique(

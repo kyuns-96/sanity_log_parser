@@ -91,6 +91,8 @@ Notes:
 - empty slots are masked out for that pair
 - `match_mode: "embedding"` uses embedding cosine distance
 - `match_mode: "jaccard"` uses token-set Jaccard distance
+- identical texts are deduplicated before embedding requests are sent
+- remote embedding chunks are retried automatically, and failing chunks are resent as smaller split chunks before AI clustering is disabled
 
 ## Variable Extraction
 

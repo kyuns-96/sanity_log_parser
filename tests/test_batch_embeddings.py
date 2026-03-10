@@ -12,6 +12,7 @@ from sanity_log_parser.clustering.ai.clusterer import (
     AIClusterer,
     _EMBED_BATCH_SIZE,
 )
+from sanity_log_parser.embeddings.openai_compat import EmbeddingsRequestError
 from sanity_log_parser.gca.config import GcaConfig, GcaRuleConfig, VariableConfig
 
 
@@ -271,3 +272,46 @@ class TestBatchChunking:
         )
         total = sum(g["total_count"] for g in result)
         assert total == 15
+
+    def test_batch_deduplicates_identical_texts_before_embedding(self) -> None:
+        clusterer = _make_clusterer(gca_config=None)
+        seen_chunks: list[list[str]] = []
+
+        def _recording_fake_embed(texts: list[str]) -> np.ndarray:
+            seen_chunks.append(list(texts))
+            return _fake_embed(texts)
+
+        clusterer._compute_embeddings = MagicMock(side_effect=_recording_fake_embed)
+
+        result = clusterer._compute_embeddings_batched(["dup", "dup", "other", "dup"])
+
+        assert seen_chunks == [["dup", "other"]]
+        assert result is not None
+        assert result.shape[0] == 4
+        assert np.allclose(result[0], result[1])
+        assert np.allclose(result[1], result[3])
+
+    def test_remote_batch_split_retry_recovers_from_size_mismatch(self) -> None:
+        clusterer = _make_clusterer(gca_config=None)
+        clusterer.remote_embeddings_client = MagicMock()
+
+        seen_chunks: list[list[str]] = []
+
+        def _flaky_remote_embed(texts: list[str]) -> np.ndarray:
+            seen_chunks.append(list(texts))
+            if len(texts) > 2:
+                raise EmbeddingsRequestError(
+                    "Embeddings response size mismatch: expected 4, received 2."
+                )
+            return _fake_embed(texts)
+
+        clusterer._compute_embeddings = MagicMock(side_effect=_flaky_remote_embed)
+
+        result = clusterer._compute_embeddings_batched(["a", "b", "c", "d"])
+
+        assert result is not None
+        assert result.shape[0] == 4
+        assert seen_chunks[0] == ["a", "b", "c", "d"]
+        assert ["a", "b"] in seen_chunks
+        assert ["c", "d"] in seen_chunks
+        assert clusterer.ai_available is True
