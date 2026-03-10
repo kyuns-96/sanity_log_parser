@@ -11,5 +11,7 @@ SEPARATOR_PATTERN = re.compile(r"^\s*[*=\-]+\s*$")
 SEVERITY_LINE_PATTERN = re.compile(
     r"^\s*(error|warning|info)\s+\d+\s+\d+\s*$", re.IGNORECASE
 )
-RULE_ID_LINE_PATTERN = re.compile(r"^\s{0,6}([A-Z]{2,4}_\d{3,4})\s+\d+\s+\d+\s+\S")
+RULE_ID_LINE_PATTERN = re.compile(
+    r"^\s{0,6}([A-Z]{2,4}_\d{3,4})\s+\d+(?:\s+\d+(?:\s+\S.*)?)?\s*$"
+)
 INSTANCE_LINE_PATTERN = re.compile(r"^\s*(\d+)\s+of\s+(\d+)\s+(\d+)\s+(.*\S)")

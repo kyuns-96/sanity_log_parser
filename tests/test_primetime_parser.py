@@ -374,6 +374,24 @@ def test_parent_with_zero_instances_followed_by_next(tmp_path: Path) -> None:
     assert results[0]["rule_id"] == "CGR_0002"
 
 
+def test_count_only_parent_line_is_supported(tmp_path: Path) -> None:
+    rpt = _write_rpt(
+        tmp_path,
+        """\
+         error    2   0
+          DES_0004                12206
+               1 of 12206   0   Message 'sig_a'
+               2 of 12206   0   Message 'sig_b'
+    """,
+    )
+    results = PrimeTimeParser().parse_file(rpt)
+
+    assert len(results) == 2
+    assert results[0]["rule_id"] == "DES_0004"
+    assert results[1]["rule_id"] == "DES_0004"
+    assert results[0]["severity"] == "error"
+
+
 # ---------------------------------------------------------------------------
 # RuleTemplateManager(None) safety
 # ---------------------------------------------------------------------------
