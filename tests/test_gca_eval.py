@@ -234,6 +234,69 @@ def test_multiple_rules(tmp_path: Path) -> None:
     assert by_rule["R2"]["f1"] == 0.0  # R2 missed the merge
 
 
+def test_raw_log_collisions_across_rules_do_not_cross_contaminate(
+    tmp_path: Path,
+) -> None:
+    logic = _make_logic_json(
+        [
+            _logic_group("R1", 1, ["dup"]),
+            _logic_group("R2", 1, ["dup"]),
+        ]
+    )
+    ai = _make_logic_json(
+        [
+            _ai_group("R1", 1, ["dup"]),
+            _ai_group("R2", 1, ["dup"]),
+        ]
+    )
+    gt = {
+        "R1": [["R1::logic::000001"]],
+        "R2": [["R2::logic::000001"]],
+    }
+
+    lp = _write_json(tmp_path, "logic.json", logic)
+    ap = _write_json(tmp_path, "ai.json", ai)
+    gp = _write_json(tmp_path, "gt.json", gt)
+
+    results = evaluate(lp, ap, gp)
+    by_rule = {r["rule_id"]: r for r in results}
+
+    assert by_rule["R1"]["f1"] == 1.0
+    assert by_rule["R2"]["f1"] == 1.0
+
+
+def test_duplicate_raw_logs_across_rules_do_not_collide(tmp_path: Path) -> None:
+    """Same raw log text under different rules must map within-rule only."""
+    logic = _make_logic_json(
+        [
+            _logic_group("R1", 1, ["dup"]),
+            _logic_group("R1", 2, ["other"]),
+            _logic_group("R2", 1, ["dup"]),
+            _logic_group("R2", 2, ["else"]),
+        ]
+    )
+    ai = _make_logic_json(
+        [
+            _ai_group("R1", 1, ["dup", "other"]),
+            _ai_group("R2", 1, ["dup"]),
+            _ai_group("R2", 2, ["else"]),
+        ]
+    )
+    gt = {
+        "R1": [["R1::logic::000001", "R1::logic::000002"]],
+        "R2": [["R2::logic::000001"], ["R2::logic::000002"]],
+    }
+
+    lp = _write_json(tmp_path, "logic.json", logic)
+    ap = _write_json(tmp_path, "ai.json", ai)
+    gp = _write_json(tmp_path, "gt.json", gt)
+
+    results = evaluate(lp, ap, gp)
+    by_rule = {r["rule_id"]: r for r in results}
+    assert by_rule["R1"]["f1"] == 1.0
+    assert by_rule["R2"]["f1"] == 1.0
+
+
 # --- Format output ---
 
 

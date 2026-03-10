@@ -60,6 +60,18 @@ def test_load_embeddings_config_openai_compatible_requires_base_url(
     assert "Missing openai_compatible.base_url" in warnings[0]
 
 
+def test_load_embeddings_config_invalid_embed_batch_size_warns(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_config(tmp_path, {"embed_batch_size": 0})
+    warnings: list[str] = []
+
+    config = load_embeddings_config(config_path=config_path, warn=warnings.append)
+
+    assert config.embed_batch_size == 512
+    assert warnings == ["Invalid embed_batch_size 0. Using default 512."]
+
+
 @pytest.mark.parametrize(
     "config_key, environ_key, expected_key",
     [

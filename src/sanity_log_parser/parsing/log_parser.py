@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..patterns import LINE_COUNTER_PATTERN, VAR_PATTERN
+from ..patterns import INSTANCE_LINE_PATTERN, VAR_PATTERN
 from .template_manager import RuleTemplateManager
 
 
@@ -15,16 +15,17 @@ class SubutaiParser:
         if not line:
             return None
 
-        if not LINE_COUNTER_PATTERN.search(line):
+        match = INSTANCE_LINE_PATTERN.match(line)
+        if match is None:
             return None
 
-        line = " ".join(line.split()[4:])
+        line = match.group(4)
 
         variables = VAR_PATTERN.findall(line)
         var_tuple = tuple(variables) if variables else ("NO_VAR",)
 
         template = self.template_manager.get_pure_template(line)
-        rule_id = self.template_manager.get_rule_id(template)
+        rule_id = self.template_manager.get_rule_id(template, raw_log=line)
 
         return {
             "rule_id": rule_id,

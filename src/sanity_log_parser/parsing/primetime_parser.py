@@ -84,10 +84,18 @@ class PrimeTimeParser:
         # Step 4: Instance line
         m = INSTANCE_LINE_PATTERN.match(line)
         if m:
+            if self.current_rule_id == "UNKNOWN" or self.current_severity == "unknown":
+                logger.debug(
+                    "Skipped orphan instance line without active rule/severity: %s",
+                    stripped[:80],
+                )
+                counts["skipped"] += 1
+                return None
             counts["instances"] += 1
             return self._parse_instance_line(m)
 
         # Step 5: Skip everything else
+        self.current_rule_id = "UNKNOWN"
         logger.debug("Skipped unrecognized line: %s", stripped[:80])
         counts["skipped"] += 1
         return None

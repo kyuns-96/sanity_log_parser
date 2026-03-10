@@ -281,6 +281,13 @@ def _parse_pairwise_tree(
             }
         )
 
+    _validate_tree_graph(
+        rule_id=rule_id,
+        tree_name="pairwise_tree",
+        features=parsed_features,
+        nodes=parsed_nodes,
+    )
+
     return {
         "features": tuple(parsed_features),
         "nodes": tuple(parsed_nodes),
@@ -373,10 +380,59 @@ def _parse_adaptive_eps_tree(
             }
         )
 
+    _validate_tree_graph(
+        rule_id=rule_id,
+        tree_name="adaptive_eps_tree",
+        features=parsed_features,
+        nodes=parsed_nodes,
+    )
+
     return {
         "features": tuple(parsed_features),
         "nodes": tuple(parsed_nodes),
     }
+
+
+def _validate_tree_graph(
+    *,
+    rule_id: str,
+    tree_name: str,
+    features: list[dict[str, object]],
+    nodes: list[dict[str, object]],
+) -> None:
+    state = [0] * len(nodes)
+
+    def visit(node_index: int) -> None:
+        if node_index < 0 or node_index >= len(nodes):
+            msg = (
+                f"Rule '{rule_id}': {tree_name} child index {node_index} "
+                f"is out of range for {len(nodes)} nodes"
+            )
+            raise ConfigError(msg)
+        if state[node_index] == 1:
+            msg = (
+                f"Rule '{rule_id}': {tree_name} contains a cycle at node "
+                f"{node_index}"
+            )
+            raise ConfigError(msg)
+        if state[node_index] == 2:
+            return
+
+        state[node_index] = 1
+        node = nodes[node_index]
+        if "value" not in node:
+            feature_index = int(node["feature"])
+            if feature_index >= len(features):
+                msg = (
+                    f"Rule '{rule_id}': {tree_name} feature index {feature_index} "
+                    f"is out of range for {len(features)} features"
+                )
+                raise ConfigError(msg)
+            visit(int(node["left"]))
+            visit(int(node["right"]))
+        state[node_index] = 2
+
+    visit(0)
 
 
 def _parse_pairwise_feature(raw: object, ctx: str) -> dict[str, object]:

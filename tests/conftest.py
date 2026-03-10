@@ -41,7 +41,7 @@ def parser(template_manager):
 
 @pytest.fixture
 def sample_matching_line():
-    return "4 of 4 Signal 'top/u_cpu/decode/pipe_4' float Signal 'top/u_cpu/decode/pipe_5' float 'top/u_cpu/decode/pipe_5' signal conflicted"
+    return "4 of 4 0 Signal 'top/u_cpu/decode/pipe_4' float Signal 'top/u_cpu/decode/pipe_5' float 'top/u_cpu/decode/pipe_5' signal conflicted"
 
 
 @pytest.fixture

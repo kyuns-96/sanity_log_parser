@@ -17,6 +17,10 @@ from sanity_log_parser.clustering.ai.clusterer import (
     _prepare_embedding_components,
     _compute_distance_matrix,
 )
+from sanity_log_parser.clustering.ai.pairwise_tree import (
+    compute_adaptive_eps_distance_matrix,
+    compute_pairwise_tree_distance_matrix,
+)
 
 _SLOT_SPLIT_RE = re.compile(r"\s+/\s+")
 
@@ -72,61 +76,12 @@ def compute_distances(
     ]
     group_ids = [g["group_id"] for g in rule_groups]
 
-    # Prepare embedding components
-    components, var_weights, var_modes = _prepare_embedding_components(
-        internal_groups, rule_config, gca_config.default_variable_weight
-    )
-
-    # Collect texts for embedding (skip Jaccard slots)
-    batch_texts: list[str] = []
-    t_keys: list[str] = [c["template"] for c in components]
-    batch_texts.extend(t_keys)
-
-    n = len(components)
-    max_vars = max(len(c["variables"]) for c in components) if components else 0
-
-    # var_slices: (v_start, v_end, mask, v_keys, mode)
-    var_slices: list[tuple[int, int, list[bool], list[str], str]] = []
-    for i in range(max_vars):
-        mode = var_modes[i] if i < len(var_modes) else "embedding"
-        mask: list[bool] = []
-        v_keys: list[str] = []
-        for c in components:
-            if i < len(c["variables"]) and c["variables"][i].strip():
-                mask.append(True)
-                v_keys.append(c["variables"][i])
-            else:
-                mask.append(False)
-                v_keys.append("_")
-        if mode != "jaccard":
-            v_start = len(batch_texts)
-            batch_texts.extend(v_keys)
-            var_slices.append((v_start, len(batch_texts), mask, v_keys, mode))
-        else:
-            var_slices.append((-1, -1, mask, v_keys, mode))
-
-    # Embed
-    all_embs = np.asarray(embed_fn(batch_texts))
-
-    # Slice embeddings
-    template_embs = all_embs[: len(t_keys)]
-    var_embeddings: list[tuple[Any, list[bool], list[str]]] = []
-    for v_start, v_end, mask, v_keys, mode in var_slices:
-        if mode != "jaccard":
-            var_embeddings.append((all_embs[v_start:v_end], mask, v_keys))
-        else:
-            var_embeddings.append((None, mask, v_keys))
-
-    # Compute distance matrix
-    dist_matrix = _compute_distance_matrix(
-        n,
-        template_embs,
-        t_keys,
-        var_embeddings,
-        rule_config,
-        gca_config.default_variable_weight,
-        var_weights=var_weights,
-        var_modes=var_modes,
+    n = len(internal_groups)
+    dist_matrix, effective_eps = _compute_runtime_distance_matrix(
+        internal_groups=internal_groups,
+        rule_config=rule_config,
+        default_variable_weight=gca_config.default_variable_weight,
+        embed_fn=embed_fn,
     )
 
     # Build ground-truth cluster lookup (group_id -> cluster_index)
@@ -150,7 +105,7 @@ def compute_distances(
                 "a": group_ids[i],
                 "b": group_ids[j],
                 "distance": round(float(dist_matrix[i, j]), 6),
-                "merge": float(dist_matrix[i, j]) <= rule_config.eps,
+                "merge": float(dist_matrix[i, j]) <= effective_eps,
             }
             if gt_same is not None:
                 key = tuple(sorted([group_ids[i], group_ids[j]]))
@@ -185,7 +140,7 @@ def compute_distances(
 
     return {
         "rule_id": rule_id,
-        "eps": rule_config.eps,
+        "eps": effective_eps,
         "template_weight": rule_config.template_weight,
         "variables": var_summary,
         "n_groups": n,
@@ -196,6 +151,85 @@ def compute_distances(
         "pairs": pairs,
         "level_analysis": level_analysis,
     }
+
+
+def _compute_runtime_distance_matrix(
+    *,
+    internal_groups: list[dict[str, Any]],
+    rule_config: Any,
+    default_variable_weight: float,
+    embed_fn: Any,
+) -> tuple[Any, float]:
+    import numpy as np
+
+    if rule_config.pairwise_tree is not None:
+        return (
+            compute_pairwise_tree_distance_matrix(
+                internal_groups,
+                rule_config.pairwise_tree,
+            ),
+            rule_config.eps,
+        )
+
+    components, var_weights, var_modes = _prepare_embedding_components(
+        internal_groups, rule_config, default_variable_weight
+    )
+
+    batch_texts: list[str] = []
+    t_keys: list[str] = [c["template"] for c in components]
+    batch_texts.extend(t_keys)
+
+    max_vars = max(len(c["variables"]) for c in components) if components else 0
+    var_slices: list[tuple[int, int, list[bool], list[str], str]] = []
+    for i in range(max_vars):
+        mode = var_modes[i] if i < len(var_modes) else "embedding"
+        mask: list[bool] = []
+        v_keys: list[str] = []
+        for c in components:
+            if i < len(c["variables"]) and c["variables"][i].strip():
+                mask.append(True)
+                v_keys.append(c["variables"][i])
+            else:
+                mask.append(False)
+                v_keys.append("_")
+        if mode != "jaccard":
+            v_start = len(batch_texts)
+            batch_texts.extend(v_keys)
+            var_slices.append((v_start, len(batch_texts), mask, v_keys, mode))
+        else:
+            var_slices.append((-1, -1, mask, v_keys, mode))
+
+    all_embs = np.asarray(embed_fn(batch_texts))
+    template_embs = all_embs[: len(t_keys)]
+    var_embeddings: list[tuple[Any, list[bool], list[str]]] = []
+    for v_start, v_end, mask, v_keys, mode in var_slices:
+        if mode != "jaccard":
+            var_embeddings.append((all_embs[v_start:v_end], mask, v_keys))
+        else:
+            var_embeddings.append((None, mask, v_keys))
+
+    dist_matrix = _compute_distance_matrix(
+        len(components),
+        template_embs,
+        t_keys,
+        var_embeddings,
+        rule_config,
+        default_variable_weight,
+        var_weights=var_weights,
+        var_modes=var_modes,
+    )
+
+    if rule_config.adaptive_eps_tree is not None:
+        return (
+            compute_adaptive_eps_distance_matrix(
+                internal_groups,
+                dist_matrix,
+                rule_config.adaptive_eps_tree,
+            ),
+            1.0,
+        )
+
+    return dist_matrix, rule_config.eps
 
 
 def _analyze_variable_levels(

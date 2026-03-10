@@ -36,10 +36,9 @@ def load_embeddings_config(
         _warn(warn, f"Invalid embeddings_backend '{backend}'. Falling back to 'local'.")
         backend = "local"
 
-    embed_batch_size = _as_positive_int(raw_config.get("embed_batch_size"), default=512)
-    if embed_batch_size < 1:
-        _warn(warn, f"Invalid embed_batch_size {embed_batch_size}. Using default 512.")
-        embed_batch_size = 512
+    embed_batch_size = _parse_embed_batch_size(
+        raw_config.get("embed_batch_size"), warn=warn
+    )
 
     openai_config = raw_config.get("openai_compatible")
     openai_data = openai_config if isinstance(openai_config, dict) else {}
@@ -117,3 +116,16 @@ def _as_positive_int(value: Any, default: int) -> int:
     if isinstance(value, int) and not isinstance(value, bool) and value > 0:
         return value
     return default
+
+
+def _parse_embed_batch_size(
+    value: Any,
+    *,
+    warn: Callable[[str], None] | None,
+) -> int:
+    if value is None:
+        return 512
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    _warn(warn, f"Invalid embed_batch_size {value}. Using default 512.")
+    return 512

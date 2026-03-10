@@ -85,24 +85,30 @@ def _load_json(path: str | Path) -> Any:
         return json.load(f)
 
 
-def _build_raw_log_to_logic_id(logic_data: dict[str, Any]) -> dict[str, str]:
-    """Map each raw log text to its logic group_id."""
-    mapping: dict[str, str] = {}
+def _build_raw_log_to_logic_id(
+    logic_data: dict[str, Any],
+) -> dict[tuple[str, str], str]:
+    """Map each (rule_id, raw log text) pair to its logic group_id."""
+    mapping: dict[tuple[str, str], str] = {}
     groups = logic_data.get("groups", logic_data) if isinstance(logic_data, dict) else logic_data
     if isinstance(groups, dict):
         groups = groups.get("groups", [])
     for group in groups:
         if group.get("group_type") != "logic":
             continue
+        rule_id = group.get("rule_id")
+        if not isinstance(rule_id, str):
+            continue
         gid: str = group["group_id"]
         for raw_log in group.get("original_logs", []):
-            mapping[raw_log] = gid
+            if isinstance(raw_log, str):
+                mapping[(rule_id, raw_log)] = gid
     return mapping
 
 
 def _build_ai_clusters(
     ai_data: dict[str, Any],
-    raw_to_logic: dict[str, str],
+    raw_to_logic: dict[tuple[str, str], str],
 ) -> dict[str, list[set[str]]]:
     """Convert AI output to {rule_id: [set_of_logic_group_ids, ...]}."""
     groups = ai_data.get("groups", ai_data) if isinstance(ai_data, dict) else ai_data
@@ -114,7 +120,9 @@ def _build_ai_clusters(
         rule_id: str = group["rule_id"]
         logic_ids: set[str] = set()
         for raw_log in group.get("original_logs", []):
-            lid = raw_to_logic.get(raw_log)
+            if not isinstance(raw_log, str):
+                continue
+            lid = raw_to_logic.get((rule_id, raw_log))
             if lid is not None:
                 logic_ids.add(lid)
         clusters_by_rule.setdefault(rule_id, []).append(logic_ids)

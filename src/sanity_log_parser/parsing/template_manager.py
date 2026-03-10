@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 class RuleTemplateManager:
     def __init__(self, template_file: str | None) -> None:
         self.template_dict: dict[str, str] = {}
+        self.exact_message_dict: dict[str, str] = {}
+        self.ambiguous_templates: set[str] = set()
 
         if template_file:
             logger.info("Loading Rule Templates from: %s", template_file)
@@ -34,10 +36,25 @@ class RuleTemplateManager:
                 if len(parts) < 4:
                     continue
                 rule_id, message = parts[0], parts[3]
+                message = message.strip()
+                self.exact_message_dict[message] = rule_id
                 pure_temp = self.get_pure_template(message)
-                self.template_dict[pure_temp] = rule_id
+                if pure_temp in self.ambiguous_templates:
+                    continue
+                existing = self.template_dict.get(pure_temp)
+                if existing is None:
+                    self.template_dict[pure_temp] = rule_id
+                    continue
+                if existing != rule_id:
+                    self.ambiguous_templates.add(pure_temp)
+                    self.template_dict.pop(pure_temp, None)
 
-    def get_rule_id(self, log_template: str) -> str:
+    def get_rule_id(self, log_template: str, raw_log: str | None = None) -> str:
+        if raw_log is not None:
+            exact_match = self.exact_message_dict.get(raw_log.strip())
+            if exact_match is not None:
+                return exact_match
+
         return self.template_dict.get(
             log_template,
             f"UNKNOWN_{hashlib.md5(log_template.encode()).hexdigest()[:6].upper()}",

@@ -162,3 +162,39 @@ def test_run_pipeline_applies_max_original_logs(
     assert payload["groups"][0]["original_logs"] == [
         "Path 'bar_1' violates constraint"
     ]
+
+
+def test_run_pipeline_persists_embeddings_warnings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "load_resolved_embeddings_config",
+        lambda embeddings_config_arg: LoadedEmbeddingsConfig(
+            config=EmbeddingsConfig(
+                backend="local",
+                openai_compatible=None,
+                embed_batch_size=512,
+            ),
+            config_path=None,
+            warnings=["bad config"],
+        ),
+    )
+
+    def fail_ai_clusterer(*args: object, **kwargs: object) -> object:
+        raise AssertionError("AIClusterer should not be initialized when --ai off")
+
+    monkeypatch.setattr(cli, "_build_ai_clusterer", lambda **kwargs: fail_ai_clusterer())
+
+    output_path = tmp_path / "results.json"
+    rc = cli._run_pipeline(
+        _parsed_logs(),
+        _opts(tmp_path, ai_mode="off", out=str(output_path)),
+    )
+
+    assert rc == 0
+    with output_path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    assert payload["run"]["ai"]["warnings"] == ["bad config"]

@@ -120,6 +120,70 @@ def test_compute_distances_merge_flag(tmp_path: Path) -> None:
     assert result["pairs"][0]["merge"] is True
 
 
+def test_compute_distances_uses_pairwise_tree_path(tmp_path: Path) -> None:
+    logic = _make_logic_json(
+        [
+            _logic_group("R1", 1, "TA", "foo", ["a"]),
+            _logic_group("R1", 2, "TB", "bar", ["b"]),
+        ]
+    )
+    lp = _write_json(tmp_path, "logic.json", logic)
+    config = GcaConfig(
+        default_variable_weight=0.0,
+        rules={
+            "R1": GcaRuleConfig(
+                eps=0.5,
+                template_weight=1.0,
+                pairwise_tree={
+                    "features": ({"kind": "path_length_equal"},),
+                    "nodes": ({"value": 0},),
+                },
+            )
+        },
+    )
+
+    def unexpected_embed_fn(texts: list[str]) -> np.ndarray:
+        raise AssertionError(f"embed_fn should not be called for pairwise_tree: {texts}")
+
+    result = compute_distances(lp, "R1", config, unexpected_embed_fn)
+    assert result["pairs"][0]["distance"] == 0.0
+    assert result["pairs"][0]["merge"] is True
+
+
+def test_compute_distances_uses_adaptive_eps_threshold(tmp_path: Path) -> None:
+    logic = _make_logic_json(
+        [
+            _logic_group("R1", 1, "TA", "foo", ["a"]),
+            _logic_group("R1", 2, "TB", "bar", ["b"]),
+        ]
+    )
+    lp = _write_json(tmp_path, "logic.json", logic)
+    config = GcaConfig(
+        default_variable_weight=0.0,
+        rules={
+            "R1": GcaRuleConfig(
+                eps=0.2,
+                template_weight=1.0,
+                adaptive_eps_tree={
+                    "features": ({"kind": "path_length_equal"},),
+                    "nodes": ({"value": 2.0},),
+                },
+            )
+        },
+    )
+
+    def orthogonal_templates(texts: list[str]) -> np.ndarray:
+        rows = []
+        for i, _text in enumerate(texts):
+            rows.append([1.0, 0.0] if i == 0 else [0.0, 1.0])
+        return np.asarray(rows, dtype=np.float32)
+
+    result = compute_distances(lp, "R1", config, orthogonal_templates)
+    assert result["eps"] == 1.0
+    assert result["pairs"][0]["distance"] == 0.5
+    assert result["pairs"][0]["merge"] is True
+
+
 def test_format_distances_error() -> None:
     result = {"rule_id": "R1", "error": "No groups found"}
     output = format_distances(result)
@@ -307,6 +371,39 @@ def test_compute_distances_jaccard_with_levels(tmp_path: Path) -> None:
     result = compute_distances(lp, "R1", config, _mock_embed_fn)
     # After levels=[-2], both are "block_a" → Jaccard distance 0
     assert result["pairs"][0]["distance"] == 0.0
+
+
+def test_compute_distances_uses_pairwise_tree_when_present(tmp_path: Path) -> None:
+    logic = _make_logic_json(
+        [
+            _logic_group("R1", 1, "TA", "a", ["a"]),
+            _logic_group("R1", 2, "TB", "b", ["b"]),
+        ]
+    )
+    lp = _write_json(tmp_path, "logic.json", logic)
+    config = GcaConfig(
+        default_variable_weight=0.0,
+        rules={
+            "R1": GcaRuleConfig(
+                eps=0.5,
+                template_weight=1.0,
+                pairwise_tree={
+                    "features": ({"kind": "path_length_equal"},),
+                    "nodes": ({"value": 0},),
+                },
+            )
+        },
+    )
+
+    def embed_fn(texts: list[str]) -> np.ndarray:
+        rows = [[1.0, 0.0], [0.0, 1.0]]
+        rows.extend([[1.0, 0.0]] * max(0, len(texts) - 2))
+        return np.asarray(rows[: len(texts)], dtype=np.float32)
+
+    result = compute_distances(lp, "R1", config, embed_fn)
+
+    assert result["pairs"][0]["distance"] == 0.0
+    assert result["pairs"][0]["merge"] is True
 
 
 # --- Level Analysis tests ---

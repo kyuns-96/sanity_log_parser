@@ -261,6 +261,71 @@ def test_strict_invalid_pairwise_tree_feature(tmp_path: Path) -> None:
         load_gca_config(path, strict=True)
 
 
+def test_strict_invalid_pairwise_tree_feature_index_out_of_range(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        {
+            "rules": {
+                "DES_0001": {
+                    "pairwise_tree": {
+                        "features": [{"kind": "level_exact", "levels": [-6]}],
+                        "nodes": [
+                            {"feature": 1, "threshold": 0.5, "left": 1, "right": 2},
+                            {"value": 0},
+                            {"value": 1},
+                        ],
+                    },
+                }
+            },
+        },
+    )
+    with pytest.raises(ConfigError, match="feature index"):
+        load_gca_config(path, strict=True)
+
+
+def test_strict_invalid_pairwise_tree_child_index_out_of_range(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        {
+            "rules": {
+                "DES_0001": {
+                    "pairwise_tree": {
+                        "features": [{"kind": "level_exact", "levels": [-6]}],
+                        "nodes": [
+                            {"feature": 0, "threshold": 0.5, "left": 1, "right": 99},
+                            {"value": 0},
+                        ],
+                    },
+                }
+            },
+        },
+    )
+    with pytest.raises(ConfigError, match="child index"):
+        load_gca_config(path, strict=True)
+
+
+def test_strict_invalid_pairwise_tree_cycle(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        {
+            "rules": {
+                "DES_0001": {
+                    "pairwise_tree": {
+                        "features": [{"kind": "level_exact", "levels": [-6]}],
+                        "nodes": [
+                            {"feature": 0, "threshold": 0.5, "left": 1, "right": 2},
+                            {"feature": 0, "threshold": 0.5, "left": 0, "right": 2},
+                            {"value": 1},
+                        ],
+                    },
+                }
+            },
+        },
+    )
+    with pytest.raises(ConfigError, match="cycle"):
+        load_gca_config(path, strict=True)
+
+
 def test_load_gca_config_with_adaptive_eps_tree(tmp_path: Path) -> None:
     path = _write_config(
         tmp_path,
@@ -286,6 +351,27 @@ def test_load_gca_config_with_adaptive_eps_tree(tmp_path: Path) -> None:
     assert tree is not None
     assert tree["features"][0]["kind"] == "level_exact"
     assert tree["nodes"][1]["value"] == 0.1
+
+
+def test_strict_invalid_adaptive_eps_tree_child_index_out_of_range(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        {
+            "rules": {
+                "DES_0001": {
+                    "adaptive_eps_tree": {
+                        "features": [{"kind": "level_exact", "levels": [-6]}],
+                        "nodes": [
+                            {"feature": 0, "threshold": 0.5, "left": 1, "right": 9},
+                            {"value": 0.1},
+                        ],
+                    },
+                }
+            },
+        },
+    )
+    with pytest.raises(ConfigError, match="child index"):
+        load_gca_config(path, strict=True)
 
 
 def test_strict_invalid_pairwise_tree_threshold_precision(tmp_path: Path) -> None:

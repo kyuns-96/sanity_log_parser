@@ -146,9 +146,7 @@ def test_orphan_instance_before_any_context(tmp_path: Path) -> None:
     """,
     )
     results = PrimeTimeParser().parse_file(rpt)
-    assert len(results) == 1
-    assert results[0]["rule_id"] == "UNKNOWN"
-    assert results[0]["severity"] == "unknown"
+    assert results == []
 
 
 def test_orphan_after_severity_but_before_parent(tmp_path: Path) -> None:
@@ -157,8 +155,45 @@ def test_orphan_after_severity_but_before_parent(tmp_path: Path) -> None:
     rpt.write_text(content, encoding="utf-8")
     rpt = str(rpt)
     results = PrimeTimeParser().parse_file(rpt)
-    assert results[0]["rule_id"] == "UNKNOWN"
-    assert results[0]["severity"] == "error"
+    assert results == []
+
+
+def test_unrecognized_structural_line_breaks_rule_inheritance(tmp_path: Path) -> None:
+    rpt = _write_rpt(
+        tmp_path,
+        """\
+         error    2   0
+          CGR_0001    1   0 Parent 'a'
+               1 of 1   0   First 'sig_a'
+        Scenario: slow
+               1 of 1   0   Second 'sig_b'
+    """,
+    )
+
+    results = PrimeTimeParser().parse_file(rpt)
+
+    assert len(results) == 1
+    assert results[0]["raw_log"] == "First 'sig_a'"
+
+
+def test_parent_after_structural_noise_restores_context(tmp_path: Path) -> None:
+    rpt = _write_rpt(
+        tmp_path,
+        """\
+         error    2   0
+          CGR_0001    1   0 Parent 'a'
+               1 of 1   0   First 'sig_a'
+        Scenario: slow
+          CGR_0002    1   0 Parent 'b'
+               1 of 1   0   Second 'sig_b'
+    """,
+    )
+
+    results = PrimeTimeParser().parse_file(rpt)
+
+    assert len(results) == 2
+    assert results[0]["rule_id"] == "CGR_0001"
+    assert results[1]["rule_id"] == "CGR_0002"
 
 
 # ---------------------------------------------------------------------------
