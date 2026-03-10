@@ -45,6 +45,17 @@ Typical files used during tuning:
 - `tuned_rule_clustering_config.json`
   - new output config written by the fitter
 
+## Air-Gapped Shell Notes
+
+The air-gapped environment uses `csh` / `tcsh`.
+
+Follow these rules when generating commands there:
+
+- do not use `python -c`
+- write Python code to a temporary `.py` file, then run `python3 /tmp/script.py`
+- use `setenv VAR value`, not `export VAR=value`
+- quote heredoc delimiters as `<< 'EOF'` when writing temporary scripts
+
 ## Runtime Precedence Per Rule
 
 For each `rule_id`, runtime uses the first applicable path below:
