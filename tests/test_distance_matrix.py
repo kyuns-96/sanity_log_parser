@@ -9,6 +9,9 @@ from sanity_log_parser.clustering.ai.clusterer import (
     _merge_patterns,
     _prepare_embedding_components,
 )
+from sanity_log_parser.clustering.ai.pairwise_tree import (
+    compute_adaptive_eps_distance_matrix,
+)
 from sanity_log_parser.gca.config import GcaRuleConfig, VariableConfig
 
 
@@ -206,6 +209,37 @@ def test_distance_matrix_with_var_weights() -> None:
     )
     np.testing.assert_array_almost_equal(d, d.T)
     assert d[0][1] > 0
+
+
+def test_adaptive_eps_distance_matrix_scales_base_distances() -> None:
+    rule_groups = [
+        {"pattern": "'top/a/x/reg1/CK'", "template": "T", "count": 1, "members": []},
+        {"pattern": "'top/a/x/reg2/CK'", "template": "T", "count": 1, "members": []},
+        {"pattern": "'top/b/y/reg3/CK'", "template": "T", "count": 1, "members": []},
+    ]
+    base = np.array(
+        [
+            [0.0, 0.2, 0.2],
+            [0.2, 0.0, 0.6],
+            [0.2, 0.6, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    tree = {
+        "features": (
+            {"kind": "level_exact", "levels": [-3]},
+        ),
+        "nodes": (
+            {"feature": 0, "threshold": 0.5, "left": 1, "right": 2},
+            {"value": 0.5},
+            {"value": 0.1},
+        ),
+    }
+
+    d = compute_adaptive_eps_distance_matrix(rule_groups, base, tree)
+    np.testing.assert_allclose(d[0][1], 0.2 / 0.1)
+    np.testing.assert_allclose(d[0][2], 0.2 / 0.5)
+    np.testing.assert_array_almost_equal(d, d.T)
 
 
 def test_merge_patterns_single() -> None:

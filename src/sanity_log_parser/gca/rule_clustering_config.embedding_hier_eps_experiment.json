@@ -1,0 +1,108 @@
+{
+  "default_eps": 0.2,
+  "default_template_weight": 0.3,
+  "default_variable_weight": 0.7,
+  "rules": {
+    "CGR_0018": {
+      "eps": 0.04,
+      "template_weight": 0,
+      "variables": {
+        "0": {
+          "weight": 0
+        },
+        "1": {
+          "weight": 1.0
+        }
+      }
+    },
+    "DES_0001": {
+      "eps": 1.0,
+      "template_weight": 0,
+      "adaptive_eps_tree": {
+        "features": [
+          {
+            "kind": "path_tfidf_char_wb",
+            "ngram_range": [
+              3,
+              6
+            ]
+          },
+          {
+            "kind": "suffix_similarity",
+            "max_shift": 3,
+            "decay": 0.65
+          },
+          {
+            "kind": "level_jaccard",
+            "levels": [
+              -4,
+              -3
+            ]
+          },
+          {
+            "kind": "path_length_diff"
+          }
+        ],
+        "nodes": [
+          {
+            "feature": 0,
+            "threshold": 0.369,
+            "left": 1,
+            "right": 4
+          },
+          {
+            "feature": 0,
+            "threshold": 0.306,
+            "left": 2,
+            "right": 3
+          },
+          {
+            "value": 0.001
+          },
+          {
+            "value": 0.147
+          },
+          {
+            "feature": 0,
+            "threshold": 0.563,
+            "left": 5,
+            "right": 8
+          },
+          {
+            "feature": 1,
+            "threshold": 0.621,
+            "left": 6,
+            "right": 7
+          },
+          {
+            "value": 0.543
+          },
+          {
+            "value": 0.014
+          },
+          {
+            "feature": 0,
+            "threshold": 0.611,
+            "left": 9,
+            "right": 10
+          },
+          {
+            "value": 0.393
+          },
+          {
+            "value": 0.396
+          }
+        ]
+      },
+      "variables": {
+        "0": {
+          "weight": 1.0,
+          "levels": [
+            -2
+          ],
+          "match_mode": "embedding"
+        }
+      }
+    }
+  }
+}

@@ -16,6 +16,10 @@ from sanity_log_parser.gca.config import (
 )
 from sanity_log_parser.patterns import VAR_PATTERN
 from .weights import select_levels
+from .pairwise_tree import (
+    compute_adaptive_eps_distance_matrix,
+    compute_pairwise_tree_distance_matrix,
+)
 from sanity_log_parser.embeddings.openai_compat import (
     EmbeddingsRequestError,
     OpenAICompatibleEmbeddingsClient,
@@ -96,7 +100,12 @@ class AIClusterer:
                 logger.warning("Failed to load SentenceTransformer model: %s", exc)
                 self.ai_available = False
 
-    def run(self, logic_groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def run(
+        self,
+        logic_groups: list[dict[str, Any]],
+        *,
+        strict: bool = False,
+    ) -> list[dict[str, Any]]:
         if not self.ai_available or not logic_groups or DBSCANFactory is None:
             return []
 
@@ -109,12 +118,14 @@ class AIClusterer:
         logger.info("Grouping by rule_id: %d different rules", len(groups_by_rule))
 
         if self.gca_config is not None:
-            return self._run_weighted(groups_by_rule)
-        return self._run_template_only(groups_by_rule)
+            return self._run_weighted(groups_by_rule, strict=strict)
+        return self._run_template_only(groups_by_rule, strict=strict)
 
     def _run_template_only(
         self,
         groups_by_rule: dict[str, list[dict[str, Any]]],
+        *,
+        strict: bool = False,
     ) -> list[dict[str, Any]]:
         """Template-only clustering path (no GCA config)."""
         final_output: list[dict[str, Any]] = []
@@ -147,6 +158,8 @@ class AIClusterer:
         # Phase 3: Batch embed, then slice and cluster
         all_embs = self._compute_embeddings_batched(batch_texts)
         if all_embs is None:
+            if strict:
+                raise RuntimeError("AI clustering failed during embedding computation.")
             logger.warning(
                 "Embeddings failed for %d rules; keeping all groups unclustered.",
                 len(multi_rules),
@@ -196,6 +209,8 @@ class AIClusterer:
     def _run_weighted(
         self,
         groups_by_rule: dict[str, list[dict[str, Any]]],
+        *,
+        strict: bool = False,
     ) -> list[dict[str, Any]]:
         """Multi-embedding weighted distance clustering path (GCA config present)."""
         assert self.gca_config is not None
@@ -206,6 +221,7 @@ class AIClusterer:
         prep_t0 = time.perf_counter()
         prepared: dict[str, tuple[GcaRuleConfig, list[dict[str, Any]], list[float], list[str]]] = {}
         for rule_id, rule_groups in groups_by_rule.items():
+            rule_config = get_gca_rule_config(self.gca_config, rule_id)
             if len(rule_groups) < 2:
                 for lg in rule_groups:
                     group_counter += 1
@@ -213,7 +229,24 @@ class AIClusterer:
                         self._build_single_group(rule_id, lg, group_counter)
                     )
                 continue
-            rule_config = get_gca_rule_config(self.gca_config, rule_id)
+            if rule_config.pairwise_tree is not None:
+                distance_matrix = compute_pairwise_tree_distance_matrix(
+                    rule_groups,
+                    rule_config.pairwise_tree,
+                )
+                clustering = DBSCANFactory(
+                    eps=rule_config.eps,
+                    min_samples=1,
+                    metric="precomputed",
+                ).fit(distance_matrix)
+                new_groups, group_counter = self._build_cluster_results(
+                    rule_id,
+                    clustering.labels_,
+                    rule_groups,
+                    group_counter,
+                )
+                final_output.extend(new_groups)
+                continue
             components, vw, vm = _prepare_embedding_components(
                 rule_groups, rule_config, self.gca_config.default_variable_weight
             )
@@ -266,6 +299,8 @@ class AIClusterer:
         # Phase 3: Batch embed, then slice and cluster
         all_embs = self._compute_embeddings_batched(batch_texts)
         if all_embs is None:
+            if strict:
+                raise RuntimeError("AI clustering failed during embedding computation.")
             logger.warning(
                 "Embeddings failed for %d rules; keeping all groups unclustered.",
                 len(prepared),
@@ -305,6 +340,15 @@ class AIClusterer:
                 var_weights=vw,
                 var_modes=vm,
             )
+            if rule_config.adaptive_eps_tree is not None:
+                distance_matrix = compute_adaptive_eps_distance_matrix(
+                    groups_by_rule[rule_id],
+                    distance_matrix,
+                    rule_config.adaptive_eps_tree,
+                )
+                dbscan_eps = 1.0
+            else:
+                dbscan_eps = rule_config.eps
             logger.info(
                 "[timing] distance matrix for '%s' (%d groups): %.3fs",
                 rule_id,
@@ -314,7 +358,7 @@ class AIClusterer:
 
             dbscan_t0 = time.perf_counter()
             clustering = DBSCANFactory(
-                eps=rule_config.eps,
+                eps=dbscan_eps,
                 min_samples=1,
                 metric="precomputed",
             ).fit(distance_matrix)
@@ -520,27 +564,9 @@ def _merge_atom(values: list[str], max_alt: int = _MAX_ALT_SEG) -> str:
     unique = list(dict.fromkeys(values))
     if len(unique) == 1:
         return unique[0]
-    prefix = _common_prefix(unique)
-    if prefix:
-        return f"{prefix}*"
     if len(unique) <= max_alt:
         return "{" + "|".join(unique) + "}"
     return "*"
-
-
-def _common_prefix(values: list[str]) -> str:
-    """Return the longest common prefix snapped to a '_' boundary."""
-    if not values:
-        return ""
-    prefix = values[0]
-    for v in values[1:]:
-        while not v.startswith(prefix):
-            prefix = prefix[:-1]
-            if not prefix:
-                return ""
-    # Snap to last '_' boundary (inclusive) so we get 'GEN_SECU_' not 'GEN_'
-    idx = prefix.rfind("_")
-    return prefix[: idx + 1] if idx >= 0 else ""
 
 
 def _prepare_embedding_components(

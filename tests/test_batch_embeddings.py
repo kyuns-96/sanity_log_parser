@@ -160,6 +160,20 @@ class TestBatchWeighted:
         assert len(result) == 4
         assert all(g["merged_variants_count"] == 1 for g in result)
 
+    def test_batch_embed_failure_strict_raises(self) -> None:
+        """Strict mode converts embedding failure into an error."""
+        gca = GcaConfig(default_eps=0.5)
+        clusterer = _make_clusterer(gca_config=gca)
+        clusterer._compute_embeddings = MagicMock(return_value=None)
+
+        groups = [
+            _make_logic_group("R1", "t1", "'v1' rest", count=5),
+            _make_logic_group("R1", "t2", "'v2' rest", count=3),
+        ]
+
+        with pytest.raises(RuntimeError, match="embedding computation"):
+            clusterer.run(groups, strict=True)
+
     def test_batch_empty_prepared(self) -> None:
         """No rules with >= 2 groups: embed never called, single groups returned."""
         gca = GcaConfig(default_eps=0.5)

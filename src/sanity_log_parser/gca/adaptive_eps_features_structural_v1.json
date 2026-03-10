@@ -1,0 +1,18 @@
+[
+  {
+    "kind": "path_tfidf_char_wb",
+    "ngram_range": [3, 6]
+  },
+  {
+    "kind": "suffix_similarity",
+    "max_shift": 3,
+    "decay": 0.65
+  },
+  {
+    "kind": "level_jaccard",
+    "levels": [-4, -3]
+  },
+  {
+    "kind": "path_length_diff"
+  }
+]

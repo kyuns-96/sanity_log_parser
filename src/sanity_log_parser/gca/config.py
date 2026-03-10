@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -13,9 +14,26 @@ _ALLOWED_TOP_KEYS = {
     "default_variable_weight",
     "rules",
 }
-_ALLOWED_RULE_KEYS = {"eps", "template_weight", "variables"}
+_ALLOWED_RULE_KEYS = {"eps", "template_weight", "variables", "pairwise_tree", "adaptive_eps_tree"}
 _ALLOWED_VARIABLE_KEYS = {"weight", "levels", "level_weights", "match_mode"}
 _VALID_MATCH_MODES = {"embedding", "jaccard"}
+_ALLOWED_PAIRWISE_TREE_KEYS = {"features", "nodes"}
+_ALLOWED_PAIRWISE_FEATURE_KEYS = {
+    "kind",
+    "levels",
+    "ngram_range",
+    "max_shift",
+    "decay",
+}
+_ALLOWED_PAIRWISE_NODE_KEYS = {"feature", "threshold", "left", "right", "value"}
+_VALID_PAIRWISE_FEATURE_KINDS = {
+    "path_tfidf_char_wb",
+    "suffix_similarity",
+    "level_jaccard",
+    "level_exact",
+    "path_length_equal",
+    "path_length_diff",
+}
 
 
 class ConfigError(Exception):
@@ -34,6 +52,8 @@ class VariableConfig:
 class GcaRuleConfig:
     eps: float = 0.2
     template_weight: float = 0.3
+    pairwise_tree: dict[str, object] | None = None
+    adaptive_eps_tree: dict[str, object] | None = None
     variables: dict[int, VariableConfig] = field(default_factory=dict)
 
 
@@ -116,6 +136,8 @@ def _parse_gca_rule(
 
     eps = raw.get("eps", default_eps)
     template_weight = raw.get("template_weight", default_template_weight)
+    pairwise_tree = _parse_pairwise_tree(raw, rule_id)
+    adaptive_eps_tree = _parse_adaptive_eps_tree(raw, rule_id)
 
     _validate_positive_float(eps, f"rule '{rule_id}' eps")
     _validate_non_negative_float(template_weight, f"rule '{rule_id}' template_weight")
@@ -132,7 +154,273 @@ def _parse_gca_rule(
             raise ConfigError(msg)
         variables[int(var_key)] = _parse_variable(var_raw, rule_id, var_key)
 
-    return GcaRuleConfig(eps=eps, template_weight=template_weight, variables=variables)
+    return GcaRuleConfig(
+        eps=eps,
+        template_weight=template_weight,
+        pairwise_tree=pairwise_tree,
+        adaptive_eps_tree=adaptive_eps_tree,
+        variables=variables,
+    )
+
+
+def _parse_pairwise_tree(
+    raw: dict[str, object],
+    rule_id: str,
+) -> dict[str, object] | None:
+    tree_raw = raw.get("pairwise_tree")
+    if tree_raw is None:
+        return None
+    if not isinstance(tree_raw, dict):
+        msg = (
+            f"Rule '{rule_id}': 'pairwise_tree' must be a dict, "
+            f"got {type(tree_raw).__name__}"
+        )
+        raise ConfigError(msg)
+
+    _reject_unknown_keys(tree_raw, _ALLOWED_PAIRWISE_TREE_KEYS, f"rule '{rule_id}' pairwise_tree")
+
+    features_raw = tree_raw.get("features")
+    nodes_raw = tree_raw.get("nodes")
+    if not isinstance(features_raw, list) or not features_raw:
+        msg = f"Rule '{rule_id}': pairwise_tree.features must be a non-empty list"
+        raise ConfigError(msg)
+    if not isinstance(nodes_raw, list) or not nodes_raw:
+        msg = f"Rule '{rule_id}': pairwise_tree.nodes must be a non-empty list"
+        raise ConfigError(msg)
+
+    parsed_features: list[dict[str, object]] = []
+    for idx, feature_raw in enumerate(features_raw):
+        ctx = f"rule '{rule_id}' pairwise_tree.features[{idx}]"
+        if not isinstance(feature_raw, dict):
+            msg = f"{ctx} must be a dict"
+            raise ConfigError(msg)
+        _reject_unknown_keys(feature_raw, _ALLOWED_PAIRWISE_FEATURE_KEYS, ctx)
+        kind = feature_raw.get("kind")
+        if kind not in _VALID_PAIRWISE_FEATURE_KINDS:
+            msg = f"{ctx}: 'kind' must be one of {sorted(_VALID_PAIRWISE_FEATURE_KINDS)}"
+            raise ConfigError(msg)
+
+        parsed: dict[str, object] = {"kind": kind}
+        levels = feature_raw.get("levels")
+        if levels is not None:
+            if not isinstance(levels, list) or not levels or not all(isinstance(v, int) for v in levels):
+                msg = f"{ctx}: 'levels' must be a non-empty list of ints"
+                raise ConfigError(msg)
+            parsed["levels"] = tuple(levels)
+
+        ngram_range = feature_raw.get("ngram_range")
+        if ngram_range is not None:
+            if (
+                not isinstance(ngram_range, list)
+                or len(ngram_range) != 2
+                or not all(isinstance(v, int) and v > 0 for v in ngram_range)
+            ):
+                msg = f"{ctx}: 'ngram_range' must be a two-item list of positive ints"
+                raise ConfigError(msg)
+            parsed["ngram_range"] = (ngram_range[0], ngram_range[1])
+
+        max_shift = feature_raw.get("max_shift")
+        if max_shift is not None:
+            if not isinstance(max_shift, int) or max_shift < 0:
+                msg = f"{ctx}: 'max_shift' must be a non-negative int"
+                raise ConfigError(msg)
+            parsed["max_shift"] = max_shift
+
+        decay = feature_raw.get("decay")
+        if decay is not None:
+            _validate_positive_float(decay, f"{ctx} decay")
+            parsed["decay"] = float(decay)
+
+        parsed_features.append(parsed)
+
+    parsed_nodes: list[dict[str, object]] = []
+    for idx, node_raw in enumerate(nodes_raw):
+        ctx = f"rule '{rule_id}' pairwise_tree.nodes[{idx}]"
+        if not isinstance(node_raw, dict):
+            msg = f"{ctx} must be a dict"
+            raise ConfigError(msg)
+        _reject_unknown_keys(node_raw, _ALLOWED_PAIRWISE_NODE_KEYS, ctx)
+
+        if "value" in node_raw:
+            value = node_raw["value"]
+            if value not in (0, 1):
+                msg = f"{ctx}: leaf 'value' must be 0 or 1"
+                raise ConfigError(msg)
+            parsed_nodes.append({"value": value})
+            continue
+
+        required = {"feature", "threshold", "left", "right"}
+        if set(node_raw) != required:
+            msg = f"{ctx}: non-leaf node must have keys {sorted(required)}"
+            raise ConfigError(msg)
+
+        feature = node_raw["feature"]
+        left = node_raw["left"]
+        right = node_raw["right"]
+        threshold = node_raw["threshold"]
+        if not isinstance(feature, int) or feature < 0:
+            msg = f"{ctx}: 'feature' must be a non-negative int"
+            raise ConfigError(msg)
+        if not isinstance(left, int) or left < 0 or not isinstance(right, int) or right < 0:
+            msg = f"{ctx}: 'left' and 'right' must be non-negative ints"
+            raise ConfigError(msg)
+        if not isinstance(threshold, int | float) or not math.isfinite(threshold):
+            msg = f"{ctx}: 'threshold' must be a finite number"
+            raise ConfigError(msg)
+        _validate_max_decimal_places(
+            threshold,
+            max_places=3,
+            name=f"{ctx} threshold",
+        )
+        parsed_nodes.append(
+            {
+                "feature": feature,
+                "threshold": float(threshold),
+                "left": left,
+                "right": right,
+            }
+        )
+
+    return {
+        "features": tuple(parsed_features),
+        "nodes": tuple(parsed_nodes),
+    }
+
+
+def _parse_adaptive_eps_tree(
+    raw: dict[str, object],
+    rule_id: str,
+) -> dict[str, object] | None:
+    tree_raw = raw.get("adaptive_eps_tree")
+    if tree_raw is None:
+        return None
+    if not isinstance(tree_raw, dict):
+        msg = (
+            f"Rule '{rule_id}': 'adaptive_eps_tree' must be a dict, "
+            f"got {type(tree_raw).__name__}"
+        )
+        raise ConfigError(msg)
+
+    _reject_unknown_keys(
+        tree_raw,
+        _ALLOWED_PAIRWISE_TREE_KEYS,
+        f"rule '{rule_id}' adaptive_eps_tree",
+    )
+
+    features_raw = tree_raw.get("features")
+    nodes_raw = tree_raw.get("nodes")
+    if not isinstance(features_raw, list) or not features_raw:
+        msg = f"Rule '{rule_id}': adaptive_eps_tree.features must be a non-empty list"
+        raise ConfigError(msg)
+    if not isinstance(nodes_raw, list) or not nodes_raw:
+        msg = f"Rule '{rule_id}': adaptive_eps_tree.nodes must be a non-empty list"
+        raise ConfigError(msg)
+
+    parsed_features = []
+    for idx, feature_raw in enumerate(features_raw):
+        parsed_features.append(
+            _parse_pairwise_feature(feature_raw, f"rule '{rule_id}' adaptive_eps_tree.features[{idx}]")
+        )
+
+    parsed_nodes: list[dict[str, object]] = []
+    for idx, node_raw in enumerate(nodes_raw):
+        ctx = f"rule '{rule_id}' adaptive_eps_tree.nodes[{idx}]"
+        if not isinstance(node_raw, dict):
+            msg = f"{ctx} must be a dict"
+            raise ConfigError(msg)
+        _reject_unknown_keys(node_raw, _ALLOWED_PAIRWISE_NODE_KEYS, ctx)
+
+        if "value" in node_raw:
+            value = node_raw["value"]
+            _validate_positive_float(value, f"{ctx} value")
+            _validate_max_decimal_places(
+                value,
+                max_places=3,
+                name=f"{ctx} value",
+            )
+            parsed_nodes.append({"value": float(value)})
+            continue
+
+        required = {"feature", "threshold", "left", "right"}
+        if set(node_raw) != required:
+            msg = f"{ctx}: non-leaf node must have keys {sorted(required)}"
+            raise ConfigError(msg)
+
+        feature = node_raw["feature"]
+        left = node_raw["left"]
+        right = node_raw["right"]
+        threshold = node_raw["threshold"]
+        if not isinstance(feature, int) or feature < 0:
+            msg = f"{ctx}: 'feature' must be a non-negative int"
+            raise ConfigError(msg)
+        if not isinstance(left, int) or left < 0 or not isinstance(right, int) or right < 0:
+            msg = f"{ctx}: 'left' and 'right' must be non-negative ints"
+            raise ConfigError(msg)
+        if not isinstance(threshold, int | float) or not math.isfinite(threshold):
+            msg = f"{ctx}: 'threshold' must be a finite number"
+            raise ConfigError(msg)
+        _validate_max_decimal_places(
+            threshold,
+            max_places=3,
+            name=f"{ctx} threshold",
+        )
+        parsed_nodes.append(
+            {
+                "feature": feature,
+                "threshold": float(threshold),
+                "left": left,
+                "right": right,
+            }
+        )
+
+    return {
+        "features": tuple(parsed_features),
+        "nodes": tuple(parsed_nodes),
+    }
+
+
+def _parse_pairwise_feature(raw: object, ctx: str) -> dict[str, object]:
+    if not isinstance(raw, dict):
+        msg = f"{ctx} must be a dict"
+        raise ConfigError(msg)
+    _reject_unknown_keys(raw, _ALLOWED_PAIRWISE_FEATURE_KEYS, ctx)
+    kind = raw.get("kind")
+    if kind not in _VALID_PAIRWISE_FEATURE_KINDS:
+        msg = f"{ctx}: 'kind' must be one of {sorted(_VALID_PAIRWISE_FEATURE_KINDS)}"
+        raise ConfigError(msg)
+
+    parsed: dict[str, object] = {"kind": kind}
+    levels = raw.get("levels")
+    if levels is not None:
+        if not isinstance(levels, list) or not levels or not all(isinstance(v, int) for v in levels):
+            msg = f"{ctx}: 'levels' must be a non-empty list of ints"
+            raise ConfigError(msg)
+        parsed["levels"] = tuple(levels)
+
+    ngram_range = raw.get("ngram_range")
+    if ngram_range is not None:
+        if (
+            not isinstance(ngram_range, list)
+            or len(ngram_range) != 2
+            or not all(isinstance(v, int) and v > 0 for v in ngram_range)
+        ):
+            msg = f"{ctx}: 'ngram_range' must be a two-item list of positive ints"
+            raise ConfigError(msg)
+        parsed["ngram_range"] = (ngram_range[0], ngram_range[1])
+
+    max_shift = raw.get("max_shift")
+    if max_shift is not None:
+        if not isinstance(max_shift, int) or max_shift < 0:
+            msg = f"{ctx}: 'max_shift' must be a non-negative int"
+            raise ConfigError(msg)
+        parsed["max_shift"] = max_shift
+
+    decay = raw.get("decay")
+    if decay is not None:
+        _validate_positive_float(decay, f"{ctx} decay")
+        parsed["decay"] = float(decay)
+
+    return parsed
 
 
 def _parse_variable(raw: object, rule_id: str, var_key: str) -> VariableConfig:
@@ -214,6 +502,23 @@ def _validate_non_negative_float(value: object, name: str) -> None:
         raise ConfigError(msg)
     if not math.isfinite(value) or value < 0:
         msg = f"'{name}' must be a non-negative finite number, got {value}"
+        raise ConfigError(msg)
+
+
+def _validate_max_decimal_places(value: object, *, max_places: int, name: str) -> None:
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        msg = f"'{name}' must be a number, got {type(value).__name__}"
+        raise ConfigError(msg)
+
+    try:
+        decimal_value = Decimal(str(value))
+    except InvalidOperation as exc:
+        msg = f"'{name}' must be a finite decimal number, got {value!r}"
+        raise ConfigError(msg) from exc
+
+    places = max(0, -decimal_value.as_tuple().exponent)
+    if places > max_places:
+        msg = f"'{name}' must have at most {max_places} decimal places, got {value!r}"
         raise ConfigError(msg)
 
 

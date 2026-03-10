@@ -44,7 +44,9 @@ def print_report(
         console.section("Run metadata")
         console.kv("Timestamp (UTC)", run["timestamp_utc"])
         console.kv("Log file", run["log_file"])
-        console.kv("Template file", run["template_file"])
+        template_file = run.get("template_file")
+        if template_file:
+            console.kv("Template file", template_file)
         console.kv("Parsed logs", counts["parsed_logs"])
         console.kv("Logic groups", counts["logic_groups"])
         console.kv("Final groups", counts["final_groups"])

@@ -282,3 +282,42 @@ def test_cluster_defaults_unchanged():
                     a for a in subparser._actions if getattr(a, "dest", None) == "ai"
                 )
                 assert set(ai_action.choices) == {"auto", "on", "off"}
+
+
+def test_gca_fit_adaptive_eps_subcommand_help(tmp_path: Path):
+    process = _run_main(["gca-fit-adaptive-eps", "--help"], tmp_path)
+    output = _output(process)
+
+    assert process.returncode == 0
+    assert "--logic" in output
+    assert "--ground-truth" in output
+    assert "--out-rule-config" in output
+    assert "--features-json" in output
+
+
+def test_gca_fit_adaptive_eps_parser_defaults() -> None:
+    sys.path.insert(0, str(ROOT / "src"))
+    from sanity_log_parser.cli import _build_parser
+
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "gca-fit-adaptive-eps",
+            "--logic",
+            "logic.json",
+            "--ground-truth",
+            "gt.json",
+            "--rule-id",
+            "DES_0001",
+            "--out-rule-config",
+            "out.json",
+        ]
+    )
+
+    assert args.rule_config is None
+    assert args.features_json is None
+    assert args.embeddings_config is None
+    assert args.max_depth == 7
+    assert args.max_min_samples_leaf == 15
+    assert args.round_decimals == 3
+    assert args.min_eps == 0.001

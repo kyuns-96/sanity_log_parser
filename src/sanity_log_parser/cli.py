@@ -8,7 +8,8 @@ import logging
 import os
 import sys
 import time
-from typing import Any, cast, Literal
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast, Literal
 
 from .config.resolution import (
     LoadedEmbeddingsConfig,
@@ -16,7 +17,6 @@ from .config.resolution import (
 )
 from .console import Console
 from .clustering.logic import LogicClusterer
-from .clustering.ai.clusterer import AIClusterer
 from .parsing import parse_log_file
 from .results.schema_v2 import (
     Group,
@@ -24,6 +24,9 @@ from .results.schema_v2 import (
     write_results_v2,
 )
 from .view import print_report
+
+if TYPE_CHECKING:
+    from .clustering.ai.clusterer import AIClusterer
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +179,68 @@ def _build_parser() -> argparse.ArgumentParser:
         "-v", "--verbose", action="store_true", help="Enable verbose logging."
     )
 
+    # --- gca-fit-adaptive-eps subcommand ---
+    gca_fit_adaptive = subparsers.add_parser(
+        "gca-fit-adaptive-eps",
+        help="Fit an adaptive-eps tree for one GCA rule from logic.json + ground truth.",
+    )
+    _ = gca_fit_adaptive.add_argument(
+        "--logic", required=True, help="Path to logic.json (AI-off output)."
+    )
+    _ = gca_fit_adaptive.add_argument(
+        "--ground-truth", required=True, help="Path to ground truth JSON."
+    )
+    _ = gca_fit_adaptive.add_argument(
+        "--rule-id", required=True, help="Rule ID to fit."
+    )
+    _ = gca_fit_adaptive.add_argument(
+        "--rule-config", default=None, help="Input rule clustering config path."
+    )
+    _ = gca_fit_adaptive.add_argument(
+        "--out-rule-config",
+        required=True,
+        help="Output path for the updated rule clustering config JSON.",
+    )
+    _ = gca_fit_adaptive.add_argument(
+        "--features-json",
+        default=None,
+        help="Optional JSON file containing a list of adaptive-eps feature definitions.",
+    )
+    _ = gca_fit_adaptive.add_argument(
+        "--embeddings-config",
+        "--config",
+        dest="embeddings_config",
+        default=None,
+        help="Embeddings config path.",
+    )
+    _ = gca_fit_adaptive.add_argument(
+        "--max-depth",
+        type=int,
+        default=7,
+        help="Maximum decision-tree depth to try (default: 7).",
+    )
+    _ = gca_fit_adaptive.add_argument(
+        "--max-min-samples-leaf",
+        type=int,
+        default=15,
+        help="Largest min_samples_leaf value to try (default: 15).",
+    )
+    _ = gca_fit_adaptive.add_argument(
+        "--round-decimals",
+        type=int,
+        default=3,
+        help="Decimal places for fitted thresholds/leaf values (default: 3).",
+    )
+    _ = gca_fit_adaptive.add_argument(
+        "--min-eps",
+        type=float,
+        default=0.001,
+        help="Minimum positive adaptive leaf eps value (default: 0.001).",
+    )
+    _ = gca_fit_adaptive.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable verbose logging."
+    )
+
     # --- view subcommand ---
     view = subparsers.add_parser("view", help="Render report from a results JSON file.")
     _ = view.add_argument(
@@ -233,7 +298,7 @@ def _run_ai_stage(
         return logic_results, False, None
 
     if ai_clusterer.ai_available and ai_mode in ("on", "auto"):
-        results = ai_clusterer.run(logic_results)
+        results = ai_clusterer.run(logic_results, strict=ai_mode == "on")
         backend = cast(
             Literal["local", "openai_compatible"], loaded_embeddings.config.backend
         )
@@ -242,10 +307,32 @@ def _run_ai_stage(
         console.kv("Output 2nd-groups", f"{len(results):,}")
         return results, True, backend
 
+    if ai_mode == "on":
+        raise RuntimeError("AI clustering requested with --ai on, but AI is unavailable.")
+
     return logic_results, False, None
 
 
-def _build_final_groups(results: list[dict[str, object]]) -> list[Group]:
+def _build_ai_clusterer(
+    *,
+    embeddings_config_file: str,
+    gca_config: Any,
+    embed_batch_size: int,
+) -> AIClusterer:
+    from .clustering.ai.clusterer import AIClusterer
+
+    return AIClusterer(
+        embeddings_config_file=embeddings_config_file,
+        gca_config=gca_config,
+        embed_batch_size=embed_batch_size,
+    )
+
+
+def _build_final_groups(
+    results: list[dict[str, object]],
+    *,
+    max_original_logs: int = 0,
+) -> list[Group]:
     """Convert raw clustering results to Group TypedDict format."""
     final_groups: list[Group] = []
     for group in results:
@@ -270,6 +357,9 @@ def _build_final_groups(results: list[dict[str, object]]) -> list[Group]:
             merged = 1
             raw_members = cast(list[dict[str, object]], group.get("members", []))
             raw_logs = [str(m.get("raw_log")) for m in raw_members]
+
+        if max_original_logs > 0:
+            raw_logs = raw_logs[:max_original_logs]
 
         final_groups.append(
             {
@@ -329,26 +419,37 @@ def _run_pipeline(parsed_logs: list[dict[str, Any]], opts: PipelineOptions) -> i
     console.kv("Input logs", f"{len(parsed_logs):,}")
     console.kv("Output groups", f"{len(logic_results):,}")
 
-    t0 = time.perf_counter()
-    ai_clusterer = AIClusterer(
-        embeddings_config_file=loaded_embeddings.config_path or "",
-        gca_config=gca_config,
-        embed_batch_size=loaded_embeddings.config.embed_batch_size,
-    )
-    logger.info("[timing] AI clusterer init: %.3fs", time.perf_counter() - t0)
+    if opts.ai_mode == "off":
+        results = logic_results
+        ai_enabled = False
+        ai_backend = None
+    else:
+        t0 = time.perf_counter()
+        ai_clusterer = _build_ai_clusterer(
+            embeddings_config_file=loaded_embeddings.config_path or "",
+            gca_config=gca_config,
+            embed_batch_size=loaded_embeddings.config.embed_batch_size,
+        )
+        logger.info("[timing] AI clusterer init: %.3fs", time.perf_counter() - t0)
+
+        t0 = time.perf_counter()
+        try:
+            results, ai_enabled, ai_backend = _run_ai_stage(
+                opts.ai_mode,
+                ai_clusterer,
+                logic_results,
+                loaded_embeddings,
+                console,
+            )
+        except RuntimeError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        logger.info("[timing] AI clustering total: %.3fs", time.perf_counter() - t0)
 
     t0 = time.perf_counter()
-    results, ai_enabled, ai_backend = _run_ai_stage(
-        opts.ai_mode,
-        ai_clusterer,
-        logic_results,
-        loaded_embeddings,
-        console,
+    final_groups = _build_final_groups(
+        results, max_original_logs=opts.max_original_logs
     )
-    logger.info("[timing] AI clustering total: %.3fs", time.perf_counter() - t0)
-
-    t0 = time.perf_counter()
-    final_groups = _build_final_groups(results)
     logger.info("[timing] build final groups: %.3fs", time.perf_counter() - t0)
 
     run_meta: RunMetadata = {
@@ -455,6 +556,7 @@ def _run_gca_eval(args: argparse.Namespace) -> int:
 
 def _run_gca_distances(args: argparse.Namespace) -> int:
     """Show pairwise distance matrix for a rule."""
+    from .clustering.ai.clusterer import AIClusterer
     from .gca.config import ConfigError, load_gca_config
     from .gca.distances import compute_distances, format_distances
     from .gca import GCA_DEFAULT_CONFIG_PATH
@@ -516,6 +618,110 @@ def _run_gca_distances(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_gca_fit_adaptive_eps(args: argparse.Namespace) -> int:
+    """Fit an adaptive-eps tree for one rule and write an updated config."""
+    from .clustering.ai.clusterer import AIClusterer
+    from .gca import GCA_DEFAULT_CONFIG_PATH
+    from .gca.adaptive_eps_tuning import (
+        fit_adaptive_eps_rule,
+        load_feature_defs,
+        update_rule_config_with_adaptive_eps_tree,
+    )
+    from .gca.config import ConfigError, load_gca_config
+
+    logging.basicConfig(
+        level=logging.INFO if cast(bool, args.verbose) else logging.WARNING,
+        format="%(levelname)s: %(message)s",
+    )
+
+    config_path = cast(str | None, args.rule_config) or str(GCA_DEFAULT_CONFIG_PATH)
+    strict = args.rule_config is not None
+    try:
+        gca_config = load_gca_config(config_path, strict=strict)
+        raw_config = json.loads(Path(config_path).read_text(encoding="utf-8"))
+        if not isinstance(raw_config, dict):
+            raise ValueError("Rule config JSON must be an object.")
+        logic_data = json.loads(Path(cast(str, args.logic)).read_text(encoding="utf-8"))
+        if not isinstance(logic_data, dict):
+            raise ValueError("logic.json must be a JSON object.")
+        ground_truth_data = json.loads(
+            Path(cast(str, args.ground_truth)).read_text(encoding="utf-8")
+        )
+        if not isinstance(ground_truth_data, dict):
+            raise ValueError("ground truth JSON must be a JSON object.")
+        feature_defs = load_feature_defs(cast(str | None, args.features_json))
+    except (OSError, json.JSONDecodeError, ValueError, ConfigError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if cast(int, args.max_depth) < 1:
+        print("Error: --max-depth must be >= 1.", file=sys.stderr)
+        return 1
+    if cast(int, args.max_min_samples_leaf) < 1:
+        print("Error: --max-min-samples-leaf must be >= 1.", file=sys.stderr)
+        return 1
+
+    loaded_embeddings = load_resolved_embeddings_config(
+        embeddings_config_arg=cast(str | None, args.embeddings_config),
+    )
+    for warning in loaded_embeddings.warnings:
+        print(f"Warning: {warning}", file=sys.stderr)
+
+    ai_clusterer = AIClusterer(
+        embeddings_config_file=loaded_embeddings.config_path or "",
+        gca_config=gca_config,
+        embed_batch_size=loaded_embeddings.config.embed_batch_size,
+    )
+    if not ai_clusterer.ai_available:
+        print("Error: AI embeddings not available. Check embeddings config.", file=sys.stderr)
+        return 1
+
+    def embed_fn(texts: list[str]) -> Any:
+        result = ai_clusterer._compute_embeddings_batched(texts)
+        if result is None:
+            raise RuntimeError("Embedding computation failed")
+        return result
+
+    try:
+        fit_result = fit_adaptive_eps_rule(
+            logic_data=logic_data,
+            ground_truth_data=cast(dict[str, list[list[str]]], ground_truth_data),
+            gca_config=gca_config,
+            rule_id=cast(str, args.rule_id),
+            embed_fn=embed_fn,
+            feature_defs=feature_defs,
+            max_depth_candidates=tuple(range(1, cast(int, args.max_depth) + 1)),
+            min_samples_leaf_candidates=tuple(
+                range(1, cast(int, args.max_min_samples_leaf) + 1)
+            ),
+            round_decimals=cast(int, args.round_decimals),
+            min_eps=cast(float, args.min_eps),
+        )
+        updated_config, removed_pairwise = update_rule_config_with_adaptive_eps_tree(
+            raw_config=raw_config,
+            rule_id=cast(str, args.rule_id),
+            tree=fit_result.tree,
+        )
+        out_path = Path(cast(str, args.out_rule_config))
+        out_path.write_text(json.dumps(updated_config, indent=2) + "\n", encoding="utf-8")
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Rule ID: {args.rule_id}")
+    print(f"Features: {len(feature_defs)}")
+    print(f"Nodes: {fit_result.node_count}")
+    print(f"Max depth: {fit_result.max_depth}")
+    print(f"Min samples leaf: {fit_result.min_samples_leaf}")
+    print(f"Precision: {fit_result.precision:.4f}")
+    print(f"Recall: {fit_result.recall:.4f}")
+    print(f"F1: {fit_result.f1:.4f}")
+    if removed_pairwise:
+        print("Removed pairwise_tree from the target rule so adaptive_eps_tree takes effect.")
+    print(f"Updated config written to: {out_path}")
+    return 0
+
+
 def _run_view(args: argparse.Namespace) -> int:
     """Render report from results JSON file."""
     results_json = cast(str, args.results_json)
@@ -537,4 +743,6 @@ def main() -> int:
         return _run_gca_eval(args)
     if command == "gca-distances":
         return _run_gca_distances(args)
+    if command == "gca-fit-adaptive-eps":
+        return _run_gca_fit_adaptive_eps(args)
     return _run_view(args)
