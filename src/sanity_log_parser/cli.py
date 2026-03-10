@@ -179,6 +179,61 @@ def _build_parser() -> argparse.ArgumentParser:
         "-v", "--verbose", action="store_true", help="Enable verbose logging."
     )
 
+    # --- gca-fit-weights subcommand ---
+    gca_fit_weights = subparsers.add_parser(
+        "gca-fit-weights",
+        help="Search a base GCA rule config (weights/levels/match_mode/eps) from logic.json + ground truth.",
+    )
+    _ = gca_fit_weights.add_argument(
+        "--logic", required=True, help="Path to logic.json (AI-off output)."
+    )
+    _ = gca_fit_weights.add_argument(
+        "--ground-truth", required=True, help="Path to ground truth JSON."
+    )
+    _ = gca_fit_weights.add_argument(
+        "--rule-id", required=True, help="Rule ID to tune."
+    )
+    _ = gca_fit_weights.add_argument(
+        "--rule-config", default=None, help="Input rule clustering config path."
+    )
+    _ = gca_fit_weights.add_argument(
+        "--out-rule-config",
+        required=True,
+        help="Output path for the updated base rule clustering config JSON.",
+    )
+    _ = gca_fit_weights.add_argument(
+        "--search-spec",
+        default=None,
+        help="Optional JSON file describing explicit search candidates.",
+    )
+    _ = gca_fit_weights.add_argument(
+        "--variables",
+        default=None,
+        help="Optional comma-separated variable indices to search (default: current rule vars).",
+    )
+    _ = gca_fit_weights.add_argument(
+        "--max-level-combo-size",
+        type=int,
+        default=2,
+        help="Max contiguous hierarchy-level span in the auto-generated search spec (default: 2).",
+    )
+    _ = gca_fit_weights.add_argument(
+        "--top-k",
+        type=int,
+        default=10,
+        help="Number of top candidates to print (default: 10).",
+    )
+    _ = gca_fit_weights.add_argument(
+        "--embeddings-config",
+        "--config",
+        dest="embeddings_config",
+        default=None,
+        help="Embeddings config path.",
+    )
+    _ = gca_fit_weights.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable verbose logging."
+    )
+
     # --- gca-fit-adaptive-eps subcommand ---
     gca_fit_adaptive = subparsers.add_parser(
         "gca-fit-adaptive-eps",
@@ -467,7 +522,7 @@ def _run_pipeline(parsed_logs: list[dict[str, Any]], opts: PipelineOptions) -> i
         "ai": {
             "enabled": ai_enabled,
             "backend": ai_backend,
-            "warnings": [],
+            "warnings": list(loaded_embeddings.warnings),
         },
     }
 
@@ -557,7 +612,7 @@ def _run_gca_eval(args: argparse.Namespace) -> int:
 def _run_gca_distances(args: argparse.Namespace) -> int:
     """Show pairwise distance matrix for a rule."""
     from .clustering.ai.clusterer import AIClusterer
-    from .gca.config import ConfigError, load_gca_config
+    from .gca.config import ConfigError, get_gca_rule_config, load_gca_config
     from .gca.distances import compute_distances, format_distances
     from .gca import GCA_DEFAULT_CONFIG_PATH
 
@@ -574,27 +629,35 @@ def _run_gca_distances(args: argparse.Namespace) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    # Set up embeddings
-    loaded_embeddings = load_resolved_embeddings_config(
-        embeddings_config_arg=cast(str | None, args.embeddings_config),
-    )
-    for warning in loaded_embeddings.warnings:
-        print(f"Warning: {warning}", file=sys.stderr)
+    rule_id = cast(str, args.rule_id)
+    rule_config = get_gca_rule_config(gca_config, rule_id)
+    if rule_config.pairwise_tree is not None:
+        def embed_fn(_texts: list[str]) -> Any:
+            raise RuntimeError("Embeddings should not be used for pairwise_tree rules.")
+    else:
+        loaded_embeddings = load_resolved_embeddings_config(
+            embeddings_config_arg=cast(str | None, args.embeddings_config),
+        )
+        for warning in loaded_embeddings.warnings:
+            print(f"Warning: {warning}", file=sys.stderr)
 
-    ai_clusterer = AIClusterer(
-        embeddings_config_file=loaded_embeddings.config_path or "",
-        gca_config=gca_config,
-        embed_batch_size=loaded_embeddings.config.embed_batch_size,
-    )
-    if not ai_clusterer.ai_available:
-        print("Error: AI embeddings not available. Check embeddings config.", file=sys.stderr)
-        return 1
+        ai_clusterer = AIClusterer(
+            embeddings_config_file=loaded_embeddings.config_path or "",
+            gca_config=gca_config,
+            embed_batch_size=loaded_embeddings.config.embed_batch_size,
+        )
+        if not ai_clusterer.ai_available:
+            print(
+                "Error: AI embeddings not available. Check embeddings config.",
+                file=sys.stderr,
+            )
+            return 1
 
-    def embed_fn(texts: list[str]) -> Any:
-        result = ai_clusterer._compute_embeddings_batched(texts)
-        if result is None:
-            raise RuntimeError("Embedding computation failed")
-        return result
+        def embed_fn(texts: list[str]) -> Any:
+            result = ai_clusterer._compute_embeddings_batched(texts)
+            if result is None:
+                raise RuntimeError("Embedding computation failed")
+            return result
 
     gt: dict[str, list[list[str]]] | None = None
     gt_path = cast(str | None, args.ground_truth)
@@ -605,7 +668,7 @@ def _run_gca_distances(args: argparse.Namespace) -> int:
     try:
         result = compute_distances(
             logic_path=cast(str, args.logic),
-            rule_id=cast(str, args.rule_id),
+            rule_id=rule_id,
             gca_config=gca_config,
             embed_fn=embed_fn,
             ground_truth=gt,
@@ -722,6 +785,121 @@ def _run_gca_fit_adaptive_eps(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_variable_indices(raw: str | None) -> tuple[int, ...] | None:
+    if raw is None:
+        return None
+    parts = [part.strip() for part in raw.split(",") if part.strip()]
+    if not parts:
+        msg = "--variables must contain at least one non-negative integer."
+        raise ValueError(msg)
+    values: list[int] = []
+    for part in parts:
+        if not part.isdigit():
+            msg = "--variables must be a comma-separated list of non-negative integers."
+            raise ValueError(msg)
+        values.append(int(part))
+    return tuple(values)
+
+
+def _run_gca_fit_weights(args: argparse.Namespace) -> int:
+    """Search a base rule config for one GCA rule and write an updated config."""
+    from .clustering.ai.clusterer import AIClusterer
+    from .gca import GCA_DEFAULT_CONFIG_PATH
+    from .gca.config import ConfigError, load_gca_config
+    from .gca.weight_tuning import (
+        fit_rule_weights,
+        format_weight_tuning_result,
+        load_weight_search_spec,
+    )
+
+    logging.basicConfig(
+        level=logging.INFO if cast(bool, args.verbose) else logging.WARNING,
+        format="%(levelname)s: %(message)s",
+    )
+
+    config_path = cast(str | None, args.rule_config) or str(GCA_DEFAULT_CONFIG_PATH)
+    strict = args.rule_config is not None
+    try:
+        variable_indices = _parse_variable_indices(cast(str | None, args.variables))
+        gca_config = load_gca_config(config_path, strict=strict)
+        raw_config = json.loads(Path(config_path).read_text(encoding="utf-8"))
+        if not isinstance(raw_config, dict):
+            raise ValueError("Rule config JSON must be an object.")
+        logic_data = json.loads(Path(cast(str, args.logic)).read_text(encoding="utf-8"))
+        if not isinstance(logic_data, dict):
+            raise ValueError("logic.json must be a JSON object.")
+        ground_truth_data = json.loads(
+            Path(cast(str, args.ground_truth)).read_text(encoding="utf-8")
+        )
+        if not isinstance(ground_truth_data, dict):
+            raise ValueError("ground truth JSON must be a JSON object.")
+        search_spec = load_weight_search_spec(
+            cast(str | None, args.search_spec),
+            logic_data=logic_data,
+            gca_config=gca_config,
+            raw_config=raw_config,
+            rule_id=cast(str, args.rule_id),
+            variable_indices=variable_indices,
+            max_level_combo_size=cast(int, args.max_level_combo_size),
+        )
+    except (ValueError, OSError, json.JSONDecodeError, ConfigError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if cast(int, args.top_k) < 1:
+        print("Error: --top-k must be >= 1.", file=sys.stderr)
+        return 1
+
+    loaded_embeddings = load_resolved_embeddings_config(
+        embeddings_config_arg=cast(str | None, args.embeddings_config),
+    )
+    for warning in loaded_embeddings.warnings:
+        print(f"Warning: {warning}", file=sys.stderr)
+
+    ai_clusterer = AIClusterer(
+        embeddings_config_file=loaded_embeddings.config_path or "",
+        gca_config=gca_config,
+        embed_batch_size=loaded_embeddings.config.embed_batch_size,
+    )
+    if not ai_clusterer.ai_available:
+        print("Error: AI embeddings not available. Check embeddings config.", file=sys.stderr)
+        return 1
+
+    def embed_fn(texts: list[str]) -> Any:
+        result = ai_clusterer._compute_embeddings_batched(texts)
+        if result is None:
+            raise RuntimeError("Embedding computation failed")
+        return result
+
+    try:
+        result = fit_rule_weights(
+            logic_data=logic_data,
+            ground_truth_data=cast(dict[str, list[list[str]]], ground_truth_data),
+            gca_config=gca_config,
+            raw_config=raw_config,
+            rule_id=cast(str, args.rule_id),
+            embed_fn=embed_fn,
+            search_spec=search_spec,
+            top_k=cast(int, args.top_k),
+        )
+        out_path = Path(cast(str, args.out_rule_config))
+        out_path.write_text(
+            json.dumps(result.updated_config, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_weight_tuning_result(result))
+    if result.removed_pairwise_tree:
+        print("Removed pairwise_tree from the tuned rule in the output config.")
+    if result.removed_adaptive_eps_tree:
+        print("Removed adaptive_eps_tree from the tuned rule in the output config.")
+    print(f"Updated config written to: {out_path}")
+    return 0
+
+
 def _run_view(args: argparse.Namespace) -> int:
     """Render report from results JSON file."""
     results_json = cast(str, args.results_json)
@@ -743,6 +921,8 @@ def main() -> int:
         return _run_gca_eval(args)
     if command == "gca-distances":
         return _run_gca_distances(args)
+    if command == "gca-fit-weights":
+        return _run_gca_fit_weights(args)
     if command == "gca-fit-adaptive-eps":
         return _run_gca_fit_adaptive_eps(args)
     return _run_view(args)

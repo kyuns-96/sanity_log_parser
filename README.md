@@ -1,270 +1,257 @@
 # Sanity Log Parser
 
-A tool for parsing and clustering Synopsys PrimeTime constraint reports (and similar log files) using a two-stage workflow: logic-based grouping followed by optional semantic AI merging. It compresses large reports into manageable groups of similar events.
+`sanity-log-parser` parses and clusters sanity logs, with first-class support for Synopsys PrimeTime constraint reports.
+
+The pipeline has two stages:
+
+1. logic clustering
+2. optional AI clustering
+
+For PrimeTime GCA reports, the recommended entrypoint is `sanity-log-parser gca`.
+
+## What It Does
+
+- parses PrimeTime constraint reports directly from the report structure
+- groups identical logic patterns deterministically
+- optionally merges similar logic groups with embeddings
+- supports local sentence-transformers or remote OpenAI-compatible embeddings
+- provides rule-level tuning utilities for `eps`, weights, levels, and adaptive eps trees
 
 ## Requirements
 
 - Python 3.11+
-- Optional: `sentence-transformers`, `scikit-learn` (for local AI-based semantic clustering)
-- Optional: `scikit-learn` (for remote OpenAI-compatible embeddings)
+- base install: logic clustering only
+- local AI clustering: `sentence-transformers` + `scikit-learn`
+- remote AI clustering: `scikit-learn`
 
-The tool works without AI dependencies by falling back to logic-only clustering.
+If AI dependencies or embeddings config are missing, `--ai auto` falls back to logic-only output.
 
 ## Installation
 
 ```bash
-pip install .                  # base (logic clustering only)
-pip install ".[ai-local]"     # + local sentence-transformers model
-pip install ".[ai-remote]"    # + remote OpenAI-compatible embeddings
-pip install ".[dev]"          # + pytest
+pip install .
+pip install ".[ai-local]"
+pip install ".[ai-remote]"
+pip install ".[dev]"
 ```
 
-## Quickstart
+## Quick Start
 
-1. Cluster a PrimeTime Constraints (GCA) report:
-   ```bash
-   sanity-log-parser gca REPORT_FILE
-   ```
+Cluster a PrimeTime report:
 
-2. View the results:
-   ```bash
-   sanity-log-parser view
-   ```
+```bash
+sanity-log-parser gca REPORT.rpt
+```
 
-3. Or use the generic `cluster` subcommand with a separate template:
-   ```bash
-   sanity-log-parser cluster LOG_FILE TEMPLATE_FILE
-   ```
+Write logic-only output:
 
-## CLI Usage
+```bash
+sanity-log-parser gca REPORT.rpt --ai off --out logic.json
+```
 
-The CLI provides item-specific subcommands (e.g. `gca`) for each sanity item type, plus a generic `cluster` subcommand and a `view` subcommand for rendering results.
+Render a saved result:
+
+```bash
+sanity-log-parser view subutai_results.json
+```
+
+## CLI Overview
 
 ### `gca`
 
-```
-sanity-log-parser gca REPORT_FILE [OPTIONS]
+```bash
+sanity-log-parser gca REPORT.rpt [OPTIONS]
 ```
 
-Parses and clusters a PrimeTime Constraints ("GCA") report. Uses the built-in PrimeTime parser to extract rule IDs and severity from the report's own structure. The output metadata includes `"sanity_item": "gca"`.
+Use this for PrimeTime constraint reports. This command:
 
-| Option | Default | Description |
-|---|---|---|
-| `--out PATH` | `subutai_results.json` | Output JSON path |
-| `--config PATH` | auto-detected | Embeddings config file path |
-| `--rule-config PATH` | auto-detected | Rule clustering config path |
-| `--ai {auto,on,off}` | `auto` | AI clustering mode |
-| `--json-indent N` | `2` | JSON output indentation |
-| `--max-original-logs N` | `0` (all) | Max original logs stored per group |
-| `--no-color` | | Disable ANSI color output |
-| `-v, --verbose` | | Enable INFO-level logging |
+- parses the report with the built-in PrimeTime parser
+- extracts `rule_id` and severity from the report itself
+- loads GCA rule config
+- runs logic clustering
+- optionally runs weighted AI clustering
+
+Common options:
+
+- `--out PATH`
+- `--ai {auto,on,off}`
+- `--embeddings-config PATH`
+- `--rule-config PATH`
+- `--json-indent N`
+- `--max-original-logs N`
+- `--no-color`
+- `-v, --verbose`
 
 ### `cluster`
 
-```
+```bash
 sanity-log-parser cluster LOG_FILE [TEMPLATE_FILE] [OPTIONS]
 ```
 
-Generic/legacy clustering subcommand. When `TEMPLATE_FILE` is omitted, the tool uses the built-in PrimeTime parser (same as `gca`). When provided, it uses the legacy two-file parsing mode.
+Generic or legacy mode.
 
-Accepts the same options as `gca`, plus an optional `TEMPLATE_FILE` positional argument.
+Use cases:
+
+- legacy two-file parsing with `LOG_FILE + TEMPLATE_FILE`
+- single-file parsing without GCA rule config
+
+Important:
+
+- if you need PrimeTime-specific rule tuning, use `gca`, not `cluster`
+- `--rule-config` is only used by `gca`
 
 ### `view`
 
-```
+```bash
 sanity-log-parser view [RESULTS_JSON] [OPTIONS]
 ```
 
-Renders a human-readable report from a results JSON file.
+Renders a saved results file in the terminal.
 
-| Option | Default | Description |
-|---|---|---|
-| `--top N` | `50` | Maximum number of groups to show |
-| `--no-color` | | Disable ANSI color output |
+Useful options:
 
-### Environment Variables
+- `--top N`
+- `--no-color`
 
-- `NO_COLOR=1` disables colored output (equivalent to `--no-color`).
+## GCA Evaluation And Tuning Commands
+
+### `gca-eval`
+
+```bash
+sanity-log-parser gca-eval \
+  --logic logic.json \
+  --ai ai.json \
+  --ground-truth gt.json
+```
+
+Compares AI output against ground truth and reports precision, recall, and F1 per rule.
+
+### `gca-distances`
+
+```bash
+sanity-log-parser gca-distances \
+  --logic logic.json \
+  --rule-id DES_0001 \
+  --rule-config rule_clustering_config.json \
+  --ground-truth gt.json
+```
+
+Shows pairwise base distances for one rule.
+
+Use this to inspect the base weighted distance behavior before adaptive eps.
+
+### `gca-fit-weights`
+
+```bash
+sanity-log-parser gca-fit-weights \
+  --logic logic.json \
+  --ground-truth gt.json \
+  --rule-id DES_0001 \
+  --rule-config rule_clustering_config.json \
+  --out-rule-config tuned_base_config.json
+```
+
+Searches a **base** rule config automatically for one GCA rule.
+
+It can search:
+
+- `eps`
+- `template_weight`
+- variable `weight`
+- variable `levels`
+- variable `level_weights`
+- variable `match_mode`
+
+You can let it build a default search space, or provide one explicitly with `--search-spec`.
+
+Important:
+
+- this command writes a new config file
+- it removes `pairwise_tree` and `adaptive_eps_tree` from the tuned rule in the output config
+- use the written file directly instead of editing JSON by hand
+
+### `gca-fit-adaptive-eps`
+
+```bash
+sanity-log-parser gca-fit-adaptive-eps \
+  --logic logic.json \
+  --ground-truth gt.json \
+  --rule-id DES_0001 \
+  --rule-config tuned_base_config.json \
+  --out-rule-config tuned_final_config.json
+```
+
+Fits an `adaptive_eps_tree` for one GCA rule after the base rule config has been tuned.
+
+### Full Air-Gapped Workflow
+
+See [AGENT_TUNING.md](AGENT_TUNING.md) for the step-by-step tuning guide written for an air-gapped agent.
 
 ## Input Formats
 
-### PrimeTime Constraint Reports (used by `gca` and single-file `cluster`)
+### PrimeTime Constraint Report
 
-A Synopsys PrimeTime constraint report (`.rpt`) containing severity sections, rule/parent lines, and instance lines. The parser extracts rule IDs, severity, and instance messages from the report's own structure.
+This is the main GCA input format.
 
-```
-****************************************
-  Report : ...
-  Version: ...
-  Date   : ...
-****************************************
+Expected structure:
 
-  error    5   0
-    CGR_0018    3   0   Some rule description
-        1 of 3   0   Instance message for 'signal_a'
-        2 of 3   0   Instance message for 'signal_b'
-        3 of 3   0   Instance message for 'signal_c'
+```text
+******************************************
+Report : report_constraint_analysis
+Version: U-2022.12-SP5-3
+Date   : Tue Sep 2 17:40:49 2025
+******************************************
 
-  warning    12   0
-    CLK_0042    4   0   Another rule description
-        1 of 4   0   Clock 'clk_main' has issue
-        ...
-```
+ error                  62   0
+  CGR_0018          46    0 Clock 'clk1' is generated from 'clk2'
+       1 of 46          0 Clock 'GEN_A' is generated from 'MSTR'
+       2 of 46          0 Clock 'GEN_B' is generated from 'MSTR2'
 
-### Legacy Two-File Mode (used by `cluster` with `TEMPLATE_FILE`)
-
-#### LOG_FILE
-
-A text log file where lines containing `N of M` are parsed. The text after the first 4 whitespace-separated fields is used as the message.
-
-```
-1 of 10 foo bar Signal 'u_top' not found
+ warning               12   0
+  CLK_0035           4    0 Clock 'x' is generated from 'y'
+       1 of 4           0 ...
 ```
 
-#### TEMPLATE_FILE
+Hierarchy used by the parser:
 
-A whitespace-separated file where each line defines a rule.
-- Field 1: `rule_id`
-- Field 4+: Message template
+1. severity section
+2. rule parent line
+3. instance line
 
+Notes:
+
+- instance lines inherit `rule_id` from the parent line
+- severity words seen in practice: `error`, `warning`, `info`
+- the report itself is the source of rule IDs and messages
+
+### Legacy Two-File Mode
+
+Use this only with `cluster LOG_FILE TEMPLATE_FILE`.
+
+`LOG_FILE` line format:
+
+```text
+1 of 10 0 Signal 'u_top' not found
 ```
+
+`TEMPLATE_FILE` line format:
+
+```text
 R001 HIGH INFO Signal 'u_top' not found
 ```
 
-## Output
+In legacy mode, the parser reads the message from field 4 onward.
 
-Results are written to `subutai_results.json` (or the path given by `--out`).
+## Embeddings Configuration
 
-### Schema (v2)
+Config resolution order:
 
-The output JSON has this structure:
+1. `--embeddings-config` or `--config`
+2. `SANITY_LOG_PARSER_EMBEDDINGS_CONFIG`
+3. `./config.json`
+4. built-in defaults
 
-```json
-{
-  "schema_version": 2,
-  "run": {
-    "timestamp_utc": "2026-02-26T12:00:00Z",
-    "log_file": "report.rpt",
-    "sanity_item": "gca",
-    "counts": { "parsed_logs": 100, "logic_groups": 25, "final_groups": 18 },
-    "ai": { "enabled": true, "backend": "local", "warnings": [] }
-  },
-  "groups": [
-    {
-      "group_type": "logic",
-      "group_id": "CGR_0018::logic::000001",
-      "rule_id": "CGR_0018",
-      "representative_template": "Clock 'clk1' from 'clk2'",
-      "representative_pattern": "'clk1'",
-      "total_count": 3,
-      "merged_variants_count": 1,
-      "original_logs": ["..."]
-    }
-  ]
-}
-```
-
-### Run Metadata Fields
-
-| Field | Presence | Description |
-|---|---|---|
-| `timestamp_utc` | Always | ISO 8601 timestamp |
-| `log_file` | Always | Path to the input file |
-| `template_file` | Legacy two-file mode only | Path to the template file |
-| `sanity_item` | Item-specific subcommands only | Sanity item type (e.g. `"gca"`) |
-| `counts` | Always | Parsed logs, logic groups, and final groups |
-| `ai` | Always | AI clustering status, backend, and warnings |
-
-### Group Fields
-
-| Field | Description |
-|---|---|
-| `group_type` | `"logic"` or `"ai_super"` |
-| `group_id` | Unique ID: `{rule_id}::{type}::{seq}` |
-| `rule_id` | Rule ID from the report or template, or a generated hash |
-| `representative_template` | Representative message template for the group |
-| `representative_pattern` | A sample log line representing the group |
-| `total_count` | Number of logs in this group |
-| `merged_variants_count` | Number of logic groups merged (AI only; 1 for logic groups) |
-| `original_logs` | All raw log lines belonging to this group |
-
-## AI Clustering
-
-If `sentence-transformers` and `scikit-learn` are installed, the tool performs a second stage of clustering to semantically merge similar groups using cosine similarity on embeddings.
-
-Control AI behavior with `--ai`:
-- `auto` (default): use AI if dependencies are available
-- `on`: require AI (fails if dependencies are missing)
-- `off`: skip AI stage entirely
-
-### Batch Size Handling
-
-Embedding is the most expensive step in the pipeline. Without batching, the tool would make one embedding API call per rule per component (template + each variable position), resulting in dozens of sequential HTTP round-trips. Instead, the tool uses a **batch-then-slice** strategy:
-
-#### How It Works
-
-The embedding pipeline runs in three phases:
-
-1. **Prepare** — For each rule with 2+ groups, extract the texts that need embedding (templates and per-variable-position texts). Rules with only 1 group skip embedding entirely.
-
-2. **Collect** — All texts from all rules are appended into a single flat list. An index map tracks which slice of the list belongs to which rule and component (template vs. variable position N).
-
-3. **Embed & Slice** — The flat list is sent to the embedding model in bounded chunks of `embed_batch_size` texts (default 512). The returned embeddings are concatenated into one array, then sliced back per rule using the index map.
-
-```
-Rule A: [tmpl_a1, tmpl_a2, var0_a1, var0_a2]   ← 4 texts
-Rule B: [tmpl_b1, tmpl_b2, tmpl_b3]              ← 3 texts
-                    ↓
-Flat batch: [tmpl_a1, tmpl_a2, var0_a1, var0_a2, tmpl_b1, tmpl_b2, tmpl_b3]
-                    ↓
-One embed call (7 texts < 512 batch size)
-                    ↓
-Slice back: Rule A templates=[0:2], vars=[2:4]
-            Rule B templates=[4:7]
-```
-
-This reduces ~80 sequential API calls (20 rules × ~4 components each) to 1-2 calls.
-
-#### Two Clustering Paths
-
-| Path | When | What Gets Batched |
-|---|---|---|
-| **Template-only** (`cluster` subcommand, no GCA config) | `gca_config` is None | Templates only. DBSCAN uses cosine metric directly on embeddings. |
-| **Weighted** (`gca` subcommand with rule config) | `gca_config` is set | Templates + per-variable-position texts. A weighted distance matrix is computed from the sliced embeddings, then DBSCAN uses `metric="precomputed"`. |
-
-#### Configuring Batch Size
-
-Set `embed_batch_size` in `config.json` to control the maximum number of texts per API call:
-
-```json
-{
-  "embed_batch_size": 256
-}
-```
-
-- **Default:** 512
-- **Smaller values** (64, 128): lower per-request latency and memory, more round-trips
-- **Larger values** (512, 1024): fewer round-trips, but may hit server timeouts or memory limits
-
-Use `-v` to see per-chunk timing and find the optimal value for your embedding server:
-
-```
-INFO: [timing] embed chunk 1/2 (512 texts): 1.234s
-INFO: [timing] embed chunk 2/2 (88 texts): 0.456s
-INFO: [timing] embeddings total: 600 texts in 2 chunks, 1.690s
-```
-
-#### Failure Behavior
-
-If any embedding chunk fails (server down, timeout, etc.), the entire batch returns `None` and **all rules fall back to unclustered output**. This is all-or-nothing by design — if the server can't handle a bounded chunk, individual per-rule calls would also fail.
-
-### Local Model
-
-The AI clusterer uses `all-MiniLM-L6-v2` by default, downloaded and cached automatically via sentence-transformers.
-
-### OpenAI-Compatible Embeddings
-
-Use a remote API for embeddings by creating a `config.json` (see `config.json.example`):
+Example remote config:
 
 ```json
 {
@@ -278,70 +265,220 @@ Use a remote API for embeddings by creating a `config.json` (see `config.json.ex
 }
 ```
 
-#### Configuration Keys
+Supported backends:
 
-| Key | Description |
-|---|---|
-| `embeddings_backend` | `"openai_compatible"` for remote API, or `"local"` (default) |
-| `embed_batch_size` | Max texts per embedding API call (default `512`). Tune to find the optimal throughput for your server. |
-| `openai_compatible.base_url` | Base URL of the OpenAI-compatible API |
-| `openai_compatible.model` | Model name for embeddings |
-| `openai_compatible.api_key` | API key (falls back to `OPENAI_API_KEY` env var) |
+- `local`
+- `openai_compatible`
 
-#### Config Resolution
+Local backend:
 
-1. If `--config` is provided, that path is used.
-2. Otherwise, the tool looks for `config.json` next to the package, then in the current directory.
-3. If no config is found or `embeddings_backend` is invalid, the tool falls back to local embeddings.
+- default model path is `nomic-ai/nomic-embed-text-v1.5`
+- requires `sentence-transformers` and `scikit-learn`
+
+Remote backend:
+
+- requires `scikit-learn`
+- reads `openai_compatible.api_key` or `OPENAI_API_KEY`
+
+### `embed_batch_size`
+
+`embed_batch_size` controls how many texts are sent in one embedding call.
+
+- default: `512`
+- smaller values: fewer timeout or memory issues
+- larger values: fewer round-trips
+
+## AI Clustering Model
+
+When GCA rule config is loaded, the AI stage uses weighted distances.
+
+At a high level:
+
+```text
+distance(A, B) =
+  template_weight * template_distance(A, B)
+  + sum(variable_weight_i * variable_distance_i(A, B))
+```
+
+Details:
+
+- weights are renormalized per pair
+- missing variable slots are masked out per pair
+- `match_mode: "embedding"` uses cosine distance on embeddings
+- `match_mode: "jaccard"` uses token-set Jaccard distance
+- identical texts are deduplicated before embedding requests
+
+Important for `DES_0001`:
+
+- if only one variable slot is active and `template_weight = 0`, changing the scalar variable weight alone may not change the result
+- in that case, `levels`, `match_mode`, and `eps` usually matter more than the raw weight number
+
+## GCA Rule Config
+
+Top-level keys:
+
+- `default_eps`
+- `default_template_weight`
+- `default_variable_weight`
+- `rules`
+
+Per-rule keys:
+
+- `eps`
+- `template_weight`
+- `variables`
+- `pairwise_tree`
+- `adaptive_eps_tree`
+
+Per-variable keys:
+
+- `weight`
+- `levels`
+- `level_weights`
+- `match_mode`
+
+Minimal example:
+
+```json
+{
+  "default_eps": 0.2,
+  "default_template_weight": 0.3,
+  "default_variable_weight": 0.7,
+  "rules": {
+    "DES_0001": {
+      "eps": 0.15,
+      "template_weight": 0.0,
+      "variables": {
+        "0": {
+          "weight": 1.0,
+          "levels": [-3],
+          "match_mode": "embedding"
+        }
+      }
+    }
+  }
+}
+```
+
+## Results Format
+
+Results are written to `subutai_results.json` unless `--out` is set.
+
+Schema version:
+
+- `2`
+
+Top-level structure:
+
+```json
+{
+  "schema_version": 2,
+  "run": {
+    "timestamp_utc": "2026-03-10T12:00:00Z",
+    "log_file": "report.rpt",
+    "sanity_item": "gca",
+    "counts": {
+      "parsed_logs": 100,
+      "logic_groups": 25,
+      "final_groups": 18
+    },
+    "ai": {
+      "enabled": true,
+      "backend": "openai_compatible",
+      "warnings": []
+    }
+  },
+  "groups": [
+    {
+      "group_type": "logic",
+      "group_id": "DES_0001::logic::000001",
+      "rule_id": "DES_0001",
+      "representative_template": "Some template",
+      "representative_pattern": "some/pattern",
+      "total_count": 5,
+      "merged_variants_count": 1,
+      "original_logs": ["raw log line"]
+    }
+  ]
+}
+```
+
+`run.ai.warnings` persists config and runtime warnings so downstream tooling can see why AI was disabled or degraded.
+
+## Typical Tuning Loop
+
+Generate logic groups:
 
 ```bash
-sanity-log-parser gca REPORT_FILE --config /path/to/config.json
+sanity-log-parser gca REPORT.rpt --ai off --out logic.json --max-original-logs 0
 ```
 
-## Performance Profiling
-
-Run with `-v` to see `[timing]` logs for each pipeline stage:
+Run baseline AI:
 
 ```bash
-sanity-log-parser gca REPORT_FILE -v
+sanity-log-parser gca REPORT.rpt \
+  --ai on \
+  --rule-config rule_clustering_config.json \
+  --out ai.json \
+  --max-original-logs 0
 ```
 
-Output includes timing for: parsing, config loading, logic clustering, AI clusterer init, embedding chunks, distance matrix per rule, DBSCAN per rule, result writing, and pipeline total.
-
-## Running Tests
+Evaluate:
 
 ```bash
-pip install ".[dev]"
-python -m pytest -q
+sanity-log-parser gca-eval --logic logic.json --ai ai.json --ground-truth gt.json
 ```
 
-## Project Structure
+Tune base config:
 
+```bash
+sanity-log-parser gca-fit-weights \
+  --logic logic.json \
+  --ground-truth gt.json \
+  --rule-id DES_0001 \
+  --rule-config rule_clustering_config.json \
+  --out-rule-config tuned_base_config.json
 ```
-src/
-  sanity_log_parser/
-    cli.py                 # CLI entry point, subcommand routing, pipeline
-    console.py             # Colored terminal output
-    patterns.py            # Shared regex patterns
-    view.py                # Report rendering
-    clustering/
-      logic.py             # Logic-based clustering (stage 1)
-      ai/
-        clusterer.py       # AI semantic clustering (stage 2)
-    config/
-      embeddings.py        # Embeddings config (backend, batch size)
-      resolution.py        # Config loading and resolution
-    gca/
-      config.py            # GCA rule clustering config (weights, eps)
-    parsing/
-      __init__.py          # parse_log_file() entry point
-      primetime_parser.py  # Single-file PrimeTime report parser
-      subutai_parser.py    # Legacy two-file parser
-      template_manager.py  # Rule template handling
-    results/
-      schema_v2.py         # Output schema, TypedDicts, read/write
-    embeddings/            # Embedding backends (local, OpenAI-compatible)
-    data/                  # Bundled config files
-tests/
-pyproject.toml
+
+Fit adaptive eps:
+
+```bash
+sanity-log-parser gca-fit-adaptive-eps \
+  --logic logic.json \
+  --ground-truth gt.json \
+  --rule-id DES_0001 \
+  --rule-config tuned_base_config.json \
+  --out-rule-config tuned_final_config.json
+```
+
+Run final evaluation:
+
+```bash
+sanity-log-parser gca REPORT.rpt \
+  --ai on \
+  --rule-config tuned_final_config.json \
+  --out ai.json \
+  --max-original-logs 0
+
+sanity-log-parser gca-eval --logic logic.json --ai ai.json --ground-truth gt.json
+```
+
+## Development
+
+Run tests:
+
+```bash
+pytest -q
+```
+
+Useful targeted test runs:
+
+```bash
+pytest -q tests/test_weight_tuning.py tests/test_cli_output.py
+```
+
+Install editable dev dependencies:
+
+```bash
+pip install -e ".[dev]"
 ```
