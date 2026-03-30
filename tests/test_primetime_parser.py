@@ -197,6 +197,48 @@ def test_parent_after_structural_noise_restores_context(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Known scenario headers should not break inheritance
+# ---------------------------------------------------------------------------
+
+
+def test_default_scenario_headers_do_not_break_rule_inheritance(tmp_path: Path) -> None:
+    rpt = _write_rpt(
+        tmp_path,
+        """\
+         error    1   0
+          CGR_0001    1   0 Parent 'a'
+        default                    28989
+                                     0      Default scenario violations
+               1 of 1   0   First 'sig_a'
+    """,
+    )
+
+    results = PrimeTimeParser().parse_file(rpt)
+
+    assert len(results) == 1
+    assert results[0]["rule_id"] == "CGR_0001"
+    assert results[0]["raw_log"] == "First 'sig_a'"
+
+
+def test_global_violations_header_does_not_break_rule_inheritance(tmp_path: Path) -> None:
+    rpt = _write_rpt(
+        tmp_path,
+        """\
+         info    1   0
+          UNT_0003    1   0 Parent 'a'
+        <Global Violations>        1    0      Scenario independent violations
+               1 of 1   0   First 'sig_a'
+    """,
+    )
+
+    results = PrimeTimeParser().parse_file(rpt)
+
+    assert len(results) == 1
+    assert results[0]["rule_id"] == "UNT_0003"
+    assert results[0]["raw_log"] == "First 'sig_a'"
+
+
+# ---------------------------------------------------------------------------
 # Variable extraction
 # ---------------------------------------------------------------------------
 

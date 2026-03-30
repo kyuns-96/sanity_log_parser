@@ -7,6 +7,8 @@ from typing import Any
 from ..patterns import (
     INSTANCE_LINE_PATTERN,
     RULE_ID_LINE_PATTERN,
+    SCENARIO_SECTION_DETAIL_PATTERN,
+    SCENARIO_SECTION_HEADER_PATTERN,
     SEPARATOR_PATTERN,
     SEVERITY_LINE_PATTERN,
     VAR_PATTERN,
@@ -94,7 +96,15 @@ class PrimeTimeParser:
             counts["instances"] += 1
             return self._parse_instance_line(m)
 
-        # Step 5: Skip everything else
+        # Step 5: Known scenario headers/details should not break inheritance
+        if (
+            SCENARIO_SECTION_HEADER_PATTERN.match(line)
+            or SCENARIO_SECTION_DETAIL_PATTERN.match(line)
+        ):
+            counts["skipped"] += 1
+            return None
+
+        # Step 6: Skip everything else
         self.current_rule_id = "UNKNOWN"
         logger.debug("Skipped unrecognized line: %s", stripped[:80])
         counts["skipped"] += 1

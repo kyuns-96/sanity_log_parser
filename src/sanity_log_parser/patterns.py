@@ -15,3 +15,7 @@ RULE_ID_LINE_PATTERN = re.compile(
     r"^\s{0,6}([A-Z]{2,4}_\d{3,4})\s+\d+(?:\s+\d+(?:\s+\S.*)?)?\s*$"
 )
 INSTANCE_LINE_PATTERN = re.compile(r"^\s*(\d+)\s+of\s+(\d+)\s+(\d+)\s+(.*\S)")
+SCENARIO_SECTION_HEADER_PATTERN = re.compile(
+    r"^\s*(?!(?:error|warning|info)\b)(?:<[^>]+>|[a-z][\w.-]*)\s+\d+(?:\s+\d+)?(?:\s+\S.*)?\s*$"
+)
+SCENARIO_SECTION_DETAIL_PATTERN = re.compile(r"^\s+\d+\s+(?!of\b)\S.*$")
