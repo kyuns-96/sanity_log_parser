@@ -178,7 +178,7 @@ def test_strict_level_weights_negative_value(tmp_path: Path) -> None:
         load_gca_config(path, strict=True)
 
 
-def test_load_gca_config_with_match_mode(tmp_path: Path) -> None:
+def test_load_gca_config_rejects_jaccard_match_mode(tmp_path: Path) -> None:
     path = _write_config(
         tmp_path,
         {
@@ -194,9 +194,31 @@ def test_load_gca_config_with_match_mode(tmp_path: Path) -> None:
             },
         },
     )
-    cfg = load_gca_config(path, strict=True)
-    vc = cfg.rules["R001"].variables[0]
-    assert vc.match_mode == "jaccard"
+    with pytest.raises(ConfigError, match="match_mode"):
+        load_gca_config(path, strict=True)
+
+
+def test_load_gca_config_rejects_level_jaccard_feature(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        {
+            "rules": {
+                "DES_0001": {
+                    "adaptive_eps_tree": {
+                        "features": [
+                            {"kind": "level_jaccard", "levels": [-4, -3]},
+                        ],
+                        "nodes": [
+                            {"value": 0.123},
+                        ],
+                    },
+                }
+            }
+        },
+    )
+
+    with pytest.raises(ConfigError, match="kind"):
+        load_gca_config(path, strict=True)
 
 
 def test_load_gca_config_with_pairwise_tree(tmp_path: Path) -> None:

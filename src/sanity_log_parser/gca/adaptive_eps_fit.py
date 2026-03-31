@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+import multiprocessing
+import os
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Sequence
 
@@ -12,6 +17,8 @@ from sanity_log_parser.clustering.ai.pairwise_tree import (
     compute_adaptive_eps_distance_matrix,
 )
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class AdaptiveEpsFitResult:
@@ -22,6 +29,22 @@ class AdaptiveEpsFitResult:
     node_count: int
     max_depth: int
     min_samples_leaf: int
+
+
+@dataclass(frozen=True)
+class SparseAdaptiveEpsDataset:
+    group_count: int
+    pair_i: np.ndarray
+    pair_j: np.ndarray
+    X: np.ndarray
+    y: np.ndarray
+    pair_distances: np.ndarray
+    cluster_labels: tuple[int, ...]
+    initial_edge_count: int
+    retained_edge_count: int
+
+
+_APPROX_FIT_WORKER_DATA: SparseAdaptiveEpsDataset | None = None
 
 
 def fit_adaptive_eps_tree(
@@ -71,9 +94,22 @@ def fit_adaptive_eps_tree(
         list(cluster_labels),
     )
 
+    logger.info(
+        "Adaptive eps exact: %d groups, %d pair rows, %d features, %d candidates.",
+        len(rule_groups),
+        X.shape[0],
+        X.shape[1],
+        len(max_depth_candidates) * len(min_samples_leaf_candidates),
+    )
+
     best: AdaptiveEpsFitResult | None = None
+    total_candidates = len(max_depth_candidates) * len(min_samples_leaf_candidates)
+    progress_interval = _adaptive_progress_interval(total_candidates)
+    started_at = time.perf_counter()
+    candidate_index = 0
     for max_depth in max_depth_candidates:
         for min_samples_leaf in min_samples_leaf_candidates:
+            candidate_index += 1
             classifier = DecisionTreeClassifier(
                 max_depth=int(max_depth),
                 min_samples_leaf=int(min_samples_leaf),
@@ -102,11 +138,119 @@ def fit_adaptive_eps_tree(
             )
             if _is_better_fit(candidate, best):
                 best = candidate
+                logger.info(
+                    "Adaptive eps exact: new best at %d/%d (%.1f%%) elapsed=%.2fs F1=%.4f P=%.4f R=%.4f nodes=%d depth=%d min_leaf=%d",
+                    candidate_index,
+                    total_candidates,
+                    (candidate_index / total_candidates) * 100.0,
+                    time.perf_counter() - started_at,
+                    candidate.f1,
+                    candidate.precision,
+                    candidate.recall,
+                    candidate.node_count,
+                    candidate.max_depth,
+                    candidate.min_samples_leaf,
+                )
+            elif candidate_index == total_candidates or candidate_index % progress_interval == 0:
+                current_best = best
+                logger.info(
+                    "Adaptive eps exact: progress %d/%d (%.1f%%) elapsed=%.2fs current F1=%.4f best F1=%.4f",
+                    candidate_index,
+                    total_candidates,
+                    (candidate_index / total_candidates) * 100.0,
+                    time.perf_counter() - started_at,
+                    candidate.f1,
+                    current_best.f1 if current_best is not None else 0.0,
+                )
 
     if best is None:
         msg = "no adaptive-eps candidate could be fit"
         raise RuntimeError(msg)
+    logger.info(
+        "Adaptive eps exact: completed %d candidates in %.2fs. Best F1=%.4f.",
+        total_candidates,
+        time.perf_counter() - started_at,
+        best.f1,
+    )
     return best
+
+
+def fit_adaptive_eps_tree_approx(
+    dataset: SparseAdaptiveEpsDataset,
+    feature_defs: Sequence[dict[str, object]],
+    *,
+    max_depth_candidates: Sequence[int] = tuple(range(1, 8)),
+    min_samples_leaf_candidates: Sequence[int] = tuple(range(1, 16)),
+    round_decimals: int = 3,
+    min_eps: float = 0.001,
+    random_state: int = 0,
+    jobs: int = 1,
+) -> AdaptiveEpsFitResult:
+    if dataset.group_count < 2:
+        msg = "at least two rule groups are required"
+        raise ValueError(msg)
+    if dataset.X.shape[0] == 0:
+        msg = "approximate adaptive-eps dataset must contain at least one edge"
+        raise ValueError(msg)
+    if not feature_defs:
+        msg = "feature_defs must be non-empty"
+        raise ValueError(msg)
+    if round_decimals < 0:
+        msg = "round_decimals must be non-negative"
+        raise ValueError(msg)
+    if min_eps <= 0:
+        msg = "min_eps must be positive"
+        raise ValueError(msg)
+    if jobs < 0:
+        msg = "jobs must be >= 0"
+        raise ValueError(msg)
+    if not np.any(dataset.y == 1):
+        msg = "approximate adaptive-eps dataset must contain at least one positive edge"
+        raise ValueError(msg)
+    if not np.any(dataset.y == 0):
+        msg = "approximate adaptive-eps dataset must contain at least one negative edge"
+        raise ValueError(msg)
+
+    feature_tuple = tuple(dict(feature) for feature in feature_defs)
+    total_candidates = len(max_depth_candidates) * len(min_samples_leaf_candidates)
+    candidate_params = [
+        (int(max_depth), int(min_samples_leaf))
+        for max_depth in max_depth_candidates
+        for min_samples_leaf in min_samples_leaf_candidates
+    ]
+    worker_jobs = _resolve_approx_jobs(jobs)
+    logger.info(
+        "Adaptive eps approx: %d groups, %d candidate edges, %d retained edges, %d features, %d candidates, jobs=%d.",
+        dataset.group_count,
+        dataset.initial_edge_count,
+        dataset.retained_edge_count,
+        dataset.X.shape[1],
+        total_candidates,
+        worker_jobs,
+    )
+
+    started_at = time.perf_counter()
+    if worker_jobs <= 1:
+        return _fit_adaptive_eps_tree_approx_serial(
+            dataset,
+            feature_tuple=feature_tuple,
+            candidate_params=candidate_params,
+            round_decimals=round_decimals,
+            min_eps=min_eps,
+            random_state=random_state,
+            started_at=started_at,
+        )
+
+    return _fit_adaptive_eps_tree_approx_parallel(
+        dataset,
+        feature_tuple=feature_tuple,
+        candidate_params=candidate_params,
+        round_decimals=round_decimals,
+        min_eps=min_eps,
+        random_state=random_state,
+        jobs=worker_jobs,
+        started_at=started_at,
+    )
 
 
 def _build_pair_dataset(
@@ -236,11 +380,20 @@ def _cluster_pair_metrics(
     expected: Sequence[str | int],
     predicted: Sequence[int],
 ) -> dict[str, float]:
-    gt_pairs = _pairs_from_labels(expected)
-    pred_pairs = _pairs_from_labels(predicted)
-    tp = len(gt_pairs & pred_pairs)
-    fp = len(pred_pairs - gt_pairs)
-    fn = len(gt_pairs - pred_pairs)
+    expected_counts: dict[str | int, int] = {}
+    predicted_counts: dict[int, int] = {}
+    overlaps: dict[tuple[int, str | int], int] = {}
+    for exp_label, pred_label in zip(expected, predicted, strict=True):
+        expected_counts[exp_label] = expected_counts.get(exp_label, 0) + 1
+        predicted_counts[pred_label] = predicted_counts.get(pred_label, 0) + 1
+        key = (pred_label, exp_label)
+        overlaps[key] = overlaps.get(key, 0) + 1
+
+    tp = sum(_n_choose_2(count) for count in overlaps.values())
+    pred_pairs = sum(_n_choose_2(count) for count in predicted_counts.values())
+    gt_pairs = sum(_n_choose_2(count) for count in expected_counts.values())
+    fp = pred_pairs - tp
+    fn = gt_pairs - tp
     precision = tp / (tp + fp) if (tp + fp) else 1.0
     recall = tp / (tp + fn) if (tp + fn) else 1.0
     f1 = (
@@ -249,19 +402,6 @@ def _cluster_pair_metrics(
         else 0.0
     )
     return {"precision": precision, "recall": recall, "f1": f1}
-
-
-def _pairs_from_labels(labels: Sequence[str | int]) -> set[tuple[int, int]]:
-    grouped: dict[str | int, list[int]] = {}
-    for index, label in enumerate(labels):
-        grouped.setdefault(label, []).append(index)
-
-    pairs: set[tuple[int, int]] = set()
-    for members in grouped.values():
-        for offset, left in enumerate(members):
-            for right in members[offset + 1 :]:
-                pairs.add((left, right))
-    return pairs
 
 
 def _is_better_fit(
@@ -287,3 +427,323 @@ def _is_better_fit(
     if candidate.max_depth != current.max_depth:
         return candidate.max_depth < current.max_depth
     return candidate.min_samples_leaf > current.min_samples_leaf
+
+
+def _n_choose_2(count: int) -> int:
+    return count * (count - 1) // 2
+
+
+def _adaptive_progress_interval(total_candidates: int) -> int:
+    if total_candidates < 1:
+        msg = "total_candidates must be >= 1"
+        raise ValueError(msg)
+    return max(1, total_candidates // 20)
+
+
+def _fit_adaptive_eps_tree_approx_serial(
+    dataset: SparseAdaptiveEpsDataset,
+    *,
+    feature_tuple: tuple[dict[str, object], ...],
+    candidate_params: list[tuple[int, int]],
+    round_decimals: int,
+    min_eps: float,
+    random_state: int,
+    started_at: float,
+) -> AdaptiveEpsFitResult:
+    best: AdaptiveEpsFitResult | None = None
+    total_candidates = len(candidate_params)
+    progress_interval = _adaptive_progress_interval(total_candidates)
+
+    for index, (max_depth, min_samples_leaf) in enumerate(candidate_params, start=1):
+        candidate = _evaluate_approx_candidate(
+            dataset,
+            feature_tuple=feature_tuple,
+            max_depth=max_depth,
+            min_samples_leaf=min_samples_leaf,
+            round_decimals=round_decimals,
+            min_eps=min_eps,
+            random_state=random_state,
+        )
+        if _is_better_fit(candidate, best):
+            best = candidate
+            logger.info(
+                "Adaptive eps approx: new best at %d/%d (%.1f%%) elapsed=%.2fs F1=%.4f P=%.4f R=%.4f nodes=%d depth=%d min_leaf=%d",
+                index,
+                total_candidates,
+                (index / total_candidates) * 100.0,
+                time.perf_counter() - started_at,
+                candidate.f1,
+                candidate.precision,
+                candidate.recall,
+                candidate.node_count,
+                candidate.max_depth,
+                candidate.min_samples_leaf,
+            )
+        elif index == total_candidates or index % progress_interval == 0:
+            current_best = best
+            logger.info(
+                "Adaptive eps approx: progress %d/%d (%.1f%%) elapsed=%.2fs current F1=%.4f best F1=%.4f",
+                index,
+                total_candidates,
+                (index / total_candidates) * 100.0,
+                time.perf_counter() - started_at,
+                candidate.f1,
+                current_best.f1 if current_best is not None else 0.0,
+            )
+
+    assert best is not None
+    logger.info(
+        "Adaptive eps approx: completed %d candidates in %.2fs. Best F1=%.4f.",
+        total_candidates,
+        time.perf_counter() - started_at,
+        best.f1,
+    )
+    return best
+
+
+def _fit_adaptive_eps_tree_approx_parallel(
+    dataset: SparseAdaptiveEpsDataset,
+    *,
+    feature_tuple: tuple[dict[str, object], ...],
+    candidate_params: list[tuple[int, int]],
+    round_decimals: int,
+    min_eps: float,
+    random_state: int,
+    jobs: int,
+    started_at: float,
+) -> AdaptiveEpsFitResult:
+    global _APPROX_FIT_WORKER_DATA
+
+    mp_context = multiprocessing.get_context("fork")
+    total_candidates = len(candidate_params)
+    progress_interval = _adaptive_progress_interval(total_candidates)
+    completed = 0
+    best: AdaptiveEpsFitResult | None = None
+    _APPROX_FIT_WORKER_DATA = dataset
+    try:
+        with ProcessPoolExecutor(max_workers=jobs, mp_context=mp_context) as executor:
+            future_to_candidate = {
+                executor.submit(
+                    _evaluate_approx_candidate_worker,
+                    max_depth,
+                    min_samples_leaf,
+                    feature_tuple,
+                    round_decimals,
+                    min_eps,
+                    random_state,
+                ): (max_depth, min_samples_leaf)
+                for max_depth, min_samples_leaf in candidate_params
+            }
+            for future in as_completed(future_to_candidate):
+                candidate = future.result()
+                completed += 1
+                if _is_better_fit(candidate, best):
+                    best = candidate
+                    logger.info(
+                        "Adaptive eps approx: new best at %d/%d (%.1f%%) elapsed=%.2fs F1=%.4f P=%.4f R=%.4f nodes=%d depth=%d min_leaf=%d",
+                        completed,
+                        total_candidates,
+                        (completed / total_candidates) * 100.0,
+                        time.perf_counter() - started_at,
+                        candidate.f1,
+                        candidate.precision,
+                        candidate.recall,
+                        candidate.node_count,
+                        candidate.max_depth,
+                        candidate.min_samples_leaf,
+                    )
+                elif completed == total_candidates or completed % progress_interval == 0:
+                    current_best = best
+                    logger.info(
+                        "Adaptive eps approx: progress %d/%d (%.1f%%) elapsed=%.2fs current F1=%.4f best F1=%.4f",
+                        completed,
+                        total_candidates,
+                        (completed / total_candidates) * 100.0,
+                        time.perf_counter() - started_at,
+                        candidate.f1,
+                        current_best.f1 if current_best is not None else 0.0,
+                    )
+    finally:
+        _APPROX_FIT_WORKER_DATA = None
+
+    if best is None:
+        msg = "no adaptive-eps candidate could be fit"
+        raise RuntimeError(msg)
+    logger.info(
+        "Adaptive eps approx: completed %d candidates in %.2fs. Best F1=%.4f.",
+        total_candidates,
+        time.perf_counter() - started_at,
+        best.f1,
+    )
+    return best
+
+
+def _evaluate_approx_candidate_worker(
+    max_depth: int,
+    min_samples_leaf: int,
+    feature_tuple: tuple[dict[str, object], ...],
+    round_decimals: int,
+    min_eps: float,
+    random_state: int,
+) -> AdaptiveEpsFitResult:
+    if _APPROX_FIT_WORKER_DATA is None:
+        msg = "approximate adaptive-eps worker data is not initialized"
+        raise RuntimeError(msg)
+    return _evaluate_approx_candidate(
+        _APPROX_FIT_WORKER_DATA,
+        feature_tuple=feature_tuple,
+        max_depth=max_depth,
+        min_samples_leaf=min_samples_leaf,
+        round_decimals=round_decimals,
+        min_eps=min_eps,
+        random_state=random_state,
+    )
+
+
+def _evaluate_approx_candidate(
+    dataset: SparseAdaptiveEpsDataset,
+    *,
+    feature_tuple: tuple[dict[str, object], ...],
+    max_depth: int,
+    min_samples_leaf: int,
+    round_decimals: int,
+    min_eps: float,
+    random_state: int,
+) -> AdaptiveEpsFitResult:
+    classifier = DecisionTreeClassifier(
+        max_depth=int(max_depth),
+        min_samples_leaf=int(min_samples_leaf),
+        random_state=random_state,
+    )
+    classifier.fit(dataset.X, dataset.y)
+    leaf_assignments = classifier.apply(dataset.X)
+    leaf_values = _derive_leaf_eps_values(
+        leaf_assignments,
+        dataset.y,
+        dataset.pair_distances,
+        round_decimals=round_decimals,
+        min_eps=min_eps,
+    )
+    tree = _classifier_to_adaptive_eps_tree_from_leaf_values(
+        classifier,
+        feature_tuple,
+        leaf_values,
+        round_decimals=round_decimals,
+    )
+    predicted = _predict_sparse_cluster_labels(
+        dataset.group_count,
+        dataset.pair_i,
+        dataset.pair_j,
+        dataset.pair_distances,
+        leaf_assignments,
+        leaf_values,
+    )
+    metrics = _cluster_pair_metrics(dataset.cluster_labels, predicted)
+    return AdaptiveEpsFitResult(
+        tree=tree,
+        precision=metrics["precision"],
+        recall=metrics["recall"],
+        f1=metrics["f1"],
+        node_count=int(classifier.tree_.node_count),
+        max_depth=int(max_depth),
+        min_samples_leaf=int(min_samples_leaf),
+    )
+
+
+def _classifier_to_adaptive_eps_tree_from_leaf_values(
+    classifier: DecisionTreeClassifier,
+    feature_defs: tuple[dict[str, object], ...],
+    leaf_values: dict[int, float],
+    *,
+    round_decimals: int,
+) -> dict[str, object]:
+    tree_ = classifier.tree_
+    nodes: list[dict[str, object]] = []
+    for index in range(tree_.node_count):
+        left = int(tree_.children_left[index])
+        right = int(tree_.children_right[index])
+        if left == -1 and right == -1:
+            nodes.append({"value": leaf_values[index]})
+            continue
+        nodes.append(
+            {
+                "feature": int(tree_.feature[index]),
+                "threshold": round(float(tree_.threshold[index]), round_decimals),
+                "left": left,
+                "right": right,
+            }
+        )
+    return {
+        "features": feature_defs,
+        "nodes": tuple(nodes),
+    }
+
+
+def _predict_sparse_cluster_labels(
+    group_count: int,
+    pair_i: np.ndarray,
+    pair_j: np.ndarray,
+    pair_distances: np.ndarray,
+    leaf_assignments: np.ndarray,
+    leaf_values: dict[int, float],
+) -> np.ndarray:
+    normalized = np.asarray(
+        [
+            float(distance) / float(leaf_values[int(leaf_id)])
+            for distance, leaf_id in zip(pair_distances, leaf_assignments, strict=True)
+        ],
+        dtype=np.float32,
+    )
+    uf = _UnionFind(group_count)
+    active = normalized <= 1.0
+    for left, right in zip(pair_i[active], pair_j[active], strict=True):
+        uf.union(int(left), int(right))
+    return uf.labels()
+
+
+def _resolve_approx_jobs(jobs: int) -> int:
+    if jobs == 0:
+        jobs = os.cpu_count() or 1
+    if jobs <= 1:
+        return 1
+    if os.name != "posix":
+        logger.warning(
+            "Adaptive eps approx multiprocessing requires POSIX fork; falling back to 1 job."
+        )
+        return 1
+    return jobs
+
+
+class _UnionFind:
+    def __init__(self, size: int) -> None:
+        self.parent = list(range(size))
+        self.rank = [0] * size
+
+    def find(self, item: int) -> int:
+        parent = self.parent[item]
+        if parent != item:
+            self.parent[item] = self.find(parent)
+        return self.parent[item]
+
+    def union(self, left: int, right: int) -> None:
+        left_root = self.find(left)
+        right_root = self.find(right)
+        if left_root == right_root:
+            return
+        if self.rank[left_root] < self.rank[right_root]:
+            left_root, right_root = right_root, left_root
+        self.parent[right_root] = left_root
+        if self.rank[left_root] == self.rank[right_root]:
+            self.rank[left_root] += 1
+
+    def labels(self) -> np.ndarray:
+        root_to_label: dict[int, int] = {}
+        labels = np.empty(len(self.parent), dtype=np.int32)
+        for index in range(len(self.parent)):
+            root = self.find(index)
+            label = root_to_label.get(root)
+            if label is None:
+                label = len(root_to_label)
+                root_to_label[root] = label
+            labels[index] = label
+        return labels

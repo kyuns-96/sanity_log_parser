@@ -7,6 +7,7 @@ import pytest
 
 from sanity_log_parser.gca.adaptive_eps_tuning import (
     DEFAULT_ADAPTIVE_EPS_FEATURES_V1,
+    _build_sparse_candidate_edges,
     extract_rule_logic_groups,
     load_feature_defs,
     update_rule_config_with_adaptive_eps_tree,
@@ -17,6 +18,7 @@ def test_load_feature_defs_uses_default_when_path_missing() -> None:
     features = load_feature_defs(None)
     assert features == DEFAULT_ADAPTIVE_EPS_FEATURES_V1
     assert features is not DEFAULT_ADAPTIVE_EPS_FEATURES_V1
+    assert all(feature["kind"] != "level_jaccard" for feature in features)
 
 
 def test_load_feature_defs_from_json_file(tmp_path: Path) -> None:
@@ -103,18 +105,55 @@ def test_extract_rule_logic_groups_maps_logic_groups_to_cluster_labels() -> None
     assert labels == [0, 1]
     assert groups == [
         {
+            "group_id": "DES_0001::logic::000001",
             "template": "T1",
             "pattern": "top/a/reg1",
             "count": 2,
             "members": [{"raw_log": "log a"}, {"raw_log": "log b"}],
         },
         {
+            "group_id": "DES_0001::logic::000002",
             "template": "T2",
             "pattern": "top/a/reg2",
             "count": 1,
             "members": [{"raw_log": "log c"}],
         },
     ]
+
+
+def test_build_sparse_candidate_edges_includes_gt_chain() -> None:
+    rule_groups = [
+        {
+            "group_id": "DES_0001::logic::000001",
+            "pattern": "'top/blk_a/reg_1/CK'",
+            "template": "T",
+            "count": 1,
+            "members": [],
+        },
+        {
+            "group_id": "DES_0001::logic::000002",
+            "pattern": "'top/blk_z/reg_9/CK'",
+            "template": "T",
+            "count": 1,
+            "members": [],
+        },
+        {
+            "group_id": "DES_0001::logic::000003",
+            "pattern": "'top/blk_b/reg_2/CK'",
+            "template": "T",
+            "count": 1,
+            "members": [],
+        },
+    ]
+    pair_i, pair_j, protected = _build_sparse_candidate_edges(
+        rule_groups,
+        [0, 0, 1],
+        ({"kind": "level_exact", "levels": [-2]},),
+    )
+
+    edges = set(zip(pair_i.tolist(), pair_j.tolist(), strict=True))
+    assert (0, 1) in edges
+    assert (0, 1) in protected
 
 
 def test_update_rule_config_with_adaptive_eps_tree_replaces_pairwise_tree() -> None:

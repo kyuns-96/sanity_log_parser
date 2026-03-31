@@ -89,8 +89,7 @@
           "weight": 1.0,
           "levels": [
             -2
-          ],
-          "match_mode": "embedding"
+          ]
         }
       }
     },
@@ -118,16 +117,6 @@
             "kind": "suffix_similarity",
             "max_shift": 3,
             "decay": 0.65
-          },
-          {
-            "kind": "level_jaccard",
-            "levels": [
-              -4,
-              -3
-            ]
-          },
-          {
-            "kind": "path_length_diff"
           }
         ],
         "nodes": [

@@ -94,6 +94,41 @@ def _build_feature_matrices(
     ]
 
 
+def build_pair_feature_dataset_for_edges(
+    rule_groups: list[dict[str, Any]],
+    features: tuple[dict[str, object], ...],
+    pair_i: np.ndarray,
+    pair_j: np.ndarray,
+) -> np.ndarray:
+    path_texts = [_extract_primary_path(group["pattern"]) for group in rule_groups]
+    normalized_docs = [_normalize_path_doc(path) for path in path_texts]
+    segment_sequences = [_segment_token_sequence(path) for path in path_texts]
+    path_lengths = np.asarray(
+        [len(sequence) for sequence in segment_sequences],
+        dtype=np.float32,
+    )
+
+    tfidf_cache: dict[tuple[int, int], Any] = {}
+    selected_cache: dict[tuple[int, ...], np.ndarray] = {}
+    columns = [
+        _compute_feature_values_for_edges(
+            feature,
+            pair_i=pair_i,
+            pair_j=pair_j,
+            path_texts=path_texts,
+            normalized_docs=normalized_docs,
+            segment_sequences=segment_sequences,
+            path_lengths=path_lengths,
+            tfidf_cache=tfidf_cache,
+            selected_cache=selected_cache,
+        )
+        for feature in features
+    ]
+    if not columns:
+        return np.empty((pair_i.size, 0), dtype=np.float32)
+    return np.column_stack(columns).astype(np.float32, copy=False)
+
+
 def _eval_tree_values_for_pairs(
     nodes: tuple[dict[str, object], ...],
     store: "_PairFeatureStore",
@@ -171,7 +206,6 @@ class _PairFeatureStore:
         )
         self._full_matrix_cache: dict[int, np.ndarray] = {}
         self._selected_text_cache: dict[int, np.ndarray] = {}
-        self._selected_token_cache: dict[int, list[frozenset[str]]] = {}
 
     def get_pair_values(
         self,
@@ -235,20 +269,6 @@ class _PairFeatureStore:
             right = selected[right_idx]
             return ((left == right) & (left != "")).astype(np.float32)
 
-        if kind == "level_jaccard":
-            token_sets = self._selected_token_cache.get(feature_idx)
-            if token_sets is None:
-                token_sets = [frozenset(text.split()) for text in selected.tolist()]
-                self._selected_token_cache[feature_idx] = token_sets
-            return np.fromiter(
-                (
-                    _set_jaccard_similarity(token_sets[i], token_sets[j])
-                    for i, j in zip(left_idx, right_idx, strict=True)
-                ),
-                dtype=np.float32,
-                count=left_idx.size,
-            )
-
         msg = f"Unsupported pairwise feature kind: {kind}"
         raise ValueError(msg)
 
@@ -311,9 +331,7 @@ def _compute_feature_matrix(
     for i in range(n):
         result[i, i] = 1.0
         for j in range(i + 1, n):
-            if kind == "level_jaccard":
-                sim = _text_jaccard_similarity(selected[i], selected[j])
-            elif kind == "level_exact":
+            if kind == "level_exact":
                 sim = 1.0 if selected[i] and selected[i] == selected[j] else 0.0
             elif kind == "path_length_equal":
                 sim = float(len(segment_sequences[i]) == len(segment_sequences[j]))
@@ -393,12 +411,6 @@ def _suffix_similarity(
     return best
 
 
-def _text_jaccard_similarity(left: str, right: str) -> float:
-    left_tokens = set(left.split())
-    right_tokens = set(right.split())
-    return _set_jaccard_similarity(left_tokens, right_tokens)
-
-
 def _token_jaccard_similarity(
     left: tuple[str, ...],
     right: tuple[str, ...],
@@ -413,3 +425,68 @@ def _set_jaccard_similarity(left: frozenset[str] | set[str], right: frozenset[st
     if not union:
         return 1.0
     return len(left & right) / len(union)
+
+
+def _compute_feature_values_for_edges(
+    feature: dict[str, object],
+    *,
+    pair_i: np.ndarray,
+    pair_j: np.ndarray,
+    path_texts: list[str],
+    normalized_docs: list[str],
+    segment_sequences: list[tuple[tuple[str, ...], ...]],
+    path_lengths: np.ndarray,
+    tfidf_cache: dict[tuple[int, int], Any],
+    selected_cache: dict[tuple[int, ...], np.ndarray],
+) -> np.ndarray:
+    kind = feature["kind"]
+    if kind == "path_tfidf_char_wb":
+        ngram_range = tuple(feature.get("ngram_range", (3, 6)))
+        tfidf = tfidf_cache.get(ngram_range)
+        if tfidf is None:
+            vectorizer = TfidfVectorizer(analyzer="char_wb", ngram_range=ngram_range)
+            tfidf = vectorizer.fit_transform(normalized_docs)
+            tfidf_cache[ngram_range] = tfidf
+        return np.asarray(
+            tfidf[pair_i].multiply(tfidf[pair_j]).sum(axis=1),
+            dtype=np.float32,
+        ).reshape(-1)
+
+    if kind == "suffix_similarity":
+        max_shift = int(feature.get("max_shift", 3))
+        decay = float(feature.get("decay", 0.65))
+        return np.fromiter(
+            (
+                _suffix_similarity(
+                    list(segment_sequences[left]),
+                    list(segment_sequences[right]),
+                    max_shift=max_shift,
+                    decay=decay,
+                )
+                for left, right in zip(pair_i, pair_j, strict=True)
+            ),
+            dtype=np.float32,
+            count=pair_i.size,
+        )
+
+    if kind == "path_length_equal":
+        return (path_lengths[pair_i] == path_lengths[pair_j]).astype(np.float32)
+    if kind == "path_length_diff":
+        return np.abs(path_lengths[pair_i] - path_lengths[pair_j]).astype(np.float32)
+
+    levels = tuple(feature.get("levels", ()))
+    selected = selected_cache.get(levels)
+    if selected is None:
+        selected = np.asarray(
+            [select_levels(path, list(levels)) for path in path_texts],
+            dtype=object,
+        )
+        selected_cache[levels] = selected
+
+    if kind == "level_exact":
+        return ((selected[pair_i] == selected[pair_j]) & (selected[pair_i] != "")).astype(
+            np.float32
+        )
+
+    msg = f"Unsupported pairwise feature kind: {kind}"
+    raise ValueError(msg)

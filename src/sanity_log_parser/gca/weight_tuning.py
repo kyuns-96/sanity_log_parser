@@ -27,7 +27,7 @@ from sanity_log_parser.gca.config import (
 _SLOT_SPLIT_RE = re.compile(r"\s+/\s+")
 _ALLOWED_SEARCH_KEYS = {"template_weight", "eps", "variables"}
 _ALLOWED_VARIABLE_SEARCH_KEYS = {"weight", "levels", "level_weights", "match_mode"}
-_VALID_MATCH_MODES = {"embedding", "jaccard"}
+_VALID_MATCH_MODES = {"embedding"}
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ def build_default_weight_search_spec(
         positive_weights = _dedupe_float_list(
             [current_var.weight, 1.0]
         )
-        match_modes = _dedupe_str_list([current_var.match_mode, "embedding", "jaccard"])
+        match_modes = _dedupe_str_list([current_var.match_mode, "embedding"])
 
         if current_var.level_weights is not None:
             candidates.append(

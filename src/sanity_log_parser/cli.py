@@ -183,7 +183,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # --- gca-fit-weights subcommand ---
     gca_fit_weights = subparsers.add_parser(
         "gca-fit-weights",
-        help="Search a base GCA rule config (weights/levels/match_mode/eps) from logic.json + ground truth.",
+        help="Search a base GCA rule config (weights/levels/eps) from logic.json + ground truth.",
     )
     _ = gca_fit_weights.add_argument(
         "--logic", required=True, help="Path to logic.json (AI-off output)."
@@ -292,6 +292,18 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.001,
         help="Minimum positive adaptive leaf eps value (default: 0.001).",
+    )
+    _ = gca_fit_adaptive.add_argument(
+        "--fit-mode",
+        choices=("exact", "approx"),
+        default="exact",
+        help="Adaptive-eps fitting mode: exact or approx.",
+    )
+    _ = gca_fit_adaptive.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="Worker processes for approx mode (0 = all available cores).",
     )
     _ = gca_fit_adaptive.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose logging."
@@ -741,6 +753,9 @@ def _run_gca_fit_adaptive_eps(args: argparse.Namespace) -> int:
     if cast(int, args.max_min_samples_leaf) < 1:
         print("Error: --max-min-samples-leaf must be >= 1.", file=sys.stderr)
         return 1
+    if cast(int, args.jobs) < 0:
+        print("Error: --jobs must be >= 0.", file=sys.stderr)
+        return 1
 
     loaded_embeddings = load_resolved_embeddings_config(
         embeddings_config_arg=cast(str | None, args.embeddings_config),
@@ -777,6 +792,8 @@ def _run_gca_fit_adaptive_eps(args: argparse.Namespace) -> int:
             ),
             round_decimals=cast(int, args.round_decimals),
             min_eps=cast(float, args.min_eps),
+            fit_mode=cast(str, args.fit_mode),
+            jobs=cast(int, args.jobs),
         )
         updated_config, removed_pairwise = update_rule_config_with_adaptive_eps_tree(
             raw_config=raw_config,

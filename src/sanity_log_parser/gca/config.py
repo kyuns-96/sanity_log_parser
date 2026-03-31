@@ -16,7 +16,7 @@ _ALLOWED_TOP_KEYS = {
 }
 _ALLOWED_RULE_KEYS = {"eps", "template_weight", "variables", "pairwise_tree", "adaptive_eps_tree"}
 _ALLOWED_VARIABLE_KEYS = {"weight", "levels", "level_weights", "match_mode"}
-_VALID_MATCH_MODES = {"embedding", "jaccard"}
+_VALID_MATCH_MODES = {"embedding"}
 _ALLOWED_PAIRWISE_TREE_KEYS = {"features", "nodes"}
 _ALLOWED_PAIRWISE_FEATURE_KEYS = {
     "kind",
@@ -29,7 +29,6 @@ _ALLOWED_PAIRWISE_NODE_KEYS = {"feature", "threshold", "left", "right", "value"}
 _VALID_PAIRWISE_FEATURE_KINDS = {
     "path_tfidf_char_wb",
     "suffix_similarity",
-    "level_jaccard",
     "level_exact",
     "path_length_equal",
     "path_length_diff",

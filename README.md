@@ -182,7 +182,6 @@ It can search:
 - variable `weight`
 - variable `levels`
 - variable `level_weights`
-- variable `match_mode`
 
 You can let it build a default search space, or provide one explicitly with `--search-spec`.
 
@@ -200,11 +199,12 @@ sanity-log-parser gca-fit-adaptive-eps \
   --logic logic.json \
   --ground-truth gt.json \
   --rule-id DES_0001 \
-  --rule-config tuned_base_config.json \
+  --rule-config rule_clustering_config.json \
   --out-rule-config tuned_final_config.json
 ```
 
-Fits an `adaptive_eps_tree` for one GCA rule after the base rule config has been tuned.
+Fits an `adaptive_eps_tree` for one GCA rule directly from the current rule config.
+Use this as the primary ground-truth fitting step. Run `gca-fit-weights` first only if you specifically need a separate base-rule search before adaptive fitting.
 
 ### Full Air-Gapped Workflow
 
@@ -327,14 +327,13 @@ Details:
 
 - weights are renormalized per pair
 - missing variable slots are masked out per pair
-- `match_mode: "embedding"` uses cosine distance on embeddings
-- `match_mode: "jaccard"` uses token-set Jaccard distance
+- variable text distance uses cosine distance on embeddings
 - identical texts are deduplicated before embedding requests
 
 Important for `DES_0001`:
 
 - if only one variable slot is active and `template_weight = 0`, changing the scalar variable weight alone may not change the result
-- in that case, `levels`, `match_mode`, and `eps` usually matter more than the raw weight number
+- in that case, `levels` and `eps` usually matter more than the raw weight number
 
 ## GCA Rule Config
 
@@ -358,7 +357,6 @@ Per-variable keys:
 - `weight`
 - `levels`
 - `level_weights`
-- `match_mode`
 
 Minimal example:
 
@@ -374,8 +372,7 @@ Minimal example:
       "variables": {
         "0": {
           "weight": 1.0,
-          "levels": [-3],
-          "match_mode": "embedding"
+          "levels": [-3]
         }
       }
     }
@@ -458,7 +455,20 @@ Evaluate:
 sanity-log-parser gca-eval --logic logic.json --ai ai.json --ground-truth gt.json
 ```
 
-Tune base config:
+Fit adaptive eps directly from the current rule config:
+
+```bash
+sanity-log-parser gca-fit-adaptive-eps \
+  --logic logic.json \
+  --ground-truth gt.json \
+  --rule-id DES_0001 \
+  --rule-config rule_clustering_config.json \
+  --out-rule-config tuned_final_config.json \
+  --fit-mode approx \
+  --jobs 0
+```
+
+Optional base-config tuning fallback:
 
 ```bash
 sanity-log-parser gca-fit-weights \
@@ -469,7 +479,7 @@ sanity-log-parser gca-fit-weights \
   --out-rule-config tuned_base_config.json
 ```
 
-Fit adaptive eps:
+If you use the optional base-config fallback, fit adaptive eps on top of it:
 
 ```bash
 sanity-log-parser gca-fit-adaptive-eps \

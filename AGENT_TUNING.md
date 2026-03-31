@@ -45,7 +45,6 @@ Reason:
 So for `DES_0001`, useful search dimensions are usually:
 
 - `levels`
-- `match_mode`
 - `eps`
 - `template_weight`
 
@@ -174,15 +173,93 @@ sanity-log-parser gca-eval \
 
 Save the current metrics. This is your baseline.
 
-## 8. Step 4: Tune The Base Rule Automatically
+## 8. Step 4: Fit Adaptive Eps Directly
 
 Do not hand-edit the config.
 
-Use `gca-fit-weights` first.
+For ground-truth fitting, use `gca-fit-adaptive-eps` first.
 
-### 8A. First Attempt: Default Search
+This is the normal path for `DES_0001`.
 
-For `DES_0001`, start with variable `0`.
+```csh
+sanity-log-parser gca-fit-adaptive-eps \
+  --logic $LOGIC_JSON \
+  --ground-truth $GT_JSON \
+  --rule-id DES_0001 \
+  --rule-config $BASE_CONFIG \
+  --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json \
+  --fit-mode approx \
+  --jobs 0 \
+  -v \
+  --out-rule-config $FINAL_TUNED_CONFIG
+```
+
+What this command does:
+
+1. loads `logic.json`
+2. loads `gt.json`
+3. uses the current rule config in `$BASE_CONFIG`
+4. computes base distances for the rule
+5. fits an `adaptive_eps_tree`
+6. scores candidates with precision, recall, and F1
+7. writes the final config to `$FINAL_TUNED_CONFIG`
+
+Important:
+
+- this command removes `pairwise_tree` from the tuned rule in the output config
+- this is intentional
+- the output is the final adaptive config for this fitting pass
+- `--fit-mode approx --jobs 0` is the recommended large-rule path
+- `-v` prints live candidate-search progress and new-best updates while the search runs
+
+## 9. Step 5: Validate The Adaptive Config
+
+The command prints:
+
+- node count
+- max depth
+- min samples leaf
+- precision
+- recall
+- F1
+
+Run the pipeline with the adaptive config:
+
+```csh
+sanity-log-parser gca $REPORT \
+  --ai on \
+  --rule-config $FINAL_TUNED_CONFIG \
+  --out $AI_JSON \
+  --max-original-logs 0
+```
+
+Then evaluate:
+
+```csh
+sanity-log-parser gca-eval \
+  --logic $LOGIC_JSON \
+  --ai $AI_JSON \
+  --ground-truth $GT_JSON
+```
+
+Interpretation:
+
+- if F1 is already good enough, you can stop here
+- if F1 is still low, continue to the optional base-tuning fallback below
+
+## 10. Step 6: Optional Base-Tuning Fallback
+
+If direct adaptive fitting is still poor, try `gca-fit-weights` to search a better base rule.
+
+Use this fallback only when at least one of these is true:
+
+- the direct adaptive fit from `$BASE_CONFIG` still has poor F1
+- the best adaptive result has obviously wrong merges and the base rule looks too coarse
+- you want to fix the base path signal before fitting adaptive eps again
+
+Do not jump into `gca-fit-weights` first unless the direct adaptive path already failed.
+
+Run:
 
 ```csh
 sanity-log-parser gca-fit-weights \
@@ -203,113 +280,24 @@ What this command does:
 4. tries many base configs automatically
 5. scores each candidate with precision, recall, and F1
 6. prints the best candidates
-7. writes the best **base** config to `$BASE_TUNED_CONFIG`
+7. writes the best base config to `$BASE_TUNED_CONFIG`
 
-Important:
+Use this only when the direct adaptive fit from `$BASE_CONFIG` is not good enough.
 
-- this command removes `pairwise_tree` and `adaptive_eps_tree` from the tuned rule in the output config
-- this is intentional
-- the output is a **base config**, not the final adaptive config
-- `-v` prints live candidate-search progress and new-best updates while the search runs
+After the command finishes, do this exact check:
 
-### 8B. Read The Output
+1. read the top candidate summary
+2. confirm the selected `levels` look structurally sensible
+3. confirm precision did not collapse
+4. use the written file directly
+5. do not hand-edit the old config
 
-The command prints:
+If the top candidate still looks wrong, do not continue with `$BASE_TUNED_CONFIG` yet.
+Instead, go to Step 14 and run a smaller explicit search spec.
 
-- total candidate count
-- best precision
-- best recall
-- best F1
-- best config summary
-- top candidate list
+## 11. Step 7: Re-fit Adaptive Eps On Top Of The Tuned Base Config
 
-Use the top line as the selected base config.
-
-Do not manually merge the output into the old config.
-Always use the written file.
-
-## 9. Step 5: If Default Search Is Not Good Enough, Use A Search Spec
-
-If the default search still gives poor F1, create a small explicit search spec.
-
-Example for `DES_0001`:
-
-```json
-{
-  "template_weight": [0.0, 0.2],
-  "eps": [0.05, 0.1, 0.15, 0.2, 0.3],
-  "variables": {
-    "0": [
-      { "weight": 0.0 },
-      { "weight": 1.0, "levels": [-4] },
-      { "weight": 1.0, "levels": [-3] },
-      { "weight": 1.0, "levels": [-2] },
-      { "weight": 1.0, "levels": [-3, -2] },
-      { "weight": 1.0, "levels": [-2], "match_mode": "jaccard" },
-      { "weight": 1.0, "levels": [-3], "match_mode": "jaccard" }
-    ]
-  }
-}
-```
-
-Save it as `des_0001_search_spec.json`.
-
-Then run:
-
-```csh
-sanity-log-parser gca-fit-weights \
-  --logic $LOGIC_JSON \
-  --ground-truth $GT_JSON \
-  --rule-id DES_0001 \
-  --rule-config $BASE_CONFIG \
-  --search-spec /absolute/path/to/des_0001_search_spec.json \
-  --out-rule-config $BASE_TUNED_CONFIG
-```
-
-Search spec rules:
-
-- `template_weight` is a list of candidate numbers
-- `eps` is a list of candidate numbers
-- `variables` maps variable index to a list of candidate variable configs
-- each variable candidate can use:
-  - `weight`
-  - `levels`
-  - `level_weights`
-  - `match_mode`
-
-Do not put both `levels` and `level_weights` in the same candidate.
-
-## 10. Step 6: Validate The Tuned Base Config
-
-Run the pipeline again with the tuned base config.
-
-```csh
-sanity-log-parser gca $REPORT \
-  --ai on \
-  --rule-config $BASE_TUNED_CONFIG \
-  --out $AI_JSON \
-  --max-original-logs 0
-```
-
-Then evaluate:
-
-```csh
-sanity-log-parser gca-eval \
-  --logic $LOGIC_JSON \
-  --ai $AI_JSON \
-  --ground-truth $GT_JSON
-```
-
-Interpretation:
-
-- if F1 is already good enough, you can stop here
-- if F1 is still low and the rule mixes different structural regimes, continue to adaptive eps
-
-## 11. Step 7: Fit Adaptive Eps On Top Of The Tuned Base Config
-
-This is the normal path for `DES_0001`.
-
-Run:
+If you used the base-tuning fallback, run adaptive eps again from `$BASE_TUNED_CONFIG`:
 
 ```csh
 sanity-log-parser gca-fit-adaptive-eps \
@@ -317,19 +305,20 @@ sanity-log-parser gca-fit-adaptive-eps \
   --ground-truth $GT_JSON \
   --rule-id DES_0001 \
   --rule-config $BASE_TUNED_CONFIG \
-  --out-rule-config $FINAL_TUNED_CONFIG \
-  --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json
+  --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json \
+  --fit-mode approx \
+  --jobs 0 \
+  -v \
+  --out-rule-config $FINAL_TUNED_CONFIG
 ```
 
-What this command does:
+Always fit this second adaptive pass from `$BASE_TUNED_CONFIG`, not from the old base config.
 
-1. uses the tuned base config as input
-2. computes the base distance matrix
-3. fits an `adaptive_eps_tree`
-4. writes the final config to `$FINAL_TUNED_CONFIG`
+This step is mandatory after weight tuning.
 
-Do not fit adaptive eps from the old config if you already changed the base rule.
-Always fit adaptive eps from `$BASE_TUNED_CONFIG`.
+Do not stop after `gca-fit-weights`.
+`gca-fit-weights` only gives you a better base rule.
+The final GT-fitting result still comes from `gca-fit-adaptive-eps`.
 
 ## 12. Step 8: Run Final Evaluation
 
@@ -381,10 +370,9 @@ Do this in order.
 1. inspect the best `gca-fit-weights` candidate summary
 2. try a smaller explicit search spec
 3. search `levels` first
-4. then search `match_mode`
-5. then search `template_weight`
-6. only after that, widen `eps`
-7. fit adaptive eps again
+4. then search `template_weight`
+5. only after that, widen `eps`
+6. fit adaptive eps again
 
 For `DES_0001`, prefer fixing the base path signal before growing a more complex adaptive tree.
 
@@ -406,11 +394,13 @@ Cause:
 
 - search space is wrong
 - signal is in a different path level
-- `match_mode` is wrong
 
 Fix:
 
 - provide a custom search spec
+- keep the search small and explicit
+- re-run `gca-fit-weights`
+- if the new base config looks better, re-run `gca-fit-adaptive-eps` using `$BASE_TUNED_CONFIG`
 
 ### Base tuning looks good but final F1 is poor
 
@@ -460,9 +450,21 @@ sanity-log-parser gca $REPORT --ai off --out $LOGIC_JSON --max-original-logs 0
 sanity-log-parser gca $REPORT --ai on --rule-config $BASE_CONFIG --out $AI_JSON --max-original-logs 0
 sanity-log-parser gca-eval --logic $LOGIC_JSON --ai $AI_JSON --ground-truth $GT_JSON
 
-sanity-log-parser gca-fit-weights --logic $LOGIC_JSON --ground-truth $GT_JSON --rule-id DES_0001 --rule-config $BASE_CONFIG --variables 0 --out-rule-config $BASE_TUNED_CONFIG
+sanity-log-parser gca-fit-adaptive-eps --logic $LOGIC_JSON --ground-truth $GT_JSON --rule-id DES_0001 --rule-config $BASE_CONFIG --out-rule-config $FINAL_TUNED_CONFIG --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json --fit-mode approx --jobs 0 -v
 
-sanity-log-parser gca-fit-adaptive-eps --logic $LOGIC_JSON --ground-truth $GT_JSON --rule-id DES_0001 --rule-config $BASE_TUNED_CONFIG --out-rule-config $FINAL_TUNED_CONFIG --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json
+sanity-log-parser gca $REPORT --ai on --rule-config $FINAL_TUNED_CONFIG --out $AI_JSON --max-original-logs 0
+sanity-log-parser gca-eval --logic $LOGIC_JSON --ai $AI_JSON --ground-truth $GT_JSON
+```
+
+If the direct adaptive result is still poor, use this exact fallback sequence:
+
+```csh
+sanity-log-parser gca-fit-weights --logic $LOGIC_JSON --ground-truth $GT_JSON --rule-id DES_0001 --rule-config $BASE_CONFIG --variables 0 -v --out-rule-config $BASE_TUNED_CONFIG
+
+sanity-log-parser gca $REPORT --ai on --rule-config $BASE_TUNED_CONFIG --out $AI_JSON --max-original-logs 0
+sanity-log-parser gca-eval --logic $LOGIC_JSON --ai $AI_JSON --ground-truth $GT_JSON
+
+sanity-log-parser gca-fit-adaptive-eps --logic $LOGIC_JSON --ground-truth $GT_JSON --rule-id DES_0001 --rule-config $BASE_TUNED_CONFIG --out-rule-config $FINAL_TUNED_CONFIG --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json --fit-mode approx --jobs 0 -v
 
 sanity-log-parser gca $REPORT --ai on --rule-config $FINAL_TUNED_CONFIG --out $AI_JSON --max-original-logs 0
 sanity-log-parser gca-eval --logic $LOGIC_JSON --ai $AI_JSON --ground-truth $GT_JSON

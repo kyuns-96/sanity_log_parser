@@ -263,8 +263,8 @@ class AIClusterer:
         # Phase 2: Collect all texts into one flat batch with index tracking
         batch_texts: list[str] = []
         template_index: dict[str, tuple[int, int, list[str]]] = {}
-        # var slots: (v_start, v_end, mask, v_keys, mode)
-        var_index: dict[str, list[tuple[int, int, list[bool], list[str], str]]] = {}
+        # var slots: (v_start, v_end, mask, v_keys)
+        var_index: dict[str, list[tuple[int, int, list[bool], list[str]]]] = {}
 
         for rule_id, (rule_config, components, _vw, vm) in prepared.items():
             # Templates
@@ -277,7 +277,6 @@ class AIClusterer:
             max_vars = max(len(c["variables"]) for c in components)
             var_index[rule_id] = []
             for i in range(max_vars):
-                mode = vm[i] if i < len(vm) else "embedding"
                 mask: list[bool] = []
                 v_keys: list[str] = []
                 for c in components:
@@ -288,12 +287,9 @@ class AIClusterer:
                     else:
                         mask.append(False)
                         v_keys.append("_")
-                if mode != "jaccard":
-                    v_start = len(batch_texts)
-                    batch_texts.extend(v_keys)
-                    var_index[rule_id].append((v_start, len(batch_texts), mask, v_keys, mode))
-                else:
-                    var_index[rule_id].append((-1, -1, mask, v_keys, mode))
+                v_start = len(batch_texts)
+                batch_texts.extend(v_keys)
+                var_index[rule_id].append((v_start, len(batch_texts), mask, v_keys))
 
         # Phase 3: Batch embed, then slice and cluster
         all_embs = self._compute_embeddings_batched(batch_texts)
@@ -322,11 +318,8 @@ class AIClusterer:
             template_embs = all_embs[t_start:t_end]
 
             var_embeddings: list[tuple[Any, list[bool], list[str]]] = []
-            for v_start, v_end, mask, v_keys, mode in var_index[rule_id]:
-                if mode != "jaccard":
-                    var_embeddings.append((all_embs[v_start:v_end], mask, v_keys))
-                else:
-                    var_embeddings.append((None, mask, v_keys))
+            for v_start, v_end, mask, v_keys in var_index[rule_id]:
+                var_embeddings.append((all_embs[v_start:v_end], mask, v_keys))
 
             dm_t0 = time.perf_counter()
             distance_matrix = _compute_distance_matrix(
@@ -644,8 +637,8 @@ def _prepare_embedding_components(
     """Prepare template + variable texts for each group.
 
     Returns (components, var_weights, var_modes) where var_weights[i] is the
-    weight for expanded variable slot i, and var_modes[i] is ``"embedding"``
-    or ``"jaccard"``.
+    weight for expanded variable slot i, and var_modes[i] is the configured
+    match mode for the expanded slot.
     """
     # Determine max original variable count across all groups
     split_variables = [_split_pattern_slots(lg["pattern"]) for lg in rule_groups]
@@ -782,36 +775,6 @@ def _cosine_distance_matrix_raw(X: Any) -> Any:
     return dist
 
 
-def _jaccard_distance_matrix(keys: list[str]) -> Any:
-    """NxN Jaccard distance on token sets.
-
-    Each key is split on whitespace into a set of tokens (quotes stripped).
-    Jaccard distance = 1 - |intersection| / |union|.
-    Identical keys → 0, completely disjoint → 1.
-    """
-    import numpy as np
-
-    n = len(keys)
-    sets: list[frozenset[str]] = []
-    for k in keys:
-        tokens = frozenset(t.strip("'\" ") for t in k.split() if t.strip("'\" "))
-        sets.append(tokens)
-
-    dist = np.zeros((n, n), dtype=np.float32)
-    for i in range(n):
-        for j in range(i + 1, n):
-            si, sj = sets[i], sets[j]
-            if not si and not sj:
-                d = 0.0
-            elif not si or not sj:
-                d = 1.0
-            else:
-                d = 1.0 - len(si & sj) / len(si | sj)
-            dist[i, j] = d
-            dist[j, i] = d
-    return dist
-
-
 def _compute_distance_matrix(
     n: int,
     template_embs: Any,
@@ -827,8 +790,8 @@ def _compute_distance_matrix(
     When *var_weights* is provided, ``var_weights[i]`` is used as the weight
     for variable slot *i* instead of looking up from *rule_config*.
 
-    When *var_modes* is provided, ``var_modes[i]`` selects the distance metric
-    for slot *i*: ``"embedding"`` (cosine) or ``"jaccard"``.
+    When *var_modes* is provided, ``var_modes[i]`` selects the configured
+    distance behavior for slot *i*.
     """
     import numpy as np
 
@@ -854,11 +817,7 @@ def _compute_distance_matrix(
             w = float(var_cfg.weight)
         if w == 0:
             continue
-        mode = var_modes[i] if var_modes is not None and i < len(var_modes) else "embedding"
-        if mode == "jaccard":
-            dist_i = _jaccard_distance_matrix(keys_i)
-        else:
-            dist_i = _cosine_distance_matrix_unique(embs_i, keys_i)
+        dist_i = _cosine_distance_matrix_unique(embs_i, keys_i)
         mask_arr = np.array(mask_i, dtype=np.float32)
         pair_mask = np.outer(mask_arr, mask_arr)  # 1.0 where both active
         comp_dists.append(dist_i)

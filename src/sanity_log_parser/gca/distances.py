@@ -180,9 +180,8 @@ def _compute_runtime_distance_matrix(
     batch_texts.extend(t_keys)
 
     max_vars = max(len(c["variables"]) for c in components) if components else 0
-    var_slices: list[tuple[int, int, list[bool], list[str], str]] = []
+    var_slices: list[tuple[int, int, list[bool], list[str]]] = []
     for i in range(max_vars):
-        mode = var_modes[i] if i < len(var_modes) else "embedding"
         mask: list[bool] = []
         v_keys: list[str] = []
         for c in components:
@@ -192,21 +191,15 @@ def _compute_runtime_distance_matrix(
             else:
                 mask.append(False)
                 v_keys.append("_")
-        if mode != "jaccard":
-            v_start = len(batch_texts)
-            batch_texts.extend(v_keys)
-            var_slices.append((v_start, len(batch_texts), mask, v_keys, mode))
-        else:
-            var_slices.append((-1, -1, mask, v_keys, mode))
+        v_start = len(batch_texts)
+        batch_texts.extend(v_keys)
+        var_slices.append((v_start, len(batch_texts), mask, v_keys))
 
     all_embs = np.asarray(embed_fn(batch_texts))
     template_embs = all_embs[: len(t_keys)]
     var_embeddings: list[tuple[Any, list[bool], list[str]]] = []
-    for v_start, v_end, mask, v_keys, mode in var_slices:
-        if mode != "jaccard":
-            var_embeddings.append((all_embs[v_start:v_end], mask, v_keys))
-        else:
-            var_embeddings.append((None, mask, v_keys))
+    for v_start, v_end, mask, v_keys in var_slices:
+        var_embeddings.append((all_embs[v_start:v_end], mask, v_keys))
 
     dist_matrix = _compute_distance_matrix(
         len(components),

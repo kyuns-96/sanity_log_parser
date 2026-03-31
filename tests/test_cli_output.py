@@ -341,6 +341,8 @@ def test_gca_fit_adaptive_eps_subcommand_help(tmp_path: Path):
     assert "--ground-truth" in output
     assert "--out-rule-config" in output
     assert "--features-json" in output
+    assert "--fit-mode" in output
+    assert "--jobs" in output
 
 
 def test_export_labeling_subcommand_help(tmp_path: Path) -> None:
@@ -479,3 +481,5 @@ def test_gca_fit_adaptive_eps_parser_defaults() -> None:
     assert args.max_min_samples_leaf == 15
     assert args.round_decimals == 3
     assert args.min_eps == 0.001
+    assert args.fit_mode == "exact"
+    assert args.jobs == 1
