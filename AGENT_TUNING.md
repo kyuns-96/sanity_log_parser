@@ -112,6 +112,22 @@ If this step fails, stop and fix parsing first.
 
 ## 6. Step 2: Prepare `gt.json`
 
+Before writing `gt.json`, export the logic groups into per-group labeling files:
+
+```csh
+sanity-log-parser export-labeling \
+  --input $LOGIC_JSON \
+  --output-dir /absolute/path/to/labeling_out
+```
+
+Expected result:
+
+- one JSON file per logic group
+- files written under `/absolute/path/to/labeling_out/<RULE_ID>/`
+- each file keeps the full group payload, including all `original_logs`
+
+Use those exported files for manual labeling, then convert the final labels into `gt.json`.
+
 `gt.json` must contain complete ground truth for the target rule.
 
 Format:

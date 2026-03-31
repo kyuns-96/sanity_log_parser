@@ -21,6 +21,7 @@ from .parsing import parse_log_file
 from .results.schema_v2 import (
     Group,
     RunMetadata,
+    read_results,
     write_results_v2,
 )
 from .view import print_report
@@ -294,6 +295,23 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _ = gca_fit_adaptive.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose logging."
+    )
+
+    # --- export-labeling subcommand ---
+    export_labeling = subparsers.add_parser(
+        "export-labeling",
+        help="Export schema-v2 groups to per-group JSON files for manual labeling.",
+    )
+    _ = export_labeling.add_argument(
+        "--input",
+        required=True,
+        dest="input_path",
+        help="Path to a schema-v2 results JSON file.",
+    )
+    _ = export_labeling.add_argument(
+        "--output-dir",
+        required=True,
+        help="Directory where per-group JSON files will be written.",
     )
 
     # --- view subcommand ---
@@ -908,6 +926,52 @@ def _run_view(args: argparse.Namespace) -> int:
     return print_report(results_json, top=top, no_color=no_color)
 
 
+def _sanitize_group_id_for_export(group_id: str) -> str:
+    return group_id.replace("::", "_").replace("/", "_").replace("\\", "_")
+
+
+def _run_export_labeling(args: argparse.Namespace) -> int:
+    """Export schema-v2 groups into a per-rule labeling directory structure."""
+    input_path = cast(str, args.input_path)
+    output_dir = Path(cast(str, args.output_dir))
+
+    try:
+        parsed = read_results(input_path)
+    except (OSError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if parsed["schema_version"] != 2:
+        print(
+            "Error: export-labeling requires schema_version 2 results JSON.",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        for group in parsed["groups"]:
+            rule_id = group.get("rule_id")
+            group_id = group.get("group_id")
+            if not isinstance(rule_id, str) or not isinstance(group_id, str):
+                raise ValueError(
+                    "Invalid schema-v2 results payload: groups must include string rule_id and group_id."
+                )
+
+            target_dir = output_dir / rule_id
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target_path = target_dir / f"{_sanitize_group_id_for_export(group_id)}.json"
+            target_path.write_text(
+                json.dumps(group, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+    except (OSError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Exported {len(parsed['groups']):,} groups to '{output_dir}'.")
+    return 0
+
+
 def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
@@ -925,4 +989,6 @@ def main() -> int:
         return _run_gca_fit_weights(args)
     if command == "gca-fit-adaptive-eps":
         return _run_gca_fit_adaptive_eps(args)
+    if command == "export-labeling":
+        return _run_export_labeling(args)
     return _run_view(args)

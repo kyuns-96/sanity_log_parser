@@ -33,6 +33,54 @@ def _output(process: subprocess.CompletedProcess[str]) -> str:
     return (process.stdout or "") + (process.stderr or "")
 
 
+def _sample_results_v2_payload() -> dict[str, object]:
+    return {
+        "schema_version": 2,
+        "run": {
+            "timestamp_utc": "2026-03-31T11:36:00Z",
+            "log_file": "logic.json",
+            "sanity_item": "gca",
+            "counts": {
+                "parsed_logs": 3,
+                "logic_groups": 3,
+                "final_groups": 3,
+            },
+            "ai": {
+                "enabled": False,
+                "backend": None,
+                "warnings": [],
+            },
+        },
+        "groups": [
+            {
+                "group_type": "logic",
+                "group_id": r"DES_0001::logic::path/leaf\branch",
+                "rule_id": "DES_0001",
+                "representative_template": "Clock '<VAR>' fails",
+                "representative_pattern": "CLK/*",
+                "total_count": 2,
+                "merged_variants_count": 1,
+                "original_logs": [
+                    "Clock 'CLK_A' fails",
+                    "Clock 'CLK_B' fails",
+                ],
+            },
+            {
+                "group_type": "ai_super",
+                "group_id": "CGR_0018::ai::000002",
+                "rule_id": "CGR_0018",
+                "representative_template": "Clock '<VAR>' is async",
+                "representative_pattern": "GEN_*",
+                "total_count": 1,
+                "merged_variants_count": 3,
+                "original_logs": [
+                    "Clock 'GEN_A' is async",
+                ],
+            },
+        ],
+    }
+
+
 def test_main_help_includes_usage_and_argument_placeholders(tmp_path: Path):
     process = _run_main(["cluster", "--help"], tmp_path)
     output = _output(process)
@@ -293,6 +341,77 @@ def test_gca_fit_adaptive_eps_subcommand_help(tmp_path: Path):
     assert "--ground-truth" in output
     assert "--out-rule-config" in output
     assert "--features-json" in output
+
+
+def test_export_labeling_subcommand_help(tmp_path: Path) -> None:
+    process = _run_main(["export-labeling", "--help"], tmp_path)
+    output = _output(process)
+
+    assert process.returncode == 0
+    assert "--input" in output
+    assert "--output-dir" in output
+
+
+def test_export_labeling_writes_group_files_and_overwrites_existing(tmp_path: Path) -> None:
+    input_path = tmp_path / "subutai_results.json"
+    output_dir = tmp_path / "labeling_export"
+    payload = _sample_results_v2_payload()
+    input_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    process = _run_main(
+        ["export-labeling", "--input", str(input_path), "--output-dir", str(output_dir)],
+        tmp_path,
+    )
+
+    assert process.returncode == 0
+    assert "Exported 2 groups" in _output(process)
+
+    first_group = payload["groups"][0]
+    second_group = payload["groups"][1]
+    first_path = output_dir / "DES_0001" / "DES_0001_logic_path_leaf_branch.json"
+    second_path = output_dir / "CGR_0018" / "CGR_0018_ai_000002.json"
+
+    assert first_path.is_file()
+    assert second_path.is_file()
+    assert json.loads(first_path.read_text(encoding="utf-8")) == first_group
+    assert json.loads(second_path.read_text(encoding="utf-8")) == second_group
+    assert json.loads(first_path.read_text(encoding="utf-8"))["original_logs"] == [
+        "Clock 'CLK_A' fails",
+        "Clock 'CLK_B' fails",
+    ]
+
+    first_path.write_text('{"stale": true}\n', encoding="utf-8")
+    rerun = _run_main(
+        ["export-labeling", "--input", str(input_path), "--output-dir", str(output_dir)],
+        tmp_path,
+    )
+
+    assert rerun.returncode == 0
+    assert json.loads(first_path.read_text(encoding="utf-8")) == first_group
+
+
+def test_export_labeling_rejects_legacy_v1_results(tmp_path: Path) -> None:
+    input_path = tmp_path / "legacy_results.json"
+    input_path.write_text(
+        json.dumps(
+            [
+                {
+                    "type": "LogicGroup",
+                    "rule_id": "R001",
+                    "original_logs": ["Signal 'u_top' not found"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    process = _run_main(
+        ["export-labeling", "--input", str(input_path), "--output-dir", str(tmp_path / "out")],
+        tmp_path,
+    )
+
+    assert process.returncode == 1
+    assert "export-labeling requires schema_version 2 results JSON" in _output(process)
 
 
 def test_gca_fit_weights_subcommand_help(tmp_path: Path):

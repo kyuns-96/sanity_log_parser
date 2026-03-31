@@ -55,6 +55,12 @@ Render a saved result:
 sanity-log-parser view subutai_results.json
 ```
 
+Export per-group labeling files from schema-v2 results:
+
+```bash
+sanity-log-parser export-labeling --input logic.json --output-dir labeling_out
+```
+
 ## CLI Overview
 
 ### `gca`
@@ -112,6 +118,21 @@ Useful options:
 
 - `--top N`
 - `--no-color`
+
+### `export-labeling`
+
+```bash
+sanity-log-parser export-labeling --input FILE --output-dir DIR
+```
+
+Exports each schema-v2 group into `{DIR}/{rule_id}/{sanitized_group_id}.json`.
+
+Behavior:
+
+- requires schema version `2`
+- replaces `::`, `/`, and `\` with `_` in output filenames
+- preserves the full group payload, including all `original_logs`
+- overwrites existing files at the target paths
 
 ## GCA Evaluation And Tuning Commands
 
@@ -411,6 +432,12 @@ Generate logic groups:
 
 ```bash
 sanity-log-parser gca REPORT.rpt --ai off --out logic.json --max-original-logs 0
+```
+
+Export per-group files for manual labeling:
+
+```bash
+sanity-log-parser export-labeling --input logic.json --output-dir labeling_out
 ```
 
 Run baseline AI:
