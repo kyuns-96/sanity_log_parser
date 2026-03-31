@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -115,6 +116,69 @@ def test_fit_rule_weights_picks_signal_level() -> None:
     assert result.best.f1 == 1.0
     assert result.best.raw_rule["variables"]["0"]["levels"] == [-3]
     assert "adaptive_eps_tree" not in result.updated_config["rules"]["DES_0001"]
+
+
+def test_fit_rule_weights_logs_progress(caplog) -> None:
+    logic_data = {
+        "groups": [
+            _logic_group("DES_0001", 1, "'top/alpha/cluster_a/reg_1/CK'", ["a"]),
+            _logic_group("DES_0001", 2, "'top/beta/cluster_a/reg_2/Q'", ["b"]),
+            _logic_group("DES_0001", 3, "'top/gamma/cluster_b/reg_3/CK'", ["c"]),
+            _logic_group("DES_0001", 4, "'top/delta/cluster_b/reg_4/Q'", ["d"]),
+        ]
+    }
+    ground_truth = {
+        "DES_0001": [
+            ["DES_0001::logic::000001", "DES_0001::logic::000002"],
+            ["DES_0001::logic::000003", "DES_0001::logic::000004"],
+        ]
+    }
+    raw_config = {
+        "default_eps": 0.2,
+        "default_template_weight": 0.3,
+        "default_variable_weight": 0.7,
+        "rules": {
+            "DES_0001": {
+                "eps": 0.2,
+                "template_weight": 0.0,
+                "variables": {
+                    "0": {"weight": 1.0, "levels": [-2]},
+                },
+            }
+        },
+    }
+    gca_config = GcaConfig(
+        default_eps=0.2,
+        default_template_weight=0.3,
+        default_variable_weight=0.7,
+    )
+    search_spec = {
+        "template_weight": [0.0],
+        "eps": [0.2],
+        "variables": {
+            "0": [
+                {"weight": 1.0, "levels": [-2]},
+                {"weight": 1.0, "levels": [-3]},
+            ]
+        },
+    }
+
+    with caplog.at_level(logging.INFO, logger="sanity_log_parser.gca.weight_tuning"):
+        fit_rule_weights(
+            logic_data=logic_data,
+            ground_truth_data=ground_truth,
+            gca_config=gca_config,
+            raw_config=raw_config,
+            rule_id="DES_0001",
+            embed_fn=_mock_embed_fn,
+            search_spec=search_spec,
+            top_k=2,
+        )
+
+    assert "Weight tuning 'DES_0001': evaluating 2 candidates." in caplog.text
+    assert "Weight tuning 'DES_0001': new best at 1/2" in caplog.text
+    assert "Weight tuning 'DES_0001': new best at 2/2" in caplog.text
+    assert "Weight tuning 'DES_0001': completed 2 candidates" in caplog.text
 
 
 def test_update_rule_config_with_weight_candidate_removes_trees() -> None:

@@ -191,6 +191,7 @@ sanity-log-parser gca-fit-weights \
   --rule-id DES_0001 \
   --rule-config $BASE_CONFIG \
   --variables 0 \
+  -v \
   --out-rule-config $BASE_TUNED_CONFIG
 ```
 
@@ -209,6 +210,7 @@ Important:
 - this command removes `pairwise_tree` and `adaptive_eps_tree` from the tuned rule in the output config
 - this is intentional
 - the output is a **base config**, not the final adaptive config
+- `-v` prints live candidate-search progress and new-best updates while the search runs
 
 ### 8B. Read The Output
 

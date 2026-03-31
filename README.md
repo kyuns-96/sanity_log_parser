@@ -169,6 +169,7 @@ sanity-log-parser gca-fit-weights \
   --ground-truth gt.json \
   --rule-id DES_0001 \
   --rule-config rule_clustering_config.json \
+  -v \
   --out-rule-config tuned_base_config.json
 ```
 
@@ -188,6 +189,7 @@ You can let it build a default search space, or provide one explicitly with `--s
 Important:
 
 - this command writes a new config file
+- use `-v` to print live candidate-search progress while the command runs
 - it removes `pairwise_tree` and `adaptive_eps_tree` from the tuned rule in the output config
 - use the written file directly instead of editing JSON by hand
 

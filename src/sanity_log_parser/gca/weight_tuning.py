@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 from copy import deepcopy
 from dataclasses import dataclass
 from itertools import product
@@ -26,6 +28,8 @@ _SLOT_SPLIT_RE = re.compile(r"\s+/\s+")
 _ALLOWED_SEARCH_KEYS = {"template_weight", "eps", "variables"}
 _ALLOWED_VARIABLE_SEARCH_KEYS = {"weight", "levels", "level_weights", "match_mode"}
 _VALID_MATCH_MODES = {"embedding", "jaccard"}
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -204,8 +208,17 @@ def fit_rule_weights(
     scored: list[WeightTuningCandidate] = []
     best: WeightTuningCandidate | None = None
     expected_cluster_count = len(set(cluster_labels))
+    total_candidates = len(candidates)
+    progress_interval = _weight_tuning_progress_interval(total_candidates)
+    started_at = time.perf_counter()
 
-    for candidate_raw in candidates:
+    logger.info(
+        "Weight tuning '%s': evaluating %d candidates.",
+        rule_id,
+        total_candidates,
+    )
+
+    for index, candidate_raw in enumerate(candidates, start=1):
         candidate_rule = _rule_config_from_raw(
             candidate_raw,
             default_eps=gca_config.default_eps,
@@ -241,8 +254,40 @@ def fit_rule_weights(
         scored.append(score)
         if _is_better_weight_candidate(score, best, expected_cluster_count):
             best = score
+            logger.info(
+                "Weight tuning '%s': new best at %d/%d (%.1f%%) elapsed=%.2fs F1=%.4f P=%.4f R=%.4f clusters=%d %s",
+                rule_id,
+                index,
+                total_candidates,
+                (index / total_candidates) * 100.0,
+                time.perf_counter() - started_at,
+                score.f1,
+                score.precision,
+                score.recall,
+                score.cluster_count,
+                _format_rule_summary(score.raw_rule),
+            )
+        elif index == total_candidates or index % progress_interval == 0:
+            current_best = best
+            logger.info(
+                "Weight tuning '%s': progress %d/%d (%.1f%%) elapsed=%.2fs current F1=%.4f best F1=%.4f",
+                rule_id,
+                index,
+                total_candidates,
+                (index / total_candidates) * 100.0,
+                time.perf_counter() - started_at,
+                score.f1,
+                current_best.f1 if current_best is not None else 0.0,
+            )
 
     assert best is not None
+    logger.info(
+        "Weight tuning '%s': completed %d candidates in %.2fs. Best F1=%.4f.",
+        rule_id,
+        total_candidates,
+        time.perf_counter() - started_at,
+        best.f1,
+    )
     scored.sort(
         key=lambda item: (
             item.f1,
@@ -268,6 +313,13 @@ def fit_rule_weights(
         removed_pairwise_tree=removed_pairwise,
         removed_adaptive_eps_tree=removed_adaptive,
     )
+
+
+def _weight_tuning_progress_interval(total_candidates: int) -> int:
+    if total_candidates < 1:
+        msg = "total_candidates must be >= 1"
+        raise ValueError(msg)
+    return max(1, total_candidates // 20)
 
 
 def iter_weight_candidates(
