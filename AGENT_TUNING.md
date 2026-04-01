@@ -1,6 +1,6 @@
 # AGENT_TUNING
 
-This file is for an air-gapped agent that must tune `DES_0001` or another GCA rule without hand-editing the config many times.
+This file is for an air-gapped agent that must tune one GCA rule without hand-editing the config many times.
 
 Use this workflow exactly.
 
@@ -32,23 +32,38 @@ Files used in this workflow:
 - `ai.json`
   final AI output to evaluate
 
-## 2. Important Rule For `DES_0001`
+## 2. Important Check: Base Tuning vs Adaptive Eps
 
-For the current `DES_0001` config, a scalar `weight` change by itself may do nothing.
+There are two different tuning layers in this workflow.
 
-Reason:
+- `gca-fit-weights` tunes the base rule:
+  - `eps`
+  - `template_weight`
+  - `variables[*]`
+- `gca-fit-adaptive-eps` fits an `adaptive_eps_tree` on top of the current base rule.
+
+Do not mix them up.
+
+- base tuning does not directly tune the adaptive tree
+- adaptive-eps fitting does not search base `weight` candidates
+- if you run `gca-fit-weights`, you must run `gca-fit-adaptive-eps` again afterward
+
+Also, a scalar `weight` change by itself may do nothing for some rules.
+
+This usually happens when:
 
 - `template_weight` is `0`
 - only one variable slot is active
 - runtime renormalizes weights per pair
 
-So for `DES_0001`, useful search dimensions are usually:
+In that rule shape, useful search dimensions are usually:
 
 - `levels`
 - `eps`
 - `template_weight`
 
 Do not assume that changing `weight: 1.0` to `weight: 0.8` will change clustering.
+Check the current rule config first, then decide whether weight magnitude is actually a meaningful search dimension.
 
 ## 3. Shell Rules
 
@@ -68,6 +83,8 @@ Run this first and edit the paths only once.
 
 ```csh
 setenv REPORT /absolute/path/to/REPORT.rpt
+setenv TARGET_RULE_ID RULE_XXXX
+setenv TARGET_VARIABLES 0
 setenv BASE_CONFIG /absolute/path/to/rule_clustering_config.json
 setenv LOGIC_JSON /absolute/path/to/logic.json
 setenv GT_JSON /absolute/path/to/gt.json
@@ -89,6 +106,15 @@ sanity-log-parser ...
 ```
 
 The examples below use `sanity-log-parser`.
+
+`TARGET_VARIABLES` should be the comma-separated variable slot indices you want `gca-fit-weights` to search.
+
+Examples:
+
+- `0`
+- `0,1`
+
+If you are not sure, inspect the current rule entry in `rule_clustering_config.json` and use the active variable keys from that rule.
 
 ## 5. Step 1: Generate `logic.json`
 
@@ -133,9 +159,9 @@ Format:
 
 ```json
 {
-  "DES_0001": [
-    ["DES_0001::logic::000001", "DES_0001::logic::000002"],
-    ["DES_0001::logic::000003"]
+  "RULE_XXXX": [
+    ["RULE_XXXX::logic::000001", "RULE_XXXX::logic::000002"],
+    ["RULE_XXXX::logic::000003"]
   ]
 }
 ```
@@ -179,13 +205,13 @@ Do not hand-edit the config.
 
 For ground-truth fitting, use `gca-fit-adaptive-eps` first.
 
-This is the normal path for `DES_0001`.
+This is the normal path for any rule.
 
 ```csh
 sanity-log-parser gca-fit-adaptive-eps \
   --logic $LOGIC_JSON \
   --ground-truth $GT_JSON \
-  --rule-id DES_0001 \
+  --rule-id $TARGET_RULE_ID \
   --rule-config $BASE_CONFIG \
   --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json \
   --fit-mode approx \
@@ -265,9 +291,9 @@ Run:
 sanity-log-parser gca-fit-weights \
   --logic $LOGIC_JSON \
   --ground-truth $GT_JSON \
-  --rule-id DES_0001 \
+  --rule-id $TARGET_RULE_ID \
   --rule-config $BASE_CONFIG \
-  --variables 0 \
+  --variables $TARGET_VARIABLES \
   -v \
   --out-rule-config $BASE_TUNED_CONFIG
 ```
@@ -303,7 +329,7 @@ If you used the base-tuning fallback, run adaptive eps again from `$BASE_TUNED_C
 sanity-log-parser gca-fit-adaptive-eps \
   --logic $LOGIC_JSON \
   --ground-truth $GT_JSON \
-  --rule-id DES_0001 \
+  --rule-id $TARGET_RULE_ID \
   --rule-config $BASE_TUNED_CONFIG \
   --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json \
   --fit-mode approx \
@@ -374,7 +400,7 @@ Do this in order.
 5. only after that, widen `eps`
 6. fit adaptive eps again
 
-For `DES_0001`, prefer fixing the base path signal before growing a more complex adaptive tree.
+If the poor result looks like a base-distance problem, prefer fixing the base path signal before growing a more complex adaptive tree.
 
 ## 15. Short Troubleshooting
 
@@ -430,7 +456,7 @@ Return only a short summary.
 Use this format:
 
 ```text
-Rule: DES_0001
+Rule: RULE_XXXX
 Baseline F1: 0.82
 Base tuned F1: 0.91
 Final tuned F1: 0.97
@@ -450,7 +476,7 @@ sanity-log-parser gca $REPORT --ai off --out $LOGIC_JSON --max-original-logs 0
 sanity-log-parser gca $REPORT --ai on --rule-config $BASE_CONFIG --out $AI_JSON --max-original-logs 0
 sanity-log-parser gca-eval --logic $LOGIC_JSON --ai $AI_JSON --ground-truth $GT_JSON
 
-sanity-log-parser gca-fit-adaptive-eps --logic $LOGIC_JSON --ground-truth $GT_JSON --rule-id DES_0001 --rule-config $BASE_CONFIG --out-rule-config $FINAL_TUNED_CONFIG --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json --fit-mode approx --jobs 0 -v
+sanity-log-parser gca-fit-adaptive-eps --logic $LOGIC_JSON --ground-truth $GT_JSON --rule-id $TARGET_RULE_ID --rule-config $BASE_CONFIG --out-rule-config $FINAL_TUNED_CONFIG --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json --fit-mode approx --jobs 0 -v
 
 sanity-log-parser gca $REPORT --ai on --rule-config $FINAL_TUNED_CONFIG --out $AI_JSON --max-original-logs 0
 sanity-log-parser gca-eval --logic $LOGIC_JSON --ai $AI_JSON --ground-truth $GT_JSON
@@ -459,12 +485,12 @@ sanity-log-parser gca-eval --logic $LOGIC_JSON --ai $AI_JSON --ground-truth $GT_
 If the direct adaptive result is still poor, use this exact fallback sequence:
 
 ```csh
-sanity-log-parser gca-fit-weights --logic $LOGIC_JSON --ground-truth $GT_JSON --rule-id DES_0001 --rule-config $BASE_CONFIG --variables 0 -v --out-rule-config $BASE_TUNED_CONFIG
+sanity-log-parser gca-fit-weights --logic $LOGIC_JSON --ground-truth $GT_JSON --rule-id $TARGET_RULE_ID --rule-config $BASE_CONFIG --variables $TARGET_VARIABLES -v --out-rule-config $BASE_TUNED_CONFIG
 
 sanity-log-parser gca $REPORT --ai on --rule-config $BASE_TUNED_CONFIG --out $AI_JSON --max-original-logs 0
 sanity-log-parser gca-eval --logic $LOGIC_JSON --ai $AI_JSON --ground-truth $GT_JSON
 
-sanity-log-parser gca-fit-adaptive-eps --logic $LOGIC_JSON --ground-truth $GT_JSON --rule-id DES_0001 --rule-config $BASE_TUNED_CONFIG --out-rule-config $FINAL_TUNED_CONFIG --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json --fit-mode approx --jobs 0 -v
+sanity-log-parser gca-fit-adaptive-eps --logic $LOGIC_JSON --ground-truth $GT_JSON --rule-id $TARGET_RULE_ID --rule-config $BASE_TUNED_CONFIG --out-rule-config $FINAL_TUNED_CONFIG --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json --fit-mode approx --jobs 0 -v
 
 sanity-log-parser gca $REPORT --ai on --rule-config $FINAL_TUNED_CONFIG --out $AI_JSON --max-original-logs 0
 sanity-log-parser gca-eval --logic $LOGIC_JSON --ai $AI_JSON --ground-truth $GT_JSON
