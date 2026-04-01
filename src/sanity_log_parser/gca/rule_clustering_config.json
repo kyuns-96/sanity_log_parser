@@ -117,53 +117,108 @@
             "kind": "suffix_similarity",
             "max_shift": 3,
             "decay": 0.65
+          },
+          {
+            "kind": "level_exact",
+            "levels": [
+              -4,
+              -3
+            ]
+          },
+          {
+            "kind": "path_length_diff"
           }
         ],
         "nodes": [
           {
             "feature": 0,
-            "threshold": 0.369,
+            "threshold": 0.366,
             "left": 1,
             "right": 4
           },
           {
-            "feature": 0,
-            "threshold": 0.306,
+            "feature": 1,
+            "threshold": 0.675,
             "left": 2,
             "right": 3
           },
           {
-            "value": 0.001
+            "value": 0.053
           },
           {
-            "value": 0.147
+            "value": 0.507
           },
           {
             "feature": 0,
-            "threshold": 0.563,
+            "threshold": 0.556,
             "left": 5,
-            "right": 8
+            "right": 16
           },
           {
             "feature": 1,
             "threshold": 0.621,
             "left": 6,
-            "right": 7
+            "right": 11
           },
           {
-            "value": 0.543
+            "feature": 1,
+            "threshold": 0.505,
+            "left": 7,
+            "right": 10
+          },
+          {
+            "feature": 0,
+            "threshold": 0.39,
+            "left": 8,
+            "right": 9
+          },
+          {
+            "value": 0.409
+          },
+          {
+            "value": 0.51
+          },
+          {
+            "value": 0.536
+          },
+          {
+            "feature": 1,
+            "threshold": 0.675,
+            "left": 12,
+            "right": 13
+          },
+          {
+            "value": 0.188
+          },
+          {
+            "feature": 1,
+            "threshold": 0.69,
+            "left": 14,
+            "right": 15
+          },
+          {
+            "value": 0.502
           },
           {
             "value": 0.014
           },
           {
             "feature": 0,
-            "threshold": 0.611,
-            "left": 9,
-            "right": 10
+            "threshold": 0.587,
+            "left": 17,
+            "right": 20
           },
           {
-            "value": 0.393
+            "feature": 0,
+            "threshold": 0.577,
+            "left": 18,
+            "right": 19
+          },
+          {
+            "value": 0.388
+          },
+          {
+            "value": 0.204
           },
           {
             "value": 0.396
