@@ -1,262 +1,209 @@
-# Agent Communication Protocol
+# AGENTS
 
-This file defines how the workstation agent and the air-gapped domain agent should collaborate on this repository.
+This file explains how the workstation agent and the air-gapped agent should work together for this repository.
 
-Use this as the coordination document.
-
-For end-user usage and CLI details, see:
-
-- `README.md`
-- `AGENT_TUNING.md`
+For CLI usage, see `README.md`.
+For rule tuning procedure, see `AGENT_TUNING.md`.
 
 ## 1. Purpose
 
-This project has two different strengths:
+This project is split across two environments:
 
-- the workstation agent can read and edit code, run tests, commit, and push
-- the air-gapped domain agent has PrimeTime report expertise and access to real secure report data
+- the **workstation agent** can read and edit code, run tests, commit, push, and update docs
+- the **air-gapped agent** has access to secure PrimeTime reports and domain-specific report knowledge
 
-The goal is to combine both without assuming direct network or file transfer between the two environments.
+The user manually relays information between those environments.
 
 ## 2. Roles
 
-| Agent | Environment | Main responsibilities |
+| Agent | Environment | Main job |
 |---|---|---|
-| Workstation agent | user workstation | code changes, tests, CLI design, docs, git |
-| Domain agent | air-gapped secure environment | PrimeTime report interpretation, real-data validation, tuning decisions |
+| Workstation agent | workstation | code, tests, docs, config, git, CLI workflow |
+| Air-gapped agent | secure environment | report interpretation, real-data validation, representative labeling, tuning judgments |
 
-## 3. Canonical Current Workflow
+## 3. Canonical Runtime Path
 
-The current recommended runtime path for PrimeTime constraint reports is:
+For PrimeTime constraint reports, the main entrypoint is:
 
 ```text
 sanity-log-parser gca REPORT.rpt
 ```
 
-The current recommended tuning path for one rule is:
+Do not treat legacy `cluster LOG_FILE TEMPLATE_FILE` mode as the primary path for PrimeTime GCA work.
+
+## 4. Canonical Tuning Truth
+
+The pipeline has two stages:
+
+1. logic clustering
+2. AI clustering
+
+Rule tuning only changes **Stage 2**.
+
+Current tuning order:
 
 1. generate `logic.json`
-2. prepare `gt.json`
-3. run `gca-fit-weights`
-4. run `gca-fit-adaptive-eps` if needed
-5. run `gca-eval`
+2. prepare complete `gt.json`
+3. measure baseline with `gca` + `gca-eval`
+4. try `gca-fit-adaptive-eps` first
+5. if direct adaptive fitting is still poor, run `gca-fit-weights`
+6. then re-run `gca-fit-adaptive-eps` from the tuned base config
+7. validate with full `gca` + `gca-eval`
 
-Do not treat legacy `cluster LOG_FILE TEMPLATE_FILE` mode as the primary path for GCA tuning.
+Important:
 
-## 4. Communication Rules
+- `gca-fit-weights` tunes the **base rule only**
+- `gca-fit-adaptive-eps` is the **final GT-fitting step**
+- if weights are changed, adaptive eps must be fit again afterward
 
-The user relays messages manually between environments.
+## 5. Current Project Facts To Preserve
 
-### Workstation agent → Domain agent
+### PrimeTime parsing
 
-Questions may be long and detailed.
-
-Good content:
-
-- exact command lines
-- short config snippets
-- one concrete question at a time
-- “compare A vs B” requests
-- requests for one sample line or one short list of examples
-
-### Domain agent → Workstation agent
-
-Answers must be short.
-
-Preferred answer styles:
-
-- a few words
-- a short list
-- one sample line
-- one config choice
-- one “use A, not B” instruction
-
-Avoid returning large pasted logs or large JSON blobs unless absolutely necessary.
-
-## 5. Current Project Facts
-
-These are the important current facts the domain agent should assume.
-
-### PrimeTime report parsing
-
-- the report itself contains the data needed for GCA parsing
-- parent lines contain the `rule_id`
+- the report itself contains the rule structure needed for GCA parsing
+- hierarchy is `severity -> parent rule -> instance lines`
 - instance lines inherit the active `rule_id`
-- severity structure is `severity -> parent rule -> instance lines`
-- instance line format is `N of M WAIVED MESSAGE`
-- parent line format is `RULE_ID COUNT WAIVED MESSAGE`
+- parent line examples include both full and count-only forms
+- count-only parent lines such as `DES_0004                12206` are supported
 
-### GCA runtime
+### GCA commands
 
-- `gca` is the main PrimeTime/GCA entrypoint
-- `gca` loads rule config and can run weighted AI clustering
-- `gca-eval` compares AI output to ground truth
-- `gca-distances` shows the base weighted distance behavior for one rule
-- `gca-fit-weights` searches base rule settings automatically
-- `gca-fit-adaptive-eps` fits an adaptive eps tree
+- `gca` runs PrimeTime parsing, logic clustering, and optional AI clustering
+- `gca-eval` compares AI output against ground truth
+- `gca-distances` shows rule-level base distance behavior
+- `gca-fit-weights` searches a better base rule
+- `gca-fit-adaptive-eps` fits an adaptive eps tree for one rule
+- `export-labeling` exports per-group JSON files for labeling
 
-### Legacy mode
+### Ground truth rules
 
-- `cluster LOG_FILE TEMPLATE_FILE` still exists
-- it is not the preferred path for GCA tuning
-
-## 6. Current Tuning Guidance
-
-For the latest step-by-step tuning procedure, use `AGENT_TUNING.md`.
-
-The most important current rules are:
-
-1. tune the base rule before adaptive eps
-2. use `gca-fit-weights` instead of hand-editing many weight candidates
-3. use `gca-fit-adaptive-eps` only after the base rule is sensible
-4. validate with `gca-eval`
-
-### `DES_0001` special note
-
-For `DES_0001`, changing only a scalar variable `weight` may not change clustering.
-
-Reason:
-
-- `template_weight` may be `0`
-- only one variable slot may be active
-- runtime renormalizes weights per pair
-
-So for `DES_0001`, the domain agent should pay attention to:
-
-- `levels`
-- `match_mode`
-- `eps`
-- `template_weight`
-
-not only the raw `weight` number.
-
-## 7. Ground Truth Rules
-
-Ground truth format:
-
-```json
-{
-  "DES_0001": [
-    ["DES_0001::logic::000001", "DES_0001::logic::000002"],
-    ["DES_0001::logic::000003"]
-  ]
-}
-```
-
-Rules:
-
-- use logic `group_id` values from `logic.json`
+- ground truth uses `logic.json` `group_id` values
 - for the tuned rule, every logic group must appear exactly once
 - no duplicates
 - no omissions
 
-If ground truth is incomplete, fitting results are not trustworthy.
+If GT is incomplete, tuning results are not trustworthy.
 
-## 8. Air-Gapped Environment Rules
+## 6. Air-Gapped Environment Rules
 
 Assume the air-gapped shell is `csh` or `tcsh`.
 
-Use these conventions:
+Use these rules:
 
 - use `setenv NAME value`
 - do not use `export`
 - do not use `python -c`
-- if Python scripting is needed, write a temporary `.py` file and run it
+- if Python scripting is needed, write a temporary `.py` file and run `python3 file.py`
 
-When the workstation agent sends commands for the air-gapped environment, prefer short, copy-paste-safe command blocks.
+When sending commands to the air-gapped agent, prefer short, copy-paste-safe blocks.
 
-## 9. What The Domain Agent Should Return
+## 7. Communication Rules
 
-The domain agent should usually return only:
+### Workstation agent → air-gapped agent
 
-- one recommended config direction
+Good messages contain:
+
+- exact command lines
+- short config snippets
+- one concrete question at a time
+- compare-A-vs-B requests
+- a request for one sample line or one short list of examples
+
+Long questions are fine.
+
+### Air-gapped agent → workstation agent
+
+Preferred answer style:
+
+- short
+- concrete
+- one recommendation at a time
+
+Good outputs:
+
+- one config direction
 - one or two important observations
-- one sample report line if format clarification is needed
+- one sample report line
 - one short metric summary
 
-Good examples:
+Avoid large pasted logs or large JSON blobs unless absolutely necessary.
 
-```text
-Use var0 levels [-3], not [-2].
-```
+## 8. When To Ask The Air-Gapped Agent
 
-```text
-DES_0001: jaccard worse than embedding.
-```
-
-```text
-Parent line example:
-CGR_0018 46 0 Clock 'clk1' is generated from 'clk2'
-```
-
-```text
-Baseline F1 0.82, tuned F1 0.96.
-```
-
-## 10. What The Workstation Agent Should Return
-
-The workstation agent should translate domain guidance into repository changes such as:
-
-- code updates
-- config updates
-- test updates
-- docs updates
-- git commits and pushes
-
-The workstation agent can send longer, more explicit summaries back to the user because copy-out is easy on the workstation side.
-
-## 11. When To Ask The Domain Agent
-
-Ask the domain agent when the question depends on real PrimeTime semantics or real secure report examples.
+Ask when the answer depends on real PrimeTime semantics or secure real-report examples.
 
 Examples:
 
-- whether two report variants are semantically the same rule family
-- which path level is meaningful vs noisy
-- whether a specific `DES_0001` split is correct
+- whether two report variants are really the same rule family
+- which path level carries real signal vs noise
+- whether a suspicious real-report split or merge is correct
 - whether a strange parent or instance line is a valid PrimeTime form
+- whether a representative subset really covers the real failure pattern
 
-Do not ask the domain agent for things the workstation agent can determine locally, such as:
+Do not ask the air-gapped agent for things the workstation can determine locally, such as:
 
 - Python syntax
 - CLI behavior visible in code
-- test failures from local unit tests
+- unit test failures
 - git operations
+
+## 9. Current DES_0004 Status
+
+DES_0004 is a checked-in worked example, not a universal template.
+
+Facts:
+
+- `labeling/DES_0004/` contains a synthetic/example workflow
+- `labeling/DES_0004/build_from_markdown.py` can generate a synthetic DES_0004 report and GT artifacts
+- the shipped rule config currently contains a compact DES_0004 adaptive rule
+- the checked-in DES_0004 F1=1.0 result is a **checked-in example result on its corresponding GT**, not proof that every real report will cluster perfectly
+
+For other rules, copy the **process**, not the literal DES_0004 values.
+
+## 10. What The Workstation Agent Should Return
+
+The workstation agent should convert air-gapped guidance into repository changes such as:
+
+- code updates
+- config updates
+- tests
+- docs
+- commits and pushes
+
+The workstation side can also provide longer summaries back to the user.
+
+## 11. Minimal Hand-Off Template
+
+Use this format when asking the air-gapped agent for help:
+
+```text
+Rule: RULE_XXXX
+Goal: improve real-report clustering quality
+Current result: baseline F1 = 0.82
+Question: which path level or family split is the real signal here?
+Please answer briefly.
+```
+
+Use this format when summarizing air-gapped feedback back on the workstation side:
+
+```text
+Air-gapped guidance:
+- use level [-3]
+- avoid the noisy family merge
+- re-fit adaptive eps after base tuning
+
+Workstation action:
+- update search direction
+- rerun base tuning
+- rerun adaptive eps
+```
 
 ## 12. When To Update This File
 
 Update `AGENTS.md` when any of these change:
 
-- the primary tuning workflow
-- the preferred command sequence
-- the role split between agents
-- the communication constraints
-- the known PrimeTime report structure assumptions
-
-If the detailed tuning procedure changes, update `AGENT_TUNING.md` too.
-
-## 13. Minimal Hand-Off Template
-
-Use this template when sending a task to the domain agent:
-
-```text
-Rule: DES_0001
-Goal: improve clustering quality
-Current result: baseline F1 = 0.82
-Question: which path level carries the real signal, [-4], [-3], or [-2]?
-Please answer briefly.
-```
-
-Use this template when summarizing domain feedback back on the workstation side:
-
-```text
-Domain guidance:
-- use level [-3]
-- avoid jaccard
-- adaptive eps still needed
-
-Workstation action:
-- update search spec
-- rerun base tuning
-- refit adaptive eps
-```
+- role split between workstation and air-gapped work
+- canonical tuning order
+- communication constraints
+- known PrimeTime parsing assumptions
+- the meaning of the current DES_0004 example status
