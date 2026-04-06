@@ -1,8 +1,8 @@
 # AGENT_TUNING
 
-This file is for an air-gapped agent that must tune one GCA rule without hand-editing the config many times.
+This file is for a low-intelligence air-gapped agent that must tune one GCA rule safely and mechanically.
 
-Use this workflow exactly.
+Use this file as an operator runbook.
 
 ## 1. What You Are Tuning
 
@@ -10,76 +10,76 @@ You are tuning **Stage 2 AI clustering** for one rule.
 
 Pipeline:
 
-1. `logic clustering`
-2. `AI clustering`
+1. logic clustering
+2. AI clustering
 
 You only tune Stage 2.
 
-Files used in this workflow:
+## 2. Files You Need
 
-- `REPORT.rpt`
-  PrimeTime constraint report
-- `logic.json`
-  output of `sanity-log-parser gca REPORT.rpt --ai off`
-- `gt.json`
-  ground truth clusters for one rule
-- `rule_clustering_config.json`
-  current config
-- `tuned_base_config.json`
-  output of `gca-fit-weights`
-- `tuned_final_config.json`
-  output of `gca-fit-adaptive-eps`
-- `ai.json`
-  final AI output to evaluate
+- `REPORT.rpt` — PrimeTime report
+- `logic.json` — output of `sanity-log-parser gca REPORT.rpt --ai off`
+- `gt.json` — ground truth for one rule
+- `rule_clustering_config.json` — current config
+- `tuned_base_config.json` — output of `gca-fit-weights`
+- `tuned_final_config.json` — output of `gca-fit-adaptive-eps`
+- `ai.json` — AI output to evaluate
 
-## 2. Important Check: Base Tuning vs Adaptive Eps
+## 3. Air-Gapped Shell Rules
 
-There are two different tuning layers in this workflow.
+Assume `csh` or `tcsh`.
 
-- `gca-fit-weights` tunes the base rule:
-  - `eps`
-  - `template_weight`
-  - `variables[*]`
-- `gca-fit-adaptive-eps` fits an `adaptive_eps_tree` on top of the current base rule.
+Rules:
 
-Do not mix them up.
-
-- base tuning does not directly tune the adaptive tree
-- adaptive-eps fitting does not search base `weight` candidates
-- if you run `gca-fit-weights`, you must run `gca-fit-adaptive-eps` again afterward
-
-Also, a scalar `weight` change by itself may do nothing for some rules.
-
-This usually happens when:
-
-- `template_weight` is `0`
-- only one variable slot is active
-- runtime renormalizes weights per pair
-
-In that rule shape, useful search dimensions are usually:
-
-- `levels`
-- `eps`
-- `template_weight`
-
-Do not assume that changing `weight: 1.0` to `weight: 0.8` will change clustering.
-Check the current rule config first, then decide whether weight magnitude is actually a meaningful search dimension.
-
-## 3. Shell Rules
-
-The air-gapped shell is `csh` or `tcsh`.
-
-Use these rules:
-
-- use `setenv NAME value`
+- use `setenv`
 - do not use `export`
-- do not use bash arrays
 - do not use `python -c`
-- if you need a temporary script, write a `.py` file and run `python3 file.py`
+- if scripting is needed, write a `.py` file and run `python3 file.py`
 
-## 4. Step 0: Set Paths
+## 4. Ground Truth Rules
 
-Run this first and edit the paths only once.
+`gt.json` must use `logic.json` `group_id` values.
+
+Rules:
+
+- include only logic groups
+- every logic group for the target rule must appear exactly once
+- no duplicates
+- no omissions
+
+If GT is incomplete, STOP.
+
+## 5. Key Truth About Tuning Order
+
+There are two tuning layers:
+
+- `gca-fit-weights` tunes the **base rule**
+- `gca-fit-adaptive-eps` fits the **adaptive eps tree**
+
+Current canonical order is:
+
+1. baseline
+2. direct `gca-fit-adaptive-eps`
+3. if poor, run `gca-fit-weights`
+4. then run `gca-fit-adaptive-eps` again from the tuned base config
+
+Do not stop after `gca-fit-weights`.
+
+Additional truth about `approx` mode:
+
+- `approx` is for candidate screening only
+- `approx` score is not final runtime truth
+- only replayed `gca` + `gca-eval` results are valid for acceptance
+
+Additional truth about over-merging:
+
+- if over-merging is unacceptable, set `MIN_PRECISION`
+- `MIN_PRECISION` is a hard eligibility gate for candidate selection
+- candidates below `MIN_PRECISION` must not be selected as the final result
+
+## 6. Step 0: Set Paths
+
+Edit these once:
 
 ```csh
 setenv REPORT /absolute/path/to/REPORT.rpt
@@ -91,34 +91,43 @@ setenv GT_JSON /absolute/path/to/gt.json
 setenv BASE_TUNED_CONFIG /absolute/path/to/tuned_base_config.json
 setenv FINAL_TUNED_CONFIG /absolute/path/to/tuned_final_config.json
 setenv AI_JSON /absolute/path/to/ai.json
+setenv MIN_PRECISION 0.0
 ```
 
-If the project is not installed as a package yet, run commands with:
+If the package is not installed, use:
 
 ```csh
 python3 -m sanity_log_parser ...
 ```
 
-If the console script is installed, use:
+Examples below use `sanity-log-parser`.
+
+If false positives are unacceptable for the rule, override this immediately:
 
 ```csh
-sanity-log-parser ...
+setenv MIN_PRECISION 1.0
 ```
 
-The examples below use `sanity-log-parser`.
+## 7. Compressed Operator Flow
 
-`TARGET_VARIABLES` should be the comma-separated variable slot indices you want `gca-fit-weights` to search.
+Use this exact flow.
 
-Examples:
+1. generate `logic.json`
+2. prepare complete `gt.json`
+3. measure baseline
+4. try direct adaptive fitting first
+5. if direct adaptive fit still over-merges badly, treat it as a base-geometry problem
+6. run base tuning
+7. re-fit adaptive eps from the tuned base config
+8. if needed, switch the final adaptive pass from `approx` to `exact`
+9. replay the tuned config on the full report
+10. accept only if full replay reproduces the claimed improvement
 
-- `0`
-- `0,1`
+If over-merging is forbidden, add this rule:
 
-If you are not sure, inspect the current rule entry in `rule_clustering_config.json` and use the active variable keys from that rule.
+11. set `MIN_PRECISION` to the required floor, for example `1.0` if false positives are not allowed
 
-## 5. Step 1: Generate `logic.json`
-
-This is the Stage 1 output. It is required for tuning.
+## 8. Step 1: Generate `logic.json`
 
 ```csh
 sanity-log-parser gca $REPORT \
@@ -127,17 +136,17 @@ sanity-log-parser gca $REPORT \
   --max-original-logs 0
 ```
 
-Expected result:
+Expected:
 
-- command exits successfully
+- command succeeds
 - `logic.json` exists
-- it contains `group_type == "logic"` groups
+- it contains logic groups
 
-If this step fails, stop and fix parsing first.
+If this step fails, STOP.
 
-## 6. Step 2: Prepare `gt.json`
+## 9. Step 2: Prepare `gt.json`
 
-Before writing `gt.json`, export the logic groups into per-group labeling files:
+To label logic groups, export them first:
 
 ```csh
 sanity-log-parser export-labeling \
@@ -145,15 +154,13 @@ sanity-log-parser export-labeling \
   --output-dir /absolute/path/to/labeling_out
 ```
 
-Expected result:
+Expected:
 
-- one JSON file per logic group
-- files written under `/absolute/path/to/labeling_out/<RULE_ID>/`
-- each file keeps the full group payload, including all `original_logs`
+- one JSON file per group
+- files under `/absolute/path/to/labeling_out/$TARGET_RULE_ID/`
+- each file keeps full payload including `original_logs`
 
-Use those exported files for manual labeling, then convert the final labels into `gt.json`.
-
-`gt.json` must contain complete ground truth for the target rule.
+Then create `gt.json` manually.
 
 Format:
 
@@ -166,839 +173,14 @@ Format:
 }
 ```
 
-Rules:
+If GT is incomplete, STOP.
 
-- use `group_id` values from `logic.json`
-- include only logic groups
-- for the tuned rule, every logic group must appear exactly once
-- do not omit any logic group for that rule
-- do not duplicate any logic group
-
-If ground truth is incomplete, fitting commands will fail. That is correct behavior.
-
-## 7. Step 3: Measure Current Behavior
-
-First, run the current config without changing anything.
+## 10. Step 3: Measure Baseline
 
 ```csh
 sanity-log-parser gca $REPORT \
   --ai on \
   --rule-config $BASE_CONFIG \
-  --out $AI_JSON \
-  --max-original-logs 0
-```
-
-Then evaluate:
-
-```csh
-sanity-log-parser gca-eval \
-  --logic $LOGIC_JSON \
-  --ai $AI_JSON \
-  --ground-truth $GT_JSON
-```
-
-Save the current metrics. This is your baseline.
-
-## 8. Step 4: Fit Adaptive Eps Directly
-
-Do not hand-edit the config.
-
-For ground-truth fitting, use `gca-fit-adaptive-eps` first.
-
-This is the normal path for any rule.
-
-```csh
-sanity-log-parser gca-fit-adaptive-eps \
-  --logic $LOGIC_JSON \
-  --ground-truth $GT_JSON \
-  --rule-id $TARGET_RULE_ID \
-  --rule-config $BASE_CONFIG \
-  --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json \
-  --fit-mode approx \
-  --jobs 0 \
-  -v \
-  --out-rule-config $FINAL_TUNED_CONFIG
-```
-
-What this command does:
-
-1. loads `logic.json`
-2. loads `gt.json`
-3. uses the current rule config in `$BASE_CONFIG`
-4. computes base distances for the rule
-5. fits an `adaptive_eps_tree`
-6. scores candidates with precision, recall, and F1
-7. writes the final config to `$FINAL_TUNED_CONFIG`
-
-Important:
-
-- this command removes `pairwise_tree` from the tuned rule in the output config
-- this is intentional
-- the output is the final adaptive config for this fitting pass
-- `--fit-mode approx --jobs 0` is the recommended large-rule path
-- `-v` prints live candidate-search progress and new-best updates while the search runs
-
-## 9. Step 5: Validate The Adaptive Config
-
-The command prints:
-
-- node count
-- max depth
-- min samples leaf
-- precision
-- recall
-- F1
-
-Run the pipeline with the adaptive config:
-
-```csh
-sanity-log-parser gca $REPORT \
-  --ai on \
-  --rule-config $FINAL_TUNED_CONFIG \
-  --out $AI_JSON \
-  --max-original-logs 0
-```
-
-Then evaluate:
-
-```csh
-sanity-log-parser gca-eval \
-  --logic $LOGIC_JSON \
-  --ai $AI_JSON \
-  --ground-truth $GT_JSON
-```
-
-Interpretation:
-
-- if F1 is already good enough, you can stop here
-- if F1 is still low, continue to the optional base-tuning fallback below
-
-## 10. Step 6: Optional Base-Tuning Fallback
-
-If direct adaptive fitting is still poor, try `gca-fit-weights` to search a better base rule.
-
-Use this fallback only when at least one of these is true:
-
-- the direct adaptive fit from `$BASE_CONFIG` still has poor F1
-- the best adaptive result has obviously wrong merges and the base rule looks too coarse
-- you want to fix the base path signal before fitting adaptive eps again
-
-Do not jump into `gca-fit-weights` first unless the direct adaptive path already failed.
-
-Run:
-
-```csh
-sanity-log-parser gca-fit-weights \
-  --logic $LOGIC_JSON \
-  --ground-truth $GT_JSON \
-  --rule-id $TARGET_RULE_ID \
-  --rule-config $BASE_CONFIG \
-  --variables $TARGET_VARIABLES \
-  -v \
-  --out-rule-config $BASE_TUNED_CONFIG
-```
-
-What this command does:
-
-1. loads `logic.json`
-2. loads `gt.json`
-3. builds a search space for the target rule
-4. tries many base configs automatically
-5. scores each candidate with precision, recall, and F1
-6. prints the best candidates
-7. writes the best base config to `$BASE_TUNED_CONFIG`
-
-Use this only when the direct adaptive fit from `$BASE_CONFIG` is not good enough.
-
-After the command finishes, do this exact check:
-
-1. read the top candidate summary
-2. confirm the selected `levels` look structurally sensible
-3. confirm precision did not collapse
-4. use the written file directly
-5. do not hand-edit the old config
-
-If the top candidate still looks wrong, do not continue with `$BASE_TUNED_CONFIG` yet.
-Instead, go to Step 14 and run a smaller explicit search spec.
-
-## 11. Step 7: Re-fit Adaptive Eps On Top Of The Tuned Base Config
-
-If you used the base-tuning fallback, run adaptive eps again from `$BASE_TUNED_CONFIG`:
-
-```csh
-sanity-log-parser gca-fit-adaptive-eps \
-  --logic $LOGIC_JSON \
-  --ground-truth $GT_JSON \
-  --rule-id $TARGET_RULE_ID \
-  --rule-config $BASE_TUNED_CONFIG \
-  --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json \
-  --fit-mode approx \
-  --jobs 0 \
-  -v \
-  --out-rule-config $FINAL_TUNED_CONFIG
-```
-
-Always fit this second adaptive pass from `$BASE_TUNED_CONFIG`, not from the old base config.
-
-This step is mandatory after weight tuning.
-
-Do not stop after `gca-fit-weights`.
-`gca-fit-weights` only gives you a better base rule.
-The final GT-fitting result still comes from `gca-fit-adaptive-eps`.
-
-## 12. Step 8: Run Final Evaluation
-
-Run the final pipeline:
-
-```csh
-sanity-log-parser gca $REPORT \
-  --ai on \
-  --rule-config $FINAL_TUNED_CONFIG \
-  --out $AI_JSON \
-  --max-original-logs 0
-```
-
-Then evaluate:
-
-```csh
-sanity-log-parser gca-eval \
-  --logic $LOGIC_JSON \
-  --ai $AI_JSON \
-  --ground-truth $GT_JSON
-```
-
-This is the metric that matters.
-
-## 13. Step 9: Decision Rules
-
-Use these rules.
-
-### Accept
-
-Accept the new config if:
-
-- F1 improved over baseline
-- precision did not collapse
-- the result is stable across repeated runs
-
-### Reject
-
-Reject the new config if:
-
-- F1 did not improve
-- precision became much worse
-- the selected rule setting is obviously using noisy path levels
-
-## 14. Step 10: If Final F1 Is Still Low
-
-Do this in order.
-
-1. inspect the best `gca-fit-weights` candidate summary
-2. try a smaller explicit search spec
-3. search `levels` first
-4. then search `template_weight`
-5. only after that, widen `eps`
-6. fit adaptive eps again
-
-If the poor result looks like a base-distance problem, prefer fixing the base path signal before growing a more complex adaptive tree.
-
-## 15. Short Troubleshooting
-
-### `gca-fit-weights` fails with missing ground truth groups
-
-Cause:
-
-- `gt.json` is incomplete
-
-Fix:
-
-- every logic group for the target rule must appear exactly once
-
-### `gca-fit-weights` runs but best F1 is still poor
-
-Cause:
-
-- search space is wrong
-- signal is in a different path level
-
-Fix:
-
-- provide a custom search spec
-- keep the search small and explicit
-- re-run `gca-fit-weights`
-- if the new base config looks better, re-run `gca-fit-adaptive-eps` using `$BASE_TUNED_CONFIG`
-
-### Base tuning looks good but final F1 is poor
-
-Cause:
-
-- adaptive eps was fit from the wrong config
-- or adaptive eps was not re-fit after base changes
-
-Fix:
-
-- run `gca-fit-adaptive-eps` again using `$BASE_TUNED_CONFIG`
-
-### New config seems ignored
-
-Cause:
-
-- old file was used by mistake
-
-Fix:
-
-- confirm the runtime command points to `$BASE_TUNED_CONFIG` or `$FINAL_TUNED_CONFIG`
-
-## 16. What To Return To The User
-
-Return only a short summary.
-
-Use this format:
-
-```text
-Rule: RULE_XXXX
-Baseline F1: 0.82
-Base tuned F1: 0.91
-Final tuned F1: 0.97
-Best base config: eps=0.15, template_weight=0.0, var0=embedding,w=1.0@[-3]
-Final config file: /absolute/path/to/tuned_final_config.json
-```
-
-Do not paste large JSON blobs unless the user explicitly asks for them.
-
-## 17. Minimal Command Checklist
-
-If you need the shortest possible recipe, use this exact order.
-
-```csh
-sanity-log-parser gca $REPORT --ai off --out $LOGIC_JSON --max-original-logs 0
-
-sanity-log-parser gca $REPORT --ai on --rule-config $BASE_CONFIG --out $AI_JSON --max-original-logs 0
-sanity-log-parser gca-eval --logic $LOGIC_JSON --ai $AI_JSON --ground-truth $GT_JSON
-
-sanity-log-parser gca-fit-adaptive-eps --logic $LOGIC_JSON --ground-truth $GT_JSON --rule-id $TARGET_RULE_ID --rule-config $BASE_CONFIG --out-rule-config $FINAL_TUNED_CONFIG --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json --fit-mode approx --jobs 0 -v
-
-sanity-log-parser gca $REPORT --ai on --rule-config $FINAL_TUNED_CONFIG --out $AI_JSON --max-original-logs 0
-sanity-log-parser gca-eval --logic $LOGIC_JSON --ai $AI_JSON --ground-truth $GT_JSON
-```
-
-If the direct adaptive result is still poor, use this exact fallback sequence:
-
-```csh
-sanity-log-parser gca-fit-weights --logic $LOGIC_JSON --ground-truth $GT_JSON --rule-id $TARGET_RULE_ID --rule-config $BASE_CONFIG --variables $TARGET_VARIABLES -v --out-rule-config $BASE_TUNED_CONFIG
-
-sanity-log-parser gca $REPORT --ai on --rule-config $BASE_TUNED_CONFIG --out $AI_JSON --max-original-logs 0
-sanity-log-parser gca-eval --logic $LOGIC_JSON --ai $AI_JSON --ground-truth $GT_JSON
-
-sanity-log-parser gca-fit-adaptive-eps --logic $LOGIC_JSON --ground-truth $GT_JSON --rule-id $TARGET_RULE_ID --rule-config $BASE_TUNED_CONFIG --out-rule-config $FINAL_TUNED_CONFIG --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json --fit-mode approx --jobs 0 -v
-
-sanity-log-parser gca $REPORT --ai on --rule-config $FINAL_TUNED_CONFIG --out $AI_JSON --max-original-logs 0
-sanity-log-parser gca-eval --logic $LOGIC_JSON --ai $AI_JSON --ground-truth $GT_JSON
-```
-
-## 18. High-Detail Hard-Rule Playbook For Air-Gapped Agents
-
-This section is intentionally much more detailed than the minimal workflow above.
-
-Use it when:
-
-- the rule is hard
-- the first adaptive fit is poor
-- the rule obviously over-merges unrelated logic groups
-- you want the agent to follow a known-good process step by step
-
-This is a **general playbook for any hard rule**.
-
-DES_0004 is only the worked example.
-
-Use this section like this:
-
-- the workflow is general
-- the decision rules are general
-- the stop conditions are general
-- DES_0004 only shows one real case where the full recovery path was needed
-
-Do **not** read this section as “only do this for DES_0004”.
-
-The important lesson is:
-
-1. do not hand-edit the rule many times
-2. fix the **base geometry** first if adaptive fitting keeps collapsing groups
-3. only then run a high-quality adaptive fit
-4. verify with the real metric every time
-
-### 18.1 What Happened In DES_0004
-
-DES_0004 did **not** reach F1 1.0 by running one normal adaptive command and stopping.
-
-It reached F1 1.0 because the process did this in order:
-
-1. build complete tuning artifacts
-2. measure baseline
-3. try direct adaptive fitting
-4. notice that adaptive fitting was collapsing too many clusters
-5. improve the base rule first
-6. re-run adaptive fitting from the improved base rule
-7. use the exact fitting path when trying to maximize final F1
-8. keep the compact exact-fit tree that still scored 1.0
-
-If you skip the diagnosis and jump directly to hand-editing thresholds, you will waste time.
-
-### 18.1A How To Apply This To Rules Other Than DES_0004
-
-For any other rule, keep the same reasoning order even if the exact winning config is different.
-
-Use this logic:
-
-1. measure baseline first
-2. try direct adaptive fitting first
-3. if direct adaptive fit is poor, diagnose whether the failure is mostly:
-   - bad base geometry
-   - or insufficient adaptive separation
-4. if the failure is mostly bad base geometry, improve the base rule first
-5. re-fit adaptive eps from the improved base rule
-6. if you are close but still want the best final score, switch the last pass to `--fit-mode exact`
-7. keep the smallest verified tree that preserves the final metric
-
-This means:
-
-- do not copy DES_0004 values blindly into another rule
-- do copy the DES_0004 **process** when another rule shows the same failure shape
-
-The worked example below shows what that process looked like on one difficult rule.
-
-### 18.2 If You Only Have A Markdown Labeling File And Not A Full Report
-
-DES_0004 originally started from:
-
-- `labeling/DES_0004/DES_0004.md`
-
-That file grouped raw failing paths into human label buckets, but it was not a full PrimeTime report.
-
-For this case, use the checked-in helper script:
-
-- `labeling/DES_0004/build_from_markdown.py`
-
-This script does three jobs:
-
-1. reads the Markdown buckets
-2. creates a synthetic DES_0004-only `REPORT.rpt`
-3. can derive `gt.json` from the generated manifest plus `logic.json`
-
-#### 18.2.1 Generate synthetic report and manifest
-
-```csh
-python3 labeling/DES_0004/build_from_markdown.py
-```
-
-Expected outputs:
-
-- `labeling/DES_0004/generated/des_0004_synthetic_report.rpt`
-- `labeling/DES_0004/generated/des_0004_md_manifest.json`
-
-Then set paths for this synthetic workflow:
-
-```csh
-setenv REPORT /absolute/path/to/labeling/DES_0004/generated/des_0004_synthetic_report.rpt
-setenv TARGET_RULE_ID DES_0004
-setenv TARGET_VARIABLES 0
-setenv BASE_CONFIG /absolute/path/to/src/sanity_log_parser/gca/rule_clustering_config.json
-setenv LOGIC_JSON /absolute/path/to/labeling/DES_0004/generated/logic.json
-setenv GT_JSON /absolute/path/to/labeling/DES_0004/generated/gt.json
-setenv BASE_TUNED_CONFIG /absolute/path/to/labeling/DES_0004/generated/tuned_base_config.json
-setenv FINAL_TUNED_CONFIG /absolute/path/to/labeling/DES_0004/generated/tuned_final_config.json
-setenv AI_JSON /absolute/path/to/labeling/DES_0004/generated/ai.json
-```
-
-#### 18.2.2 Generate `logic.json`
-
-```csh
-sanity-log-parser gca $REPORT \
-  --ai off \
-  --out $LOGIC_JSON \
-  --max-original-logs 0
-```
-
-#### 18.2.3 Generate `gt.json` from the helper script
-
-```csh
-python3 labeling/DES_0004/build_from_markdown.py \
-  --logic-json $LOGIC_JSON \
-  --gt-json $GT_JSON
-```
-
-Expected result:
-
-- every DES_0004 logic group appears exactly once in `gt.json`
-- no group is missing
-- no group is duplicated
-
-### 18.3 Always Measure Baseline First
-
-Before tuning, always measure the rule exactly as it exists now.
-
-```csh
-sanity-log-parser gca $REPORT \
-  --ai on \
-  --rule-config $BASE_CONFIG \
-  --out $AI_JSON \
-  --max-original-logs 0
-
-sanity-log-parser gca-eval \
-  --logic $LOGIC_JSON \
-  --ai $AI_JSON \
-  --ground-truth $GT_JSON
-```
-
-For DES_0004, the baseline was poor.
-
-That is not a reason to hand-edit the tree.
-That is a reason to start the tuning workflow.
-
-### 18.4 First Try Direct Adaptive Fitting
-
-Do this first.
-
-```csh
-sanity-log-parser gca-fit-adaptive-eps \
-  --logic $LOGIC_JSON \
-  --ground-truth $GT_JSON \
-  --rule-id $TARGET_RULE_ID \
-  --rule-config $BASE_CONFIG \
-  --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json \
-  --fit-mode approx \
-  --jobs 0 \
-  -v \
-  --out-rule-config $FINAL_TUNED_CONFIG
-```
-
-Then evaluate it.
-
-If it is already good enough, stop.
-
-If it is **not** good enough, do not guess.
-Diagnose the failure pattern.
-
-### 18.5 How To Recognize The Bad Base-Geometry Failure Mode
-
-DES_0004 did not fail because the adaptive tree was too small.
-It failed because the **base distances were wrong** before the tree was applied.
-
-You are probably in the same failure mode if these are true:
-
-- direct adaptive fit still produces very low F1
-- output AI cluster count is much smaller than GT cluster count
-- recall is high but precision is poor
-- unrelated human clusters are being bridged together
-- base-tuned config improves behavior, but adaptive-on-top collapses again
-
-In plain language:
-
-- the adaptive tree is trying to rescue a bad base rule
-- if the base distance already says two unrelated groups are almost identical, adaptive scaling has very little room to fix it
-
-When you see this pattern, stop trying random adaptive feature files.
-Improve the base rule first.
-
-### 18.6 Improve The Base Rule First
-
-Use `gca-fit-weights`.
-
-```csh
-sanity-log-parser gca-fit-weights \
-  --logic $LOGIC_JSON \
-  --ground-truth $GT_JSON \
-  --rule-id $TARGET_RULE_ID \
-  --rule-config $BASE_CONFIG \
-  --variables $TARGET_VARIABLES \
-  -v \
-  --out-rule-config $BASE_TUNED_CONFIG
-```
-
-Then evaluate that base-tuned config directly:
-
-```csh
-sanity-log-parser gca $REPORT \
-  --ai on \
-  --rule-config $BASE_TUNED_CONFIG \
-  --out $AI_JSON \
-  --max-original-logs 0
-
-sanity-log-parser gca-eval \
-  --logic $LOGIC_JSON \
-  --ai $AI_JSON \
-  --ground-truth $GT_JSON
-```
-
-For DES_0004, the successful base shape was not just a scalar weight change.
-It changed the path-signal representation.
-
-The important pattern was:
-
-- include more discriminative signal near the register name
-- do not rely only on a single old `levels` slice if it causes obvious bridges
-
-For DES_0004, the successful base rule shape was:
-
-```json
-"variables": {
-  "0": {
-    "level_weights": {
-      "-4": 0.25,
-      "-3": 0.25,
-      "-2": 0.5
-    }
-  }
-}
-```
-
-This matters because it changed the base geometry from “bad over-merge” into a state that adaptive fitting could actually refine.
-
-### 18.7 After Base Tuning, Re-Fit Adaptive Eps Again
-
-Do **not** stop after `gca-fit-weights`.
-
-Always re-fit adaptive eps from the improved base config:
-
-```csh
-sanity-log-parser gca-fit-adaptive-eps \
-  --logic $LOGIC_JSON \
-  --ground-truth $GT_JSON \
-  --rule-id $TARGET_RULE_ID \
-  --rule-config $BASE_TUNED_CONFIG \
-  --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json \
-  --fit-mode approx \
-  --jobs 0 \
-  -v \
-  --out-rule-config $FINAL_TUNED_CONFIG
-```
-
-Then evaluate again.
-
-### 18.8 When To Switch From `approx` To `exact`
-
-Use this rule:
-
-- use `approx` first when you are screening candidates
-- use `exact` when you already have a promising base rule and want the best final result
-
-For DES_0004, `approx` was not enough for the final jump to 1.0.
-
-Once the improved base geometry was in place, the final successful command was an **exact** adaptive fit:
-
-```csh
-sanity-log-parser gca-fit-adaptive-eps \
-  --logic $LOGIC_JSON \
-  --ground-truth $GT_JSON \
-  --rule-id $TARGET_RULE_ID \
-  --rule-config $BASE_TUNED_CONFIG \
-  --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json \
-  --fit-mode exact \
-  --max-depth 5 \
-  --max-min-samples-leaf 10 \
-  --min-eps 0.001 \
-  -v \
-  --out-rule-config $FINAL_TUNED_CONFIG
-```
-
-Why this worked:
-
-1. the base rule was already good enough to separate the worst bridges
-2. exact fitting could search the remaining candidate trees precisely
-3. the fitter now includes a general leaf-epsilon optimization pass
-4. the fitter also includes a general score-preserving subtree compaction pass
-
-Because of those general fitter improvements, the final exact-fit result for DES_0004 was both:
-
-- perfect on the training ground truth
-- much smaller than the first exact-fit tree
-
-### 18.9 Verify The Final Result Every Time
-
-Never trust the fit command summary alone.
-
-Always run the full pipeline after writing the final config:
-
-```csh
-sanity-log-parser gca $REPORT \
-  --ai on \
-  --rule-config $FINAL_TUNED_CONFIG \
-  --out $AI_JSON \
-  --max-original-logs 0
-
-sanity-log-parser gca-eval \
-  --logic $LOGIC_JSON \
-  --ai $AI_JSON \
-  --ground-truth $GT_JSON
-```
-
-For DES_0004, the final verified result was:
-
-```text
-Rule ID                   P      R     F1   TP   FP   FN  GT#  AI# Status
--------------------------------------------------------------------------
-DES_0004               1.00   1.00   1.00  958    0    0   10   10 PASS
-```
-
-If the full pipeline does not reproduce the fit summary, do not claim success.
-
-### 18.10 How To Keep The Tree Compact And Avoid Overfitting
-
-The goal is **not** “largest possible tree with F1 1.0”.
-The goal is “smallest reasonable tree that still verifies at F1 1.0”.
-
-The fitter now helps with this automatically.
-
-Generic compaction rules now built into the fitter:
-
-1. optimize leaf eps values after the tree structure is learned
-2. try score-preserving subtree-to-leaf collapses
-3. keep the compacted tree, not the raw sklearn tree
-4. prefer smaller perfect-score trees when comparing candidates
-
-For DES_0004 this reduced the tree from:
-
-- `45 nodes / 23 leaves`
-
-to:
-
-- `19 nodes / 10 leaves`
-
-while still preserving:
-
-- `P = 1.0`
-- `R = 1.0`
-- `F1 = 1.0`
-
-That is the correct stopping point.
-
-Do not hand-prune the final tree unless the full metric stays identical after each change.
-
-This compaction rule is also general.
-
-For any rule:
-
-- first get the best verified score you can
-- then prefer the smaller verified tree over the larger verified tree
-- if two trees have the same verified metric, keep the smaller one
-
-### 18.11 Exact Decision Logic For A Lower-Intelligence Agent
-
-Use this logic exactly.
-
-#### Case A: direct adaptive fit is already strong
-
-- keep the result
-- verify with full pipeline
-- stop
-
-#### Case B: direct adaptive fit is poor and over-merges unrelated groups
-
-- run base tuning
-- evaluate base-tuned config directly
-- if base-tuned config is better, re-fit adaptive from that base
-
-#### Case C: base-tuned config is better, but adaptive-on-top is still weak
-
-- switch the final adaptive pass to `--fit-mode exact`
-- keep the same base-tuned config
-- verify with full pipeline
-
-#### Case D: exact fit reaches F1 1.0 but the tree is large
-
-- keep the compacted tree written by the fitter
-- verify the compacted tree with full pipeline
-- stop if metric is still 1.0
-
-#### Case E: exact fit is still poor
-
-- do not hand-author a complex adaptive tree
-- go back and check the base geometry again
-- the problem is probably still in the base signal, not the tree size
-
-### 18.11A Mechanical Execution Mode: IF / THEN / STOP
-
-Use this section when the agent is weak and should behave like a deterministic operator.
-
-Do not improvise.
-Do not skip steps.
-Do not jump ahead.
-
-Follow this exact order.
-
-#### Block 1: Build required files
-
-IF `logic.json` does not exist,
-THEN run:
-
-```csh
-sanity-log-parser gca $REPORT \
-  --ai off \
-  --out $LOGIC_JSON \
-  --max-original-logs 0
-```
-
-IF this command fails,
-THEN STOP.
-Reason: parsing is broken and tuning is invalid.
-
-IF `gt.json` does not exist or is incomplete,
-THEN build or fix it before tuning.
-
-IF every logic group for `$TARGET_RULE_ID` does not appear exactly once in `gt.json`,
-THEN STOP.
-Reason: fitting results are invalid with incomplete ground truth.
-
-#### Block 2: Measure baseline
-
-Always run baseline before fitting.
-
-```csh
-sanity-log-parser gca $REPORT \
-  --ai on \
-  --rule-config $BASE_CONFIG \
-  --out $AI_JSON \
-  --max-original-logs 0
-
-sanity-log-parser gca-eval \
-  --logic $LOGIC_JSON \
-  --ai $AI_JSON \
-  --ground-truth $GT_JSON
-```
-
-Record these values:
-
-- baseline precision
-- baseline recall
-- baseline F1
-- baseline AI cluster count
-
-IF baseline is already good enough for the user,
-THEN STOP.
-
-#### Block 3: First adaptive attempt
-
-Run direct adaptive fitting first.
-
-```csh
-sanity-log-parser gca-fit-adaptive-eps \
-  --logic $LOGIC_JSON \
-  --ground-truth $GT_JSON \
-  --rule-id $TARGET_RULE_ID \
-  --rule-config $BASE_CONFIG \
-  --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json \
-  --fit-mode approx \
-  --jobs 0 \
-  -v \
-  --out-rule-config $FINAL_TUNED_CONFIG
-```
-
-Then verify it:
-
-```csh
-sanity-log-parser gca $REPORT \
-  --ai on \
-  --rule-config $FINAL_TUNED_CONFIG \
   --out $AI_JSON \
   --max-original-logs 0
 
@@ -1010,37 +192,80 @@ sanity-log-parser gca-eval \
 
 Record:
 
-- direct-adaptive precision
-- direct-adaptive recall
-- direct-adaptive F1
-- direct-adaptive AI cluster count
+- precision
+- recall
+- F1
+- AI cluster count
 
-IF direct-adaptive F1 is already good enough,
-THEN STOP and keep `$FINAL_TUNED_CONFIG`.
+Also record these operator thresholds for the rest of the run:
 
-#### Block 4: Decide whether the problem is base geometry
+- `F1_ACCEPT_DELTA = 0.05`
+- `F1_MIN_IMPROVEMENT = 0.02`
+- `PRECISION_MAX_DROP = 0.02`
+- `MERGE_COUNT_RATIO = 0.70`
+- `HIGH_RECALL_THRESHOLD = 0.90`
+- `LOW_PRECISION_THRESHOLD = 0.75`
 
-IF all or most of these are true:
+Interpretation for a low-intelligence agent:
 
-- recall is high but precision is poor
-- AI cluster count is much smaller than GT cluster count
-- unrelated groups are merged together
-- adaptive fitting did not materially improve baseline
+- “good enough” means `new_F1 >= baseline_F1 + F1_ACCEPT_DELTA` and `new_precision >= baseline_precision - PRECISION_MAX_DROP`
+- “material improvement” means `new_F1 >= baseline_F1 + F1_MIN_IMPROVEMENT`
+- “cluster count much smaller than GT” means `AI_cluster_count <= GT_cluster_count * MERGE_COUNT_RATIO`
 
-THEN assume the rule has a **base-geometry problem**.
+## 11. Step 4: Direct Adaptive Fit First
 
-IF the rule has a base-geometry problem,
-THEN do **not** try many random adaptive feature files yet.
+Use adaptive fitting first.
 
-Go to Block 5.
+```csh
+sanity-log-parser gca-fit-adaptive-eps \
+  --logic $LOGIC_JSON \
+  --ground-truth $GT_JSON \
+  --rule-id $TARGET_RULE_ID \
+  --rule-config $BASE_CONFIG \
+  --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json \
+  --fit-mode approx \
+  --jobs 0 \
+  -v \
+  --out-rule-config $FINAL_TUNED_CONFIG
+```
 
-IF the rule does **not** look like a base-geometry problem,
-THEN you may continue experimenting with adaptive fitting,
-BUT you must still verify every candidate with full `gca` + `gca-eval`.
+Then verify it with full runtime:
 
-#### Block 5: Improve the base rule
+```csh
+sanity-log-parser gca $REPORT \
+  --ai on \
+  --rule-config $FINAL_TUNED_CONFIG \
+  --out $AI_JSON \
+  --max-original-logs 0
 
-Run base tuning:
+sanity-log-parser gca-eval \
+  --logic $LOGIC_JSON \
+  --ai $AI_JSON \
+  --ground-truth $GT_JSON
+```
+
+Important:
+
+- the fit command may print a high `approx` F1
+- ignore that number for final acceptance
+- only the replayed `gca` + `gca-eval` score is valid
+
+If `final_F1 >= baseline_F1 + F1_ACCEPT_DELTA` and `final_precision >= baseline_precision - PRECISION_MAX_DROP`, STOP.
+
+## 12. Step 5: Decide Whether The Problem Is Base Geometry
+
+Assume a **base-geometry problem** if any one of these is true:
+
+- `adaptive_recall >= HIGH_RECALL_THRESHOLD` and `adaptive_precision <= LOW_PRECISION_THRESHOLD`
+- `adaptive_AI_cluster_count <= GT_cluster_count * MERGE_COUNT_RATIO`
+- `adaptive_F1 < baseline_F1 + F1_MIN_IMPROVEMENT`
+
+If this pattern appears, do **not** keep trying random adaptive feature files first.
+Fix the base rule.
+
+## 13. Step 6: Base-Tuning Fallback
+
+Run base tuning only after the direct adaptive path is poor.
 
 ```csh
 sanity-log-parser gca-fit-weights \
@@ -1068,25 +293,12 @@ sanity-log-parser gca-eval \
   --ground-truth $GT_JSON
 ```
 
-Record:
+If `base_tuned_F1 < baseline_F1 + F1_MIN_IMPROVEMENT`, STOP and return status `reject_base_tuning_no_gain`.
 
-- base-tuned precision
-- base-tuned recall
-- base-tuned F1
-- base-tuned AI cluster count
-
-IF base-tuned F1 is not better than baseline,
-THEN STOP and inspect the search space before continuing.
-
-IF base-tuned F1 is better than baseline,
-THEN continue.
-
-#### Block 6: Re-fit adaptive from the improved base
+## 14. Step 7: Re-Fit Adaptive Eps From The Tuned Base
 
 Never fit the second adaptive pass from `$BASE_CONFIG`.
 Always fit from `$BASE_TUNED_CONFIG`.
-
-First try the normal second pass:
 
 ```csh
 sanity-log-parser gca-fit-adaptive-eps \
@@ -1096,38 +308,31 @@ sanity-log-parser gca-fit-adaptive-eps \
   --rule-config $BASE_TUNED_CONFIG \
   --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json \
   --fit-mode approx \
+  --min-precision $MIN_PRECISION \
   --jobs 0 \
   -v \
   --out-rule-config $FINAL_TUNED_CONFIG
 ```
 
-Then verify it:
+Then verify again with full runtime.
 
-```csh
-sanity-log-parser gca $REPORT \
-  --ai on \
-  --rule-config $FINAL_TUNED_CONFIG \
-  --out $AI_JSON \
-  --max-original-logs 0
+If `final_F1 >= baseline_F1 + F1_ACCEPT_DELTA` and `final_precision >= baseline_precision - PRECISION_MAX_DROP`, STOP.
 
-sanity-log-parser gca-eval \
-  --logic $LOGIC_JSON \
-  --ai $AI_JSON \
-  --ground-truth $GT_JSON
-```
+## 15. Step 8: Switch To `exact` Only At The End
 
-IF this result is good enough,
-THEN STOP.
+Use this rule:
 
-#### Block 7: Switch to exact fitting only at the end
+- use `approx` first when screening
+- use `exact` only when `base_tuned_F1 >= baseline_F1 + F1_MIN_IMPROVEMENT` and the approx adaptive replay still fails the acceptance rule
+- if over-merging is forbidden, use the same `--min-precision $MIN_PRECISION` floor in exact mode
 
-IF:
+Interpretation:
 
-- the base-tuned rule is clearly better than baseline
-- but the final adaptive result is still not good enough
-- and you are trying to maximize the final score
+- `approx` = candidate ranking only
+- `exact` = high-confidence final fitting mode
+- do not return `approx` F1 as the final score
 
-THEN run the final pass with `--fit-mode exact`.
+Final exact-fit form:
 
 ```csh
 sanity-log-parser gca-fit-adaptive-eps \
@@ -1137,6 +342,7 @@ sanity-log-parser gca-fit-adaptive-eps \
   --rule-config $BASE_TUNED_CONFIG \
   --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json \
   --fit-mode exact \
+  --min-precision $MIN_PRECISION \
   --max-depth 5 \
   --max-min-samples-leaf 10 \
   --min-eps 0.001 \
@@ -1144,75 +350,215 @@ sanity-log-parser gca-fit-adaptive-eps \
   --out-rule-config $FINAL_TUNED_CONFIG
 ```
 
-Then verify it again with the full runtime pipeline.
+Then verify again with full runtime.
 
-IF exact fit still does not improve the verified result,
-THEN STOP and go back to base-geometry diagnosis.
+If the exact-fit replay does not beat the previous best verified F1 by at least `F1_MIN_IMPROVEMENT`, reject it and keep the previous best config.
 
-#### Block 8: Compact tree rule
-
-IF the verified score is good and the resulting tree is large,
-THEN keep the compacted tree written by the fitter.
-
-Do not prefer a larger tree if:
-
-- F1 is identical
-- precision is identical
-- recall is identical
-
-Always prefer the smaller verified tree.
-
-#### Block 9: Final acceptance rule
+## 16. Step 9: Final Acceptance Rule
 
 Only claim success if all are true:
 
-- the final config file exists
-- the full runtime pipeline reproduces the claimed score
-- F1 improved over baseline
-- precision did not collapse
-- the tree is the smallest verified version you have
+- final config file exists
+- full runtime replay reproduces the claimed score
+- `final_F1 >= baseline_F1 + F1_ACCEPT_DELTA`
+- `final_precision >= baseline_precision - PRECISION_MAX_DROP`
+- if `MIN_PRECISION > 0.0`, then `final_precision >= MIN_PRECISION`
 
-IF any of those are false,
-THEN do not claim success.
-STOP and report what failed.
+If multiple configs tie on verified score, keep the smaller tree.
 
-### 18.12 What The Air-Gapped Agent Must Not Do
+Forbidden acceptance rule:
 
-Do not do these things:
+- do not accept because `approx` F1 is high
+- do not compare one candidate's `approx` F1 to another candidate's replay F1
+- do not report `approx` F1 as the final answer
 
-- do not hand-edit many candidate configs one by one
-- do not skip the baseline measurement
-- do not stop after `gca-fit-weights`
-- do not run the second adaptive fit from the old base config
-- do not assume `approx` is always enough for the final pass
-- do not trust the fitter summary without a full `gca` + `gca-eval` verification
-- do not keep a larger tree if a smaller verified tree has the same score
+## 17. Real-Report Representative-Subset Re-Tuning
 
-### 18.13 Minimal DES_0004 Success Recipe
+Use this when:
 
-This final subsection is **example-specific**.
+- synthetic or curated results look good
+- but the rule still fails on the real report
+- or the user says the exact complaint examples are still wrong
 
-Use it only when the target rule is actually DES_0004.
+Main rule:
 
-For all other rules, use the general decision logic above, not the literal DES_0004 values.
+> Do not trust synthetic-only success if the full real report disagrees.
 
-If you need the shortest high-quality DES_0004 recipe after artifacts already exist, use this order:
+### 17.1 Goal
+
+1. build a representative subset from the real report
+2. label that subset carefully
+3. tune against the subset
+4. replay the tuned config on the full real report
+5. confirm the user complaint examples are fixed on the full report
+
+### 17.2 Extra Paths
 
 ```csh
-sanity-log-parser gca $REPORT --ai off --out $LOGIC_JSON --max-original-logs 0
-
-sanity-log-parser gca $REPORT --ai on --rule-config $BASE_CONFIG --out $AI_JSON --max-original-logs 0
-sanity-log-parser gca-eval --logic $LOGIC_JSON --ai $AI_JSON --ground-truth $GT_JSON
-
-sanity-log-parser gca-fit-weights --logic $LOGIC_JSON --ground-truth $GT_JSON --rule-id $TARGET_RULE_ID --rule-config $BASE_CONFIG --variables $TARGET_VARIABLES -v --out-rule-config $BASE_TUNED_CONFIG
-
-sanity-log-parser gca $REPORT --ai on --rule-config $BASE_TUNED_CONFIG --out $AI_JSON --max-original-logs 0
-sanity-log-parser gca-eval --logic $LOGIC_JSON --ai $AI_JSON --ground-truth $GT_JSON
-
-sanity-log-parser gca-fit-adaptive-eps --logic $LOGIC_JSON --ground-truth $GT_JSON --rule-id $TARGET_RULE_ID --rule-config $BASE_TUNED_CONFIG --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json --fit-mode exact --max-depth 5 --max-min-samples-leaf 10 --min-eps 0.001 -v --out-rule-config $FINAL_TUNED_CONFIG
-
-sanity-log-parser gca $REPORT --ai on --rule-config $FINAL_TUNED_CONFIG --out $AI_JSON --max-original-logs 0
-sanity-log-parser gca-eval --logic $LOGIC_JSON --ai $AI_JSON --ground-truth $GT_JSON
+setenv LABEL_DIR /absolute/path/to/labeling_out
+setenv SUBSET_DIR /absolute/path/to/representative_subset
+setenv SUBSET_LOGIC_JSON /absolute/path/to/representative_subset/logic_subset.json
+setenv SUBSET_GT_JSON /absolute/path/to/representative_subset/gt_subset.json
+setenv SUBSET_BASE_TUNED_CONFIG /absolute/path/to/representative_subset/tuned_base_subset.json
+setenv SUBSET_FINAL_TUNED_CONFIG /absolute/path/to/representative_subset/tuned_final_subset.json
+setenv FULL_REPORT_AI_JSON /absolute/path/to/representative_subset/full_report_ai.json
 ```
 
-If the final eval does not show `F1 = 1.00`, do not claim success.
+### 17.3 Build Full Real-Report Logic First
+
+```csh
+sanity-log-parser gca $REPORT \
+  --ai off \
+  --out $LOGIC_JSON \
+  --max-original-logs 0
+
+sanity-log-parser export-labeling \
+  --input $LOGIC_JSON \
+  --output-dir $LABEL_DIR
+```
+
+### 17.4 Select A Representative Subset
+
+The subset must include:
+
+- user complaint examples
+- easy same-family examples
+- hard boundary examples
+- long-tail / outlier examples
+- current false merges and false splits
+
+Do not pick only clean examples.
+
+Recommended size:
+
+- minimum: 20 logic groups
+- preferred: 30 to 80 logic groups
+
+### 17.5 Build `logic_subset.json`
+
+There is no built-in CLI for this step.
+
+Create `$SUBSET_DIR/build_logic_subset.py` with this logic:
+
+- read full `logic.json`
+- read selected per-group JSON files from `$SUBSET_DIR/groups/`
+- validate rule_id and `group_type == "logic"`
+- write a schema-v2 results file containing only the selected logic groups
+
+If this step fails, STOP.
+
+### 17.6 Build `gt_subset.json`
+
+Rules:
+
+- every subset logic group exactly once
+- no duplicates
+- no omissions
+- no out-of-subset groups
+
+### 17.7 Baseline On The Representative Subset
+
+Run the current config on the **full real report**:
+
+```csh
+sanity-log-parser gca $REPORT \
+  --ai on \
+  --rule-config $BASE_CONFIG \
+  --out $FULL_REPORT_AI_JSON \
+  --max-original-logs 0
+```
+
+Then evaluate only against the representative subset:
+
+```csh
+sanity-log-parser gca-eval \
+  --logic $SUBSET_LOGIC_JSON \
+  --ai $FULL_REPORT_AI_JSON \
+  --ground-truth $SUBSET_GT_JSON
+```
+
+### 17.8 Tune Against The Representative Subset
+
+```csh
+sanity-log-parser gca-fit-weights \
+  --logic $SUBSET_LOGIC_JSON \
+  --ground-truth $SUBSET_GT_JSON \
+  --rule-id $TARGET_RULE_ID \
+  --rule-config $BASE_CONFIG \
+  --variables $TARGET_VARIABLES \
+  -v \
+  --out-rule-config $SUBSET_BASE_TUNED_CONFIG
+
+sanity-log-parser gca-fit-adaptive-eps \
+  --logic $SUBSET_LOGIC_JSON \
+  --ground-truth $SUBSET_GT_JSON \
+  --rule-id $TARGET_RULE_ID \
+  --rule-config $SUBSET_BASE_TUNED_CONFIG \
+  --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json \
+  --fit-mode exact \
+  --min-precision $MIN_PRECISION \
+  --max-depth 5 \
+  --max-min-samples-leaf 10 \
+  --min-eps 0.001 \
+  -v \
+  --out-rule-config $SUBSET_FINAL_TUNED_CONFIG
+```
+
+### 17.9 Replay The Tuned Rule On The Full Real Report
+
+```csh
+sanity-log-parser gca $REPORT \
+  --ai on \
+  --rule-config $SUBSET_FINAL_TUNED_CONFIG \
+  --out $FULL_REPORT_AI_JSON \
+  --max-original-logs 0
+
+sanity-log-parser gca-eval \
+  --logic $SUBSET_LOGIC_JSON \
+  --ai $FULL_REPORT_AI_JSON \
+  --ground-truth $SUBSET_GT_JSON
+```
+
+### 17.10 Final Real-Report Acceptance Rule
+
+Only accept if all are true:
+
+- subset metric improved
+- replay on the full real report still looks good
+- user complaint examples are now clustered correctly on the full report
+- no obvious catastrophic new merge was introduced
+
+If subset metric improved but complaint examples are still wrong, do not claim success.
+
+## 18. DES_0004 Example Status
+
+DES_0004 is a worked example in this repo.
+
+Facts to remember:
+
+- `labeling/DES_0004/` contains synthetic/example artifacts
+- `labeling/DES_0004/build_from_markdown.py` can build a synthetic DES_0004 report and GT
+- the shipped DES_0004 config currently contains a compact adaptive tree
+- the checked-in F1=1.0 result is valid for its checked-in example GT, but it is not automatic proof of perfect behavior on every real report
+
+For other rules, copy the process, not the literal DES_0004 values.
+
+## 19. What To Return
+
+Return a short summary only.
+
+Format:
+
+```text
+Rule: RULE_XXXX
+Baseline F1: 0.82
+Base tuned F1: 0.91
+Final tuned F1: 0.97
+Final config file: /absolute/path/to/tuned_final_config.json
+Decision: accept / reject
+Reason: one sentence
+```
+
+Do not paste large JSON blobs unless explicitly asked.
+
+Do not report `approx` F1 as the final metric.
