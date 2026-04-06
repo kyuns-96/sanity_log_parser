@@ -6,7 +6,7 @@ import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence, cast
 
 import numpy as np
 from sklearn.cluster import DBSCAN
@@ -18,6 +18,10 @@ from sanity_log_parser.clustering.ai.pairwise_tree import (
 )
 
 logger = logging.getLogger(__name__)
+
+TreeNode = dict[str, object]
+AdaptiveTree = dict[str, object]
+ScoreTreeFn = Callable[[AdaptiveTree], dict[str, float]]
 
 
 @dataclass(frozen=True)
@@ -44,7 +48,7 @@ class SparseAdaptiveEpsDataset:
     retained_edge_count: int
 
 
-_APPROX_FIT_WORKER_DATA: SparseAdaptiveEpsDataset | None = None
+_approx_fit_worker_data: SparseAdaptiveEpsDataset | None = None
 
 
 def fit_adaptive_eps_tree(
@@ -107,6 +111,7 @@ def fit_adaptive_eps_tree(
     progress_interval = _adaptive_progress_interval(total_candidates)
     started_at = time.perf_counter()
     candidate_index = 0
+    pair_i, pair_j = _dense_pair_indices(len(rule_groups))
     for max_depth in max_depth_candidates:
         for min_samples_leaf in min_samples_leaf_candidates:
             candidate_index += 1
@@ -116,24 +121,48 @@ def fit_adaptive_eps_tree(
                 random_state=random_state,
             )
             classifier.fit(X, y)
-
-            tree = _classifier_to_adaptive_eps_tree(
-                classifier,
-                X,
+            leaf_assignments = classifier.apply(X)
+            leaf_values = _derive_leaf_eps_values(
+                leaf_assignments,
                 y,
                 pair_distances,
-                feature_tuple,
                 round_decimals=round_decimals,
                 min_eps=min_eps,
             )
-            metrics = _score_adaptive_tree(rule_groups, base_distances, cluster_labels, tree)
+            leaf_values, metrics = _optimize_leaf_values(
+                group_count=len(rule_groups),
+                pair_i=pair_i,
+                pair_j=pair_j,
+                pair_distances=pair_distances,
+                cluster_labels=cluster_labels,
+                leaf_assignments=leaf_assignments,
+                leaf_values=leaf_values,
+                round_decimals=round_decimals,
+                min_eps=min_eps,
+            )
+            tree = _classifier_to_adaptive_eps_tree_from_leaf_values(
+                classifier,
+                feature_tuple,
+                leaf_values,
+                round_decimals=round_decimals,
+            )
+            compact_tree, compact_metrics = _compact_adaptive_tree(
+                tree,
+                lambda candidate_tree: _score_adaptive_tree(
+                    rule_groups,
+                    base_distances,
+                    cluster_labels,
+                    candidate_tree,
+                ),
+                metrics,
+            )
             candidate = AdaptiveEpsFitResult(
-                tree=tree,
-                precision=metrics["precision"],
-                recall=metrics["recall"],
-                f1=metrics["f1"],
-                node_count=int(classifier.tree_.node_count),
-                max_depth=int(max_depth),
+                tree=compact_tree,
+                precision=compact_metrics["precision"],
+                recall=compact_metrics["recall"],
+                f1=compact_metrics["f1"],
+                node_count=len(cast(tuple[TreeNode, ...], compact_tree["nodes"])),
+                max_depth=_tree_max_depth(compact_tree),
                 min_samples_leaf=int(min_samples_leaf),
             )
             if _is_better_fit(candidate, best):
@@ -151,7 +180,10 @@ def fit_adaptive_eps_tree(
                     candidate.max_depth,
                     candidate.min_samples_leaf,
                 )
-            elif candidate_index == total_candidates or candidate_index % progress_interval == 0:
+            elif (
+                candidate_index == total_candidates
+                or candidate_index % progress_interval == 0
+            ):
                 current_best = best
                 logger.info(
                     "Adaptive eps exact: progress %d/%d (%.1f%%) elapsed=%.2fs current F1=%.4f best F1=%.4f",
@@ -325,7 +357,9 @@ def _derive_leaf_eps_values(
     min_eps: float,
 ) -> dict[int, float]:
     leaf_stats: dict[int, dict[str, list[float]]] = {}
-    for leaf_id, label, distance in zip(leaf_assignments, y, pair_distances, strict=True):
+    for leaf_id, label, distance in zip(
+        leaf_assignments, y, pair_distances, strict=True
+    ):
         stats = leaf_stats.setdefault(int(leaf_id), {"pos": [], "neg": []})
         key = "pos" if int(label) == 1 else "neg"
         stats[key].append(float(distance))
@@ -357,6 +391,283 @@ def _derive_leaf_eps_values(
     return leaf_values
 
 
+def _optimize_leaf_values(
+    *,
+    group_count: int,
+    pair_i: np.ndarray,
+    pair_j: np.ndarray,
+    pair_distances: np.ndarray,
+    cluster_labels: Sequence[str | int],
+    leaf_assignments: np.ndarray,
+    leaf_values: dict[int, float],
+    round_decimals: int,
+    min_eps: float,
+    max_passes: int = 2,
+    max_candidates_per_leaf: int = 24,
+) -> tuple[dict[int, float], dict[str, float]]:
+    current_values = dict(leaf_values)
+    current_metrics = _score_leaf_values(
+        group_count=group_count,
+        pair_i=pair_i,
+        pair_j=pair_j,
+        pair_distances=pair_distances,
+        cluster_labels=cluster_labels,
+        leaf_assignments=leaf_assignments,
+        leaf_values=current_values,
+    )
+    candidate_values = _build_leaf_candidate_values(
+        leaf_assignments=leaf_assignments,
+        pair_distances=pair_distances,
+        leaf_values=current_values,
+        round_decimals=round_decimals,
+        min_eps=min_eps,
+        max_candidates_per_leaf=max_candidates_per_leaf,
+    )
+
+    for _ in range(max_passes):
+        improved = False
+        for leaf_id in sorted(candidate_values):
+            best_value = current_values[leaf_id]
+            best_metrics = current_metrics
+            for candidate_value in candidate_values[leaf_id]:
+                if candidate_value == current_values[leaf_id]:
+                    continue
+                trial_values = dict(current_values)
+                trial_values[leaf_id] = candidate_value
+                trial_metrics = _score_leaf_values(
+                    group_count=group_count,
+                    pair_i=pair_i,
+                    pair_j=pair_j,
+                    pair_distances=pair_distances,
+                    cluster_labels=cluster_labels,
+                    leaf_assignments=leaf_assignments,
+                    leaf_values=trial_values,
+                )
+                if _is_better_metric_scores(trial_metrics, best_metrics):
+                    best_value = candidate_value
+                    best_metrics = trial_metrics
+
+            if best_value != current_values[leaf_id]:
+                current_values[leaf_id] = best_value
+                current_metrics = best_metrics
+                improved = True
+
+        if not improved:
+            break
+
+    return current_values, current_metrics
+
+
+def _build_leaf_candidate_values(
+    *,
+    leaf_assignments: np.ndarray,
+    pair_distances: np.ndarray,
+    leaf_values: dict[int, float],
+    round_decimals: int,
+    min_eps: float,
+    max_candidates_per_leaf: int,
+) -> dict[int, tuple[float, ...]]:
+    by_leaf: dict[int, set[float]] = {}
+    step = 10 ** (-round_decimals)
+    for leaf_id, distance in zip(leaf_assignments, pair_distances, strict=True):
+        rounded = round(float(distance), round_decimals)
+        leaf_key = int(leaf_id)
+        bucket = by_leaf.setdefault(leaf_key, {leaf_values[leaf_key], min_eps})
+        bucket.add(max(min_eps, rounded))
+        bucket.add(max(min_eps, round(rounded - step, round_decimals)))
+
+    result: dict[int, tuple[float, ...]] = {}
+    for leaf_id, values in by_leaf.items():
+        ordered = sorted(values)
+        if len(ordered) > max_candidates_per_leaf:
+            indices = np.linspace(
+                0,
+                len(ordered) - 1,
+                num=max_candidates_per_leaf,
+                dtype=int,
+            )
+            ordered = [ordered[index] for index in sorted(set(indices.tolist()))]
+            if leaf_values[leaf_id] not in ordered:
+                ordered.append(leaf_values[leaf_id])
+                ordered.sort()
+        result[leaf_id] = tuple(ordered)
+    return result
+
+
+def _score_leaf_values(
+    *,
+    group_count: int,
+    pair_i: np.ndarray,
+    pair_j: np.ndarray,
+    pair_distances: np.ndarray,
+    cluster_labels: Sequence[str | int],
+    leaf_assignments: np.ndarray,
+    leaf_values: dict[int, float],
+) -> dict[str, float]:
+    predicted = _predict_sparse_cluster_labels(
+        group_count,
+        pair_i,
+        pair_j,
+        pair_distances,
+        leaf_assignments,
+        leaf_values,
+    )
+    return _cluster_pair_metrics(cluster_labels, predicted.tolist())
+
+
+def _compact_adaptive_tree(
+    tree: AdaptiveTree,
+    score_tree: ScoreTreeFn,
+    initial_metrics: dict[str, float],
+) -> tuple[AdaptiveTree, dict[str, float]]:
+    current_tree = _remap_tree(tree)
+    current_metrics = dict(initial_metrics)
+
+    while True:
+        improved = False
+        for node_index in _postorder_internal_nodes(current_tree):
+            subtree_values = _subtree_leaf_values(
+                cast(tuple[TreeNode, ...], current_tree["nodes"]),
+                node_index,
+            )
+            for leaf_value in subtree_values:
+                candidate_tree = _replace_subtree_with_leaf(
+                    current_tree,
+                    node_index,
+                    leaf_value,
+                )
+                candidate_metrics = score_tree(candidate_tree)
+                if _is_same_metric_scores(candidate_metrics, current_metrics):
+                    current_tree = candidate_tree
+                    current_metrics = candidate_metrics
+                    improved = True
+                    break
+            if improved:
+                break
+        if not improved:
+            break
+
+    return current_tree, current_metrics
+
+
+def _remap_tree(tree: AdaptiveTree) -> AdaptiveTree:
+    nodes = cast(tuple[TreeNode, ...], tree["nodes"])
+    ordered: list[int] = []
+    index_map: dict[int, int] = {}
+
+    def visit(node_index: int) -> None:
+        if node_index in index_map:
+            return
+        index_map[node_index] = len(index_map)
+        ordered.append(node_index)
+        node = cast(TreeNode, nodes[node_index])
+        if "value" not in node:
+            visit(cast(int, node["left"]))
+            visit(cast(int, node["right"]))
+
+    visit(0)
+    remapped_nodes: list[dict[str, object]] = []
+    for old_index in ordered:
+        node = cast(TreeNode, nodes[old_index])
+        if "value" in node:
+            remapped_nodes.append({"value": node["value"]})
+            continue
+        remapped_nodes.append(
+            {
+                "feature": node["feature"],
+                "threshold": node["threshold"],
+                "left": index_map[cast(int, node["left"])],
+                "right": index_map[cast(int, node["right"])],
+            }
+        )
+
+    return {
+        "features": tree["features"],
+        "nodes": tuple(remapped_nodes),
+    }
+
+
+def _postorder_internal_nodes(tree: AdaptiveTree) -> list[int]:
+    nodes = cast(tuple[TreeNode, ...], tree["nodes"])
+    order: list[int] = []
+
+    def visit(node_index: int) -> None:
+        node = cast(TreeNode, nodes[node_index])
+        if "value" in node:
+            return
+        visit(cast(int, node["left"]))
+        visit(cast(int, node["right"]))
+        order.append(node_index)
+
+    visit(0)
+    return order
+
+
+def _subtree_leaf_values(
+    nodes: tuple[TreeNode, ...], node_index: int
+) -> tuple[float, ...]:
+    node = cast(TreeNode, nodes[node_index])
+    if "value" in node:
+        return (float(cast(float, node["value"])),)
+    values = _subtree_leaf_values(
+        nodes, cast(int, node["left"])
+    ) + _subtree_leaf_values(nodes, cast(int, node["right"]))
+    return tuple(sorted(set(values)))
+
+
+def _replace_subtree_with_leaf(
+    tree: AdaptiveTree,
+    node_index: int,
+    leaf_value: float,
+) -> AdaptiveTree:
+    nodes = [dict(node) for node in cast(tuple[TreeNode, ...], tree["nodes"])]
+    nodes[node_index] = {"value": leaf_value}
+    return _remap_tree({"features": tree["features"], "nodes": tuple(nodes)})
+
+
+def _is_same_metric_scores(
+    left: dict[str, float],
+    right: dict[str, float],
+    *,
+    tol: float = 1e-12,
+) -> bool:
+    return (
+        abs(left["f1"] - right["f1"]) <= tol
+        and abs(left["precision"] - right["precision"]) <= tol
+        and abs(left["recall"] - right["recall"]) <= tol
+    )
+
+
+def _tree_max_depth(tree: AdaptiveTree) -> int:
+    nodes = cast(tuple[TreeNode, ...], tree["nodes"])
+
+    def visit(node_index: int) -> int:
+        node = cast(TreeNode, nodes[node_index])
+        if "value" in node:
+            return 0
+        return 1 + max(visit(cast(int, node["left"])), visit(cast(int, node["right"])))
+
+    return visit(0)
+
+
+def _is_better_metric_scores(
+    candidate: dict[str, float],
+    current: dict[str, float],
+) -> bool:
+    if candidate["f1"] != current["f1"]:
+        return candidate["f1"] > current["f1"]
+    if candidate["precision"] != current["precision"]:
+        return candidate["precision"] > current["precision"]
+    if candidate["recall"] != current["recall"]:
+        return candidate["recall"] > current["recall"]
+    return False
+
+
+def _dense_pair_indices(group_count: int) -> tuple[np.ndarray, np.ndarray]:
+    pair_i, pair_j = np.triu_indices(group_count, 1)
+    return pair_i.astype(np.int32, copy=False), pair_j.astype(np.int32, copy=False)
+
+
 def _score_adaptive_tree(
     rule_groups: list[dict[str, Any]],
     base_distances: Any,
@@ -368,12 +679,16 @@ def _score_adaptive_tree(
         base_distances,
         tree,
     )
-    predicted = DBSCAN(
-        eps=1.0,
-        min_samples=1,
-        metric="precomputed",
-    ).fit(normalized).labels_
-    return _cluster_pair_metrics(cluster_labels, predicted)
+    predicted = (
+        DBSCAN(
+            eps=1.0,
+            min_samples=1,
+            metric="precomputed",
+        )
+        .fit(normalized)
+        .labels_
+    )
+    return _cluster_pair_metrics(cluster_labels, predicted.tolist())
 
 
 def _cluster_pair_metrics(
@@ -396,11 +711,7 @@ def _cluster_pair_metrics(
     fn = gt_pairs - tp
     precision = tp / (tp + fp) if (tp + fp) else 1.0
     recall = tp / (tp + fn) if (tp + fn) else 1.0
-    f1 = (
-        2 * precision * recall / (precision + recall)
-        if (precision + recall)
-        else 0.0
-    )
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
     return {"precision": precision, "recall": recall, "f1": f1}
 
 
@@ -512,14 +823,14 @@ def _fit_adaptive_eps_tree_approx_parallel(
     jobs: int,
     started_at: float,
 ) -> AdaptiveEpsFitResult:
-    global _APPROX_FIT_WORKER_DATA
+    global _approx_fit_worker_data
 
     mp_context = multiprocessing.get_context("fork")
     total_candidates = len(candidate_params)
     progress_interval = _adaptive_progress_interval(total_candidates)
     completed = 0
     best: AdaptiveEpsFitResult | None = None
-    _APPROX_FIT_WORKER_DATA = dataset
+    _approx_fit_worker_data = dataset
     try:
         with ProcessPoolExecutor(max_workers=jobs, mp_context=mp_context) as executor:
             future_to_candidate = {
@@ -552,7 +863,9 @@ def _fit_adaptive_eps_tree_approx_parallel(
                         candidate.max_depth,
                         candidate.min_samples_leaf,
                     )
-                elif completed == total_candidates or completed % progress_interval == 0:
+                elif (
+                    completed == total_candidates or completed % progress_interval == 0
+                ):
                     current_best = best
                     logger.info(
                         "Adaptive eps approx: progress %d/%d (%.1f%%) elapsed=%.2fs current F1=%.4f best F1=%.4f",
@@ -564,7 +877,7 @@ def _fit_adaptive_eps_tree_approx_parallel(
                         current_best.f1 if current_best is not None else 0.0,
                     )
     finally:
-        _APPROX_FIT_WORKER_DATA = None
+        _approx_fit_worker_data = None
 
     if best is None:
         msg = "no adaptive-eps candidate could be fit"
@@ -586,11 +899,11 @@ def _evaluate_approx_candidate_worker(
     min_eps: float,
     random_state: int,
 ) -> AdaptiveEpsFitResult:
-    if _APPROX_FIT_WORKER_DATA is None:
+    if _approx_fit_worker_data is None:
         msg = "approximate adaptive-eps worker data is not initialized"
         raise RuntimeError(msg)
     return _evaluate_approx_candidate(
-        _APPROX_FIT_WORKER_DATA,
+        _approx_fit_worker_data,
         feature_tuple=feature_tuple,
         max_depth=max_depth,
         min_samples_leaf=min_samples_leaf,
@@ -624,21 +937,23 @@ def _evaluate_approx_candidate(
         round_decimals=round_decimals,
         min_eps=min_eps,
     )
+    leaf_values, metrics = _optimize_leaf_values(
+        group_count=dataset.group_count,
+        pair_i=dataset.pair_i,
+        pair_j=dataset.pair_j,
+        pair_distances=dataset.pair_distances,
+        cluster_labels=dataset.cluster_labels,
+        leaf_assignments=leaf_assignments,
+        leaf_values=leaf_values,
+        round_decimals=round_decimals,
+        min_eps=min_eps,
+    )
     tree = _classifier_to_adaptive_eps_tree_from_leaf_values(
         classifier,
         feature_tuple,
         leaf_values,
         round_decimals=round_decimals,
     )
-    predicted = _predict_sparse_cluster_labels(
-        dataset.group_count,
-        dataset.pair_i,
-        dataset.pair_j,
-        dataset.pair_distances,
-        leaf_assignments,
-        leaf_values,
-    )
-    metrics = _cluster_pair_metrics(dataset.cluster_labels, predicted)
     return AdaptiveEpsFitResult(
         tree=tree,
         precision=metrics["precision"],
