@@ -61,6 +61,7 @@ def fit_adaptive_eps_tree(
     min_samples_leaf_candidates: Sequence[int] = tuple(range(1, 16)),
     round_decimals: int = 3,
     min_eps: float = 0.001,
+    min_precision: float = 0.0,
     random_state: int = 0,
 ) -> AdaptiveEpsFitResult:
     """Fit a compact adaptive-eps tree from labeled logic groups.
@@ -165,7 +166,7 @@ def fit_adaptive_eps_tree(
                 max_depth=_tree_max_depth(compact_tree),
                 min_samples_leaf=int(min_samples_leaf),
             )
-            if _is_better_fit(candidate, best):
+            if _is_better_fit(candidate, best, min_precision=min_precision):
                 best = candidate
                 logger.info(
                     "Adaptive eps exact: new best at %d/%d (%.1f%%) elapsed=%.2fs F1=%.4f P=%.4f R=%.4f nodes=%d depth=%d min_leaf=%d",
@@ -217,6 +218,11 @@ def fit_adaptive_eps_tree_approx(
     min_eps: float = 0.001,
     random_state: int = 0,
     jobs: int = 1,
+    rerank_top_k: int = 0,
+    exact_rule_groups: list[dict[str, Any]] | None = None,
+    exact_base_distances: Any | None = None,
+    exact_cluster_labels: Sequence[str | int] | None = None,
+    min_precision: float = 0.0,
 ) -> AdaptiveEpsFitResult:
     if dataset.group_count < 2:
         msg = "at least two rule groups are required"
@@ -261,9 +267,16 @@ def fit_adaptive_eps_tree_approx(
         worker_jobs,
     )
 
+    if rerank_top_k < 0:
+        msg = "rerank_top_k must be >= 0"
+        raise ValueError(msg)
+    if not 0.0 <= min_precision <= 1.0:
+        msg = "min_precision must be between 0.0 and 1.0"
+        raise ValueError(msg)
+
     started_at = time.perf_counter()
     if worker_jobs <= 1:
-        return _fit_adaptive_eps_tree_approx_serial(
+        candidates = _fit_adaptive_eps_tree_approx_serial(
             dataset,
             feature_tuple=feature_tuple,
             candidate_params=candidate_params,
@@ -272,17 +285,44 @@ def fit_adaptive_eps_tree_approx(
             random_state=random_state,
             started_at=started_at,
         )
+    else:
+        candidates = _fit_adaptive_eps_tree_approx_parallel(
+            dataset,
+            feature_tuple=feature_tuple,
+            candidate_params=candidate_params,
+            round_decimals=round_decimals,
+            min_eps=min_eps,
+            random_state=random_state,
+            jobs=worker_jobs,
+            started_at=started_at,
+        )
 
-    return _fit_adaptive_eps_tree_approx_parallel(
-        dataset,
-        feature_tuple=feature_tuple,
-        candidate_params=candidate_params,
-        round_decimals=round_decimals,
-        min_eps=min_eps,
-        random_state=random_state,
-        jobs=worker_jobs,
-        started_at=started_at,
+    best = _select_best_fit(candidates, min_precision=min_precision)
+    if (
+        rerank_top_k > 0
+        and exact_rule_groups is not None
+        and exact_base_distances is not None
+        and exact_cluster_labels is not None
+    ):
+        best = _rerank_approx_candidates_exact(
+            candidates,
+            rerank_top_k=rerank_top_k,
+            rule_groups=exact_rule_groups,
+            base_distances=exact_base_distances,
+            cluster_labels=exact_cluster_labels,
+            min_precision=min_precision,
+        )
+
+    logger.info(
+        "Adaptive eps approx: final selected candidate F1=%.4f P=%.4f R=%.4f nodes=%d depth=%d min_leaf=%d.",
+        best.f1,
+        best.precision,
+        best.recall,
+        best.node_count,
+        best.max_depth,
+        best.min_samples_leaf,
     )
+    return best
 
 
 def _build_pair_dataset(
@@ -718,7 +758,13 @@ def _cluster_pair_metrics(
 def _is_better_fit(
     candidate: AdaptiveEpsFitResult,
     current: AdaptiveEpsFitResult | None,
+    *,
+    min_precision: float = 0.0,
 ) -> bool:
+    candidate_eligible = candidate.precision >= min_precision
+    current_eligible = current is not None and current.precision >= min_precision
+    if candidate_eligible != current_eligible:
+        return candidate_eligible
     if current is None:
         return True
 
@@ -760,8 +806,9 @@ def _fit_adaptive_eps_tree_approx_serial(
     min_eps: float,
     random_state: int,
     started_at: float,
-) -> AdaptiveEpsFitResult:
+) -> list[AdaptiveEpsFitResult]:
     best: AdaptiveEpsFitResult | None = None
+    candidates: list[AdaptiveEpsFitResult] = []
     total_candidates = len(candidate_params)
     progress_interval = _adaptive_progress_interval(total_candidates)
 
@@ -775,6 +822,7 @@ def _fit_adaptive_eps_tree_approx_serial(
             min_eps=min_eps,
             random_state=random_state,
         )
+        candidates.append(candidate)
         if _is_better_fit(candidate, best):
             best = candidate
             logger.info(
@@ -809,7 +857,7 @@ def _fit_adaptive_eps_tree_approx_serial(
         time.perf_counter() - started_at,
         best.f1,
     )
-    return best
+    return candidates
 
 
 def _fit_adaptive_eps_tree_approx_parallel(
@@ -822,7 +870,7 @@ def _fit_adaptive_eps_tree_approx_parallel(
     random_state: int,
     jobs: int,
     started_at: float,
-) -> AdaptiveEpsFitResult:
+) -> list[AdaptiveEpsFitResult]:
     global _approx_fit_worker_data
 
     mp_context = multiprocessing.get_context("fork")
@@ -830,6 +878,7 @@ def _fit_adaptive_eps_tree_approx_parallel(
     progress_interval = _adaptive_progress_interval(total_candidates)
     completed = 0
     best: AdaptiveEpsFitResult | None = None
+    candidates: list[AdaptiveEpsFitResult] = []
     _approx_fit_worker_data = dataset
     try:
         with ProcessPoolExecutor(max_workers=jobs, mp_context=mp_context) as executor:
@@ -847,6 +896,7 @@ def _fit_adaptive_eps_tree_approx_parallel(
             }
             for future in as_completed(future_to_candidate):
                 candidate = future.result()
+                candidates.append(candidate)
                 completed += 1
                 if _is_better_fit(candidate, best):
                     best = candidate
@@ -888,7 +938,136 @@ def _fit_adaptive_eps_tree_approx_parallel(
         time.perf_counter() - started_at,
         best.f1,
     )
+    return candidates
+
+
+def _select_best_fit(
+    candidates: Sequence[AdaptiveEpsFitResult],
+    *,
+    min_precision: float = 0.0,
+) -> AdaptiveEpsFitResult:
+    best: AdaptiveEpsFitResult | None = None
+    for candidate in candidates:
+        if _is_better_fit(candidate, best, min_precision=min_precision):
+            best = candidate
+    assert best is not None
     return best
+
+
+def _rerank_approx_candidates_exact(
+    candidates: Sequence[AdaptiveEpsFitResult],
+    *,
+    rerank_top_k: int,
+    rule_groups: list[dict[str, Any]],
+    base_distances: Any,
+    cluster_labels: Sequence[str | int],
+    min_precision: float,
+) -> AdaptiveEpsFitResult:
+    finalists = _select_exact_rerank_finalists(candidates, rerank_top_k)
+
+    best: AdaptiveEpsFitResult | None = None
+    for candidate in finalists:
+        exact_metrics = _score_adaptive_tree(
+            rule_groups,
+            base_distances,
+            cluster_labels,
+            candidate.tree,
+        )
+        compact_tree, compact_metrics = _compact_adaptive_tree(
+            candidate.tree,
+            lambda candidate_tree: _score_adaptive_tree(
+                rule_groups,
+                base_distances,
+                cluster_labels,
+                candidate_tree,
+            ),
+            exact_metrics,
+        )
+        exact_candidate = AdaptiveEpsFitResult(
+            tree=compact_tree,
+            precision=compact_metrics["precision"],
+            recall=compact_metrics["recall"],
+            f1=compact_metrics["f1"],
+            node_count=len(cast(tuple[TreeNode, ...], compact_tree["nodes"])),
+            max_depth=_tree_max_depth(compact_tree),
+            min_samples_leaf=candidate.min_samples_leaf,
+        )
+        if _is_better_reranked_fit(
+            exact_candidate,
+            best,
+            min_precision=min_precision,
+        ):
+            best = exact_candidate
+
+    assert best is not None
+    return best
+
+
+def _select_exact_rerank_finalists(
+    candidates: Sequence[AdaptiveEpsFitResult],
+    rerank_top_k: int,
+) -> list[AdaptiveEpsFitResult]:
+    limit = max(1, min(rerank_top_k, len(candidates)))
+    by_f1 = sorted(candidates, key=_approx_rank_key_f1, reverse=True)[:limit]
+    by_precision = sorted(candidates, key=_approx_rank_key_precision, reverse=True)[
+        :limit
+    ]
+
+    merged: dict[str, AdaptiveEpsFitResult] = {}
+    for candidate in [*by_f1, *by_precision]:
+        merged[repr(candidate.tree)] = candidate
+    return list(merged.values())
+
+
+def _approx_rank_key_f1(
+    candidate: AdaptiveEpsFitResult,
+) -> tuple[float, float, float, int, int, int]:
+    return (
+        candidate.f1,
+        candidate.precision,
+        candidate.recall,
+        -candidate.node_count,
+        -candidate.max_depth,
+        candidate.min_samples_leaf,
+    )
+
+
+def _approx_rank_key_precision(
+    candidate: AdaptiveEpsFitResult,
+) -> tuple[float, float, float, int, int, int]:
+    return (
+        candidate.precision,
+        candidate.f1,
+        candidate.recall,
+        -candidate.node_count,
+        -candidate.max_depth,
+        candidate.min_samples_leaf,
+    )
+
+
+def _is_better_reranked_fit(
+    candidate: AdaptiveEpsFitResult,
+    current: AdaptiveEpsFitResult | None,
+    *,
+    min_precision: float = 0.0,
+) -> bool:
+    candidate_eligible = candidate.precision >= min_precision
+    current_eligible = current is not None and current.precision >= min_precision
+    if candidate_eligible != current_eligible:
+        return candidate_eligible
+    if current is None:
+        return True
+    if candidate.precision != current.precision:
+        return candidate.precision > current.precision
+    if candidate.f1 != current.f1:
+        return candidate.f1 > current.f1
+    if candidate.recall != current.recall:
+        return candidate.recall > current.recall
+    if candidate.node_count != current.node_count:
+        return candidate.node_count < current.node_count
+    if candidate.max_depth != current.max_depth:
+        return candidate.max_depth < current.max_depth
+    return candidate.min_samples_leaf > current.min_samples_leaf
 
 
 def _evaluate_approx_candidate_worker(

@@ -5,7 +5,7 @@ import logging
 import time
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Sequence, cast
 
 import numpy as np
 
@@ -46,7 +46,11 @@ def load_feature_defs(features_json: str | None) -> tuple[dict[str, object], ...
         return tuple(deepcopy(feature) for feature in DEFAULT_ADAPTIVE_EPS_FEATURES_V1)
 
     raw = json.loads(Path(features_json).read_text(encoding="utf-8"))
-    if not isinstance(raw, list) or not raw or not all(isinstance(item, dict) for item in raw):
+    if (
+        not isinstance(raw, list)
+        or not raw
+        or not all(isinstance(item, dict) for item in raw)
+    ):
         msg = f"Feature definition file '{features_json}' must contain a non-empty JSON list of objects."
         raise ValueError(msg)
     return tuple(deepcopy(item) for item in raw)
@@ -66,6 +70,8 @@ def fit_adaptive_eps_rule(
     min_eps: float = 0.001,
     fit_mode: str = "exact",
     jobs: int = 1,
+    rerank_top_k: int = 10,
+    min_precision: float = 0.0,
 ) -> AdaptiveEpsFitResult:
     started_at = time.perf_counter()
     rule_groups, cluster_labels = extract_rule_logic_groups(
@@ -96,6 +102,7 @@ def fit_adaptive_eps_rule(
             min_samples_leaf_candidates=min_samples_leaf_candidates,
             round_decimals=round_decimals,
             min_eps=min_eps,
+            min_precision=min_precision,
         )
     elif fit_mode == "approx":
         dataset = build_sparse_adaptive_eps_dataset(
@@ -106,6 +113,14 @@ def fit_adaptive_eps_rule(
             rule_id=rule_id,
             embed_fn=embed_fn,
         )
+        exact_base_distances = None
+        if rerank_top_k > 0:
+            exact_base_distances = compute_rule_base_distance_matrix(
+                rule_groups=rule_groups,
+                gca_config=gca_config,
+                rule_id=rule_id,
+                embed_fn=embed_fn,
+            )
         result = fit_adaptive_eps_tree_approx(
             dataset,
             feature_defs,
@@ -114,6 +129,11 @@ def fit_adaptive_eps_rule(
             round_decimals=round_decimals,
             min_eps=min_eps,
             jobs=jobs,
+            rerank_top_k=rerank_top_k,
+            exact_rule_groups=rule_groups,
+            exact_base_distances=exact_base_distances,
+            exact_cluster_labels=cluster_labels,
+            min_precision=min_precision,
         )
     else:
         msg = f"Unsupported adaptive eps fit mode: {fit_mode}"
@@ -183,7 +203,9 @@ def extract_rule_logic_groups(
                 "template": group["representative_template"],
                 "pattern": group["representative_pattern"],
                 "count": group["total_count"],
-                "members": [{"raw_log": raw_log} for raw_log in group.get("original_logs", [])],
+                "members": [
+                    {"raw_log": raw_log} for raw_log in group.get("original_logs", [])
+                ],
             }
         )
         cluster_labels.append(cluster_index)
@@ -222,13 +244,20 @@ def compute_rule_base_distance_matrix(
     template_keys = [component["template"] for component in components]
     var_slices: list[tuple[int, int, list[bool], list[str], str]] = []
 
-    max_vars = max(len(component["variables"]) for component in components) if components else 0
+    max_vars = (
+        max(len(component["variables"]) for component in components)
+        if components
+        else 0
+    )
     for index in range(max_vars):
         mode = var_modes[index] if index < len(var_modes) else "embedding"
         mask: list[bool] = []
         var_keys: list[str] = []
         for component in components:
-            if index < len(component["variables"]) and component["variables"][index].strip():
+            if (
+                index < len(component["variables"])
+                and component["variables"][index].strip()
+            ):
                 mask.append(True)
                 var_keys.append(component["variables"][index])
             else:
@@ -362,12 +391,19 @@ def compute_rule_base_distances_for_edges(
     template_keys = [component["template"] for component in components]
     var_slices: list[tuple[int, int, list[bool], list[str]]] = []
 
-    max_vars = max(len(component["variables"]) for component in components) if components else 0
+    max_vars = (
+        max(len(component["variables"]) for component in components)
+        if components
+        else 0
+    )
     for index in range(max_vars):
         mask: list[bool] = []
         var_keys: list[str] = []
         for component in components:
-            if index < len(component["variables"]) and component["variables"][index].strip():
+            if (
+                index < len(component["variables"])
+                and component["variables"][index].strip()
+            ):
                 mask.append(True)
                 var_keys.append(component["variables"][index])
             else:
@@ -403,7 +439,9 @@ def compute_rule_base_distances_for_edges(
     zero_weight = weight_sum == 0
     safe_weight = np.where(zero_weight, 1.0, weight_sum)
     safe_active = np.maximum(uniform_count, 1.0)
-    return np.where(zero_weight, uniform_num / safe_active, numerator / safe_weight).astype(
+    return np.where(
+        zero_weight, uniform_num / safe_active, numerator / safe_weight
+    ).astype(
         np.float32,
         copy=False,
     )
@@ -416,10 +454,15 @@ def _build_sparse_candidate_edges(
 ) -> tuple[np.ndarray, np.ndarray, set[tuple[int, int]]]:
     path_texts = [_extract_primary_path(group["pattern"]) for group in rule_groups]
     segment_sequences = [_segment_token_sequence(path) for path in path_texts]
-    group_ids = [str(group.get("group_id", f"{index:06d}")) for index, group in enumerate(rule_groups)]
+    group_ids = [
+        str(group.get("group_id", f"{index:06d}"))
+        for index, group in enumerate(rule_groups)
+    ]
 
-    buckets: dict[tuple[str, object], list[int]] = {}
-    for index, (path, segments) in enumerate(zip(path_texts, segment_sequences, strict=True)):
+    buckets: dict[tuple[object, ...], list[int]] = {}
+    for index, (path, segments) in enumerate(
+        zip(path_texts, segment_sequences, strict=True)
+    ):
         if segments:
             _append_bucket(buckets, ("last1", " ".join(segments[-1])), index)
             if len(segments) >= 2:
@@ -433,13 +476,16 @@ def _build_sparse_candidate_edges(
             levels = feature.get("levels")
             if not levels:
                 continue
-            selected = select_levels(path, list(levels))
+            level_list = [int(level) for level in cast(Sequence[int], levels)]
+            selected = select_levels(path, level_list)
             if selected:
-                _append_bucket(buckets, ("levels", tuple(levels), selected), index)
+                _append_bucket(buckets, ("levels", tuple(level_list), selected), index)
 
     edge_set: set[tuple[int, int]] = set()
     for bucket_indices in buckets.values():
-        ordered = sorted(dict.fromkeys(bucket_indices), key=lambda idx: (group_ids[idx], idx))
+        ordered = sorted(
+            dict.fromkeys(bucket_indices), key=lambda idx: (group_ids[idx], idx)
+        )
         for offset, left in enumerate(ordered):
             for right in ordered[offset + 1 : offset + 1 + _APPROX_BUCKET_FANOUT]:
                 edge = (left, right) if left < right else (right, left)
@@ -497,7 +543,10 @@ def _prune_sparse_candidate_edges(
 
     keep = np.zeros(pair_i.size, dtype=bool)
     for edge_index, (left, right) in enumerate(zip(pair_i, pair_j, strict=True)):
-        if edge_index in top_per_node[int(left)] and edge_index in top_per_node[int(right)]:
+        if (
+            edge_index in top_per_node[int(left)]
+            and edge_index in top_per_node[int(right)]
+        ):
             keep[edge_index] = True
 
     if not np.any(keep):
@@ -507,8 +556,8 @@ def _prune_sparse_candidate_edges(
 
 
 def _append_bucket(
-    buckets: dict[tuple[str, object], list[int]],
-    key: tuple[str, object] | tuple[str, object, object],
+    buckets: dict[tuple[object, ...], list[int]],
+    key: tuple[object, ...],
     index: int,
 ) -> None:
     buckets.setdefault(key, []).append(index)
@@ -525,9 +574,12 @@ def _cosine_distance_for_edges(
     pair_i: np.ndarray,
     pair_j: np.ndarray,
 ) -> np.ndarray:
-    sims = np.sum(
-        normalized_vectors[pair_i] * normalized_vectors[pair_j],
-        axis=1,
+    sims = np.asarray(
+        np.sum(
+            normalized_vectors[pair_i] * normalized_vectors[pair_j],
+            axis=1,
+            dtype=np.float32,
+        ),
         dtype=np.float32,
     )
     np.clip(sims, -1.0, 1.0, out=sims)

@@ -163,9 +163,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _ = gca_dist.add_argument(
         "--rule-config", default=None, help="Rule clustering config path."
     )
-    _ = gca_dist.add_argument(
-        "--rule-id", required=True, help="Rule ID to analyze."
-    )
+    _ = gca_dist.add_argument("--rule-id", required=True, help="Rule ID to analyze.")
     _ = gca_dist.add_argument(
         "--embeddings-config",
         "--config",
@@ -174,7 +172,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Embeddings config path.",
     )
     _ = gca_dist.add_argument(
-        "--ground-truth", default=None, help="Optional ground truth JSON for annotation."
+        "--ground-truth",
+        default=None,
+        help="Optional ground truth JSON for annotation.",
     )
     _ = gca_dist.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose logging."
@@ -306,6 +306,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Worker processes for approx mode (0 = all available cores).",
     )
     _ = gca_fit_adaptive.add_argument(
+        "--min-precision",
+        type=float,
+        default=0.0,
+        help="Minimum precision required for a candidate to be eligible (default: 0.0).",
+    )
+    _ = gca_fit_adaptive.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose logging."
     )
 
@@ -393,7 +399,9 @@ def _run_ai_stage(
         return results, True, backend
 
     if ai_mode == "on":
-        raise RuntimeError("AI clustering requested with --ai on, but AI is unavailable.")
+        raise RuntimeError(
+            "AI clustering requested with --ai on, but AI is unavailable."
+        )
 
     return logic_results, False, None
 
@@ -537,24 +545,30 @@ def _run_pipeline(parsed_logs: list[dict[str, Any]], opts: PipelineOptions) -> i
     )
     logger.info("[timing] build final groups: %.3fs", time.perf_counter() - t0)
 
-    run_meta: RunMetadata = {
-        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
+    run_meta = cast(
+        RunMetadata,
+        cast(
+            object,
+            {
+                "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                ),
+                "log_file": opts.log_file,
+                **({"template_file": opts.template_file} if opts.template_file else {}),
+                **({"sanity_item": opts.sanity_item} if opts.sanity_item else {}),
+                "counts": {
+                    "parsed_logs": len(parsed_logs),
+                    "logic_groups": len(logic_results),
+                    "final_groups": len(final_groups),
+                },
+                "ai": {
+                    "enabled": ai_enabled,
+                    "backend": ai_backend,
+                    "warnings": list(loaded_embeddings.warnings),
+                },
+            },
         ),
-        "log_file": opts.log_file,
-        **({"template_file": opts.template_file} if opts.template_file else {}),
-        **({"sanity_item": opts.sanity_item} if opts.sanity_item else {}),
-        "counts": {
-            "parsed_logs": len(parsed_logs),
-            "logic_groups": len(logic_results),
-            "final_groups": len(final_groups),
-        },
-        "ai": {
-            "enabled": ai_enabled,
-            "backend": ai_backend,
-            "warnings": list(loaded_embeddings.warnings),
-        },
-    }
+    )
 
     t0 = time.perf_counter()
     write_results_v2(
@@ -662,6 +676,7 @@ def _run_gca_distances(args: argparse.Namespace) -> int:
     rule_id = cast(str, args.rule_id)
     rule_config = get_gca_rule_config(gca_config, rule_id)
     if rule_config.pairwise_tree is not None:
+
         def embed_fn(_texts: list[str]) -> Any:
             raise RuntimeError("Embeddings should not be used for pairwise_tree rules.")
     else:
@@ -756,6 +771,9 @@ def _run_gca_fit_adaptive_eps(args: argparse.Namespace) -> int:
     if cast(int, args.jobs) < 0:
         print("Error: --jobs must be >= 0.", file=sys.stderr)
         return 1
+    if not 0.0 <= cast(float, args.min_precision) <= 1.0:
+        print("Error: --min-precision must be between 0.0 and 1.0.", file=sys.stderr)
+        return 1
 
     loaded_embeddings = load_resolved_embeddings_config(
         embeddings_config_arg=cast(str | None, args.embeddings_config),
@@ -769,7 +787,10 @@ def _run_gca_fit_adaptive_eps(args: argparse.Namespace) -> int:
         embed_batch_size=loaded_embeddings.config.embed_batch_size,
     )
     if not ai_clusterer.ai_available:
-        print("Error: AI embeddings not available. Check embeddings config.", file=sys.stderr)
+        print(
+            "Error: AI embeddings not available. Check embeddings config.",
+            file=sys.stderr,
+        )
         return 1
 
     def embed_fn(texts: list[str]) -> Any:
@@ -794,6 +815,7 @@ def _run_gca_fit_adaptive_eps(args: argparse.Namespace) -> int:
             min_eps=cast(float, args.min_eps),
             fit_mode=cast(str, args.fit_mode),
             jobs=cast(int, args.jobs),
+            min_precision=cast(float, args.min_precision),
         )
         updated_config, removed_pairwise = update_rule_config_with_adaptive_eps_tree(
             raw_config=raw_config,
@@ -801,7 +823,9 @@ def _run_gca_fit_adaptive_eps(args: argparse.Namespace) -> int:
             tree=fit_result.tree,
         )
         out_path = Path(cast(str, args.out_rule_config))
-        out_path.write_text(json.dumps(updated_config, indent=2) + "\n", encoding="utf-8")
+        out_path.write_text(
+            json.dumps(updated_config, indent=2) + "\n", encoding="utf-8"
+        )
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
@@ -815,7 +839,9 @@ def _run_gca_fit_adaptive_eps(args: argparse.Namespace) -> int:
     print(f"Recall: {fit_result.recall:.4f}")
     print(f"F1: {fit_result.f1:.4f}")
     if removed_pairwise:
-        print("Removed pairwise_tree from the target rule so adaptive_eps_tree takes effect.")
+        print(
+            "Removed pairwise_tree from the target rule so adaptive_eps_tree takes effect."
+        )
     print(f"Updated config written to: {out_path}")
     return 0
 
@@ -897,7 +923,10 @@ def _run_gca_fit_weights(args: argparse.Namespace) -> int:
         embed_batch_size=loaded_embeddings.config.embed_batch_size,
     )
     if not ai_clusterer.ai_available:
-        print("Error: AI embeddings not available. Check embeddings config.", file=sys.stderr)
+        print(
+            "Error: AI embeddings not available. Check embeddings config.",
+            file=sys.stderr,
+        )
         return 1
 
     def embed_fn(texts: list[str]) -> Any:
