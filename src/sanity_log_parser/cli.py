@@ -306,6 +306,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Worker processes for approx mode (0 = all available cores).",
     )
     _ = gca_fit_adaptive.add_argument(
+        "--rerank-top-k",
+        type=int,
+        default=10,
+        help="Number of approximate finalists to exact-rerank (0 disables rerank, default: 10).",
+    )
+    _ = gca_fit_adaptive.add_argument(
         "--min-precision",
         type=float,
         default=0.0,
@@ -771,6 +777,9 @@ def _run_gca_fit_adaptive_eps(args: argparse.Namespace) -> int:
     if cast(int, args.jobs) < 0:
         print("Error: --jobs must be >= 0.", file=sys.stderr)
         return 1
+    if cast(int, args.rerank_top_k) < 0:
+        print("Error: --rerank-top-k must be >= 0.", file=sys.stderr)
+        return 1
     if not 0.0 <= cast(float, args.min_precision) <= 1.0:
         print("Error: --min-precision must be between 0.0 and 1.0.", file=sys.stderr)
         return 1
@@ -815,6 +824,7 @@ def _run_gca_fit_adaptive_eps(args: argparse.Namespace) -> int:
             min_eps=cast(float, args.min_eps),
             fit_mode=cast(str, args.fit_mode),
             jobs=cast(int, args.jobs),
+            rerank_top_k=cast(int, args.rerank_top_k),
             min_precision=cast(float, args.min_precision),
         )
         updated_config, removed_pairwise = update_rule_config_with_adaptive_eps_tree(

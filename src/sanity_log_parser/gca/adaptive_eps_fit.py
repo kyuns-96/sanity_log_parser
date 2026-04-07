@@ -964,14 +964,38 @@ def _rerank_approx_candidates_exact(
     min_precision: float,
 ) -> AdaptiveEpsFitResult:
     finalists = _select_exact_rerank_finalists(candidates, rerank_top_k)
+    logger.info(
+        "Adaptive eps approx: starting exact rerank for %d finalist(s) (top_k=%d).",
+        len(finalists),
+        rerank_top_k,
+    )
 
     best: AdaptiveEpsFitResult | None = None
-    for candidate in finalists:
+    for index, candidate in enumerate(finalists, start=1):
+        logger.info(
+            "Adaptive eps approx: exact rerank finalist %d/%d (approx F1=%.4f P=%.4f R=%.4f nodes=%d depth=%d min_leaf=%d).",
+            index,
+            len(finalists),
+            candidate.f1,
+            candidate.precision,
+            candidate.recall,
+            candidate.node_count,
+            candidate.max_depth,
+            candidate.min_samples_leaf,
+        )
         exact_metrics = _score_adaptive_tree(
             rule_groups,
             base_distances,
             cluster_labels,
             candidate.tree,
+        )
+        logger.info(
+            "Adaptive eps approx: finalist %d/%d exact replay F1=%.4f P=%.4f R=%.4f before compaction.",
+            index,
+            len(finalists),
+            exact_metrics["f1"],
+            exact_metrics["precision"],
+            exact_metrics["recall"],
         )
         compact_tree, compact_metrics = _compact_adaptive_tree(
             candidate.tree,
@@ -982,6 +1006,15 @@ def _rerank_approx_candidates_exact(
                 candidate_tree,
             ),
             exact_metrics,
+        )
+        logger.info(
+            "Adaptive eps approx: finalist %d/%d compacted to %d node(s), final exact F1=%.4f P=%.4f R=%.4f.",
+            index,
+            len(finalists),
+            len(cast(tuple[TreeNode, ...], compact_tree["nodes"])),
+            compact_metrics["f1"],
+            compact_metrics["precision"],
+            compact_metrics["recall"],
         )
         exact_candidate = AdaptiveEpsFitResult(
             tree=compact_tree,
@@ -998,6 +1031,15 @@ def _rerank_approx_candidates_exact(
             min_precision=min_precision,
         ):
             best = exact_candidate
+            logger.info(
+                "Adaptive eps approx: exact rerank new best at finalist %d/%d F1=%.4f P=%.4f R=%.4f nodes=%d.",
+                index,
+                len(finalists),
+                exact_candidate.f1,
+                exact_candidate.precision,
+                exact_candidate.recall,
+                exact_candidate.node_count,
+            )
 
     assert best is not None
     return best
