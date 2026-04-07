@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -323,8 +324,9 @@ def test_cluster_defaults_unchanged():
     assert args.verbose is False
 
     # Verify ai choices
-    for action in parser._subparsers._group_actions:
-        for name, subparser in action.choices.items():
+    subparsers_action = cast(Any, parser._subparsers)
+    for action in cast(list[Any], subparsers_action._group_actions):
+        for name, subparser in cast(dict[str, Any], action.choices).items():
             if name == "cluster":
                 ai_action = next(
                     a for a in subparser._actions if getattr(a, "dest", None) == "ai"
@@ -343,6 +345,7 @@ def test_gca_fit_adaptive_eps_subcommand_help(tmp_path: Path):
     assert "--features-json" in output
     assert "--fit-mode" in output
     assert "--jobs" in output
+    assert "--rerank-top-k" in output
 
 
 def test_export_labeling_subcommand_help(tmp_path: Path) -> None:
@@ -354,22 +357,31 @@ def test_export_labeling_subcommand_help(tmp_path: Path) -> None:
     assert "--output-dir" in output
 
 
-def test_export_labeling_writes_group_files_and_overwrites_existing(tmp_path: Path) -> None:
+def test_export_labeling_writes_group_files_and_overwrites_existing(
+    tmp_path: Path,
+) -> None:
     input_path = tmp_path / "subutai_results.json"
     output_dir = tmp_path / "labeling_export"
     payload = _sample_results_v2_payload()
     input_path.write_text(json.dumps(payload), encoding="utf-8")
 
     process = _run_main(
-        ["export-labeling", "--input", str(input_path), "--output-dir", str(output_dir)],
+        [
+            "export-labeling",
+            "--input",
+            str(input_path),
+            "--output-dir",
+            str(output_dir),
+        ],
         tmp_path,
     )
 
     assert process.returncode == 0
     assert "Exported 2 groups" in _output(process)
 
-    first_group = payload["groups"][0]
-    second_group = payload["groups"][1]
+    groups = cast(list[dict[str, object]], payload["groups"])
+    first_group = groups[0]
+    second_group = groups[1]
     first_path = output_dir / "DES_0001" / "DES_0001_logic_path_leaf_branch.json"
     second_path = output_dir / "CGR_0018" / "CGR_0018_ai_000002.json"
 
@@ -384,7 +396,13 @@ def test_export_labeling_writes_group_files_and_overwrites_existing(tmp_path: Pa
 
     first_path.write_text('{"stale": true}\n', encoding="utf-8")
     rerun = _run_main(
-        ["export-labeling", "--input", str(input_path), "--output-dir", str(output_dir)],
+        [
+            "export-labeling",
+            "--input",
+            str(input_path),
+            "--output-dir",
+            str(output_dir),
+        ],
         tmp_path,
     )
 
@@ -408,7 +426,13 @@ def test_export_labeling_rejects_legacy_v1_results(tmp_path: Path) -> None:
     )
 
     process = _run_main(
-        ["export-labeling", "--input", str(input_path), "--output-dir", str(tmp_path / "out")],
+        [
+            "export-labeling",
+            "--input",
+            str(input_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ],
         tmp_path,
     )
 
