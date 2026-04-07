@@ -70,6 +70,8 @@ Additional truth about `approx` mode:
 - `approx` is for candidate screening only
 - `approx` score is not final runtime truth
 - only replayed `gca` + `gca-eval` results are valid for acceptance
+- `approx` may still do post-search exact rerank unless you disable it
+- if the environment looks hung after `Adaptive eps approx: completed ...`, rerun with `--rerank-top-k 0`
 
 Additional truth about over-merging:
 
@@ -224,6 +226,7 @@ sanity-log-parser gca-fit-adaptive-eps \
   --rule-config $BASE_CONFIG \
   --features-json src/sanity_log_parser/gca/adaptive_eps_features_structural_v1.json \
   --fit-mode approx \
+  --rerank-top-k 0 \
   --jobs 0 \
   -v \
   --out-rule-config $FINAL_TUNED_CONFIG
@@ -325,6 +328,12 @@ Use this rule:
 - use `approx` first when screening
 - use `exact` only when `base_tuned_F1 >= baseline_F1 + F1_MIN_IMPROVEMENT` and the approx adaptive replay still fails the acceptance rule
 - if over-merging is forbidden, use the same `--min-precision $MIN_PRECISION` floor in exact mode
+
+If `approx` looks hung after sparse search completes, use this fallback:
+
+- rerun with `--rerank-top-k 0`
+- this disables post-approx exact rerank
+- use the result only for screening, not for final acceptance
 
 Interpretation:
 
