@@ -12,9 +12,17 @@ _ALLOWED_TOP_KEYS = {
     "default_eps",
     "default_template_weight",
     "default_variable_weight",
+    "default_clustering_method",
     "rules",
 }
-_ALLOWED_RULE_KEYS = {"eps", "template_weight", "variables", "pairwise_tree", "adaptive_eps_tree"}
+_ALLOWED_RULE_KEYS = {
+    "eps",
+    "template_weight",
+    "variables",
+    "pairwise_tree",
+    "adaptive_eps_tree",
+    "clustering_method",
+}
 _ALLOWED_VARIABLE_KEYS = {"weight", "levels", "level_weights", "match_mode"}
 _VALID_MATCH_MODES = {"embedding"}
 _ALLOWED_PAIRWISE_TREE_KEYS = {"features", "nodes"}
@@ -33,6 +41,7 @@ _VALID_PAIRWISE_FEATURE_KINDS = {
     "path_length_equal",
     "path_length_diff",
 }
+_VALID_CLUSTERING_METHODS = {"dbscan", "agglomerative_complete"}
 
 
 class ConfigError(Exception):
@@ -51,6 +60,7 @@ class VariableConfig:
 class GcaRuleConfig:
     eps: float = 0.2
     template_weight: float = 0.3
+    clustering_method: str = "dbscan"
     pairwise_tree: dict[str, object] | None = None
     adaptive_eps_tree: dict[str, object] | None = None
     variables: dict[int, VariableConfig] = field(default_factory=dict)
@@ -61,6 +71,7 @@ class GcaConfig:
     default_eps: float = 0.2
     default_template_weight: float = 0.3
     default_variable_weight: float = 0.7
+    default_clustering_method: str = "dbscan"
     rules: dict[str, GcaRuleConfig] = field(default_factory=dict)
 
 
@@ -93,10 +104,15 @@ def _parse_gca_config(raw: object) -> GcaConfig:
     default_eps = raw.get("default_eps", 0.2)
     default_template_weight = raw.get("default_template_weight", 0.3)
     default_variable_weight = raw.get("default_variable_weight", 0.7)
+    default_clustering_method = raw.get("default_clustering_method", "dbscan")
 
     _validate_positive_float(default_eps, "default_eps")
     _validate_non_negative_float(default_template_weight, "default_template_weight")
     _validate_non_negative_float(default_variable_weight, "default_variable_weight")
+    _validate_clustering_method(
+        default_clustering_method,
+        "default_clustering_method",
+    )
 
     raw_rules = raw.get("rules", {})
     if not isinstance(raw_rules, dict):
@@ -110,12 +126,14 @@ def _parse_gca_config(raw: object) -> GcaConfig:
             rule_id,
             default_eps=default_eps,
             default_template_weight=default_template_weight,
+            default_clustering_method=str(default_clustering_method),
         )
 
     return GcaConfig(
         default_eps=default_eps,
         default_template_weight=default_template_weight,
         default_variable_weight=default_variable_weight,
+        default_clustering_method=str(default_clustering_method),
         rules=rules,
     )
 
@@ -126,6 +144,7 @@ def _parse_gca_rule(
     *,
     default_eps: float,
     default_template_weight: float,
+    default_clustering_method: str,
 ) -> GcaRuleConfig:
     if not isinstance(raw, dict):
         msg = f"Rule '{rule_id}': expected dict, got {type(raw).__name__}"
@@ -135,11 +154,13 @@ def _parse_gca_rule(
 
     eps = raw.get("eps", default_eps)
     template_weight = raw.get("template_weight", default_template_weight)
+    clustering_method = raw.get("clustering_method", default_clustering_method)
     pairwise_tree = _parse_pairwise_tree(raw, rule_id)
     adaptive_eps_tree = _parse_adaptive_eps_tree(raw, rule_id)
 
     _validate_positive_float(eps, f"rule '{rule_id}' eps")
     _validate_non_negative_float(template_weight, f"rule '{rule_id}' template_weight")
+    _validate_clustering_method(clustering_method, f"rule '{rule_id}' clustering_method")
 
     raw_variables = raw.get("variables", {})
     if not isinstance(raw_variables, dict):
@@ -156,6 +177,7 @@ def _parse_gca_rule(
     return GcaRuleConfig(
         eps=eps,
         template_weight=template_weight,
+        clustering_method=str(clustering_method),
         pairwise_tree=pairwise_tree,
         adaptive_eps_tree=adaptive_eps_tree,
         variables=variables,
@@ -560,6 +582,15 @@ def _validate_non_negative_float(value: object, name: str) -> None:
         raise ConfigError(msg)
 
 
+def _validate_clustering_method(value: object, name: str) -> None:
+    if not isinstance(value, str):
+        msg = f"'{name}' must be a string, got {type(value).__name__}"
+        raise ConfigError(msg)
+    if value not in _VALID_CLUSTERING_METHODS:
+        msg = f"'{name}' must be one of {sorted(_VALID_CLUSTERING_METHODS)}, got '{value}'"
+        raise ConfigError(msg)
+
+
 def _validate_max_decimal_places(value: object, *, max_places: int, name: str) -> None:
     if not isinstance(value, int | float) or isinstance(value, bool):
         msg = f"'{name}' must be a number, got {type(value).__name__}"
@@ -584,4 +615,5 @@ def get_gca_rule_config(gca_config: GcaConfig, rule_id: str) -> GcaRuleConfig:
     return GcaRuleConfig(
         eps=gca_config.default_eps,
         template_weight=gca_config.default_template_weight,
+        clustering_method=gca_config.default_clustering_method,
     )

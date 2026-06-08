@@ -75,6 +75,13 @@ Important:
 - `gca-fit-adaptive-eps` fits an adaptive eps tree for one rule
 - `export-labeling` exports per-group JSON files for labeling
 
+### Stage 2 clustering method
+
+- `clustering_method` controls how Stage 2 consumes the rule distance matrix
+- supported values are `dbscan` and `agglomerative_complete`
+- built-in GCA config uses `agglomerative_complete` by default to reduce bridge over-merges
+- fitting commands use the method from the active rule config
+
 ### Ground truth rules
 
 - ground truth uses `logic.json` `group_id` values

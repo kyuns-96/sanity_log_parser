@@ -329,6 +329,7 @@ Details:
 - missing variable slots are masked out per pair
 - variable text distance uses cosine distance on embeddings
 - identical texts are deduplicated before embedding requests
+- built-in GCA config uses complete-link agglomerative clustering by default to reduce bridge over-merges
 
 Important for `DES_0001`:
 
@@ -342,15 +343,22 @@ Top-level keys:
 - `default_eps`
 - `default_template_weight`
 - `default_variable_weight`
+- `default_clustering_method`
 - `rules`
 
 Per-rule keys:
 
 - `eps`
 - `template_weight`
+- `clustering_method`
 - `variables`
 - `pairwise_tree`
 - `adaptive_eps_tree`
+
+Supported clustering methods:
+
+- `dbscan`: single-link-like connected merging with `eps`
+- `agglomerative_complete`: complete-link agglomerative merging with `eps` as `distance_threshold`
 
 Per-variable keys:
 
@@ -365,10 +373,12 @@ Minimal example:
   "default_eps": 0.2,
   "default_template_weight": 0.3,
   "default_variable_weight": 0.7,
+  "default_clustering_method": "agglomerative_complete",
   "rules": {
     "DES_0001": {
       "eps": 0.15,
       "template_weight": 0.0,
+      "clustering_method": "agglomerative_complete",
       "variables": {
         "0": {
           "weight": 1.0,

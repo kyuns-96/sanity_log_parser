@@ -72,10 +72,12 @@ def test_load_gca_config_with_rules(tmp_path: Path) -> None:
             "default_eps": 0.3,
             "default_template_weight": 0.4,
             "default_variable_weight": 0.6,
+            "default_clustering_method": "agglomerative_complete",
             "rules": {
                 "CGR_0018": {
                     "eps": 0.15,
                     "template_weight": 0.1,
+                    "clustering_method": "dbscan",
                     "variables": {
                         "0": {"weight": 0.7, "levels": [1]},
                         "1": {"weight": 0.2, "levels": [-2, -1]},
@@ -88,10 +90,12 @@ def test_load_gca_config_with_rules(tmp_path: Path) -> None:
     assert cfg.default_eps == 0.3
     assert cfg.default_template_weight == 0.4
     assert cfg.default_variable_weight == 0.6
+    assert cfg.default_clustering_method == "agglomerative_complete"
     assert "CGR_0018" in cfg.rules
     rule = cfg.rules["CGR_0018"]
     assert rule.eps == 0.15
     assert rule.template_weight == 0.1
+    assert rule.clustering_method == "dbscan"
     assert rule.variables[0] == VariableConfig(weight=0.7, levels=[1])
     assert rule.variables[1] == VariableConfig(weight=0.2, levels=[-2, -1])
 
@@ -512,6 +516,35 @@ def test_load_gca_config_partial_rule(tmp_path: Path) -> None:
     cfg = load_gca_config(path, strict=True)
     assert cfg.rules["R001"].eps == 0.1
     assert cfg.rules["R001"].template_weight == 0.5
+
+
+def test_rule_inherits_top_level_clustering_method(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        {
+            "default_eps": 0.2,
+            "default_clustering_method": "agglomerative_complete",
+            "rules": {
+                "R001": {"eps": 0.1},
+            },
+        },
+    )
+    cfg = load_gca_config(path, strict=True)
+    assert cfg.rules["R001"].clustering_method == "agglomerative_complete"
+
+
+def test_strict_invalid_clustering_method(tmp_path: Path) -> None:
+    path = _write_config(
+        tmp_path,
+        {
+            "default_eps": 0.2,
+            "rules": {
+                "R001": {"clustering_method": "single_link"},
+            },
+        },
+    )
+    with pytest.raises(ConfigError, match="clustering_method"):
+        load_gca_config(path, strict=True)
 
 
 # --- Strict validation: numeric (7) ---

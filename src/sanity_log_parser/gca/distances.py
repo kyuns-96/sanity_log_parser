@@ -141,6 +141,7 @@ def compute_distances(
     return {
         "rule_id": rule_id,
         "eps": effective_eps,
+        "clustering_method": rule_config.clustering_method,
         "template_weight": rule_config.template_weight,
         "variables": var_summary,
         "n_groups": n,
@@ -412,7 +413,8 @@ def format_distances(result: dict[str, Any]) -> str:
     lines: list[str] = []
     lines.append(f"Rule: {result['rule_id']}")
     lines.append(
-        f"  eps={result['eps']}  template_weight={result['template_weight']}"
+        f"  eps={result['eps']}  clustering_method={result['clustering_method']}  "
+        f"template_weight={result['template_weight']}"
     )
     for var_idx, var_info in result.get("variables", {}).items():
         w = var_info["weight"]

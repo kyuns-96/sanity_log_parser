@@ -79,6 +79,13 @@ Additional truth about over-merging:
 - `MIN_PRECISION` is a hard eligibility gate for candidate selection
 - candidates below `MIN_PRECISION` must not be selected as the final result
 
+Additional truth about clustering method:
+
+- `clustering_method` controls how Stage 2 consumes the distance matrix
+- `dbscan` can merge through bridge pairs
+- `agglomerative_complete` requires complete-link agreement and is more conservative
+- fitting commands use the method from the current rule config
+
 ## 6. Step 0: Set Paths
 
 Edit these once:

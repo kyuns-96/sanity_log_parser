@@ -9,9 +9,9 @@ from dataclasses import dataclass
 from typing import Any, Callable, Sequence, cast
 
 import numpy as np
-from sklearn.cluster import DBSCAN
 from sklearn.tree import DecisionTreeClassifier
 
+from sanity_log_parser.clustering.ai.methods import fit_precomputed_distance_clusters
 from sanity_log_parser.clustering.ai.pairwise_tree import (
     _build_feature_matrices,
     compute_adaptive_eps_distance_matrix,
@@ -63,6 +63,7 @@ def fit_adaptive_eps_tree(
     min_eps: float = 0.001,
     min_precision: float = 0.0,
     random_state: int = 0,
+    clustering_method: str = "dbscan",
 ) -> AdaptiveEpsFitResult:
     """Fit a compact adaptive-eps tree from labeled logic groups.
 
@@ -140,6 +141,7 @@ def fit_adaptive_eps_tree(
                 leaf_values=leaf_values,
                 round_decimals=round_decimals,
                 min_eps=min_eps,
+                clustering_method=clustering_method,
             )
             tree = _classifier_to_adaptive_eps_tree_from_leaf_values(
                 classifier,
@@ -154,6 +156,7 @@ def fit_adaptive_eps_tree(
                     base_distances,
                     cluster_labels,
                     candidate_tree,
+                    clustering_method=clustering_method,
                 ),
                 metrics,
             )
@@ -223,6 +226,7 @@ def fit_adaptive_eps_tree_approx(
     exact_base_distances: Any | None = None,
     exact_cluster_labels: Sequence[str | int] | None = None,
     min_precision: float = 0.0,
+    clustering_method: str = "dbscan",
 ) -> AdaptiveEpsFitResult:
     if dataset.group_count < 2:
         msg = "at least two rule groups are required"
@@ -284,6 +288,7 @@ def fit_adaptive_eps_tree_approx(
             min_eps=min_eps,
             random_state=random_state,
             started_at=started_at,
+            clustering_method=clustering_method,
         )
     else:
         candidates = _fit_adaptive_eps_tree_approx_parallel(
@@ -295,6 +300,7 @@ def fit_adaptive_eps_tree_approx(
             random_state=random_state,
             jobs=worker_jobs,
             started_at=started_at,
+            clustering_method=clustering_method,
         )
 
     best = _select_best_fit(candidates, min_precision=min_precision)
@@ -311,6 +317,7 @@ def fit_adaptive_eps_tree_approx(
             base_distances=exact_base_distances,
             cluster_labels=exact_cluster_labels,
             min_precision=min_precision,
+            clustering_method=clustering_method,
         )
 
     logger.info(
@@ -442,6 +449,7 @@ def _optimize_leaf_values(
     leaf_values: dict[int, float],
     round_decimals: int,
     min_eps: float,
+    clustering_method: str = "dbscan",
     max_passes: int = 2,
     max_candidates_per_leaf: int = 24,
 ) -> tuple[dict[int, float], dict[str, float]]:
@@ -454,6 +462,7 @@ def _optimize_leaf_values(
         cluster_labels=cluster_labels,
         leaf_assignments=leaf_assignments,
         leaf_values=current_values,
+        clustering_method=clustering_method,
     )
     candidate_values = _build_leaf_candidate_values(
         leaf_assignments=leaf_assignments,
@@ -482,6 +491,7 @@ def _optimize_leaf_values(
                     cluster_labels=cluster_labels,
                     leaf_assignments=leaf_assignments,
                     leaf_values=trial_values,
+                    clustering_method=clustering_method,
                 )
                 if _is_better_metric_scores(trial_metrics, best_metrics):
                     best_value = candidate_value
@@ -543,6 +553,7 @@ def _score_leaf_values(
     cluster_labels: Sequence[str | int],
     leaf_assignments: np.ndarray,
     leaf_values: dict[int, float],
+    clustering_method: str = "dbscan",
 ) -> dict[str, float]:
     predicted = _predict_sparse_cluster_labels(
         group_count,
@@ -551,6 +562,7 @@ def _score_leaf_values(
         pair_distances,
         leaf_assignments,
         leaf_values,
+        clustering_method=clustering_method,
     )
     return _cluster_pair_metrics(cluster_labels, predicted.tolist())
 
@@ -713,20 +725,18 @@ def _score_adaptive_tree(
     base_distances: Any,
     cluster_labels: Sequence[str | int],
     tree: dict[str, object],
+    *,
+    clustering_method: str = "dbscan",
 ) -> dict[str, float]:
     normalized = compute_adaptive_eps_distance_matrix(
         rule_groups,
         base_distances,
         tree,
     )
-    predicted = (
-        DBSCAN(
-            eps=1.0,
-            min_samples=1,
-            metric="precomputed",
-        )
-        .fit(normalized)
-        .labels_
+    predicted = fit_precomputed_distance_clusters(
+        normalized,
+        threshold=1.0,
+        method=clustering_method,
     )
     return _cluster_pair_metrics(cluster_labels, predicted.tolist())
 
@@ -806,6 +816,7 @@ def _fit_adaptive_eps_tree_approx_serial(
     min_eps: float,
     random_state: int,
     started_at: float,
+    clustering_method: str,
 ) -> list[AdaptiveEpsFitResult]:
     best: AdaptiveEpsFitResult | None = None
     candidates: list[AdaptiveEpsFitResult] = []
@@ -821,6 +832,7 @@ def _fit_adaptive_eps_tree_approx_serial(
             round_decimals=round_decimals,
             min_eps=min_eps,
             random_state=random_state,
+            clustering_method=clustering_method,
         )
         candidates.append(candidate)
         if _is_better_fit(candidate, best):
@@ -870,6 +882,7 @@ def _fit_adaptive_eps_tree_approx_parallel(
     random_state: int,
     jobs: int,
     started_at: float,
+    clustering_method: str,
 ) -> list[AdaptiveEpsFitResult]:
     global _approx_fit_worker_data
 
@@ -891,6 +904,7 @@ def _fit_adaptive_eps_tree_approx_parallel(
                     round_decimals,
                     min_eps,
                     random_state,
+                    clustering_method,
                 ): (max_depth, min_samples_leaf)
                 for max_depth, min_samples_leaf in candidate_params
             }
@@ -962,6 +976,7 @@ def _rerank_approx_candidates_exact(
     base_distances: Any,
     cluster_labels: Sequence[str | int],
     min_precision: float,
+    clustering_method: str = "dbscan",
 ) -> AdaptiveEpsFitResult:
     finalists = _select_exact_rerank_finalists(candidates, rerank_top_k)
     logger.info(
@@ -988,6 +1003,7 @@ def _rerank_approx_candidates_exact(
             base_distances,
             cluster_labels,
             candidate.tree,
+            clustering_method=clustering_method,
         )
         logger.info(
             "Adaptive eps approx: finalist %d/%d exact replay F1=%.4f P=%.4f R=%.4f before compaction.",
@@ -1004,6 +1020,7 @@ def _rerank_approx_candidates_exact(
                 base_distances,
                 cluster_labels,
                 candidate_tree,
+                clustering_method=clustering_method,
             ),
             exact_metrics,
         )
@@ -1119,6 +1136,7 @@ def _evaluate_approx_candidate_worker(
     round_decimals: int,
     min_eps: float,
     random_state: int,
+    clustering_method: str,
 ) -> AdaptiveEpsFitResult:
     if _approx_fit_worker_data is None:
         msg = "approximate adaptive-eps worker data is not initialized"
@@ -1131,6 +1149,7 @@ def _evaluate_approx_candidate_worker(
         round_decimals=round_decimals,
         min_eps=min_eps,
         random_state=random_state,
+        clustering_method=clustering_method,
     )
 
 
@@ -1143,6 +1162,7 @@ def _evaluate_approx_candidate(
     round_decimals: int,
     min_eps: float,
     random_state: int,
+    clustering_method: str,
 ) -> AdaptiveEpsFitResult:
     classifier = DecisionTreeClassifier(
         max_depth=int(max_depth),
@@ -1168,6 +1188,7 @@ def _evaluate_approx_candidate(
         leaf_values=leaf_values,
         round_decimals=round_decimals,
         min_eps=min_eps,
+        clustering_method=clustering_method,
     )
     tree = _classifier_to_adaptive_eps_tree_from_leaf_values(
         classifier,
@@ -1222,6 +1243,8 @@ def _predict_sparse_cluster_labels(
     pair_distances: np.ndarray,
     leaf_assignments: np.ndarray,
     leaf_values: dict[int, float],
+    *,
+    clustering_method: str = "dbscan",
 ) -> np.ndarray:
     normalized = np.asarray(
         [
@@ -1230,6 +1253,20 @@ def _predict_sparse_cluster_labels(
         ],
         dtype=np.float32,
     )
+    if clustering_method != "dbscan":
+        matrix = np.full((group_count, group_count), 2.0, dtype=np.float32)
+        np.fill_diagonal(matrix, 0.0)
+        matrix[pair_i, pair_j] = normalized
+        matrix[pair_j, pair_i] = normalized
+        return np.asarray(
+            fit_precomputed_distance_clusters(
+                matrix,
+                threshold=1.0,
+                method=clustering_method,
+            ),
+            dtype=np.int32,
+        )
+
     uf = _UnionFind(group_count)
     active = normalized <= 1.0
     for left, right in zip(pair_i[active], pair_j[active], strict=True):

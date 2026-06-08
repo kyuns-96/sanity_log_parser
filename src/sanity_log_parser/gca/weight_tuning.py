@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 import numpy as np
-from sklearn.cluster import DBSCAN
 
+from sanity_log_parser.clustering.ai.methods import fit_precomputed_distance_clusters
 from sanity_log_parser.gca.adaptive_eps_tuning import (
     compute_rule_base_distance_matrix,
     extract_rule_logic_groups,
@@ -224,11 +224,13 @@ def fit_rule_weights(
             default_eps=gca_config.default_eps,
             default_template_weight=gca_config.default_template_weight,
             default_variable_weight=gca_config.default_variable_weight,
+            default_clustering_method=gca_config.default_clustering_method,
         )
         candidate_config = GcaConfig(
             default_eps=gca_config.default_eps,
             default_template_weight=gca_config.default_template_weight,
             default_variable_weight=gca_config.default_variable_weight,
+            default_clustering_method=gca_config.default_clustering_method,
             rules={rule_id: candidate_rule},
         )
         distances = compute_rule_base_distance_matrix(
@@ -237,11 +239,11 @@ def fit_rule_weights(
             rule_id=rule_id,
             embed_fn=cached_embed_fn,
         )
-        predicted = DBSCAN(
-            eps=float(candidate_rule.eps),
-            min_samples=1,
-            metric="precomputed",
-        ).fit(distances).labels_
+        predicted = fit_precomputed_distance_clusters(
+            distances,
+            threshold=float(candidate_rule.eps),
+            method=candidate_rule.clustering_method,
+        )
         metrics = _cluster_pair_metrics(cluster_labels, predicted)
         score = WeightTuningCandidate(
             raw_rule=candidate_raw,
@@ -634,9 +636,13 @@ def _rule_config_from_raw(
     default_eps: float,
     default_template_weight: float,
     default_variable_weight: float,
+    default_clustering_method: str,
 ) -> GcaRuleConfig:
     eps = float(raw_rule.get("eps", default_eps))
     template_weight = float(raw_rule.get("template_weight", default_template_weight))
+    clustering_method = str(
+        raw_rule.get("clustering_method", default_clustering_method)
+    )
     raw_variables = raw_rule.get("variables", {})
     if not isinstance(raw_variables, dict):
         msg = "Rule 'variables' must be an object."
@@ -657,6 +663,7 @@ def _rule_config_from_raw(
     return GcaRuleConfig(
         eps=eps,
         template_weight=template_weight,
+        clustering_method=clustering_method,
         variables=variables,
     )
 
@@ -787,6 +794,7 @@ def _is_better_weight_candidate(
 def _format_rule_summary(rule_raw: dict[str, Any]) -> str:
     template_weight = float(rule_raw.get("template_weight", 0.0))
     eps = float(rule_raw.get("eps", 0.0))
+    method = str(rule_raw.get("clustering_method", ""))
     variable_parts: list[str] = []
     raw_variables = rule_raw.get("variables", {})
     if isinstance(raw_variables, dict):
@@ -807,7 +815,11 @@ def _format_rule_summary(rule_raw: dict[str, Any]) -> str:
             variable_parts.append(
                 f"var{key}={mode},w={float(value.get('weight', 0.0))}{level_str}"
             )
-    return f"eps={eps} template_weight={template_weight} {' '.join(variable_parts)}".strip()
+    method_part = f"clustering_method={method} " if method else ""
+    return (
+        f"eps={eps} template_weight={template_weight} "
+        f"{method_part}{' '.join(variable_parts)}"
+    ).strip()
 
 
 def _is_int_string(value: str) -> bool:

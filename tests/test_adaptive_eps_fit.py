@@ -233,7 +233,10 @@ def test_rerank_approx_candidates_exact_prefers_precision(
         _base_distances: object,
         _cluster_labels: tuple[int, ...],
         tree: dict[str, object],
+        *,
+        clustering_method: str = "dbscan",
     ) -> dict[str, float]:
+        assert clustering_method == "dbscan"
         value = cast(tuple[dict[str, object], ...], tree["nodes"])[0]["value"]
         if value == 0.1:
             return {"precision": 0.80, "recall": 0.95, "f1": 0.87}
@@ -307,11 +310,13 @@ def test_fit_adaptive_eps_tree_approx_uses_exact_rerank_when_enabled(
         base_distances: object,
         cluster_labels: Sequence[int],
         min_precision: float,
+        clustering_method: str = "dbscan",
     ) -> AdaptiveEpsFitResult:
         called["count"] = len(candidates)
         called["top_k"] = rerank_top_k
         called["labels"] = tuple(cluster_labels)
         called["min_precision"] = min_precision
+        called["clustering_method"] = clustering_method
         return expected
 
     monkeypatch.setattr(
@@ -335,6 +340,7 @@ def test_fit_adaptive_eps_tree_approx_uses_exact_rerank_when_enabled(
     assert called["top_k"] == 2
     assert called["labels"] == (0, 1)
     assert called["min_precision"] == 0.0
+    assert called["clustering_method"] == "dbscan"
     assert result == expected
 
 

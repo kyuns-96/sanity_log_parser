@@ -79,10 +79,12 @@ def fit_adaptive_eps_rule(
         ground_truth_data=ground_truth_data,
         rule_id=rule_id,
     )
+    rule_config = get_gca_rule_config(gca_config, rule_id)
     logger.info(
-        "Adaptive eps fit '%s': mode=%s, groups=%d, features=%d.",
+        "Adaptive eps fit '%s': mode=%s, clustering_method=%s, groups=%d, features=%d.",
         rule_id,
         fit_mode,
+        rule_config.clustering_method,
         len(rule_groups),
         len(feature_defs),
     )
@@ -103,6 +105,7 @@ def fit_adaptive_eps_rule(
             round_decimals=round_decimals,
             min_eps=min_eps,
             min_precision=min_precision,
+            clustering_method=rule_config.clustering_method,
         )
     elif fit_mode == "approx":
         dataset = build_sparse_adaptive_eps_dataset(
@@ -134,6 +137,7 @@ def fit_adaptive_eps_rule(
             exact_base_distances=exact_base_distances,
             exact_cluster_labels=cluster_labels,
             min_precision=min_precision,
+            clustering_method=rule_config.clustering_method,
         )
     else:
         msg = f"Unsupported adaptive eps fit mode: {fit_mode}"

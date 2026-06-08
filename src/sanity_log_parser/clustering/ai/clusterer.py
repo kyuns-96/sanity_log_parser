@@ -17,6 +17,11 @@ from sanity_log_parser.gca.config import (
 )
 from sanity_log_parser.patterns import VAR_PATTERN
 from .weights import select_levels
+from .methods import (
+    fit_precomputed_distance_clusters,
+    get_agglomerative_factory,
+    get_dbscan_factory,
+)
 from .pairwise_tree import (
     compute_adaptive_eps_distance_matrix,
     compute_pairwise_tree_distance_matrix,
@@ -41,14 +46,6 @@ def _get_sentence_transformer_factory() -> Any | None:
         return None
 
 
-@lru_cache(maxsize=1)
-def _get_dbscan_factory() -> Any | None:
-    try:
-        return import_module("sklearn.cluster").DBSCAN
-    except ImportError:
-        return None
-
-
 class AIClusterer:
     def __init__(
         self,
@@ -62,7 +59,8 @@ class AIClusterer:
         self.ai_available: bool = False
         self.gca_config = gca_config
         self.embed_batch_size = embed_batch_size
-        self.dbscan_factory = _get_dbscan_factory()
+        self.dbscan_factory = get_dbscan_factory()
+        self.agglomerative_factory = get_agglomerative_factory()
 
         embeddings_config = load_embeddings_config(
             config_path=embeddings_config_file,
@@ -233,14 +231,18 @@ class AIClusterer:
                     rule_groups,
                     rule_config.pairwise_tree,
                 )
-                clustering = self.dbscan_factory(
-                    eps=rule_config.eps,
-                    min_samples=1,
-                    metric="precomputed",
-                ).fit(distance_matrix)
+                labels = fit_precomputed_distance_clusters(
+                    distance_matrix,
+                    threshold=rule_config.eps,
+                    method=rule_config.clustering_method,
+                    dbscan_factory=self.dbscan_factory,
+                    agglomerative_factory=getattr(
+                        self, "agglomerative_factory", None
+                    ),
+                )
                 new_groups, group_counter = self._build_cluster_results(
                     rule_id,
-                    clustering.labels_,
+                    labels,
                     rule_groups,
                     group_counter,
                 )
@@ -338,9 +340,9 @@ class AIClusterer:
                     distance_matrix,
                     rule_config.adaptive_eps_tree,
                 )
-                dbscan_eps = 1.0
+                threshold = 1.0
             else:
-                dbscan_eps = rule_config.eps
+                threshold = rule_config.eps
             logger.info(
                 "[timing] distance matrix for '%s' (%d groups): %.3fs",
                 rule_id,
@@ -348,21 +350,24 @@ class AIClusterer:
                 time.perf_counter() - dm_t0,
             )
 
-            dbscan_t0 = time.perf_counter()
-            clustering = self.dbscan_factory(
-                eps=dbscan_eps,
-                min_samples=1,
-                metric="precomputed",
-            ).fit(distance_matrix)
+            clustering_t0 = time.perf_counter()
+            labels = fit_precomputed_distance_clusters(
+                distance_matrix,
+                threshold=threshold,
+                method=rule_config.clustering_method,
+                dbscan_factory=self.dbscan_factory,
+                agglomerative_factory=getattr(self, "agglomerative_factory", None),
+            )
             logger.info(
-                "[timing] DBSCAN for '%s': %.3fs",
+                "[timing] %s clustering for '%s': %.3fs",
+                rule_config.clustering_method,
                 rule_id,
-                time.perf_counter() - dbscan_t0,
+                time.perf_counter() - clustering_t0,
             )
 
             new_groups, group_counter = self._build_cluster_results(
                 rule_id,
-                clustering.labels_,
+                labels,
                 groups_by_rule[rule_id],
                 group_counter,
             )
