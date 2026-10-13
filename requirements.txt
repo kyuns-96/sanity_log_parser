@@ -1,0 +1,6 @@
+psycopg[binary]==3.3.6
+typing_extensions==4.16.0
+httpx==0.28.1
+python-dotenv==1.2.4
+fastapi==0.143.0
+uvicorn==0.54.0

@@ -1,0 +1,31 @@
+__pycache__/
+*.py[cod]
+demo-output*/
+.coverage
+.venv/
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+test-results/
+playwright-report/
+.sites-runtime/
+
+# Private connection instructions and local credentials must never be published.
+/dbaccess.md
+*.pem
+*.key
+*.cer
+*.crt
+*.p12
+*.pfx
+
+# Editor recovery files, local settings, logs and generated screenshots.
+*.swp
+*.swo
+*~
+.DS_Store
+*.local
+*.log
+artifacts/
