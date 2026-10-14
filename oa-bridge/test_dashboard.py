@@ -28,7 +28,7 @@ from sanity_exchange import respond_evidence
 from tests_support import PgTestCase
 
 TOKEN = "synthetic-dashboard-test-token-not-a-secret"
-SETTINGS = {"SANITY_DASHBOARD_TOKEN": TOKEN, "SANITY_DASHBOARD_REVIEWER": "test-reviewer"}
+SETTINGS = {"SANITY_AUTH_MODE": "local_token", "SANITY_DASHBOARD_TOKEN": TOKEN, "SANITY_DASHBOARD_REVIEWER": "test-reviewer"}
 
 
 class DashboardBoundaryTests(unittest.TestCase):
@@ -187,7 +187,7 @@ class DashboardDatabaseTests(PgTestCase):
         self.assertEqual({"code": "STATE_CORRUPT"}, result.json())
         self.assertEqual(1, self.admin_query("SELECT count(*) FROM {oa} WHERE record_type='REVIEW_EVENT'").fetchone()[0])
 
-    def test_evidence_is_requested_through_db_and_never_auto_approved(self):
+    def test_out_of_scope_evidence_is_rejected_without_changing_review(self):
         self.receive()
         request_id = str(uuid.uuid4())
         command = {"unit_id": "u-numeric", "record_ids": ["r-1"], "reason": "추가 확인", "request_id": request_id}

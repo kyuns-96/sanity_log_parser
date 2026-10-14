@@ -6,15 +6,15 @@ import hashlib
 import uuid
 
 from sanity_common import ReviewError, canonical_json
-from sanity_config import load_environment, access_mode
+from sanity_config import load_environment, access_mode, postgres_parameters
 
 try:
-    import psycopg
-    from psycopg import sql
-    from psycopg.rows import dict_row
-    from psycopg.types.json import Jsonb
+    import psycopg2
+    from psycopg2 import sql
+    from psycopg2.extras import RealDictCursor, Json
+    from sanity_postgres import connect
 except ImportError:
-    psycopg = None
+    psycopg2 = None
 
 TABLES = {"vwp": "sanity_vwp_data", "oa": "sanity_oa_data",
           "vwp_to_oa": "sanity_vwp_to_oa", "oa_to_vwp": "sanity_oa_to_vwp"}
@@ -23,7 +23,7 @@ MAX_BYTES = 64 * 1024 * 1024
 
 def json_value(value):
     canonical_json(value)
-    return Jsonb(value, dumps=lambda obj: canonical_json(obj).decode("utf-8"))
+    return Json(value, dumps=lambda obj: canonical_json(obj).decode("utf-8"))
 
 
 def stable_uuid(*parts):
@@ -51,11 +51,9 @@ class Database:
             # Do not silently weaken locks, atomic commits or role checks, or fall back to a DSN.
             raise ReviewError("DBAAS_SQL_CONTRACT_REQUIRED",
                 "DBaaS HTTP access is configured separately; bridge storage needs the query and transaction contract")
-        if psycopg is None:
+        if psycopg2 is None:
             raise ReviewError("DATABASE_DRIVER_MISSING", "Install requirements.txt in the application environment")
-        dsn = settings.get(f"SANITY_{side.upper()}_DSN")
-        if not dsn:
-            raise ReviewError("DATABASE_NOT_CONFIGURED", f"Set SANITY_{side.upper()}_DSN; there is no local fallback")
+        params = postgres_parameters(settings, side)
         schema = settings.get("SANITY_DB_SCHEMA", "public")
         if not schema or len(schema.encode()) > 63 or "\x00" in schema:
             raise ReviewError("DATABASE_CONFIG", "Invalid database schema")
@@ -63,8 +61,8 @@ class Database:
         self.tables = {key: sql.Identifier(schema, name) for key, name in TABLES.items()}
         self.conn = None
         try:
-            self.conn = psycopg.connect(dsn, autocommit=True, row_factory=dict_row, connect_timeout=10,
-                                        application_name=f"sanity-{side}-bridge")
+            self.conn = connect(**params, autocommit=True, cursor_factory=RealDictCursor, connect_timeout=10,
+                                application_name=f"sanity-{side}-bridge")
             self.conn.execute("SET statement_timeout = '60s'")
             self.conn.execute("SET lock_timeout = '5s'")
             self.conn.execute("SET idle_in_transaction_session_timeout = '60s'")
@@ -72,9 +70,9 @@ class Database:
         except ReviewError:
             self.close()
             raise
-        except psycopg.Error as exc:
+        except psycopg2.Error:
             self.close()
-            raise ReviewError("DATABASE_UNAVAILABLE", "Cannot open a compatible PostgreSQL connection") from exc
+            raise ReviewError("DATABASE_UNAVAILABLE", "Cannot open a compatible PostgreSQL connection") from None
 
     def _check_contract(self):
         role = self.conn.execute("SELECT oid, rolsuper, rolcreaterole, rolbypassrls FROM pg_roles WHERE rolname=current_user").fetchone()
@@ -115,12 +113,15 @@ class Database:
             ("oa", ("bundle_id", "review_unit_id"), "record_type", "REVIEW_UNIT"),
             ("oa", ("bundle_id", "review_revision"), "record_type", "REVIEW_EVENT"),
             ("oa", ("bundle_id", "review_revision"), "record_type", "REPORT"),
+            ("oa", ("bundle_id", "review_unit_id", "classification_revision"), "record_type", "CLUSTER_EVENT"),
+            ("vwp_to_oa", ("correlation_id",), "message_type", "CLUSTER_RESULT"),
         ]
         # PostgreSQL's deparsed expressions for the VARCHAR predicates in db/002_indexes.sql.
         # Exact comparison deliberately rejects unrecognized predicates instead of guessing equivalence.
         required = {(TABLES[table], columns, f"(({field})::text = '{value}'::text)")
                     for table, columns, field, value in definitions}
         required.add((TABLES["oa"], ("request_id",), "(request_id IS NOT NULL)"))
+        required.add((TABLES["oa"], ("bundle_id", "review_unit_id", "record_type", "entity_key"), "(entity_key IS NOT NULL)"))
         indexes = self.conn.execute(
             "SELECT t.relname AS table_name, pg_get_expr(i.indpred,i.indrelid) AS predicate, "
             "ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum,position) "
@@ -133,7 +134,7 @@ class Database:
             (self.schema, list(TABLES.values()))).fetchall()
         actual = {(row["table_name"], tuple(row["key_columns"]), row["predicate"]) for row in indexes}
         if not required <= actual:
-            raise ReviewError("DATABASE_SCHEMA", "Required UNIQUE index definitions must match db/002_indexes.sql")
+            raise ReviewError("DATABASE_SCHEMA", "Required UNIQUE indexes must match db/002_indexes.sql and db/004_clustering.sql")
 
     def _check_table_acl(self, oid, name):
         """Check effective column rights too: table-level checks miss direct login grants."""
@@ -187,7 +188,7 @@ class Database:
 
     def __exit__(self, exc_type, exc, tb):
         self.close()
-        if exc is not None and isinstance(exc, psycopg.Error):
+        if exc is not None and isinstance(exc, psycopg2.Error):
             # Do not print driver errors: they can include row contents, hosts or credentials.
             raise ReviewError("DATABASE_ERROR", "PostgreSQL operation failed; no local fallback was used") from exc
 
@@ -248,3 +249,34 @@ class Queue:
             "RETURNING message_id", (status, error_code, status, message["message_id"], message["lease_token"])).fetchone()
         if row is None:
             raise ReviewError("LEASE_LOST", "Message lease expired or was reclaimed; completion was rolled back")
+
+    def renew(self, message, lease_seconds=300):
+        if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
+            raise ReviewError("INVALID_LEASE", "Invalid heartbeat lease")
+        row = self.db.execute(f"UPDATE {self.table} SET lease_expires_at=clock_timestamp()+(%s*interval '1 second'),"
+            "updated_at=clock_timestamp() WHERE message_id=%s AND status='PROCESSING' AND lease_token=%s "
+            "AND lease_expires_at>clock_timestamp() RETURNING message_id",
+            (lease_seconds, message["message_id"], message["lease_token"])).fetchone()
+        if row is None:
+            raise ReviewError("LEASE_LOST", "Expired workers cannot renew a lease")
+
+
+def main(argv=None):
+    import argparse
+    import sys
+    parser = argparse.ArgumentParser(description="Check PostgreSQL connectivity, installed schema and bridge permissions (read-only)")
+    parser.add_argument("command", choices=("check",))
+    parser.add_argument("--side", choices=("vwp", "oa"), required=True)
+    args = parser.parse_args(argv)
+    try:
+        with Database(args.side):
+            pass
+    except ReviewError as exc:
+        print(f"code={exc.code}", file=sys.stderr)
+        return 2
+    print(f"status=CONNECTED backend=POSTGRESQL driver=psycopg2 side={args.side} checks=schema,permissions")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

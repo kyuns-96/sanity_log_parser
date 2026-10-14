@@ -1,30 +1,49 @@
 # 프로토타입 데이터 계약 — PostgreSQL
 
 현재 실행 계약은 같은 PostgreSQL DB의 4개 테이블이다. SQLite와 브리지 간 직접 통신/파일 복사는 사용하지 않는다.
-Python 3.10 이상, 직접 모드는 psycopg, DBaaS 접속은 HTTPX/python-dotenv를 사용한다. DB 신청은 [db/README.md](db/README.md),
+Python 3.10 이상, 직접 모드는 psycopg2, DBaaS 접속은 HTTPX/python-dotenv를 사용한다. DB 신청은 [db/README.md](db/README.md),
 환경 변수·배포 파일·실행 명령은 [README.md](README.md)를 따른다. Jira 조회·게시·시뮬레이터는 폐지했다.
-OA는 React·shadcn 대시보드와 인증된 로컬 FastAPI를 사용한다. 운영 AI는 NOT_CONFIGURED이며 운영 SSO/RBAC는 미구현이다.
+OA는 React·shadcn 대시보드와 인증된 로컬 FastAPI를 사용한다. VWP AI 어댑터의 기본 설정은 disabled다. SSO 인증·사용자 연결 추상 인터페이스는 제공하지만 사내 검증 어댑터와 운영 RBAC는 미구현이다.
 
-접속 방식 정정: [공개용 접속 안내](dbaccess.example.md)의 DBaaS HTTPS API는 **임시 읽기 전용**이다.
+VWP AI의 API·CLI 호출 가능 여부는 사용자에게 확인했다. AI clustering·사람 피드백·지속 그룹·evidence 추가의 목표 계약은
+[요구사항 14절](requirement.md#ai-clustering)에 정리되어 있으며, 이 파일은 현재 구현된 프로토콜을 설명한다.
+새 AI 작업/메시지·분류 개정의 DB 기반은 `db/004_clustering.sql`로 추가한다. 기존 신청 form과 `002`·`003`은 유지한다.
+작업자·분류 개정·분할 전송 API와 화면을 연결했다. OA는 검토 화면이고 AI 분석은 VWP에서만 수행한다.
+실제 사내 API/DB 호환성과 report 사례는 사용자 제공 후 검증한다.
+
+프로젝트·사용자 배정·블록별 버전·PoR의 목표 요구사항은 [15절 명세](requirement.md#dashboard-domain-spec)를 따른다.
+해당 관리 API·DB 레코드와 NET_VER/REVISION/ECO 전송 필드는 아직 이 문서의 현재 구현 계약에 포함되지 않는다.
+
+접속 방식 확정(2026-10-14): 사용자가 psycopg2 직접 PostgreSQL 접속 가능함을 확인했다.
+기본 `SANITY_DB_ACCESS=postgresql`이며 `SANITY_DB_HOST/PORT/NAME/USER_NAME/PASSWORD`,
+`SANITY_DB_SCHEMA`, `SANITY_DB_SSLMODE/SSLROOTCERT`를 각 서버의 비공개 설정에서 읽는다.
+비어 있지 않은 해당 side DSN은 호환성을 위해 연결 필드보다 우선한다. 비밀번호는 문자열 조립 없이 드라이버 인자로 전달한다.
+`sanity_postgres.py`는 psycopg2 커서·트랜잭션/savepoint와 UUID·JSONB·BYTEA 변환을 기존 저장 계약에 연결한다.
+트랜잭션 밖 autocommit, 내부 commit/rollback, 서버 측 커서와 세션 advisory lock을 유지한다.
+직접 접속 성공과 실제 배포 DB의 역할/DDL/트랜잭션 검증 완료는 구분한다.
+[공개용 접속 안내](dbaccess.example.md)의 이전 DBaaS HTTPS API는 **임시 읽기 전용**으로 남는다.
 실제 사내 접속 안내 `dbaccess.md`는 Git 업로드에서 제외한다.
-쓰기·트랜잭션을 포함한 정식 전체 접근 방식은 사용자가 별도로 제공하며, 최종 연결 방식은 아직 확정하지 않는다.
 `sanity_config.py`는 저장소 루트 `.env`/환경변수에서 설정을 읽고 `sanity_dbaas.py`는
 Bearer·사내 CA 검증·trust_env=False·30초 timeout·redirect 금지·응답 크기 제한을 적용한다.
 URL/토큰/CA 경로/서버 오류 본문은 출력하지 않는다. `/api/vi/me`는 `/api/v1/me`의 오타로 해석했다.
 현재 HTTP API는 운영 저장·메시지 등록·DDL 경로가 아니며, 이 API의 쓰기 지원을 전제로 확장하지 않는다.
 따라서 이 문서의 PostgreSQL 원자적 저장/잠금 동작을 HTTP에서 구현했다고 주장하지 않는다.
-`SANITY_DB_ACCESS=dbaas_http`(기본)의 전체 브리지는 DBAAS_SQL_CONTRACT_REQUIRED로 중단하며 DSN fallback은 없다.
-아래 저장 계약의 실행 구현은 `SANITY_DB_ACCESS=postgresql`을 명시한 직접 접속 모드다.
+`SANITY_DB_ACCESS=dbaas_http`를 명시한 전체 브리지는 DBAAS_SQL_CONTRACT_REQUIRED로 중단하며 DSN fallback은 없다.
+아래 저장 계약의 실행 구현은 기본 `SANITY_DB_ACCESS=postgresql` 직접 접속 모드다.
 공통 DBaaS API로 접근하는 HTTPS와 금지된 브리지 상호 간 직접 통신은 구분한다.
 
 ## 모듈과 데이터 소유권
 
 - `vwp-dev/`: VWP 내부 입력 snapshot 생성. DB 계정 불필요.
 - `vwp-bridge/`, `sanity_evidence.py`: 전체 판정, VWP private 근거, 봉인·번들 등록.
+- `sanity_parsers.py`, `site_integration/corporate_parsers.py`: 회사 report 추출 추상 계약·결과 검사와 명시적 registry. 회사 진입점은 `vwp-bridge/corporate_analyze.py`.
 - `oa-bridge/`, `sanity_oa_store.py`: 수신본, 검토 개정, 불변 보고서, 대시보드/API.
 - `oa-bridge/dashboard_api.py`, `oa-bridge/dashboard/`: OA 로컬 인증·조회·수동 수신·검토·근거 요청 UI.
 - `sanity_db.py`: 제한된 계정·유효 권한 검사, 짧은 트랜잭션, 방향별 큐.
-- `sanity_exchange.py`: OA 근거 요청 → VWP 명시적 승인/거부 → OA 응답 수신.
+- `sanity_exchange.py`, `sanity_privacy.py`: OA 원문 요청 → VWP 범위/무결성 확인·자격증명 마스킹 → OA 수신.
+- `sanity_ai.py`, `sanity_cluster_worker.py`: VWP AI 호출·규칙 제안·전체 적용·체크포인트/분할 전송.
+- `sanity_clustering.py`, `sanity_cluster_store.py`: 선언형 규칙·지속 ID·OA 분류 개정·후보 판단·규칙 저장.
+- `sanity_workers.py`: 명시적으로 실행하는 VWP/OA DB polling 프로세스.
 - `sanity_common.py`: 입력/번들/근거 동일성·coverage 검증, 제한된 gzip·JSON, 결정적 보고서 렌더링.
 
 원본 bytes와 JSONB를 혼동하지 않는다. 전송 해시는 `payload_gzip`, 보고서 해시는 `payload_bytes`,
@@ -88,6 +107,45 @@ Two supported report formats:
 An applicable empty report or zero-record results must be incomplete in this prototype.
 Non-applicable units require exclusion `{reason,approved_by,reference}`; no report is needed.
 Never turn failed/missing execution into non-applicable based on observed report absence.
+
+### Company report adapters
+
+The two built-ins retain their contracts. Company formats implement
+`ReportParser.parse(ReportSource, ParseContext)` from `sanity_parsers.py` and are
+explicitly registered in `site_integration/corporate_parsers.py`. The default
+registry is empty; the company stub raises `PARSER_NOT_CONFIGURED`.
+`corporate_analyze.py analyze` injects that registry into the existing analyzer;
+normal `main.py` does not load company code. A plan cannot select Python modules.
+
+Registrations require parser ID, implementation_version, fixed evaluation mode
+(`numeric` or `reported`), item IDs, tool, tool versions and rule versions.
+Duplicate/built-in names and wildcard scopes are rejected; a registered scope
+mismatch stops before DB writes. Reported mode cannot bypass a plan's numerical
+evaluation. Numerical measurements use the existing exact Decimal evaluator.
+
+Adapters emit ordered `ParsedRecord(fields, span, json_pointer=None)`,
+`ReportMetadata(span, kind)`, or `UnparsedRegion(span, reason)` events, then exactly
+one `ParseFinished(declared_records, complete, blockers=())` after reading EOF.
+Spans originate in the common reader; common code derives raw excerpts and JSON
+Pointer content from the source. Omitted/unread bytes become UNKNOWN evidence.
+Completion/count/encoding blockers prevent review completion. Unknown sections
+must not be silently classified as metadata. Empty results remain incomplete;
+zero violations requires an explicitly evidenced result record.
+
+Used registrations are included in the VWP immutable RUN's `parser_contract` and
+payload `producer.parsers` as `{parser_id, implementation_version, evaluation,
+item_ids, tool, tool_versions, rule_versions}`. They participate in analysis and
+bundle IDs; installing/updating an adapter produces a separate immutable analysis.
+No SQL migration or review-status changes are needed. Built-in-only analyses keep
+the original producer/ID contract. Adapter changes must increment implementation_version.
+
+Expected malformed input yields PARTIAL/UNKNOWN evidence. Unexpected adapter
+exceptions/invalid return contracts stop without sealing/enqueueing a success,
+using fixed `PARSER_*` codes without exception text or automatic retries.
+The common UTF-8 reader limits physical lines to 1MiB, raw spans to 64MiB and JSON
+Pointer documents to 16MiB. See [parser handoff](vwp-bridge/PARSER_INTEGRATION.md)
+for field requirements, source coverage and company-only validation. Real reports
+stay inside the company; external Codex debugging uses synthetic inputs only.
 
 ## vwp-bridge payload
 
@@ -177,7 +235,8 @@ VWP→OA 분석 메시지 필드는 다음과 같다.
 완료 갱신은 PROCESSING + 동일 token + 미만료 조건으로만 수행한다.
 0행 갱신이면 LEASE_LOST이며 수신 private 기록과 함께 전체 완료 트랜잭션을 rollback한다.
 의미/무결성 오류는 REJECTED, 일시 DB 장애·프로세스 중단은 lease 만료 후 다음 호출에서 복구한다.
-자동 heartbeat/지속 polling daemon은 없으며 CLI 호출은 한 건 처리한다.
+기존 `receive` CLI는 한 건 처리하며 heartbeat를 사용하지 않는다. 별도 `work` 프로세스는
+분류 큐를 지속 polling하고 VWP 분류 작업은 heartbeat로 lease를 갱신한다.
 
 OA private `sanity_oa_data`의 record_type은 RECEIVED_BUNDLE, REVIEW_UNIT, REVIEW_EVENT, REPORT뿐이다.
 원본 수신 payload와 context={interface:"dashboard-v1",ai:{status:"NOT_CONFIGURED"}},
@@ -217,13 +276,16 @@ OA는 `sanity_oa_to_vwp`에 EVIDENCE_REQUEST를 넣는다.
 - 임의 경로·명령·SQL은 허용하지 않는다. 현재 group/range 선택은 미구현이다.
 - 같은 요청 UUID는 동일 내용과 최초 expires_at을 유지한다. 새 요청은 새 UUID다.
 
-VWP `respond --request-id ... --approve-export|--reject`는 특정 요청만 점유한다.
+VWP `respond --request-id ... [--reject]`는 특정 요청만 점유한다. `work`는 다음 요청을 처리한다.
 유효 기간·봉인된 분석·단위·파일 연결·전체 선택 기록·원문 해시를 검사한다.
-반출 승인을 명시하지 않으면 원문을 내보내지 않는다.
+일반 sanity 원문은 요청별 수동 승인 없이 응답한다. `--approve-export`는 호환용 선택 옵션이다.
 EVIDENCE_RESPONSE의 message_id는 `response-<UUID>`, correlation_id는 요청 message_id다.
 project/run/bundle 일치는 DB FK로도 확인한다. 최종 결과는 FULFILLED/REJECTED/EXPIRED다.
 FULFILLED에만 gzip을 저장하며 내부에는 schema_version, request_id(요청 message_id),
-bundle_id, review_unit_id, records가 있다. 각 record에는 전체 raw와 raw_sha256이 포함된다.
+bundle_id, review_unit_id, records가 있다. 각 record에는 마스킹 후 전체 raw와 raw_sha256,
+VWP 원본의 source_raw_sha256, redacted, redaction_policy=credentials-v1이 포함된다.
+등록된 비밀값·password/token/Authorization·DB URI 암호·private key 패턴을 마스킹하고 private 원문은 수정하지 않는다.
+이는 범용 DLP가 아니다. 분석 번들/분류 입력/출력은 자격증명 감지 시 마스킹으로 identity를 바꾸지 않고 전달을 중단한다.
 최종 응답 등록과 요청 RECEIVED는 같은 트랜잭션이며 부분 성공은 없다.
 
 OA 수신은 요청한 ID 집합과 정확히 일치하는지, source/unit 연결과 원문 해시를 검사한다.
@@ -231,6 +293,19 @@ OA 수신은 요청한 ID 집합과 정확히 일치하는지, source/unit 연�
 근거 수신으로 원래 분석 payload나 사람 검토 판정을 자동 변경하지 않는다.
 
 ## 대시보드 API와 인증
+
+SSO 확장 계약과 사내 구현 방법은 [SSO_INTEGRATION.md](oa-bridge/SSO_INTEGRATION.md)를 따른다.
+기본 `SANITY_AUTH_MODE=local_token`은 아래의 기존 Bearer 방식이다. `sso` 모드에서는 검증된
+`VerifiedIdentity(issuer, subject)`를 `UserDirectory`로 내부 `user_id`에 연결한다.
+`create_app(auth_mode="sso", identity_provider=..., user_directory=..., auth_router=...)`로 주입하며,
+인증 router는 `/auth` 아래에 등록한다. 공급자 실패·미구현 시 로컬 토큰으로 우회하지 않는다.
+
+`GET /api/session`에는 기존 필드 외 `user_id`, `auth_method`, `authorization_ready`를 반환한다.
+SSO 세션은 신원 확인만 지원하며 `writable=false`, `authorization_ready=false`다.
+권한 필터 미구현 상태의 모든 업무 API는 인증 후 `503 AUTHORIZATION_NOT_IMPLEMENTED`로 차단한다.
+인증 실패는 401, 계정 미연결·비활성은 403, 어댑터 미설정·장애는 503이며 고정 code만 반환한다.
+회사 로그인 redirect·callback·세션 생성/폐기와 브라우저 SSO 흐름은 사내 구현 범위다.
+
 
 서버는 python oa-bridge/dashboard_api.py로 실행하며 127.0.0.1:8000에만 bind한다.
 npm ci / npm run build 결과 dist를 같은 origin으로 제공한다. 개발 서버는
@@ -255,10 +330,12 @@ health와 정적 UI는 공개 가능하지만 업무 정보를 제공하지 않�
   reviewer는 요청 본문을 받지 않고 서버 설정을 사용한다.
 - GET /api/bundles/{bundle_id}/report: 현재 개정의 저장된 불변 Markdown 보고서 다운로드.
 - POST /api/bundles/{bundle_id}/evidence:
-  {unit_id,record_ids,reason,request_id:UUID,ttl_seconds}; VWP 반출 승인이 별도로 필요하다.
+  {unit_id,record_ids,reason,request_id:UUID,ttl_seconds}; VWP 작업자가 자동으로 범위/무결성을 검사한다.
 - GET /api/bundles/{bundle_id}/requests: 요청 상태 페이지.
 - POST /api/evidence/{request_id}/receive: 응답 명시적 수신.
 - GET /api/evidence/{request_id}: 검증·수신된 응답의 제한된 원문 미리보기와 잘림 표시.
+- GET /api/evidence/{request_id}/records/{record_id}: 수신된 요청에 포함된 원문만 페이지 조회.
+  start>=0, length 기본 8000·최대 16000자. total_chars·원본/전송본 해시·redacted를 함께 반환한다.
 
 목록 페이지 기본값은 엔드포인트별로 다르며 limit은 최대 100이다. coverage 분모는 화면 페이지와 독립적이다.
 POST는 JSON 객체를 사용하고 추가 필드·잘못된 ID/UUID·범위 밖 수치는 거부한다.
@@ -266,11 +343,98 @@ POST는 JSON 객체를 사용하고 추가 필드·잘못된 ID/UUID·범위 밖
 화면의 합성 demo는 사용자가 명시적으로 진입하는 메모리 상태이며 새로고침 시 초기화한다.
 인증/DB/API 오류에서 demo로 자동 fallback하지 않고 demo 결과를 실제 DB 저장으로 표현하지 않는다.
 
-## 운영 AI 경계
+## VWP AI와 분류 계약
 
-AI는 NOT_CONFIGURED다. 가짜 AI 의견이나 모델 호출 성공을 생성하지 않는다.
-개발 협업용 내부 AI와 운영 API는 별개이며 운영 모델 연동은 후속 범위다.
-Jira 맥락 조회·후보 fixture·게시 API는 현재 프로토콜에서 제거했다.
+`SANITY_AI_MODE=api|cli`와 모델을 명시해야 한다. 미설정은 AI_NOT_CONFIGURED 실패이며 합성 응답으로 대체하지 않는다.
+URL은 전체 HTTPS 주소, token은 Bearer, CA는 선택적인 절대 PEM 경로다. redirect·환경 proxy·자동 재시도·API→CLI 우회는 없다.
+HTTPX I/O timeout은 1~600초(기본 120)이고 응답 chunk마다 경과 시간도 검사한다. 엄격한 전체 wall-clock deadline과 동일하지 않다.
+입력 512KiB·출력 128KiB를 제한하고 원격 오류 본문/접속값은 노출하지 않는다.
+
+OpenAI 공식 [Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)와
+[Responses 전환 문서](https://developers.openai.com/api/docs/guides/migrate-to-responses)의 wire 형식을 따른다.
+내부 서버의 지원 범위는 아직 확인되지 않았다.
+
+- `SANITY_AI_API=chat_completions`: model/stream=false/messages(system,user). 선택 JSON 모드는 response_format.type=json_object.
+  choices 한 개, finish_reason=stop, refusal 없음, message.content의 strict JSON만 허용한다.
+- `SANITY_AI_API=responses`: model/stream=false/input/store=false. 선택 JSON 모드는 text.format.type=json_object.
+  status=completed와 message/output_text를 확인한다. 미완료·refusal·중복 키·비정상 수치·잘린 JSON을 거부한다.
+- CLI: 절대 argv 배열, shell=false, stdin JSON과 stdout strict JSON. DB/dashboard 환경변수는 전달하지 않고
+  PATH/LANG/LC_ALL/TMPDIR 및 선택 AI token만 전달한다. stderr는 버리고 timeout/초과 출력 시 자식 프로세스 그룹을 종료한다.
+
+AI 논리 출력은 `{schema_version:1,rules:[...],explanation,needs_clarification:boolean}`이다.
+규칙은 `{identity_fields:[...],where:{...},reason,evidence_ids:[...]}`이며 코드/스크립트는 허용하지 않는다.
+필드는 object/check_point/mode/code/severity/observed/expected/unit만 허용하고 code/severity 외 식별 필드를 최소 하나 요구한다.
+where는 정확한 scalar 일치이고 필수 identity 누락·상충하는 규칙은 UNDECIDED로 남긴다.
+AI 근거 ID는 입력 표본에 속해야 하고 사용자가 준 규칙의 근거도 같은 scope의 봉인된 VWP 근거여야 한다.
+
+scope는 project/design/stage/tool/tool_version/item_id/parser/rule_version/condition의 정확한 조합이다.
+rule ID는 scope+identity_fields+where, 지속 group ID는 rule ID+identity로 결정한다. 설명/근거 추가만으로 ID가 바뀌지 않는다.
+규칙 의미/범위가 바뀌면 ID가 바뀌므로 의미 기반 그룹 연속성이나 임의 merge/split을 자동 추정하지 않는다.
+
+### DB 작업과 누락 검증
+
+OA가 `CLUSTER_REQUEST`, message_id=`cj-<요청 UUID>`, TTL 24시간을 등록한다. payload는
+schema_version/job_id/bundle_id/unit_id/scope/base_revision/base_job/rules/known_groups/command를 포함한다.
+새 요청은 `catalog_exclusions`도 보존한다. 각 항목은 group_id/group_revision/source_bundle/source_unit/source_job/reason이며,
+비교 소스에서 제외한 과거 확정본을 설명한다. 이전 요청의 이 필드가 없으면 빈 목록으로 조회한다.
+command는 request_id/expected_revision/instruction/rules(명시 수정 또는 null)/mode(AUTO|AI|RULES)/reviewer다.
+UUID 재전송은 최초 내용/만료를 유지한다. active 분류 규칙→저장된 scope 규칙 순으로 재사용한다.
+
+VWP는 lease와 job advisory lock을 사용하며 전체 기록을 스캔해 최대 64건/128KiB의 결정적 표본을 만든다.
+미분류를 우선하고 개별 표본 2KiB 초과는 생략 수에 기록한다. 표본 크기·누락·방법은 provenance에 남는다.
+규칙만으로 모두 배정되고 피드백이 없으면 AUTO는 AI를 호출하지 않는다. AI는 모든 원문을 읽은 것으로 표시하지 않는다.
+AI 호출 직전 ai_calling을 영속화하고 DB 트랜잭션 밖에서 호출한다. 대기 중 20초마다 lease를 갱신한다.
+중단으로 응답 여부가 불확실하면 AI_OUTCOME_UNKNOWN으로 종료하고 같은 작업에서 자동 호출하지 않는다.
+
+전체 기록에 규칙을 적용한 `CLUSTER_PART`는 최대 128건/구성원 약 512KiB(+header 최대 64KiB)이며 gzip/hash를 사용한다.
+private 조각·공유 메시지·마지막 record ID 체크포인트를 같은 트랜잭션으로 저장한다. 확정 header 이후 중단은 AI 재호출 없이 재개한다.
+header는 scope_hash/rules/provenance/explanation/needs_clarification이다.
+member는 원본 record/file/unit/index, 판정, 정규화 fields/location, 소속/규칙/identity/method/reason,
+연관 후보 배열과 비교 방법/비교 그룹 수를 포함한다. raw는 별도 원문 요청으로 가져온다.
+최종 `CLUSTER_RESULT`는 COMPLETE/FAILED, 조각 수와 COMPLETE일 때 순서별 누적 해시·header를 포함한다.
+
+OA는 header 일관성, 원본 ID 공식/범위, 조각 간 중복, 순서/누적 해시, 전체 건수와 PASS/FAIL/UNKNOWN 건수,
+`분류 대상=배정+미분류`를 검증하고 소속/후보를 동일한 순수 함수로 재계산한다.
+최종 메시지가 먼저 와도 누락 조각이 있으면 RECEIVING이다. 오류 조각은 REJECTED로 기록하며 남은 기록을 임의로 완료하지 않는다.
+READY는 전체 전송/계산 검증 완료이지 사람 확정이 아니다. FAILED/REJECTED/NEEDS_CLARIFICATION은 적용할 수 없다.
+
+### OA 조작과 후보 경계
+
+공통 경로는 `/api/bundles/{bundle_id}/units/{unit_id}/clustering`이다.
+
+- GET: 작업 목록/phase/표본 provenance/개정/최근 50개 이벤트/저장 규칙/입력 차단 사유와 작업별 catalog_exclusions.
+- POST: `{request_id,expected_revision,instruction,rules,mode}`. 서버 고정 reviewer를 사용한다.
+- GET `/{jid}/members`: offset/limit, filter=all|unresolved|candidates, 선택 group_id. 이전 job 소속과 변경 여부도 반환한다.
+- POST `/{jid}/receive`: 빈 JSON, 해당 job의 메시지만 최대 20개 수신. 또는 OA `work` 프로세스를 사용한다.
+- POST `/actions`: `{request_id,expected_revision,action,job_id,reason,record_id?,group_id?,decision?}`.
+
+APPLY는 기준 개정이 현재와 같을 때만 현재 분류를 바꾸고 확정을 해제한다.
+CONFIRM은 미분류 없음·전체 입력 완료·미해결 후보 없음·참조 개정 유효가 필요하다.
+SAVE_RULES는 현재 확정 후 별도로 실행하고 정확한 scope의 다음 run에 재사용한다.
+DEFER는 현재 활성 READY 작업의 확정을 해제하며 참조가 오래되었거나 순환 참조가 있어도 허용한다.
+기대 개정·요청 UUID·사유 검증은 그대로 적용하고, 다른 작업을 보류하거나 이를 승인 경로로 사용하지 못한다.
+각 동작은 별도의 classification_revision·불변 CLUSTER_EVENT로 기록하며 sanity review_revision/REPORT는 바꾸지 않는다.
+
+현재 FAIL 그룹 기준은 다른 번들에서 사람이 분류 확정했고 FAIL 구성원이 존재하는 그룹이다. 독립 FAIL 태그 UI는 후속이다.
+한 scope 최대 100그룹을 정확한 필드로 대조하고 초과 시 CATALOG_LIMIT로 실패한다. top-1 확률 선택이나 의미 검색이 아니다.
+새 요청은 각 지속 그룹의 발생을 최신순으로 확인하여 현재 확정·참조가 유효하고 요청 대상에 직·간접 의존하지 않는 소스를 선택한다.
+최신 소스가 `STALE_REFERENCE` 또는 `SELF_DEPENDENCY`이면 제외 사유/원본 개정을 기록하고 같은 그룹의 다른 번들에서 더 이전의 유효한 발생을 찾는다.
+유효한 소스가 없으면 그 그룹을 known_groups에 넣지 않는다. 자기 자신에 의존하는 후속 분류를 제외하여 A→B→A 재검토의 순환을 막는다.
+과거의 비활성 개정을 다시 활성화하거나 제외된 소스의 확정을 자동 복구하지 않는다. 비교 건수는 known_groups 기준이고 제외된 확정본의 비교 완료를 뜻하지 않는다.
+소스 조회는 32건씩 keyset 페이지로 수행한다. 한 요청에서 최대 1,000개 그룹 발생을 확인하며 초과하거나 의존 검증 상한을 넘으면
+CATALOG_LIMIT로 전체 요청을 거부한다. 후보/제외 내역을 크기 제한에 맞추려고 조용히 잘라내지 않는다.
+code/severity만 일치하는 것은 후보 근거로 부족하며 identity의 명확한 차이는 제외한다. 일부 필드가 없으면 NEEDS_EVIDENCE다.
+각 후보에 source_bundle/unit/job, group_revision, identity·일치/차이/누락 필드·FAIL 근거 최대 3개를 둔다.
+PASS 기록에도 후보를 표시하지만 소속은 NOT_TARGET로 남는다. CANDIDATE 결정은 CONFIRM_MATCH/DIFFERENT/DEFER이며
+연관 확인은 소속 이동이나 개별 판정 변경이 아니다. DEFER/미판단은 확정을 막는다.
+참조 그룹 개정이 바뀌면 needs_recheck를 표시하고 적용/확정/규칙 저장을 거부하여 새 요청을 요구한다.
+참조 그룹이 의존한 이전 분류 참조도 대조하며 최대 1,000개 의존 snapshot을 넘으면 유효하다고 선언하지 않는다.
+이전 코드에서 생성한 순환 참조 작업도 적용/확정/규칙 저장을 거부한다. 이미 적용된 작업은 보류하거나 최신 후보로 새 요청을 만들어 복구한다.
+
+현재 루프는 기존 정규화 필드 계약을 사용한다. 회사 파서는 같은 계약으로 연결할 수 있으나 실제 형식은 사내 검증이 필요하다.
+새 파서 자동 생성, 정교한 의미 비교/반례 검색, 임의 구성원 이동,
+그룹 lineage, 수만 report의 성능·운영 인증 검증은 남아 있다. 기존 보고서의 ai=NOT_CONFIGURED는
+봉인된 최초 분석 context이며 별도 분류 job의 모델 호출 provenance와 혼동하지 않는다. Jira는 사용하지 않는다.
 
 ## Coverage and finality
 

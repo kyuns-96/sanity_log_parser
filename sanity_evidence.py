@@ -12,12 +12,14 @@ PRODUCER_VERSION = "postgresql-2"
 
 
 class PgEvidence:
-    def __init__(self, db, manifest):
+    def __init__(self, db, manifest, parser_contract=None):
         self.db, self.run = db, manifest["run"]
         contract = {key: manifest[key] for key in ("run", "inventory", "files", "unexpected_files")}
         contract["files"] = sorted(contract["files"], key=lambda item: item["path"])
         contract["unexpected_files"] = sorted(contract["unexpected_files"])
         contract["producer_version"] = PRODUCER_VERSION
+        if parser_contract:
+            contract["parser_contract"] = parser_contract
         self.analysis_id = stable_uuid("analysis", digest(contract))
         if not db.conn.execute("SELECT pg_try_advisory_lock(%s) AS acquired", (lock_key(self.analysis_id),)).fetchone()["acquired"]:
             raise ReviewError("ANALYSIS_BUSY", "This analysis is already running")
@@ -108,7 +110,7 @@ class PgEvidence:
         groups = []
         current = None
         query = self.db.tables
-        from psycopg import sql
+        from psycopg2 import sql
         with self.db.transaction():
             with self.db.conn.cursor(name="groups_" + uuid.uuid4().hex) as cursor:
                 cursor.itersize = 256
@@ -137,6 +139,9 @@ class PgEvidence:
 
     def seal(self, payload):
         validate_content_id(payload)
+        from sanity_privacy import SecretGuard
+        # Original evidence remains private. Do not leak credentials in legacy bundle examples/fields.
+        SecretGuard().ensure_public(payload)
         expected = {"RUN": 1, "UNIT": self.expected_units, "FILE": self.expected_files,
                     "GROUP": len(payload["finding_groups"]), "EVIDENCE": self.record_count}
         actual = {row["record_type"]: row["n"] for row in self.db.execute(

@@ -1,5 +1,157 @@
 # 프로토타입 구현 검토 기록
 
+## 2026-10-14 사내 item별 report parser 추상 인터페이스·인수인계
+
+- 사용자 결정: 실제 report는 사내 AI/담당자가 사내에서만 열람·검증한다. 현재 Codex는
+  공통 추상 계약·검증·합성 재현을 담당하고 실제 원문을 전달받지 않는다.
+- `sanity_parsers.py`에 `ReportParser`, 읽기 전용 context, source span/reader,
+  추출·metadata·미해석 구간·완료 이벤트와 명시적 registry를 구현했다.
+  공통 코드가 원문 위치/Pointer·EOF·미해석 구간·선언 건수와 기존 Decimal/report 판정을 검사한다.
+  정상 0건은 명시적 근거를 가진 결과 기록으로 남기며 빈 report/0개 기록은 미완료를 유지한다.
+- 회사 구현 지점은 `site_integration/corporate_parsers.py`의 parse/등록과
+  `site_integration/company_parsers/`의 전용 어댑터/테스트다.
+  `vwp-bridge/corporate_analyze.py`로 주입하며 일반 main은 회사 코드를 자동 로드하지 않는다.
+  기본 registry는 비어 있고 미구현 메서드의 `PARSER_NOT_CONFIGURED`를 별도 smoke로 확인했다.
+- 등록은 item·tool·tool/rule version과 고정 판정 방식으로 제한한다. 내장 파서 교체·wildcard를 거부한다.
+  사용한 구현 버전/범위를 불변 RUN 계약과 `producer.parsers`에 포함하여
+  미지원 상태의 과거 분석, 최초 등록, 구현 버전 변경을 각각 별도 분석/번들로 보존한다.
+  예상 밖 어댑터 예외는 고정 코드로 중단하며 원문 예외 출력·자동 재시도·성공 봉인/전송이 없다.
+- `PARSER_INTEGRATION.md`에 필드/반환 계약, 합성 예제, 구현·등록 순서,
+  정상/위반/경계/0건/잘림/형식 변경 검증과 합성 Codex 문의 절차를 제공했다.
+  AGENTS·내부 AI 가이드·요구사항·프로토콜·README의 사내 수정 허용 범위를 함께 맞췄다.
+- 공통 테스트는 수정될 회사 stub/registry에 의존하지 않는다. mock snapshot은 회사
+  구현/등록 파일·company_parsers·비공개 fixture를 수집하지 않음을 별도 회귀로 확인했다.
+- 최종 독립 mock PostgreSQL: **224개 통과, 실패/오류/skip 0개**(52.831초).
+  결과: `/tmp/sanity-mock-pg-8kuba2z3/summary.json`, `tests.json`, `tests.log`.
+  기존 CLI 4개 시나리오와 10,000건/100그룹 파싱·저장(6.792초)도 통과했고 DB는 종료했다.
+  신규 검증은 순수 파서 계약 27개·PostgreSQL 통합 6개·회사 자료 미수집 1개다.
+  원문/판정 저장·OA 수신·결정적 재실행·구현 버전 변경·오류 시 전송 차단을 포함한다.
+- 구문 검사, 문서 링크 검사, `git diff --check` 통과. 기존 사내 설정·SQL·UI·SSO 계약은 유지했다.
+  실제 report/사내 DB/실제 AI를 사용하지 않았으며 현장 어댑터의 의미적 정확성은 사내 검증 대상이다.
+
+## 2026-10-14 전체 검토에서 재현한 원문 작업자·분류 참조 복구 수정
+
+- 기본 VWP 작업자의 `respond_evidence()` 호출이 큐에서 가져온 요청 ID를 응답에 반영하지 않아
+  PostgreSQL CHECK 오류와 `PROCESSING` 잔류를 일으키는 문제를 수정했다. 응답 본문과 correlation_id 모두 점유한 요청 ID를 사용한다.
+  자동 다중 요청 처리·명시 ID 재시도·거부/만료/없는 근거·만료 lease 재점유 후 정상 응답을 회귀로 확인했다.
+- A 확정 → A를 참조한 B 확정 → A 재적용 시 자기 자신에 의존하는 제안이 만들어지는 문제를 수정했다.
+  새 후보 목록은 현재 유효하고 요청 대상에 직·간접 의존하지 않는 소스만 선택하며, 최신 소스가 부적격이면
+  같은 지속 그룹의 다른 번들에서 이전 유효 소스를 찾는다. 제외 소스·개정·사유는 불변 요청과 OA 화면에 남긴다.
+  페이지 경계를 넘는 이전 소스 검색과 상한 초과 시 전체 요청 거부도 확인했다.
+- 이전 코드가 만든 순환 작업의 적용과 오래된 작업의 확정/규칙 저장은 계속 막는다.
+  활성 READY 작업의 보류는 오래된 참조에서도 허용하되 사유·기대 개정·UUID 검증은 유지한다.
+  이미 막힌 작업을 보류 → 새 요청 → 적용/확정으로 복구하고 후속 보고서도 처리하는 시나리오를 검증했다.
+  기존 sanity 판정·봉인 번들·보고서가 변경되지 않는 것을 함께 확인했다.
+- 독립 mock PostgreSQL에서 **190개 통과, 실패/오류/skip 0개**(51.600초).
+  결과: `/tmp/sanity-mock-pg-piqk9mrw/summary.json`, `tests.json`, `tests.log`.
+  CLI 4개 시나리오와 10,000건/100그룹 파싱·저장 검사도 통과했고 mock DB는 종료했다.
+- 별도 포트/결과 폴더에서 브라우저 회귀 **28개 통과**(53.0초).
+  추가 UI 검증은 오래된 작업의 승인 버튼 차단·보류 허용·제외 사유 표시·모바일 폭을 포함한다.
+  결과: `/tmp/sanity-fix-browser-5UrtwV/results.json`. TypeScript/Vite build, `pip check`, `git diff --check` 통과.
+- 신청 form·설치 SQL·4개 테이블·권한·SSO 보호는 변경하지 않았다. 이번 수정용 추가 migration은 없다.
+  사내 DB/실제 AI 호출·실제 `.env` 변경·Git commit/push는 하지 않았다.
+
+## 2026-10-14 내부 AI 작업 경계·디버깅 인계
+
+- `AGENTS.md`와 `INTERNAL_AI_GUIDE.md`에 사내 AI의 파일/메서드 허용 목록, 보호 영역, 완료 기준을 기록했다.
+  회사 SSO/계정 조회·허용된 주입·기존 plan 입력 연결만 제한적으로 맡기며, 공통 parser·분류·DB·권한·UI 변경은 Codex가 담당한다.
+- 자기 어댑터의 예상 밖 오류도 수정/재시도를 멈추고 `WAITING_FOR_CODEX`로 문의하도록 명시했다.
+  비식별 진단 템플릿을 제공하고 자동 연락 경로가 없을 때 사용자가 현재 대화로 중계하도록 했다.
+- 기존 SSO 인수인계의 RBAC·DB·기존 UI 변경 지시를 Codex 후속 작업으로 정정하고 README·요구사항과 일치시켰다.
+  이번 작업은 문서/에이전트 지침만 변경했다. 링크 검사와 `git diff --check`를 통과했으며 실행 코드·DB·AI 테스트는 다시 실행하지 않았다.
+  지침 작성은 파일시스템/병합 권한 강제 설정을 의미하지 않는다.
+
+## 2026-10-14 로컬 mock PostgreSQL 생성·통합 검증
+
+- 실제 사내 DB 연결은 사용자가 사내 배포 후 확인하기로 했으며, 개발 측 검증은 새 로컬 DB에서 수행했다.
+  `db/tests/run_mock.py`는 PostgreSQL 16+ 바이너리로 매번 독립 인스턴스를 만들고 테스트 뒤 종료한다.
+  이번에는 PostgreSQL 16.15/psycopg2 2.9.13, 로컬 소켓, SCRAM 인증과 서로 다른 제한된 VWP/OA 로그인을 사용했다.
+  잘못된 비밀번호의 거부, 양쪽 스키마/권한 확인 및 SQL smoke를 통과했다. TCP 수신은 열지 않았다.
+- 코드/SQL만 별도 작업 폴더에 복사하며 기존 `.env`·사내 접속 문서·실제 report를 복사/조회하지 않는다.
+  부모 프로세스의 DB/AI 설정도 제거한다. 테스트 AI는 FakeAI/HTTPX 모의 응답이며 실제 AI를 호출하지 않았다.
+  환경 격리·비공개 파일 제외·symlink 거부·시작 실패 시 종료 처리의 안전성 테스트도 추가했다.
+- 첫 새 DB 실행에서 163개가 통과했고, 시작 실패 시 정리 처리를 검증하는 테스트를 추가한 뒤 **또 다른 새 DB에서 164개 통과**,
+  실패/오류/skip 각 0개, 회귀 테스트 43.651초를 확인했다.
+  검증에는 원자 저장/rollback·권한 격리·중복 전달·동시 큐 점유·lease 만료/복구·분류와 사람 검토 분리가 포함된다.
+- complete/missing/malformed/unsupported CLI demo를 각각 실행해 보고서를 만들었다.
+  정상 입력도 알려진 FAIL과 사람 검토 대기를 포함하므로 `review=INCOMPLETE`가 예상 결과다.
+  테스트 성공을 합성 sanity 결과의 PASS 또는 사람 검토 완료로 표시하지 않는다.
+- 최종 규모 검사: 합성 numeric 10,000건/100그룹, 전체 evidence 10,000건 저장과 그룹 수 대조 성공,
+  파싱/저장 6.847초, 클라이언트 peak RSS 35,588 KiB, 압축 번들 20,186 bytes.
+  이는 한 로컬 환경의 파싱/저장 측정이며 실제 AI 품질·수만 report 전체 분류 처리량 보증이 아니다.
+- 결과는 실행 시 출력하는 `/tmp/sanity-mock-pg-*/summary.json`, `tests.json`, `tests.log`, `scale.json`과
+  demo별 보고서에 보존한다. 운영 SQL 원본·실제 `.env`·사내 DB는 변경하지 않았다.
+  이번 검증 범위는 DB/Python API이며 브라우저 E2E는 다시 실행하지 않았다.
+
+## 2026-10-14 psycopg2 직접 접속 · 환경변수 설정
+
+- 사용자 확인에 따라 기본 DB 모드를 `postgresql`로 전환하고 드라이버를 `psycopg2-binary 2.9.13`으로 변경했다.
+  `SANITY_DB_HOST/PORT/NAME/USER_NAME/PASSWORD`, 스키마·TLS 설정을 비공개 env에서 읽는다.
+  해당 side의 기존 DSN 우선순위는 유지하고 HTTP/다른 계정/낮은 TLS 수준으로 자동 재시도하지 않는다.
+- `sanity_postgres.py`에 커서 실행, 외부 트랜잭션 보존 및 중첩 savepoint,
+  UUID/JSONB/BYTEA 변환을 연결했다. named cursor와 짧은 트랜잭션·세션 advisory lock을 유지한다.
+  트랜잭션/커서 동작과 타입 등록은 [Psycopg 공식 연결 문서](https://www.psycopg.org/docs/connection.html)와
+  [공식 타입 확장 문서](https://www.psycopg.org/docs/extras.html)를 참고했다.
+- `sanity_db.py check --side vwp|oa`는 연결·설치된 스키마·유효 권한을 읽기 전용으로 확인한다.
+  DSN/비밀번호/드라이버의 서버 상세 오류를 출력하지 않는다. UI에 DB 자격증명을 전달하지 않는다.
+- PostgreSQL 16.15의 전용 로컬 소켓 DB와 서로 다른 제한된 앱 로그인으로
+  `run_tests.py --require-db`: **160개 통과, skip 0개**.
+  추가 13개 테스트는 필드 기반 양쪽 로그인, 환경변수 우선순위/무보간, 특수문자 비밀번호 인자 전달,
+  오류 비노출/재시도 금지, 비밀번호 마스킹, UUID·한글 JSONB·binary roundtrip,
+  중첩/외부 rollback, read-only 격리와 서버 측 커서를 포함한다.
+- `pip check`, 구문 검사, `git diff --check` 통과. 기존 form·`002`·`003` 변경 없음.
+  실제 사내 DB/TLS/계정 권한은 검증하지 않았고 실제 `.env`나 사내 접속값은 수정·출력하지 않았다.
+  이번 변경은 Python DB 계층과 설정/문서/테스트 범위이며 프런트엔드 빌드·브라우저 테스트는 다시 실행하지 않았다.
+
+## 2026-10-13 VWP AI 분류 루프 · OA 조작 · 원문 조회
+
+- `sanity_ai.py`에 OpenAI 호환 Chat Completions/Responses와 선택 CLI 어댑터를 연결했다.
+  공식 요청/응답 형식을 확인했지만 실제 사내 endpoint/model을 호출하지 않았다. 기본 disabled,
+  명시적 설정·strict JSON·근거 ID·크기/TLS/timeout 검사, HTTP 로그 억제, 자동 재시도/CLI 우회 금지를 적용했다.
+- VWP 작업자는 전체 기록 스캔/최대 64건 표본 → AI 선언형 규칙 제안 → 전체 기록 적용 → 분할 전송을 수행한다.
+  AI 호출 동안 트랜잭션을 열지 않고 lease를 갱신한다. 조각/체크포인트를 원자 저장하며 불확실한 AI 호출은 재호출하지 않는다.
+- OA에 작업/조각/구성원/분류 개정/규칙 snapshot을 연결했다. 누락·중복·해시·건수·개별 판정/소속 재계산을 검증한다.
+  초기 규칙 없음, 다음 run의 규칙 재사용, 자연어 피드백, 적용/후보 판단/확정/재사용 저장을 별도 동작으로 구현했다.
+  늦은 결과·기대 개정 충돌·오래된 직접/간접 그룹 참조는 적용/확정을 막는다. 기존 sanity 보고서/검토 개정은 수정하지 않는다.
+- React/shadcn AI 분류 탭은 규칙 JSON 편집, 작업·구성원 페이지, 이전 소속 변화, 모든 FAIL 연관 후보·원문 요청을 제공한다.
+  후보 연관 확인은 실제 소속 변경이나 개별 FAIL 판정이 아니다. PASS 기록에도 후보를 표시하며 미해결 후보는 분류 확정을 막는다.
+- 일반 원문 응답의 요청별 수동 승인을 제거했다. 범위·TTL·봉인·원문 해시 검증은 유지하며 자격증명 마스킹/원본·전송본 해시를 기록한다.
+  OA는 4,000자 미리보기와 기본 8,000자 전체 상세 페이지를 제공한다. 등록 비밀값/명시적 패턴 검사이지 범용 DLP는 아니다.
+- 별도 로컬 PostgreSQL 16.15, 제한된 두 앱 계정으로 `run_tests.py --require-db`: **147개 통과, skip 0개, 73.729초**.
+  새 테스트에는 270건/3조각 중단 후 재개, AI 불확실 결과 재호출 차단, heartbeat 만료/재점유,
+  최종 메시지 선도착, 조각 위조 rollback, 임의 규칙 근거 거부, 실행 간 동일 그룹/후보/참조 변경,
+  원문 자격증명 마스킹·private 바이트 보존, 인증/고정 검토자/상세 원문 범위 검사를 포함한다.
+  API 형식은 HTTPX MockTransport, 모델 제안은 명시적 FakeAI를 사용했다. 실제 AI 정확도 검증이 아니다.
+- TypeScript/Vite build와 `pip check`, `compileall`, `git diff --check` 통과.
+  브라우저 기본/분류 회귀 **10개 통과, 25.3초**. 제안/적용/확정/규칙 저장 분리와 모바일 화면도 확인했다.
+  동시에 진행된 별도 GCA 데모 변경은 보존했다. 공유 Playwright 결과 폴더 충돌이 있어
+  `/tmp/sanity-cluster-browser.kh65to/`의 별도 결과 폴더와 5187 포트로 `e2e/dashboard.spec.ts`를 재검증했다.
+  GCA 전용 테스트 성공을 이 기록으로 주장하지 않는다.
+- 기존 신청 form/002/003은 바이트 단위로 변경하지 않았다. 새 분류 스키마에는 `004_clustering.sql` 적용이 필요하다.
+  사내 DB에 접속/DDL 실행하거나 실제 `.env`의 AI 값을 설정하지 않았으며 Git commit/push도 하지 않았다.
+- 남은 범위: 실제 사내 API/DB/report 검증, 새 파서 생성, 의미 기반 후보 검색·독립 FAIL 태그 정책,
+  임의 구성원 이동/그룹 lineage, 수만 report의 성능 검증, 운영 SSO/RBAC. 현재 후보 비교는 정확한 필드 대조이고 scope당 최대 100그룹이다.
+  최초 분석 번들의 전체 그룹 목록은 여전히 기존 메모리/64MiB 전송 제한을 가진다.
+
+## 2026-10-13 신청 원본 보존 · 분류 DB 증분 변경
+
+- 사용자가 최초 form으로 신청을 완료했다고 확인했다. `db/form/` 4개와 기존
+  `002_indexes.sql`·`003_grants.sql`은 Git 기준 원본과 바이트 단위로 동일하게 유지했다.
+  향후 실수로 신청 원본을 변경하면 실패하도록 SHA-256 고정 검사를 추가했다.
+- `db/004_clustering.sql`을 별도 작성했다. 테이블 4개를 유지하고 OA 컬럼 2개와
+  작업/분류 개정의 CHECK·인덱스를 추가한다. 기존 보고서·근거·메시지·판정 개정은 수정하지 않는다.
+  기존 CHECK 식을 PostgreSQL 파서로 비교해 GUI 제약 이름 차이를 허용하되 정의 불일치는 거부한다.
+  전체 DDL은 한 트랜잭션이며 5초 잠금 대기 제한을 둔다. 실제 적용은 작업 중지·백업 확인 후 owner/DBA가 수행한다.
+- 별도 로컬 PostgreSQL 16.15 DB에서 기존 행이 있는 최초 스키마에 migration을 적용했다.
+  기존 데이터·테이블 OID 보존, 제약 이름 변경, 정의 불일치 시 전체 rollback,
+  재실행 실패 시 보존, 기존 원문 해시/메시지 제약과 제한된 앱 권한을 확인했다.
+- `run_tests.py --require-db`: **124개 통과, skip 0개, 30.783초**.
+  이후 추가한 원본 보존 검사를 포함한 `test_schema.py`: **4개 통과**.
+  `git diff --check` 및 기존 form/002/003의 변경 없음 검사도 통과했다.
+- 이 기록은 DB 기반과 기존 기능 회귀 검증이다. 작성 중인 `sanity_clustering.py`·`sanity_ai.py`는
+  아직 작업자/API/화면에 연결되지 않았으며, 전체 AI 분류 루프나 실제 사내 AI 호출 완료를 의미하지 않는다.
+  사내 DB에는 실행하지 않았고 Git commit/push도 하지 않았다.
+
 ## 2026-10-12 Jira 폐지 · OA 대시보드 전환
 
 - 아직 테이블 신청 전이라는 사용자 확인에 따라 신규 신청 SQL 자체를 정리했다.
@@ -304,3 +456,23 @@ RSS는 Linux `getrusage(RUSAGE_CHILDREN)`의 실행 누적 최대값이다. 단�
 개정 순서 관리와 대규모 결과 분할은 미구현이다. 현재의 Jira 게시 트랜잭션은 로컬
 시뮬레이터 검증이며 실제 Jira의 응답 유실 문제를 해결했다고 간주하지 않는다.
 구체적인 지원 범위와 한도는 [README.md](README.md)에 기록했다.
+
+
+## 2026-10-14 — 사내 SSO 추상 인터페이스와 인수인계
+
+- `sanity_auth.py`의 `SSOIdentityProvider`·`UserDirectory` 추상 계약, 검증된 외부 계정 → 내부 ID 연결,
+  활성/미연결 처리, `local_token`/`sso` 모드 분리와 고정 오류 응답을 추가했다.
+- `corporate_sso.py`는 사내에서 채울 두 메서드를 명시적으로 미구현 상태로 제공하며,
+  `sso_app.py`가 `create_app`에 주입한다. `/auth` router는 UI 정적 mount보다 먼저 등록한다.
+- `/api/session`에서 정규화된 신원을 확인한다. 업무 범위 필터가 없는 현재 API는
+  SSO 신원만으로 접근하지 못하도록 `AUTHORIZATION_NOT_IMPLEMENTED`를 반환한다.
+  기존 토큰 로그인과 서버 고정 검토자 동작은 유지한다.
+- `tests/test_auth.py` 12개, `oa-bridge/test_sso.py` 8개, 기존 dashboard 경계 6개,
+  환경/DB 설정 회귀 30개로 **56개 통과, 실패 0개**를 확인했다.
+  함께 발견된 dashboard PostgreSQL 통합 테스트 7개는 테스트 DB 환경 미설정으로 skip했다.
+- `oa-bridge/dashboard`의 `tsc --noEmit` 통과. 사용자 화면 동작은 변경하지 않았으며 브라우저 테스트는 재실행하지 않았다.
+- 검증 범위: 위조 사용자 헤더·로컬 토큰의 SSO 우회 거부, issuer별 계정 분리, 미연결·비활성·만료 재확인,
+  어댑터 장애·잘못된 반환의 고정 오류 처리, 세션 비밀정보 비노출, 모든 업무 API의 저장소 접근 전 차단,
+  인증 router 연결, 기존 토큰 인증 및 설정 회귀.
+- 실제 사내 SSO/계정 DB, 로그인 callback·서버 세션·프런트엔드 SSO, 프로젝트/블록 RBAC는 검증하지 않았다.
+  사내 구현 순서·계약·작업 요청문은 [SSO_INTEGRATION.md](oa-bridge/SSO_INTEGRATION.md)에 제공한다.

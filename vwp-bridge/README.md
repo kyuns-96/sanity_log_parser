@@ -5,24 +5,44 @@ OA에 전달할 압축 번들은 `sanity_vwp_to_oa`에 등록합니다.
 SQLite·OA 파일 복사·직접 통신은 사용하지 않습니다.
 
 설치·DB 구성·공통 모듈 배포는 [루트 안내](../README.md)를 따릅니다.
-VWP 계정의 `SANITY_VWP_DSN`과 공통 `SANITY_DB_SCHEMA`가 필요하며 OA 계정은 필요하지 않습니다.
+VWP 서버의 비공개 `.env`에 `SANITY_DB_HOST/PORT/NAME/USER_NAME/PASSWORD`와 `SANITY_DB_SCHEMA`,
+TLS 설정을 입력합니다. 사용자/비밀번호는 VWP의 제한된 계정이며 OA 계정은 필요하지 않습니다.
+기존 `SANITY_VWP_DSN`이 비어 있지 않으면 연결 필드보다 우선합니다.
 
-위 설명과 아래 분석 명령은 `SANITY_DB_ACCESS=postgresql`을 명시한 직접 접속 검증 모드입니다.
-[공개용 접속 안내](../dbaccess.example.md)의 DBaaS HTTP는 **임시 읽기 전용**이며 정식 전체 접근 방식은 별도 제공 예정입니다.
-`sanity_dbaas.py check --resources`는 Bearer/CA 기반 읽기 전용 접속을 확인합니다.
-코드·설정 기본값은 그대로이며 HTTP 모드의 분석 저장은 기존처럼 `DBAAS_SQL_CONTRACT_REQUIRED`로 중단합니다.
-이 API를 쓰기용으로 확장하거나 직접 접속으로 자동 우회하지 않습니다.
+사용자가 psycopg2 접속을 확인했으며 기본 `SANITY_DB_ACCESS=postgresql`로 동작합니다.
+기존 `.env`의 `dbaas_http`는 직접 변경해야 합니다. 연결/권한 확인은
+`.venv/bin/python sanity_db.py check --side vwp`로 합니다.
+[공개용 접속 안내](../dbaccess.example.md)의 DBaaS HTTP는 임시 읽기 전용으로만 남습니다.
+명시적 HTTP 모드에서 분석 저장은 `DBAAS_SQL_CONTRACT_REQUIRED`로 중단하며 직접 접속으로 자동 우회하지 않습니다.
 
 ```bash
 .venv/bin/python vwp-bridge/main.py analyze --input /tmp/sanity-source/run.json --out /tmp/sanity-receipt
-.venv/bin/python vwp-bridge/main.py respond --request-id REQUEST_UUID --approve-export
+.venv/bin/python vwp-bridge/main.py respond --request-id REQUEST_UUID
 .venv/bin/python vwp-bridge/main.py respond --request-id REQUEST_UUID --reject
+.venv/bin/python vwp-bridge/main.py work --interval 2
 ```
 
 `analyze --out`은 선택 사항이며 `receipt.json`만 생성합니다.
 분석 전후 파일 크기·해시·상대 경로와 실제 파일 목록을 검사합니다.
 누락·미지원·형식 오류도 예상 단위에 남기며 불완전 결과를 DB에 등록합니다.
 종료 코드 0은 명령 성공이지 sanity PASS나 검토 완료가 아닙니다.
+
+## 사내 item별 report parser
+
+실제 report는 사내에서만 열람·검증합니다. [PARSER_INTEGRATION.md](PARSER_INTEGRATION.md)에
+`ReportParser` 추상 인터페이스, 반환 모델, 구현·등록 순서, 합성 예제와 검증/오류 인계 절차를 제공합니다.
+사내 AI는 `site_integration/corporate_parsers.py`의 추출 메서드/등록과
+`site_integration/company_parsers/`의 전용 구현·테스트만 작성합니다.
+공통 코드가 scope·원문 span·EOF·미해석 구간·전체 건수와 기존 판정을 검증하며
+구현 버전을 불변 분석 계약과 `producer.parsers`에 기록합니다.
+
+```bash
+.venv/bin/python vwp-bridge/corporate_analyze.py analyze --input /path/to/private/run.json --out /path/to/private/receipt
+```
+
+기본 회사 registry는 비어 있으며 stub은 `PARSER_NOT_CONFIGURED`로 실패합니다.
+일반 `main.py`는 회사 코드를 자동 import하지 않습니다. 현장 형식 지원/의미적 정확성은
+사내 어댑터 구현과 비공개 사례 검증 후 확인하며 Codex에게 원문을 전달하지 않습니다.
 
 ## 판정과 동일성
 
@@ -51,13 +71,22 @@ RUN을 SEALED로 바꾸고 번들을 등록하는 작업을 같은 트랜잭션�
 
 ## 추가 근거 반출
 
-OA가 생성한 특정 요청 UUID에 대해서만 `respond`를 실행합니다.
-`--approve-export` 또는 `--reject` 중 하나를 반드시 지정합니다.
+OA가 생성한 특정 요청 UUID에 `respond`를 실행하거나 `work`로 다음 요청을 처리합니다.
+일반 sanity report는 요청별 수동 승인을 요구하지 않습니다. `--reject`는 명시적 거부이고 `--approve-export`는 호환용 선택 옵션입니다.
 유효 기간, 번들·unit·원본 파일·근거 해시를 검사하고 요청한 모든 기록이 있어야 FULFILLED입니다.
 최종 응답 등록과 요청 수신 확인은 원자적으로 처리합니다. 거부/만료 응답은 덮어쓰지 않습니다.
 
-실제 사내 파서·반출 승인 시스템·내부 AI 연동은 미구현입니다.
-분석 요약에는 대표 원문이 포함되므로 해당 내용과 private DB 원문 보관 정책도 먼저 확인해야 합니다.
+등록된 비밀값과 자격증명 패턴을 원문 응답에서 마스킹하고 원본/전송 해시·마스킹 여부를 함께 저장합니다.
+분석 번들과 분류 입력/결과에서 발견한 자격증명은 전달을 중단합니다. 범용 DLP를 구현한 것은 아닙니다.
 원본 snapshot은 현장 보존 정책에 따라 별도로 유지합니다.
+
+## VWP AI 작업자
+
+`work`는 DB의 분류 요청과 원문 요청을 polling하며 `--once`로 한 번만 실행할 수 있습니다.
+비공개 `.env`의 OpenAI 호환 URL/token/model과 명시적인 API 방식으로 연결합니다. 설정은 [루트 안내](../README.md#6-vwp-ai-분류-루프)를 따릅니다.
+AI는 최대 64개 표본으로 선언형 규칙만 제안하고 프로그램이 PASS 포함 전체 기록을 처리합니다.
+분류 결과는 최대 128건/약 512KiB씩 저장·전송하고 체크포인트에서 재개합니다. AI 호출 중 lease는 갱신하되 긴 DB 트랜잭션은 열지 않습니다.
+불확실한 API 결과를 자동 재호출하거나 CLI/합성 결과로 대체하지 않습니다. 확정은 OA의 사람이 합니다.
+실제 사내 API·report 형식·정식 DB 접속 검증은 아직 대기 중입니다.
 
 검증: 루트에서 DB 테스트 설정 후 `.venv/bin/python run_tests.py --require-db`.

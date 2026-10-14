@@ -1,11 +1,13 @@
 export type Coverage = { expected: number; reviewed: number; approved_na: number; unresolved: number; missing: number; review_status: string; check_status: string; global_blockers: string[] }
 export type Decision = { review_unit_id?: string; unit_id?: string; reviewer: string; conclusion: string; reason: string; reviewed_at?: string }
-export type Unit = { review_unit_id: string; item_id: string; report: string; check_status: string; parse_status: string; execution_status: string; applicable: boolean; analysis_ready: boolean; blockers: string[]; record_count: number; evaluated_count: number; rule_version: string; parser?: string; evaluation?: Record<string, unknown>; condition?: Record<string, unknown>; identity_fields?: string[]; decision?: Decision | null }
-export type Bundle = { bundle_id: string; project: string; run_id: string; created_at: string; review_revision: number; coverage: Coverage }
+export type DemoReport = { summary: string; text: string | null; sources: { title: string; url: string; section: string }[] }
+export type Unit = { review_unit_id: string; item_id: string; report: string; check_status: string; parse_status: string; execution_status: string; applicable: boolean; analysis_ready: boolean; blockers: string[]; record_count: number; evaluated_count: number; rule_version: string; parser?: string; evaluation?: Record<string, unknown>; condition?: Record<string, unknown>; identity_fields?: string[]; decision?: Decision | null; demo_report?: DemoReport }
+export type Bundle = { bundle_id: string; project: string; design?: string; run_id: string; created_at: string; review_revision: number; coverage: Coverage }
 export type Detail = { bundle_id: string; run: { run_id: string; project: string; design: string; stage: string; tool: string; tool_version: string }; review_revision: number; coverage: Coverage; units: Unit[]; unit_total: number; unit_offset: number; unit_limit: number; history: { revision: number; actor: string; decisions: Decision[] }[]; history_total: number; context: { ai: { status: string } } }
 export type Example = { record_id: string; file_id: string; line_start: number; line_end: number; raw: string; observed?: number; expected?: number; unit?: string }
 export type Group = { finding_group_id: string; review_unit_id: string; message_code: string; severity: string; identity: Record<string, unknown>; identity_status: string; occurrence_count: number; examples: Example[]; examples_omitted: number; rule_version: string }
 export type EvidenceRequest = { request_id: string; review_unit_id: string; record_ids: string[]; reason: string; status: string; created_at: string; expires_at: string; response_status: string | null; result: string | null }
 export type Evidence = { result: string; records: { record_id: string; raw: string; raw_truncated: boolean }[]; record_count: number }
 export type Page<T> = { items: T[]; total: number; offset: number; limit: number }
-export type Session = { reviewer: string; access_mode: string; writable: boolean; notice: string }
+// Identity fields are optional only for existing browser-demo fixtures.
+export type Session = { user_id?: string; reviewer: string; auth_method?: 'local_token' | 'sso'; authorization_ready?: boolean; access_mode: string; writable: boolean; notice: string }

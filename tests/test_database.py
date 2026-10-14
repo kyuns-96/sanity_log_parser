@@ -15,6 +15,7 @@ from sanity_common import ReviewError, pack_json, unpack_bundle, unpack_json
 from sanity_db import Database, Queue, json_value
 from sanity_exchange import request_evidence, respond_evidence, receive_evidence
 from sanity_oa_store import OAStore
+from sanity_workers import work
 from tests_support import PgTestCase, ROOT
 
 
@@ -29,6 +30,61 @@ oa = module("oa_database_test", "oa-bridge/main.py")
 
 
 class DatabaseTests(PgTestCase):
+    def test_psycopg2_types_and_nested_transactions_preserve_outer_work(self):
+        import psycopg2
+        value = uuid.uuid4()
+        with Database("vwp") as db:
+            self.assertIsInstance(db.conn, psycopg2.extensions.connection)
+            row = db.conn.execute("SELECT %s::uuid AS id, %s::jsonb AS data, %s::bytea AS raw",
+                                  (value, json_value({"한글": [True, None, 3]}), b"\x00\xff")).fetchone()
+            self.assertEqual(value, row["id"])
+            self.assertEqual({"한글": [True, None, 3]}, row["data"])
+            self.assertEqual(b"\x00\xff", row["raw"])
+            self.assertIsInstance(row["raw"], bytes)
+            def enqueue(mid):
+                Queue(db, "vwp_to_oa").enqueue({"message_id": mid, "message_type": "PING", "payload": {},
+                                                "project": "test", "run_id": "nested-test"})
+            with db.transaction():
+                # Nest before the outer context has issued any statement, too.
+                with db.transaction():
+                    enqueue("nested-committed")
+                with self.assertRaises(psycopg2.errors.DivisionByZero), db.transaction():
+                    enqueue("nested-rolled-back")
+                    db.conn.execute("SELECT 1/0")
+            self.assertTrue(db.conn.autocommit)
+            self.assertIsNotNone(Queue(db, "vwp_to_oa").get("nested-committed"))
+            self.assertIsNone(Queue(db, "vwp_to_oa").get("nested-rolled-back"))
+
+    def test_psycopg2_outer_rollback_and_readonly_do_not_leak(self):
+        with Database("vwp") as db:
+            with self.assertRaises(RuntimeError), db.transaction():
+                with db.transaction():
+                    Queue(db, "vwp_to_oa").enqueue({"message_id": "outer-rollback", "message_type": "PING",
+                                                    "payload": {}, "project": "test", "run_id": "test"})
+                raise RuntimeError("synthetic abort")
+            self.assertTrue(db.conn.autocommit)
+            self.assertIsNone(Queue(db, "vwp_to_oa").get("outer-rollback"))
+            with db.transaction(readonly=True):
+                self.assertEqual("on", db.conn.execute("SHOW transaction_read_only").fetchone()["transaction_read_only"])
+                with db.conn.cursor(name="type_test") as cursor:
+                    cursor.execute("SELECT generate_series(1,3) AS n")
+                    self.assertEqual([1, 2, 3], [row["n"] for row in cursor])
+            self.assertEqual("off", db.conn.execute("SHOW transaction_read_only").fetchone()["transaction_read_only"])
+
+    def test_field_based_connection_for_both_restricted_roles(self):
+        from psycopg2.extensions import parse_dsn
+        for side in ("vwp", "oa"):
+            # Synthetic local fixture; prefer its actual password (SCRAM mock).
+            params = parse_dsn(os.environ[f"SANITY_{side.upper()}_DSN"])
+            settings = {"SANITY_DB_HOST": params["host"], "SANITY_DB_PORT": params.get("port", "5432"),
+                        "SANITY_DB_NAME": params["dbname"], "SANITY_DB_USER_NAME": params["user"],
+                        "SANITY_DB_PASSWORD": params.get("password", "synthetic-fixture-password"),
+                        "SANITY_DB_SSLMODE": params.get("sslmode", "disable"), "SANITY_DB_SCHEMA": self.schema}
+            import sanity_db
+            with self.subTest(side=side), patch.object(sanity_db, "load_environment", return_value=settings):
+                with Database(side) as db:
+                    self.assertEqual(params["user"], db.conn.execute("SELECT current_user AS name").fetchone()["name"])
+
     def ping(self, message_id="ping-test"):
         with Database("vwp") as db, db.transaction():
             Queue(db, "vwp_to_oa").enqueue({"message_id": message_id, "message_type": "PING", "payload": {},
@@ -69,7 +125,7 @@ class DatabaseTests(PgTestCase):
         self.assertEqual("DATABASE_PRIVILEGES", err.exception.code)
 
     def test_required_indexes_accept_existing_names(self):
-        from psycopg import sql
+        from psycopg2 import sql
         indexes = self.admin.execute(
             "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
             "WHERE n.nspname=%s AND c.relkind='i'", (self.schema,)).fetchall()
@@ -81,7 +137,7 @@ class DatabaseTests(PgTestCase):
             self.assertIsNotNone(Queue(db, "vwp_to_oa").get("ping-test"))
 
     def test_missing_required_index_is_rejected(self):
-        from psycopg import sql
+        from psycopg2 import sql
         self.admin.execute(sql.SQL("DROP INDEX {}").format(sql.Identifier(self.schema, "sanity_oa_event_uq")))
         with self.assertRaises(ReviewError) as err:
             Database("oa")
@@ -90,7 +146,7 @@ class DatabaseTests(PgTestCase):
 
 
     def test_same_index_name_with_wrong_definition_is_rejected(self):
-        from psycopg import sql
+        from psycopg2 import sql
         cases = [
             "CREATE UNIQUE INDEX sanity_oa_event_uq ON {oa}(bundle_id) WHERE record_type='REVIEW_EVENT'",
             "CREATE UNIQUE INDEX sanity_oa_event_uq ON {oa}(bundle_id,review_revision) WHERE record_type='REVIEW_UNIT'",
@@ -107,7 +163,7 @@ class DatabaseTests(PgTestCase):
                 self.assertEqual("DATABASE_SCHEMA", err.exception.code)
 
     def test_schema_create_right_is_rejected(self):
-        from psycopg import sql
+        from psycopg2 import sql
         self.admin.execute(sql.SQL("GRANT CREATE ON SCHEMA {} TO sanity_vwp_app").format(sql.Identifier(self.schema)))
         with self.assertRaises(ReviewError) as err:
             Database("vwp")
@@ -203,7 +259,7 @@ class DatabaseTests(PgTestCase):
         rid, first = self.request()
         self.assertEqual("REQUESTED", first["status"])
         self.assertEqual("ALREADY_REQUESTED", self.request(rid)[1]["status"])
-        self.assertEqual("FULFILLED", respond_evidence(rid, approve_export=True)["result"])
+        self.assertEqual("FULFILLED", respond_evidence(rid)["result"])
         self.assertEqual("ALREADY_RESPONDED", respond_evidence(rid, approve_export=True)["status"])
         received = receive_evidence(rid, self.out)
         self.assertEqual("FULFILLED", received["result"])
@@ -211,10 +267,56 @@ class DatabaseTests(PgTestCase):
         self.assertTrue(self.out.is_file())
         self.assertEqual("ALREADY_RECEIVED", receive_evidence(rid)["status"])
 
-    def test_evidence_export_requires_approval_and_expiry_is_final(self):
+    def test_default_worker_correlates_each_claimed_evidence_request(self):
+        self.example()
+        requests = {self.request()[0], self.request()[0]}
+        handled = set()
+        for _ in requests:
+            result = work("vwp", once=True)
+            self.assertEqual("FULFILLED", result["result"])
+            rid = result["request_id"]
+            self.assertIn(rid, requests - handled)
+            handled.add(rid)
+            with Database("oa") as db:
+                response = Queue(db, "vwp_to_oa").get("response-" + rid)
+            self.assertEqual("request-" + rid, response["correlation_id"])
+            self.assertEqual(response["correlation_id"], unpack_json(response)["request_id"])
+            self.assertEqual("FULFILLED", receive_evidence(rid)["result"])
+            self.assertEqual("ALREADY_RESPONDED", respond_evidence(rid)["status"])
+        self.assertEqual("NO_MESSAGE", work("vwp", once=True)["status"])
+        self.assertEqual(2, self.admin_query("SELECT count(*) FROM {vwp_to_oa} WHERE message_type='EVIDENCE_RESPONSE'").fetchone()[0])
+
+    def test_default_evidence_polling_rejection_and_expiry_remain_correlated(self):
         self.example()
         rid, _ = self.request()
-        self.assertEqual("REJECTED", respond_evidence(rid)["result"])
+        self.assertEqual("REJECTED", respond_evidence(approve_export=False)["result"])
+        self.assertEqual("REJECTED", receive_evidence(rid)["result"])
+        rid, req = self.request()
+        self.admin_query("UPDATE {oa_to_vwp} SET expires_at=created_at+interval '1 microsecond' WHERE message_id=%s",
+                         (req["message_id"],))
+        self.assertEqual("EXPIRED", work("vwp", once=True)["result"])
+        self.assertEqual("EXPIRED", receive_evidence(rid)["result"])
+        self.record_ids.append("r-missing")
+        rid, _ = self.request()
+        self.assertEqual("REJECTED", work("vwp", once=True)["result"])
+        self.assertEqual("REJECTED", receive_evidence(rid)["result"])
+
+    def test_default_worker_recovers_an_expired_evidence_lease(self):
+        self.example()
+        rid, req = self.request()
+        with Database("vwp") as db:
+            Queue(db, "oa_to_vwp").claim(("EVIDENCE_REQUEST",), req["message_id"])
+        self.admin_query("UPDATE {oa_to_vwp} SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE message_id=%s",
+                         (req["message_id"],))
+        self.assertEqual("FULFILLED", work("vwp", once=True)["result"])
+        self.assertEqual("FULFILLED", receive_evidence(rid)["result"])
+        self.assertEqual(("RECEIVED", 2), self.admin_query("SELECT status,attempt_count FROM {oa_to_vwp} WHERE message_id=%s",
+                                                        (req["message_id"],)).fetchone())
+
+    def test_evidence_explicit_rejection_and_expiry_are_final(self):
+        self.example()
+        rid, _ = self.request()
+        self.assertEqual("REJECTED", respond_evidence(rid, approve_export=False)["result"])
         self.assertEqual("REJECTED", receive_evidence(rid)["result"])
         # New approval must use a new request: a rejected response is immutable.
         self.assertEqual("REJECTED", respond_evidence(rid, approve_export=True)["result"])

@@ -1,15 +1,16 @@
-# PostgreSQL 4개 테이블 신규 생성·설정 안내
+# PostgreSQL 4개 테이블 신청 원본·변경 안내
 
-현재 선택한 구성은 **운영 테이블 4개 모두 신규 생성**이다. 기존 테스트 테이블을 변경하거나 재사용하지 않는다.
+**기존 `db/form/`으로 테이블 신청을 완료한 상태**다. 신청 원본 4개와 `002`·`003`은 그대로 보존한다.
+이후 기능 추가는 별도 증분 변경 SQL로 적용한다. 테이블을 재신청·재생성하거나 기존 데이터를 삭제하지 않는다.
 모든 테이블은 같은 PostgreSQL DB에 있어야 한다. PostgreSQL 16 이상, UTF-8을 전제로 한다.
 별도 스키마·시퀀스·확장 모듈·SQLite·DB 밖의 브리지 간 통신은 요구하지 않는다.
 OA 브라우저의 로컬 API 접속은 브리지 간 통신과 별개다.
 이 문서는 DDL/권한 계약이다. Python 실행 코드도 이 4개 테이블을 사용한다.
-설치·DSN·실행·통합 테스트는 [루트 README](../README.md)를 따른다.
+설치·환경변수 접속 설정·실행·통합 테스트는 [루트 README](../README.md)를 따른다.
 접속 안내 [공개용 설정 문서](../dbaccess.example.md)의 DBaaS HTTP API는 **임시 읽기 전용**이다.
-4개 테이블 설계는 유지하며, 쓰기·트랜잭션을 포함한 정식 전체 접근 방식은 사용자가 별도로 제공한다.
-현재 HTTP 인증·조회 클라이언트와 직접 PostgreSQL 저장 어댑터는 별개다.
-아래 생성·설정 SQL을 임시 HTTP `/query`로 실행하지 않는다. 정식 방식 제공 후 승인된 DDL/권한 적용 경로를 확인한다.
+사용자가 psycopg2 직접 PostgreSQL 접속 가능함을 확인했으며 이 방식을 기본으로 사용한다.
+4개 테이블 설계·신청 원본·기존 SQL은 변경하지 않는다. HTTP 인증·조회 클라이언트와 PostgreSQL 저장 어댑터는 별개다.
+아래 생성·설정 SQL을 임시 HTTP `/query`로 실행하지 않는다. 실제 DBA가 승인한 DDL/권한 적용 경로를 확인한다.
 현재 신청·변경 파일은 이 `db/` 폴더만 사용한다. 이전 신청안과 전용 테스트는 제거했다.
 
 ## 1. 신청 대상과 적용 순서
@@ -21,12 +22,16 @@ OA 브라우저의 로컬 API 접속은 브리지 간 통신과 별개다.
 | `form/*.columns.sql` | 테이블별 컬럼·자료형·기본값·PK/UNIQUE/CHECK 정의. 바깥 `CREATE TABLE`은 없음 | GUI의 **컬럼 정의(SQL)** 입력란 |
 | [002_indexes.sql](002_indexes.sql) | 추가 인덱스·부분 UNIQUE·테이블 간 FK·저장 설정 | 테이블 생성 후 SQL 실행 |
 | [003_grants.sql](003_grants.sql) | VWP/OA 역할별 테이블·컬럼 권한 | 역할 준비 후 SQL 실행 |
+| [004_clustering.sql](004_clustering.sql) | 분류 작업·개정용 컬럼 2개, CHECK 확장, 인덱스 추가 | 기존 테이블의 `002`·`003` 준비 후 owner/DBA가 한 번 실행 |
 
-**GUI에서 `form`으로 4개 생성 → `002` 실행 → 역할 준비 → `003` 실행**이 전체 설치 순서다.
-직접 생성용·예전 설치 보정용 SQL은 제거했다. 남은 실행용 SQL은 위 두 개뿐이며 번호는 그대로 유지한다.
+전체 준비 순서는 **신청한 `form`으로 생성 → `002` → 역할 준비 → `003` → `004`**다.
+이미 완료한 단계는 반복하지 않는다. 생성·`002`·`003`까지 완료했다면 **`004`만 실행**한다.
 `tests/`는 개발자용 로컬 검증 도구이며 DB 신청이나 운영 설치 시 실행할 파일이 아니다.
+사내 DB 없이 새 합성 DB를 만드는 명령은 `.venv/bin/python db/tests/run_mock.py`다.
+PostgreSQL 16+ 서버 바이너리가 필요하며, 별도 로컬 소켓 DB 생성·권한/회귀 테스트·종료를 수행한다.
+기존 DB와 `.env`는 사용하지 않는다. 자세한 전제와 결과 파일은 [검증 안내](../README.md#7-합성-demo와-검증)를 따른다.
 
-### GUI 신청 절차
+### 최초 신청 원본과 생성 이후 절차
 
 | 테이블 이름 | 컬럼 정의(SQL)에 붙여 넣을 파일 |
 |---|---|
@@ -36,26 +41,57 @@ OA 브라우저의 로컬 API 접속은 브리지 간 통신과 별개다.
 | `sanity_oa_to_vwp` | [컬럼 정의](form/sanity_oa_to_vwp.columns.sql) |
 
 1. 실제 DB/스키마, 테이블 owner, VWP/OA의 서로 다른 로그인 계정을 확인한다.
-2. 위 테이블 4개를 각각 새로 신청한다. 각 `.columns.sql`의 **전체 내용만** 컬럼 입력란에 붙여 넣는다.
-   `CREATE TABLE`, 바깥 괄호, 코드펜스는 추가하지 않는다. 기존 테스트 테이블은 변경·삭제하지 않는다.
+2. 위 표는 이미 신청한 원본의 위치다. 현재 사용자는 재신청하지 않는다.
+   별도 새 환경을 만들 때만 각 `.columns.sql` 전체를 GUI에 넣는다. 바깥 `CREATE TABLE`은 추가하지 않는다.
 3. 네 테이블 생성 후 owner/DBA가 `002_indexes.sql` 전체를 한 번 실행한다.
 4. DBA가 `sanity_vwp_app`, `sanity_oa_app` 역할을 준비하고 `003_grants.sql`을 실행한다.
    예: `CREATE ROLE sanity_vwp_app NOLOGIN;` / `CREATE ROLE sanity_oa_app NOLOGIN;`.
    기존 역할이 있다면 새로 만들지 말고 구성을 검토한다. 실제 로그인에 해당 역할 하나만 연결한다.
-5. 양쪽 환경의 실제 앱 계정으로 PING 전달을 확인하고 승인된 접속 방식으로 합성 분석/수신을 확인한다.
+5. 아래 변경 안내에 따라 owner/DBA가 `004_clustering.sql`을 한 번 적용한다.
+6. 양쪽 환경의 실제 앱 계정으로 PING 전달을 확인하고 승인된 접속 방식으로 합성 분석/수신을 확인한다.
 
-SQL의 대상 스키마는 `public`이다. 다른 스키마에 신청했다면 `002`/`003`의 모든 `public.` 참조와
+SQL의 대상 스키마는 `public`이다. 다른 스키마에 신청했다면 실행할 `002`/`003`/`004`의 모든 `public.` 참조와
 `GRANT USAGE ON SCHEMA public`, 앱 설정을 **같은 실제 스키마로** 맞춘다.
 기존 DB가 이미 준비되어 있다면 재생성하거나 `002`를 다시 실행하지 않는다.
 앱은 필수 UNIQUE 인덱스를 이름이 아닌 대상 테이블·키·조건으로 확인한다.
 
+### 이미 생성한 테이블에 `004` 적용
+
+- 대상은 위 4개 테이블뿐이다. OA 전용 테이블에 `entity_key VARCHAR(256)`과
+  `classification_revision BIGINT`를 추가하고, 새로운 작업·결과·개정을 담을 CHECK와 인덱스를 확장한다.
+  기존 행에서 새 컬럼은 NULL이며, 기존 `review_revision`·보고서·근거·메시지 내용은 변경하지 않는다.
+- 먼저 백업/복구 절차를 확인하고 양쪽 bridge와 대시보드의 DB 작업을 중지한다.
+  스크립트가 네 테이블에 `ACCESS EXCLUSIVE` 잠금을 잡고 기존 행의 CHECK와 인덱스를 검증하므로
+  데이터량에 따라 조회·쓰기 중단 시간이 발생한다. 잠금을 5초 안에 얻지 못하면 중단한다.
+- 승인된 SQL 도구에서 파일 전체를 **한 트랜잭션으로**, owner/DBA 권한으로 실행한다.
+  GUI의 컬럼 정의 칸에 넣는 파일이 아니다. 임시 읽기 전용 DBaaS `/query`로 실행하지 않는다.
+- GUI가 생성한 제약조건 이름은 가정하지 않는다. 최초 form의 CHECK 표현식과 정확히 일치하는
+  기존 제약 하나만 교체한다. 다른 정의·중복 정의·검증되지 않은 제약이면 자동으로 삭제하지 않고 실패한다.
+- 오류가 나면 `ROLLBACK`하고 원인을 확인한다. 파일 전체가 성공하기 전에는 변경분이 커밋되지 않는다.
+  성공한 파일을 재실행하면 추가 컬럼이 이미 있어 실패한다. `002`도 재실행하지 않는다.
+- 기존 테이블 단위 SELECT/INSERT 권한이 새 컬럼에도 적용되고 UPDATE 허용 컬럼은 같으므로
+  `003` 재실행이나 권한 확대는 필요 없다. 변경된 앱은 추가 UNIQUE 계약을 확인한다.
+
+`004`는 분류 기능용 DB 기반이다. SQL 적용만으로 AI 작업자·OA 분류 화면·실제 AI 연동이 완성되지는 않는다.
+
 ## 2. 데이터 계약
+
+아래는 기존 실행 중인 기본 분석 계약이다. `004` 적용 후 추가되는 종류는 다음과 같다.
+
+| 테이블 | 추가 허용 종류 |
+|---|---|
+| VWP 전용 | `CLUSTER_JOB`, `CLUSTER_PART` |
+| OA 전용 | `CLUSTER_STATE`, `CLUSTER_JOB`, `CLUSTER_PART`, `CLUSTER_MEMBER`, `CLUSTER_EVENT`, `CLUSTER_RULE` |
+| OA → VWP | `CLUSTER_REQUEST` |
+| VWP → OA | `CLUSTER_PART`, `CLUSTER_RESULT` |
+
+분류 개정은 기존 sanity 사람 판정 개정과 다른 컬럼이다. 앱의 payload 검증·작업자·수신/확정 흐름은 [PROTOCOL](../PROTOCOL.md#vwp-ai와-분류-계약)을 따른다.
 
 | 테이블 | 구분 | 행 하나의 의미 |
 |---|---|---|
 | VWP 전용 | `RUN`, `UNIT`, `FILE`, `GROUP`, `EVIDENCE` | 실행, 예상 단위, 파일, 문제 군집, PASS 포함 개별 근거 |
 | OA 전용 | `RECEIVED_BUNDLE`, `REVIEW_UNIT`, `REVIEW_EVENT`, `REPORT` | 검증된 수신본, 전체 검토 단위, 검토 개정, 개정별 불변 보고서 |
-| VWP → OA | `PING`, `ANALYSIS_BUNDLE`, `EVIDENCE_RESPONSE` | 연결 확인, 반출 승인된 gzip 번들, 근거 요청에 대한 최종 응답 |
+| VWP → OA | `PING`, `ANALYSIS_BUNDLE`, `EVIDENCE_RESPONSE` | 연결 확인, 범위/무결성 검증한 gzip 번들, 근거 요청에 대한 최종 응답 |
 | OA → VWP | `PING`, `EVIDENCE_REQUEST` | 연결 확인, 허용된 논리 ID/범위에 대한 추가 근거 요청 |
 
 - `record_id`, `request_id`, lease token UUID는 앱이 생성한다. 같은 작업을 재시도할 때는 기존 ID를 재사용한다.
@@ -64,14 +100,14 @@ SQL의 대상 스키마는 `public`이다. 다른 스키마에 신청했다면 `
   `entity_key`는 실행·종류 내에서 유일하다. 파일/단위/그룹 키는 기존 논리 ID, 근거 키는 원본 내 고유 record ID를 쓴다.
   같은 분석의 parent 존재는 FK로 확인하지만 parent 종류·unit 일치·파일/그룹 연결은 앱 검증이다.
 - VWP `payload`에는 불변 입력/규칙/식별 필드/위치/개별 판정을 넣고, `state`에는 가변 checkpoint·집계를 넣는다.
-  RUN/UNIT/GROUP만 state를 바꾼다. FILE/EVIDENCE의 state/version/갱신 시각은 고정한다.
+  RUN/UNIT/GROUP/CLUSTER_JOB의 state를 바꾼다. FILE/EVIDENCE/CLUSTER_PART의 state/version/갱신 시각은 고정한다.
   현재 구현은 모든 원문을 raw_bytes에 저장한다. DB 원문 보관이 불허되면 배포를 중단하고
   승인된 VWP 파일 위치/해시 참조 어댑터를 추가해야 한다. DDL의 local_evidence_ref만으로 지원되는 것은 아니다.
 - OA 수신본의 state에 `current_review_revision`을 저장한다. 초기 개정 0의 REVIEW_EVENT와 함께 만든다.
   REVIEW_EVENT는 한 개정의 결정 변경 목록·검토자·사유를 payload에 담는다. 개별 단위는 REVIEW_UNIT 행으로 유지한다.
   REVIEW_EVENT/REVIEW_UNIT/REPORT는 추가 전용이며, 보고서는 `payload_bytes`에 원본 UTF-8 바이트와 SHA-256을 보존한다.
-- Jira 게시와 시뮬레이터는 폐지했다. 아직 신규 신청 전이므로 신청 컬럼·인덱스에서 Jira 작업을 제거했다.
-  OA 테이블은 위 4개 record_type만 허용하며 검토·보고서는 OA 대시보드에서 확인한다.
+- Jira 게시와 시뮬레이터는 폐지했다. 신청 원본에는 Jira 작업이 없으며 이후 변경에서도 추가하지 않는다.
+  검토·보고서는 OA 대시보드에서 확인한다.
 - 공유 payload JSON은 공개 가능한 전송 명세/진단만 포함한다. gzip 바이트는 `payload_gzip`에 보존한다.
   ANALYSIS_BUNDLE의 payload에는 기존 schema_version/producer_version/inventory_sha256 등 명세를 넣는다.
   압축 전후 한도는 각각 64 MiB다. JSONB 재직렬화로 원본 해시를 대신하지 않는다.
@@ -154,7 +190,9 @@ python3 db/tests/check_concurrency.py -h HOST -U OWNER -d sanity_test_example
 
 fixture는 `form`을 감싸 GUI 생성을 모사한 뒤 `002` 인덱스/FK → `003` 권한 적용을 검사한다.
 smoke 테스트 행은 rollback하며, 테스트용 빈 테이블은 보존한다.
-`tests/test_schema.py`는 신청용 컬럼 정의 4개와 생성 후 설정 SQL 두 개의 구성을 확인한다.
+`tests/test_schema.py`는 신청용 컬럼 정의 4개와 기존 설정 SQL 2개·증분 변경 SQL 1개의 구성을 확인한다.
+`tests/test_migration.py`는 기존 행 보존, GUI 제약 이름 차이, 스키마 불일치 rollback,
+재실행 시 안전한 실패, 기존 무결성·앱 권한 유지를 실제 PostgreSQL에서 검사한다.
 Python DB 회귀 검사도 동일한 `form`으로 생성한 테이블을 사용한다.
 concurrency 검사는 실제 두 세션에서 잠긴 행을 건너뛰고 서로 다른 작업을 점유하는지 검사한 뒤,
 이 검사에서 생성한 UUID 식별자의 합성 PING 두 개만 owner로 정리한다.

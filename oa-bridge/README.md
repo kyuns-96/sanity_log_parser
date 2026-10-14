@@ -2,16 +2,28 @@
 
 OA는 sanity_vwp_to_oa에서만 결과를 수신하고 검토·이력·불변 보고서는 sanity_oa_data에 저장합니다.
 VWP private 테이블과 파일에는 접근하지 않습니다. Jira 조회·게시·시뮬레이터는 폐지했습니다.
-React·shadcn UI가 검토 화면이고 실제 운영 AI는 NOT_CONFIGURED입니다.
+React·shadcn UI가 검토 화면이고 AI 호출은 VWP 작업자만 수행합니다. 실제 사내 AI/DB 검증은 대기 중입니다.
 공통 설치·배포와 DB 신청은 [루트 안내](../README.md)를 따릅니다.
+
+## 사내 SSO 연동 경계
+
+사내 AI의 수정 허용 범위와 디버깅 중단 규칙은 [INTERNAL_AI_GUIDE.md](../INTERNAL_AI_GUIDE.md)를 먼저 따릅니다.
+SSO의 기술 계약은 [SSO_INTEGRATION.md](SSO_INTEGRATION.md)에 있습니다. 업무 권한·DB 저장·기존 UI 변경은 Codex 담당입니다.
+`sanity_auth.py`의 인증 검증·내부 사용자 연결 추상 인터페이스를 제공하며,
+[corporate_sso.py](corporate_sso.py)의 두 메서드에 회사 구현을 연결합니다.
+사내용 진입점은 `sso_app.py`이고 `/auth` 로그인·콜백·로그아웃 router 주입을 지원합니다.
+실제 SSO 연결은 미구현이며, SSO 사용자의 업무 API는 프로젝트·블록 권한 필터 구현 전까지 차단합니다.
+기존 `local_token` 모드와 데모는 유지합니다.
 
 ## 접속 모드와 실행
 
-기본 SANITY_DB_ACCESS=dbaas_http는 임시 읽기 전용이며 정식 전체 접근 방식은 사용자 제공 대기 중입니다.
-세션에서 읽기 전용 안내를 받을 수 있지만 업무 DB 저장·조회 어댑터는 아직 준비되지 않았습니다.
-수신·검토 저장은 DBAAS_SQL_CONTRACT_REQUIRED로 중단하며 SQLite나 직접 PostgreSQL로 우회하지 않습니다.
-직접 저장 모드는 승인된 환경/로컬 테스트에서 postgresql을 명시하고 SANITY_OA_DSN과
-SANITY_DB_SCHEMA를 설정해야 합니다. VWP 계정은 OA에 필요하지 않습니다.
+기본 `SANITY_DB_ACCESS=postgresql`은 사용자가 확인한 psycopg2 직접 접속입니다.
+OA 서버의 비공개 `.env`에 `SANITY_DB_HOST/PORT/NAME/USER_NAME/PASSWORD`, `SANITY_DB_SCHEMA`,
+TLS 설정을 입력합니다. 사용자/비밀번호는 OA의 제한된 계정이며 VWP 계정은 필요하지 않습니다.
+기존 `SANITY_OA_DSN`이 비어 있지 않으면 연결 필드보다 우선합니다. 연결/권한 확인은
+`.venv/bin/python sanity_db.py check --side oa`로 합니다.
+기존 `.env`의 `dbaas_http`는 직접 변경해야 합니다. 이 모드는 임시 읽기 전용으로만 남으며
+수신·검토 저장은 `DBAAS_SQL_CONTRACT_REQUIRED`로 중단합니다. SQLite/다른 접속 방식으로 우회하지 않습니다.
 
 루트 private .env에 SANITY_DASHBOARD_TOKEN(최소 32자)과 SANITY_DASHBOARD_REVIEWER를 설정합니다.
 토큰은 브라우저 메모리에만 유지하고 localStorage·URL·로그·VITE_*·소스에 넣지 않습니다.
@@ -34,7 +46,7 @@ FastAPI 엔드포인트를 별도 공개 서비스로 노출하는 구성은 지
 
 ## 화면과 인증 API
 
-모든 업무 데이터 조회·변경은 Bearer 인증이 필요합니다. health와 정적 UI는 업무 데이터가 아닙니다.
+기존 `local_token` 모드의 모든 업무 데이터 조회·변경은 Bearer 인증이 필요합니다. health와 정적 UI는 업무 데이터가 아닙니다.
 브라우저가 DB 자격증명을 받거나 VWP bridge에 직접 요청하지 않습니다.
 
 | 동작 | API |
@@ -48,6 +60,10 @@ FastAPI 엔드포인트를 별도 공개 서비스로 노출하는 구성은 지
 | 불변 보고서 다운로드 | GET /api/bundles/{bundle_id}/report |
 | 추가 근거 요청·목록 | POST .../{bundle_id}/evidence, GET .../{bundle_id}/requests |
 | 응답 수신·미리보기 | POST /api/evidence/{request_id}/receive, GET /api/evidence/{request_id} |
+| 전체 원문 페이지 | GET /api/evidence/{request_id}/records/{record_id} |
+| 분류 작업 요청·조회 | POST/GET .../{bundle_id}/units/{unit_id}/clustering |
+| 분류 조각 수신·구성원 조회 | POST .../clustering/{jid}/receive, GET .../clustering/{jid}/members |
+| 분류 적용·후보 판단·확정·규칙 저장 | POST .../clustering/actions |
 
 번들·단위·그룹·요청은 페이지로 조회하며 한 페이지에 없는 항목도 전체 coverage에 포함합니다.
 이력은 최근 50개와 전체 개정 수를 보여줍니다. 세션의 writable은 설정 모드 표시이며 실제 DB 연결·권한은
@@ -97,10 +113,23 @@ ID 없는 receive는 다음 작업 한 건을 처리합니다. NO_MESSAGE는 대
 
 요청은 sanity_oa_to_vwp, 응답은 sanity_vwp_to_oa만 사용합니다.
 record ID는 단위별 1~100개이며 TTL 기본 3,600초·최대 86,400초입니다.
-임의 경로·명령·SQL을 요청하지 않습니다. VWP가 명시적으로 반출 승인하거나 거부해야 합니다.
+임의 경로·명령·SQL을 요청하지 않습니다. VWP 작업자가 범위·무결성을 검사하며 일반 report의 요청별 수동 반출 승인은 필요 없습니다.
 FULFILLED/REJECTED/EXPIRED가 최종 결과이고 일부만 성공으로 내보내지 않습니다.
 응답은 요청한 ID 집합·단위/파일 연결·원문 해시를 확인한 뒤 수신합니다.
 미리보기는 기록별 원문 일부와 잘림 여부를 표시하며 근거 수신은 기존 판정을 자동 변경하지 않습니다.
+상세 원문은 기본 8,000자씩 페이지 조회하고 자격증명 마스킹 여부를 표시합니다.
+
+## AI 분류 탭
+
+점검 항목과 자연어 피드백을 선택해 VWP 작업을 요청합니다. AUTO/AI/규칙 전용 모드와 선언형 규칙 JSON 편집을 지원합니다.
+결과 수신 후 전체 건수·미분류·이전 소속 대비 변경·모든 FAIL 연관 후보·표본 출처를 확인합니다.
+사유를 입력하고 제안 적용·후보별 연관/다른 문제/보류·분류 확정·규칙 재사용 저장을 별도로 실행합니다.
+개별 sanity 판정은 기존 대장에서 별도로 검토하며 원문 열람이나 분류 확정으로 PASS가 되지 않습니다.
+현재 후보 비교는 정확한 필드 대조이며 AI가 공통 원인이나 확률을 확정한 결과가 아닙니다.
+
+OA 결과 수신을 계속 실행하려면 별도 프로세스에서 `.venv/bin/python oa-bridge/main.py work --interval 2`를 실행합니다.
+한 번만 수신하는 `--once`와 화면의 ‘분류 결과 수신’도 지원합니다. VWP에서도 별도 작업자를 실행해야 합니다.
+OA에는 AI URL/token이나 VWP DB 계정을 배포하지 않습니다. 상세 설정/한도는 [루트 안내](../README.md#6-vwp-ai-분류-루프)를 따릅니다.
 
 ## 검증
 

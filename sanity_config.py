@@ -6,8 +6,12 @@ from sanity_common import ReviewError
 
 ENV_FILE = Path(__file__).resolve().parent / ".env"
 ENV_KEYS = ("SANITY_DB_ACCESS", "SANITY_DB_SCHEMA", "SANITY_VWP_DSN", "SANITY_OA_DSN",
+            "SANITY_DB_HOST", "SANITY_DB_PORT", "SANITY_DB_NAME", "SANITY_DB_USER_NAME", "SANITY_DB_PASSWORD",
+            "SANITY_DB_SSLMODE", "SANITY_DB_SSLROOTCERT",
             "DBAAS_BASE_URL", "DBASS_BASE_URL", "DBAAS_TOKEN", "DBAAS_CA_PATH",
-            "SANITY_DASHBOARD_TOKEN", "SANITY_DASHBOARD_REVIEWER")
+            "SANITY_AUTH_MODE", "SANITY_DASHBOARD_TOKEN", "SANITY_DASHBOARD_REVIEWER",
+            "SANITY_AI_MODE", "SANITY_AI_URL", "SANITY_AI_TOKEN", "SANITY_AI_MODEL",
+            "SANITY_AI_API", "SANITY_AI_JSON_MODE", "SANITY_AI_TIMEOUT", "SANITY_AI_CA_PATH", "SANITY_AI_ARGV")
 
 
 def load_environment(env_file=None):
@@ -29,7 +33,39 @@ def load_environment(env_file=None):
 
 
 def access_mode(settings):
-    mode = settings.get("SANITY_DB_ACCESS", "dbaas_http")
+    mode = settings.get("SANITY_DB_ACCESS", "postgresql")
     if mode not in ("dbaas_http", "postgresql"):
         raise ReviewError("DATABASE_CONFIG", "SANITY_DB_ACCESS must be dbaas_http or postgresql")
     return mode
+
+
+def postgres_parameters(settings, side):
+    """Pass credentials as driver kwargs, never interpolate them into a DSN."""
+    if side not in ("vwp", "oa"):
+        raise ReviewError("DATABASE_CONFIG", "Unknown application side")
+    # Existing explicit per-side DSNs remain authoritative for tests/deployments.
+    # A connection failure must never retry using a different configuration.
+    dsn = settings.get(f"SANITY_{side.upper()}_DSN")
+    if dsn:
+        return {"dsn": dsn}
+    fields = {"host": "HOST", "dbname": "NAME", "user": "USER_NAME", "password": "PASSWORD"}
+    params = {key: settings.get("SANITY_DB_" + suffix) for key, suffix in fields.items()}
+    if any(not value for value in params.values()):
+        raise ReviewError("DATABASE_NOT_CONFIGURED",
+                          "Set SANITY_DB_HOST, SANITY_DB_NAME, SANITY_DB_USER_NAME and SANITY_DB_PASSWORD")
+    if any(not isinstance(value, str) or "\x00" in value for value in params.values()):
+        raise ReviewError("DATABASE_CONFIG", "Invalid PostgreSQL connection settings")
+    port = settings.get("SANITY_DB_PORT", "5432")
+    if (not isinstance(port, str) or not 1 <= len(port) <= 5 or not port.isascii()
+            or not port.isdecimal() or not 1 <= int(port) <= 65535):
+        raise ReviewError("DATABASE_CONFIG", "SANITY_DB_PORT must be between 1 and 65535")
+    sslmode = settings.get("SANITY_DB_SSLMODE", "verify-full")
+    if sslmode not in ("disable", "allow", "prefer", "require", "verify-ca", "verify-full"):
+        raise ReviewError("DATABASE_CONFIG", "Invalid SANITY_DB_SSLMODE")
+    params.update(port=int(port), sslmode=sslmode)
+    ca = settings.get("SANITY_DB_SSLROOTCERT")
+    if ca:
+        if not isinstance(ca, str) or "\x00" in ca or not Path(ca).is_absolute():
+            raise ReviewError("DATABASE_CONFIG", "SANITY_DB_SSLROOTCERT must be an absolute CA file path")
+        params["sslrootcert"] = ca
+    return params

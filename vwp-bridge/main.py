@@ -16,6 +16,7 @@ from sanity_common import (ReviewError, atomic_json, canonical_json, digest, rea
                            identity_value_valid)
 from sanity_db import Database
 from sanity_evidence import PgEvidence, PRODUCER_VERSION
+from sanity_parsers import ParseContext, ParserRegistry, checked_records
 
 HEADER = ["object", "check_point", "mode", "code", "severity", "observed", "unit"]
 JSON_LIMIT = 16 * 1024 * 1024
@@ -311,7 +312,7 @@ def summary_records(path, unit, blockers):
                             "json_pointer": "/results/" + str(index)}, status, reasons
 
 
-def analyze_unit(unit, source, root, evidence):
+def analyze_unit(unit, source, root, evidence, parser_registry=None):
     result = {key: unit.get(key) for key in ("review_unit_id", "item_id", "report",
               "execution_status", "applicable", "exclusion", "rule_version", "parser", "condition",
               "evaluation", "identity_fields")}
@@ -341,6 +342,11 @@ def analyze_unit(unit, source, root, evidence):
         records = numeric_records(path, unit, blockers)
     elif parser == "summary_json_v1":
         records = summary_records(path, unit, blockers)
+    elif parser_registry is not None and (registered := parser_registry.resolve(parser, evidence.run, unit)) is not None:
+        context = ParseContext(evidence.run, unit)
+        records = checked_records(registered.parser, path, context, blockers,
+                                  lambda fields, numeric: evaluate(fields, unit, numeric=numeric),
+                                  evaluation=registered.evaluation)
     else:
         blockers.add("UNSUPPORTED_PARSER")
         result["parse_status"] = "UNSUPPORTED"
@@ -361,18 +367,22 @@ def analyze_unit(unit, source, root, evidence):
     return result
 
 
-def analyze(input_path, out_dir=None):
+def analyze(input_path, out_dir=None, parser_registry=None):
     input_path = Path(input_path)
     manifest = read_json(input_path)
     root = input_path.resolve().parent
     files = validate_manifest(manifest, root)
+    parser_contract = None
+    if parser_registry is not None:
+        require(isinstance(parser_registry, ParserRegistry), "PARSER_REGISTRATION_ERROR", "Invalid parser registry")
+        parser_contract = parser_registry.contract(manifest["run"], manifest["inventory"]["units"])
     with Database("vwp") as db:
-        evidence = Evidence(db, manifest)
+        evidence = Evidence(db, manifest, parser_contract=parser_contract)
         inventory = manifest["inventory"]
         units = sorted(inventory["units"], key=lambda unit: unit["review_unit_id"])
         results = []
         for unit in units:
-            result = analyze_unit(unit, files.get(unit["report"]), root, evidence)
+            result = analyze_unit(unit, files.get(unit["report"]), root, evidence, parser_registry)
             evidence.unit_result(result)
             results.append(result)
         global_blockers = []
@@ -393,6 +403,8 @@ def analyze(input_path, out_dir=None):
                    "global_blockers": sorted(global_blockers),
                    "source_files": sorted(files.values(), key=lambda f: f["path"]),
                    "producer": {"version": PRODUCER_VERSION}}
+        if parser_contract:
+            payload["producer"]["parsers"] = parser_contract
         payload["bundle_id"] = "b-" + digest(payload)
         validate_payload(payload)
         # Recheck after parsing to catch a report changing during analysis.
@@ -403,7 +415,7 @@ def analyze(input_path, out_dir=None):
     return payload, receipt
 
 
-def main(argv=None):
+def main(argv=None, parser_registry=None):
     parser = argparse.ArgumentParser(description="VWP parser and PostgreSQL evidence/transport bridge")
     commands = parser.add_subparsers(dest="command", required=True)
     command = commands.add_parser("analyze")
@@ -411,16 +423,23 @@ def main(argv=None):
     command.add_argument("--out", help="optional local receipt directory; never used as transport")
     respond = commands.add_parser("respond", help="handle a specific OA evidence request through PostgreSQL")
     respond.add_argument("--request-id", required=True)
-    permission = respond.add_mutually_exclusive_group(required=True)
-    permission.add_argument("--approve-export", action="store_true", help="explicit approval to export the selected raw records")
+    permission = respond.add_mutually_exclusive_group()
+    permission.add_argument("--approve-export", action="store_true", help="compatibility flag; normal report access is already allowed")
     permission.add_argument("--reject", action="store_true", help="record a final export rejection")
+    worker = commands.add_parser("work", help="poll DB classification and ordinary evidence requests")
+    worker.add_argument("--once", action="store_true")
+    worker.add_argument("--interval", type=int, default=2)
     args = parser.parse_args(argv)
     try:
+        if args.command == "work":
+            from sanity_workers import work
+            print(json.dumps(work("vwp", args.once, args.interval), sort_keys=True))
+            return 0
         if args.command == "respond":
             from sanity_exchange import respond_evidence
-            print(json.dumps(respond_evidence(args.request_id, args.approve_export), sort_keys=True))
+            print(json.dumps(respond_evidence(args.request_id, not args.reject), sort_keys=True))
             return 0
-        payload, receipt = analyze(args.input, args.out)
+        payload, receipt = analyze(args.input, args.out, parser_registry)
         print(json.dumps({"status": "ENQUEUED", **receipt, "units": len(payload["review_units"]),
                           "groups": len(payload["finding_groups"])}, sort_keys=True))
         return 0

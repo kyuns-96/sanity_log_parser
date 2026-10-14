@@ -213,7 +213,7 @@ class DbaasTests(unittest.TestCase):
         self.assertEqual("", output.getvalue())
 
     def test_bridge_never_falls_back_to_direct_database_in_http_mode(self):
-        with patch.dict(os.environ, {"SANITY_VWP_DSN": "unused-secret-dsn"}), self.assertRaises(ReviewError) as err:
+        with patch.dict(os.environ, {"SANITY_DB_ACCESS": "dbaas_http", "SANITY_VWP_DSN": "unused-secret-dsn"}), self.assertRaises(ReviewError) as err:
             Database("vwp")
         self.assertEqual("DBAAS_SQL_CONTRACT_REQUIRED", err.exception.code)
         with patch.dict(os.environ, {"SANITY_DB_ACCESS": "postgresql"}), self.assertRaises(ReviewError) as err:

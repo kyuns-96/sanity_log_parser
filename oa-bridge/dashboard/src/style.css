@@ -180,3 +180,32 @@ select { border: 1px solid #e3e8f0; border-radius: 5px; color: #63718a; font-siz
 .stat-amber strong { color: #866019; }.stat-red strong { color: #a34454; }
 @media (max-width: 720px) { .workspace .unit-select strong { font-size: 11px; }.workspace .unit-select small { font-size: 9px; }.workspace .code-example pre { font-size: 10px; }.workspace .review-action > span { font-size: 9px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+.cluster-panel { display: grid; gap: 16px; padding: 20px; min-width: 0; }
+.cluster-panel .tab-intro { padding: 0; }
+.cluster-panel label { display: grid; gap: 8px; font-size: 12px; }
+.cluster-panel select { width: 100%; min-width: 0; padding: 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); font-size: 12px; }
+.cluster-panel details { min-width: 0; }.cluster-panel summary { cursor: pointer; font-size: 12px; }
+.cluster-panel p { font-size: 12px; overflow-wrap: anywhere; }.cluster-panel .finding { margin: 0; }
+.cluster-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.cluster-panel .pagination { flex-wrap: wrap; font-size: 11px; }
+.cluster-panel .pagination [data-slot="button"] { width: auto; min-width: 56px; height: 30px; padding: 0 8px; font-size: 11px; }
+.cluster-json { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 340px; overflow: auto; font-size: 11px; padding: 12px; background: var(--muted); border-radius: 6px; }
+.cluster-id { font-family: monospace; overflow-wrap: anywhere; }
+.demo-banner { flex-wrap: wrap; }
+.demo-switch { font-weight: 600; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+.gca-scope { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px 24px; background: var(--background); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 22px; }
+.gca-scope h2 { font-size: 16px; font-weight: 600; margin: 6px 0; }.gca-scope p { font-size: 12px; line-height: 1.7; color: var(--muted-foreground); }
+.gca-scope > small { grid-column: 1 / -1; font-size: 11px; color: var(--muted-foreground); }
+.gca-selectors { display: flex; align-items: start; gap: 12px; }.gca-selectors label { display: grid; gap: 6px; font-size: 11px; min-width: 110px; }
+.gca-selectors select { min-width: 0; width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); font-size: 13px; }
+.gca-report-source { display: grid; gap: 12px; padding: 16px; margin-top: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--muted); min-width: 0; }
+.gca-source-heading { display: flex; gap: 8px; align-items: center; font-size: 12px; }.gca-report-source p { font-size: 11px; line-height: 1.8; }
+.gca-report-source ul { display: grid; gap: 9px; }.gca-report-source li { display: grid; gap: 4px; }.gca-report-source a { display: inline-flex; align-items: center; gap: 4px; width: fit-content; font-size: 11px; text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.gca-report-source small { font-size: 10px; color: var(--muted-foreground); }.gca-report-source summary { cursor: pointer; font-size: 12px; font-weight: 600; }
+.gca-report-source pre { max-height: 360px; margin-top: 12px; padding: 12px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; line-height: 1.8; border-radius: 6px; background: var(--background); }
+.gca-report-source > button { justify-self: start; }
+@media (max-width: 980px) { .gca-scope { grid-template-columns: 1fr; }.gca-selectors label { flex: 1; } }
+@media (max-width: 720px) { .gca-scope { padding: 15px; }.gca-scope h2 { font-size: 14px; }.gca-report-source { padding: 12px; } }
+.cluster-stats { display: flex; flex-wrap: wrap; gap: 16px; }.cluster-stats dt { font-size: 11px; color: var(--muted-foreground); }.cluster-stats dd { margin: 0; font-weight: 600; }
+.cluster-candidate { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-top: 12px; display: grid; gap: 10px; }
+@media (max-width: 720px) { .cluster-panel { padding: 12px; }.detail-tabs [data-slot="tabs-list"] { flex-wrap: wrap; height: auto; }.cluster-panel .table-toolbar { flex-wrap: wrap; } }

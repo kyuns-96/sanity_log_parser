@@ -90,6 +90,11 @@ def receive_evidence(args):
     return receive_response(args.request_id, args.out)
 
 
+def work(args):
+    from sanity_workers import work as run_worker
+    return run_worker("oa", args.once, args.interval)
+
+
 def brief_result(result):
     """Bound the hand-relayed response independently of report or context size."""
     if not isinstance(result, dict):
@@ -113,6 +118,10 @@ def brief_result(result):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="OA PostgreSQL bridge and review controls; Jira disabled")
     subs = parser.add_subparsers(dest="command", required=True)
+    worker = subs.add_parser("work", help="poll classification result parts through PostgreSQL")
+    worker.add_argument("--once", action="store_true")
+    worker.add_argument("--interval", type=int, default=2)
+    worker.set_defaults(handler=work)
     for name in ("receive", "status", "report", "publish", "review", "request-evidence", "receive-evidence"):
         sub = subs.add_parser(name)
         if name != "report":

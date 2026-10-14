@@ -6,6 +6,7 @@ import hashlib
 from sanity_common import (ReviewError, atomic_json, pack_json, require_id, unpack_json)
 from sanity_db import Database, Queue, uuid_value
 from sanity_oa_store import OAStore
+from sanity_privacy import SecretGuard
 
 
 def request_message_id(request_id):
@@ -32,6 +33,7 @@ def request_evidence(bundle_id, unit_id, record_ids, reason, request_id, ttl_sec
     selector = {"schema_version": 1, "review_unit_id": unit_id, "record_ids": record_ids,
                 "reason": reason, "ttl_seconds": ttl_seconds}
     validate_selector(selector)
+    SecretGuard().ensure_public(selector)
     selector["record_ids"] = sorted(record_ids)
     with Database("oa") as db, db.transaction():
         payload, _, _, _ = OAStore(db).load(bundle_id, lock=True)
@@ -74,6 +76,7 @@ def _approved_records(db, request):
     files = {row["entity_key"]: row for row in db.execute(
         "SELECT * FROM {vwp} WHERE analysis_id=%s AND record_type='FILE'", (root["analysis_id"],))}
     records = []
+    guard = SecretGuard()
     for row in rows:
         evidence = row["payload"]
         source = files.get(evidence.get("file_id"))
@@ -87,25 +90,30 @@ def _approved_records(db, request):
             decoded = raw.decode("utf-8")
         except UnicodeError as exc:
             raise ReviewError("EVIDENCE_CONFLICT", "Invalid evidence encoding") from exc
-        records.append({**{key: value for key, value in evidence.items() if key != "example"},
-                        "raw": decoded, "raw_sha256": row["raw_sha256"]})
+        safe = guard.redact({**{key: value for key, value in evidence.items() if key != "example"}, "raw": decoded})
+        redacted = safe != {**{key: value for key, value in evidence.items() if key != "example"}, "raw": decoded}
+        records.append({**safe, "raw_sha256": hashlib.sha256(safe["raw"].encode()).hexdigest(),
+                        "source_raw_sha256": row["raw_sha256"], "redacted": redacted,
+                        "redaction_policy": "credentials-v1"})
     return records
 
 
-def respond_evidence(request_id, approve_export=False):
-    message_id = request_message_id(request_id)
-    response_id = "response-" + str(uuid_value(request_id))
+def respond_evidence(request_id=None, approve_export=True):
+    message_id = request_message_id(request_id) if request_id is not None else None
     with Database("vwp") as db:
         incoming, outgoing = Queue(db, "oa_to_vwp"), Queue(db, "vwp_to_oa")
-        old = incoming.get(message_id)
+        old = incoming.get(message_id) if message_id else None
         if old and old["status"] == "RECEIVED":
-            response = outgoing.get(response_id)
+            response = outgoing.get("response-" + str(uuid_value(request_id)))
             if response is None:
                 raise ReviewError("STATE_CORRUPT", "Handled evidence request has no final response")
             return {"status": "ALREADY_RESPONDED", "request_id": str(uuid_value(request_id)), "result": response["payload"]["result"]}
         request = incoming.claim(("EVIDENCE_REQUEST",), message_id)
         if request is None:
             return {"status": "NO_MESSAGE"}
+        message_id = request["message_id"]
+        request_id = str(uuid_value(message_id.removeprefix("request-")))
+        response_id = "response-" + request_id
         try:
             validate_selector(request["payload"])
             clock = db.conn.execute("SELECT clock_timestamp() AS now").fetchone()["now"]
@@ -120,7 +128,7 @@ def respond_evidence(request_id, approve_export=False):
                         records = _approved_records(db, request)
                     packed = pack_json({"schema_version": 1, "request_id": message_id,
                         "bundle_id": request["bundle_id"], "review_unit_id": request["payload"]["review_unit_id"], "records": records})
-                    result, reason = "FULFILLED", "EXPLICIT_EXPORT_APPROVAL"
+                    result, reason = "FULFILLED", "REPORT_ACCESS_ALLOWED"
                 except ReviewError as exc:
                     result, reason = "REJECTED", exc.code
             with db.transaction():
@@ -168,6 +176,13 @@ def _validate_response(db, response):
                 or hashlib.sha256(raw.encode()).hexdigest() != record.get("raw_sha256")
                 or record.get("check_status") not in ("PASS", "FAIL", "UNKNOWN")):
             raise ReviewError("INVALID_RESPONSE", "Evidence record integrity or unit mapping differs")
+        if any(k in record for k in ("source_raw_sha256", "redacted", "redaction_policy")):
+            source_hash = record.get("source_raw_sha256")
+            if (type(record.get("redacted")) is not bool or record.get("redaction_policy") != "credentials-v1"
+                    or not isinstance(source_hash, str) or len(source_hash) != 64
+                    or any(c not in "0123456789abcdef" for c in source_hash)
+                    or not record["redacted"] and source_hash != record["raw_sha256"]):
+                raise ReviewError("INVALID_RESPONSE", "Invalid redaction provenance")
     return data
 
 

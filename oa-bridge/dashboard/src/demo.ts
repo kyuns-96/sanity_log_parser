@@ -41,7 +41,7 @@ export function makeDemo() {
       commandBodies.set(key, signature)
     }
     const page = <T,>(items: T[]) => { const offset = Number(url.searchParams.get('offset') || 0); const limit = Number(url.searchParams.get('limit') || 20); return { items: items.slice(offset, offset + limit), total: items.length, offset, limit } }
-    if (p === '/api/session') return { reviewer: '김민서', access_mode: 'demo', writable: true, notice: '합성 데이터 · 변경은 현재 화면 메모리에만 저장됩니다.' }
+    if (p === '/api/session') return { reviewer: '김민서', access_mode: 'demo', writable: true, notice: '데모 데이터 · 변경은 현재 화면 메모리에만 저장됩니다.' }
     if (p === '/api/bundles') return structuredClone(page(bundles()))
     if (p === '/api/receive') return { status: 'NO_NEW_BUNDLES' }
     if (p.endsWith('/reviews') && body) {
@@ -65,14 +65,14 @@ export function makeDemo() {
     if (p.startsWith('/api/evidence/')) {
       const id = p.split('/')[3]; const request = requests.find(r => r.request_id === id)!
       if (p.endsWith('/receive')) { request.status = 'RECEIVED'; request.response_status = 'RECEIVED'; request.result = 'FULFILLED'; return { status: 'RECEIVED', record_count: request.record_ids.length } }
-      return { result: 'FULFILLED', record_count: request.record_ids.length, records: request.record_ids.map(record_id => ({ record_id, raw: `[합성 근거] ${record_id}: 전체 검사값 12.4 ns / 허용값 10.0 ns`, raw_truncated: false })) }
+      return { result: 'FULFILLED', record_count: request.record_ids.length, records: request.record_ids.map(record_id => ({ record_id, raw: `[검사 근거 예시] ${record_id}: 전체 검사값 12.4 ns / 허용값 10.0 ns`, raw_truncated: false })) }
     }
     if (p.endsWith('/requests')) return structuredClone(page(requests))
     if (p.endsWith('/groups')) return page(groups(decodeURIComponent(p.split('/')[5])))
-    if (p.endsWith('/report')) return '# Sanity 검토 보고서 (데모)\n\n합성 데이터입니다.\n\n' + units.map(u => `- ${u.item_id}: ${u.decision?.conclusion || u.check_status}`).join('\n')
+    if (p.endsWith('/report')) return '# Sanity 검토 보고서 (데모)\n\n예시 검사 결과를 사용한 데모 보고서입니다.\n\n' + units.map(u => `- ${u.item_id}: ${u.decision?.conclusion || u.check_status}`).join('\n')
     if (p.startsWith('/api/bundles/')) {
       const offset = Number(url.searchParams.get('unit_offset') || 0); const limit = Number(url.searchParams.get('unit_limit') || 50)
-      return structuredClone({ bundle_id: bundles()[0].bundle_id, run: { run_id: bundles()[0].run_id, project: 'Atlas', design: 'chip_a', stage: 'sanity', tool: 'synthetic', tool_version: '1.0' }, review_revision: revision, coverage: coverage(), units: units.slice(offset, offset + limit), unit_total: units.length, unit_offset: offset, unit_limit: limit, history, history_total: history.length, context: { ai: { status: 'NOT_CONFIGURED' } } })
+      return structuredClone({ bundle_id: bundles()[0].bundle_id, run: { run_id: bundles()[0].run_id, project: 'Atlas', design: 'chip_a', stage: 'sanity', tool: 'Demo', tool_version: '1.0' }, review_revision: revision, coverage: coverage(), units: units.slice(offset, offset + limit), unit_total: units.length, unit_offset: offset, unit_limit: limit, history, history_total: history.length, context: { ai: { status: 'NOT_CONFIGURED' } } })
     }
     throw new Error('NOT_FOUND')
   }

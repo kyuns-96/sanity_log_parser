@@ -6,19 +6,22 @@ from unittest.mock import patch
 import uuid
 
 try:
-    import psycopg
-    from psycopg import sql
+    import psycopg2
+    from psycopg2 import sql
+    from sanity_postgres import connect
 except ImportError:
-    psycopg = None
+    psycopg2 = None
 
 ROOT = Path(__file__).resolve().parent
 
 
-@unittest.skipUnless(psycopg is not None and os.environ.get("SANITY_TEST_ADMIN_DSN"),
+@unittest.skipUnless(psycopg2 is not None and os.environ.get("SANITY_TEST_ADMIN_DSN"),
                      "PostgreSQL integration requires SANITY_TEST_ADMIN_DSN and both restricted app DSNs")
 class PgTestCase(unittest.TestCase):
+    migrate_clustering = True
+
     def setUp(self):
-        self.admin = psycopg.connect(os.environ["SANITY_TEST_ADMIN_DSN"], autocommit=True)
+        self.admin = connect(os.environ["SANITY_TEST_ADMIN_DSN"], autocommit=True)
         self.addCleanup(self.admin.close)
         database = self.admin.execute("SELECT current_database()").fetchone()[0]
         if not database.startswith("sanity_test_"):
@@ -32,7 +35,9 @@ class PgTestCase(unittest.TestCase):
             columns = (ROOT / "db/form" / f"{name}.columns.sql").read_text(encoding="utf-8")
             self.admin.execute(sql.SQL("CREATE TABLE {}.{} (").format(
                 sql.Identifier(self.schema), sql.Identifier(name)) + sql.SQL(columns) + sql.SQL(")"))
-        for name in ("002_indexes.sql", "003_grants.sql"):
+        for name in ("002_indexes.sql", "003_grants.sql", "004_clustering.sql"):
+            if name == "004_clustering.sql" and not self.migrate_clustering:
+                continue
             script = (ROOT / "db" / name).read_text(encoding="utf-8")
             script = script.replace("public.", self.schema + ".").replace("SCHEMA public", "SCHEMA " + self.schema)
             self.admin.execute(script)
