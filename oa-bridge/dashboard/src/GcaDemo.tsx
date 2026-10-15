@@ -10,7 +10,6 @@ export function GcaDemoScope({ bundles, selected, select, disabled }: {
   const projects = [...new Set(bundles.map(b => b.project))]
   const blocks = [...new Set(bundles.filter(b => b.project === current.project).map(b => b.design!))]
   return <section className="gca-scope" aria-label="GCA 예시 선택">
-    <div><span className="eyebrow">GCA EXAMPLE LIBRARY</span><h2>프로젝트에서 sanity item까지</h2><p>프로젝트·블록을 고른 뒤 실행과 점검 항목을 선택하세요. 검토 이력은 실행별로 분리됩니다.</p></div>
     <div className="gca-selectors"><label>프로젝트<select aria-label="GCA 프로젝트" value={current.project} disabled={disabled}
       onChange={e => select(bundles.find(b => b.project === e.target.value)!.bundle_id)}>
       {projects.map(p => <option key={p}>{p}</option>)}</select></label>

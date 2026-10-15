@@ -105,6 +105,7 @@ test('stale classification can be deferred and exclusions are visible without en
 async function demo(page: Page) {
   await page.goto('/?demo=1')
   await expect(page.getByRole('heading', { name: 'sanity-20261012-042' })).toBeVisible()
+  if ((page.viewportSize()?.width || 1440) <= 1100) await page.getByRole('button', { name: '수치 임계값 검사 상세 보기', exact: true }).click()
   await expect(page.getByText('CHECK-101', { exact: true })).toBeVisible()
 }
 
@@ -263,7 +264,7 @@ test('bundle and failed unit-page changes never retain data from the old scope',
   await page.getByRole('button', { name: '워크스페이스 연결' }).click()
   await page.getByRole('tab', { name: /추가 근거/ }).click()
   await expect(page.getByText('이전 번들에만 있는 요청')).toBeVisible()
-  await page.locator('.run-card').nth(1).click()
+  await page.getByLabel('조회 실행', { exact: true }).selectOption('b-second')
   await expect(page.getByRole('heading', { name: 'second-run' })).toBeVisible()
   await expect(page.getByText('이전 번들에만 있는 요청')).toHaveCount(0)
   releaseRequests()
