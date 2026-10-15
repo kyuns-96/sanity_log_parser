@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ArrowUpRight, Check, CheckCircle2, ChevronRight, ClipboardCheck, Layers3, RotateCcw, Sparkles, X } from 'lucide-react'
 import { Button } from './components/ui/button'
+import { WorkspaceBrand } from './components/WorkspaceBrand'
 import { assignPor, blockOwners, canAssignPor, initialVersionState, latestRun, porOf, reviewLatest, revisionSetOf, snapshotsFor, versionItems, versionUsers, visibleVersionBlocks } from './versionDemoModel'
 import type { DemoResult, DesignSnapshot, LayoutStage, RevisionSet, VersionBlock, VersionItem, VersionState } from './versionDemoModel'
 import './versionFlow.css'
@@ -52,19 +53,19 @@ export default function VersionFlowDemo() {
     setSelectedId('cpu-post-2-eco03'); setNotice('데모를 처음 상태로 되돌렸습니다.')
   }
 
-  return <div className="vf-root">
+  return <div className="vf-root"><a className="skip-link" href="#workspace-main">본문으로 건너뛰기</a>
     <div className="vf-demo-bar"><span><Sparkles size={14} /><strong>VERSION DEMO</strong><span>예시 데이터로 보는 버전 구조</span></span><div><a href="/?demo=1&flow=access">담당자 배정 데모 <ArrowUpRight size={13} /></a><button onClick={reset}><RotateCcw size={14} />초기화</button></div></div>
     <div className="vf-shell">
       <aside className="vf-sidebar">
-        <a className="vf-brand" href="/?demo=1&flow=versions"><span><Layers3 size={23} /></span><strong>sanity<span>console</span></strong></a>
+        <WorkspaceBrand href="/?demo=1&flow=versions" />
         <div className="vf-workspace"><span>A</span><div><strong>Atlas</strong><small>SoC DESIGN PROJECT</small></div></div>
         <div className="vf-nav-label">VERSION WORKSPACE</div>
-        <nav aria-label="버전 데모 메뉴"><a className="is-active" href="/?demo=1&flow=versions"><Layers3 size={16} />블록별 PoR 조회</a><a href="/?demo=1&dataset=gca"><ClipboardCheck size={16} />GCA report 예시<ArrowUpRight size={12} /></a></nav>
+        <nav aria-label="버전 데모 메뉴"><a className="is-active" aria-current="page" href="/?demo=1&flow=versions"><Layers3 size={16} />블록별 PoR 조회</a><a href="/?demo=1&dataset=gca"><ClipboardCheck size={16} />GCA report 예시<ArrowUpRight size={12} /></a></nav>
         <div className="vf-sidebar-note"><strong>블록 → NET_VER + REVISION</strong><p>각 블록 담당자가 PoR을 정합니다.<br />ECO는 해당 세트 아래에서 관리합니다.</p></div>
       </aside>
       <div className="vf-main-shell">
         <header className="vf-topbar"><div>Atlas <ChevronRight size={13} /><strong>블록별 PoR·sanity 현황</strong></div><span>새로고침 시 데모 초기화</span></header>
-        <main className="vf-main">
+        <main className="vf-main" id="workspace-main" tabIndex={-1}>
           <div className="vf-page-title"><div className="vf-eyebrow">BLOCK VERSION WORKSPACE</div><h1>블록별 PoR·sanity 현황</h1><p>블록마다 NET_VER·REVISION을 따로 관리하고, 해당 블록 담당자가 PoR을 지정합니다.</p></div>
           <div className="vf-user-toolbar"><label>데모 사용자<select aria-label="데모 사용자" value={userId} onChange={event => chooseUser(event.target.value)}>{versionUsers.map(user => <option key={user.id} value={user.id}>{user.name} · {user.id === 'u-lee' ? 'Atlas TOP' : user.id === 'u-kim' ? 'CPU 담당자' : 'GPU·DDR 담당자'}</option>)}</select></label><p>{userId === 'u-lee' ? 'TOP은 모든 블록의 PoR과 검사 결과를 조회합니다.' : '담당 블록의 버전을 조회하고 PoR을 지정할 수 있습니다.'}</p></div>
           {notice && <div className="vf-notice" role="status"><CheckCircle2 size={17} /><span>{notice}</span><button aria-label="안내 닫기" onClick={() => setNotice('')}><X size={15} /></button></div>}

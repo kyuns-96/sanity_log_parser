@@ -4,6 +4,7 @@ import App from './App'
 import AccessFlowDemo from './AccessFlowDemo'
 import VersionFlowDemo from './VersionFlowDemo'
 import './style.css'
+import './theme.css'
 
 const params = new URLSearchParams(location.search)
 const accessDemo = params.get('demo') === '1' && params.get('flow') === 'access'
