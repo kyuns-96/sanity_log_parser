@@ -1,0 +1,37 @@
+# The build context is the repository root. Send only OA/common source.
+**
+!common/
+!common/**
+!oa/
+!oa/**
+
+# These exclusions also apply under the allowlisted directories.
+**/.env
+**/.env.*
+**/.npmrc
+**/pip.conf
+**/*secret*
+**/*credential*
+**/dbaccess.md
+**/*.pem
+**/*.key
+**/*.cer
+**/*.crt
+**/*.p12
+**/*.pfx
+**/certs/**
+**/.venv/**
+**/node_modules/**
+**/dist/**
+**/__pycache__/**
+**/*.py[cod]
+**/*.swp
+**/*.swo
+**/*~
+**/*.log
+**/test_*.py
+**/tests/**
+**/e2e/**
+**/test-results/**
+**/playwright-report/**
+**/public/sample-data/**

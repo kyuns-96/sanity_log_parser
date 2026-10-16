@@ -1,0 +1,44 @@
+name: sanity-oa
+
+x-oa: &oa
+  image: ${OA_IMAGE:-sanity-oa:local}
+  build:
+    context: ../..
+    dockerfile: oa/docker/Dockerfile-prod
+    args:
+      OA_BASE_IMAGE: ${OA_BASE_IMAGE:?Set the approved company Python base image}
+      OA_NODE_IMAGE: ${OA_NODE_IMAGE:?Set the approved Node 20.18 build image}
+  # raw preserves literal dollar signs in passwords. Requires Compose 2.30+.
+  env_file:
+    - path: ${OA_ENV_FILE:?Set an absolute path to the OA-only runtime env file}
+      format: raw
+  environment:
+    SANITY_AUTH_MODE: sso
+  init: true
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  stop_grace_period: 20s
+
+services:
+  oa:
+    <<: *oa
+    environment:
+      SANITY_AUTH_MODE: sso
+      OA_ALLOWED_HOSTS: ${OA_ALLOWED_HOSTS:-127.0.0.1,localhost,[::1]}
+    ports:
+      - "8080:8080"
+
+  # This legacy clustering-result receiver writes to the shared DB. Start it
+  # explicitly only after the user's DB/schema/role checks and approval.
+  oa-receiver:
+    <<: *oa
+    profiles: [receiver]
+    command: [python, -m, oa.main, work, --interval, "2"]
+    healthcheck:
+      disable: true
