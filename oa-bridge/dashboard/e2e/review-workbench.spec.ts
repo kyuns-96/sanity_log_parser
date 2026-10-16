@@ -1,0 +1,72 @@
+import { test, expect } from '@playwright/test'
+import { makeDemo } from '../src/demo'
+
+test('mobile inspection returns focus to the selected item and preserves missing-report guards', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/?demo=1')
+  const ledger = page.getByRole('region', { name: '검사 대장', exact: true })
+  await expect(ledger.getByRole('row')).toHaveCount(9)
+  await expect(page.getByRole('region', { name: '선택 항목 근거', exact: true })).toHaveCount(0)
+  await ledger.getByRole('button', { name: '수치 임계값 검사 상세 보기', exact: true }).click()
+  const inspection = page.getByRole('region', { name: '선택 항목 근거', exact: true })
+  await expect(inspection.getByRole('heading', { name: '수치 임계값 검사', exact: true })).toBeFocused()
+  await expect(inspection.getByText('CHECK-101', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '검사 목록으로', exact: true }).click()
+  await expect(ledger.locator('.unit-select[aria-pressed="true"]')).toBeFocused()
+  await ledger.getByRole('button', { name: '보고서 완전성 상세 보기', exact: true }).click()
+  await expect(inspection.getByText('SOURCE_REPORT_MISSING', { exact: false })).toBeVisible()
+  await expect(inspection.getByRole('button', { name: '검토 의견 기록', exact: true })).toBeDisabled()
+  await expect(page.getByText('CHECK-101', { exact: true })).toHaveCount(0)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+})
+
+test('switching items clears old evidence while the new request is pending, and filters retain full coverage', async ({ page }) => {
+  const api = makeDemo()
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/api/**', async route => {
+    const url = new URL(route.request().url())
+    if (url.pathname.endsWith('/u-summary_checks/groups')) await gate
+    return route.fulfill({ json: await api(url.pathname + url.search) })
+  })
+  await page.goto('/')
+  await page.getByLabel('접근 토큰').fill('synthetic-workbench-token')
+  await page.getByRole('button', { name: '워크스페이스 연결', exact: true }).click()
+  await expect(page.getByText('CHECK-101', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '실행 결과 요약 상세 보기', exact: true }).click()
+  const inspection = page.getByRole('region', { name: '선택 항목 근거', exact: true })
+  await expect(inspection.getByText('reports/summary_checks.csv', { exact: true })).toBeVisible()
+  await expect(inspection.getByRole('status')).toHaveText('원본 근거를 불러오는 중입니다.')
+  await expect(page.getByText('CHECK-101', { exact: true })).toHaveCount(0)
+  release()
+  await expect(inspection.getByText('이 항목에서 집계된 문제 그룹이 없습니다.', { exact: false })).toBeVisible()
+  await page.getByLabel('현재 페이지 항목 검색', { exact: true }).fill('no-matching-item')
+  await expect(inspection.getByRole('heading')).toHaveCount(0)
+  await expect(inspection.getByText('reports/summary_checks.csv', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('group', { name: '선택 실행의 전체 검토 범위' })).toContainText('전체8')
+})
+
+test('a review that leaves the pending filter cannot leave its report selected', async ({ page }) => {
+  await page.goto('/?demo=1')
+  await page.getByLabel('항목 상태 필터', { exact: true }).selectOption('pending')
+  await expect(page.getByText('CHECK-101', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '검토 의견 기록', exact: true }).click()
+  await page.getByLabel('판단 사유').fill('측정값과 기준 초과를 확인했습니다.')
+  await page.getByRole('button', { name: '검토 저장', exact: true }).click()
+  const inspection = page.getByRole('region', { name: '선택 항목 근거', exact: true })
+  await expect(inspection.getByRole('heading', { name: '모드 일관성', exact: true })).toBeVisible()
+  await expect(inspection.getByText('reports/numeric_limits.csv', { exact: true })).toHaveCount(0)
+  await expect(page.locator('.review-ledger .unit-select[aria-pressed="true"]')).toContainText('모드 일관성')
+  await expect(page.getByRole('group', { name: '선택 실행의 전체 검토 범위' })).toContainText('전체8')
+})
+
+test('wrapped tabs leave the inspection back button clickable on a narrow phone', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 740 })
+  await page.goto('/?demo=1&dataset=gca')
+  const ledger = page.getByRole('region', { name: '검사 대장', exact: true })
+  await ledger.getByRole('row').nth(1).getByRole('button').first().click()
+  await expect(page.getByRole('region', { name: '선택 항목 근거' })).toBeVisible()
+  await page.getByRole('button', { name: '검사 목록으로', exact: true }).click()
+  await expect(ledger).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+})
