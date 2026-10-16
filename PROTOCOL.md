@@ -12,7 +12,30 @@ VWP AI의 API·CLI 호출 가능 여부는 사용자에게 확인했다. AI clus
 실제 사내 API/DB 호환성과 report 사례는 사용자 제공 후 검증한다.
 
 프로젝트·사용자 배정·블록별 버전·PoR의 목표 요구사항은 [15절 명세](requirement.md#dashboard-domain-spec)를 따른다.
-해당 관리 API·DB 레코드와 NET_VER/REVISION/ECO 전송 필드는 아직 이 문서의 현재 구현 계약에 포함되지 않는다.
+OA 관리 API·DB 레코드는 아래 워크스페이스 계약으로 추가했다. 실제 VWP의 NET_VER/REVISION/ECO 전송 필드는 아직 확정·연결하지 않았다.
+
+## OA 워크스페이스 관리 계약
+
+`db/005_workspace.sql`은 OA에 `WS_CONFIG`, `WS_USER`, `WS_SESSION`, `WS_PROJECT`, `WS_BLOCK`, `WS_VERSION`,
+`WS_POR`, `WS_POR_EVENT`, `WS_REPORT`를 추가한다. run/bundle 없는 관리 정보의 별도 종류이며 기존 분석 payload로 위장하지 않는다.
+프로젝트/블록/대상 버전의 FK와 앱의 종류·소속 대조를 함께 검사한다. 네 테이블과 브리지 간 DB-only 통신은 유지한다.
+PoR은 블록의 버전 참조이고 ECO/특정 검사 실행을 포함하지 않는다. 버전 조회와 PoR 변경은 구분한다.
+
+`POST /workspace/api/blocks/{block_id}/por`는 version_id·expected_revision·request_id(UUID)·reason만 받는다.
+지정 사용자·권한·시각은 서버가 결정한다. 최신 배정 검사와 UUID/PoR 행 잠금 후 state·개정·불변 이력을 원자적으로 저장한다.
+같은 요청은 같은 결과, 다른 내용의 UUID 재사용/오래된 개정은 409다. 검사 판정·원문·다른 블록은 변경하지 않는다.
+세션/Origin/CSRF와 서버의 프로젝트·블록 범위를 검사하고 조회 응답에도 같은 범위를 적용한다.
+
+현재 실행 진입점은 **독립 합성 workspace**를 명시적으로 초기화한 `oa-bridge/workspace_app.py`다.
+검증된 공개 parser 스냅샷을 해당 테스트 버전에 연결하며 실제 회사 SSO/자료/운영 DB를 쓰지 않는다.
+회사 인증 실패 시 이 계정을 선택하거나 기존 `AUTHORIZATION_NOT_IMPLEMENTED`를 해제하지 않는다.
+이 계약은 실제 VWP 버전 메타데이터 수신 구현이나 회사 SSO 완성을 뜻하지 않는다.
+필드·실행·인계는 [WORKSPACE.md](oa-bridge/WORKSPACE.md)를 따른다.
+
+검사 조회는 같은 버전·ECO 안에서 `item_id`로 구분한다. reports API의 `groups`는 필터·페이지 적용 전의 항목별 집계이며,
+선택적 `item_id`는 해당 항목의 상세 목록에 정확히 적용한다. 도구가 같아도 다른 item을 합치지 않는다.
+
+## PostgreSQL 접속 계약
 
 접속 방식 확정(2026-10-14): 사용자가 psycopg2 직접 PostgreSQL 접속 가능함을 확인했다.
 기본 `SANITY_DB_ACCESS=postgresql`이며 `SANITY_DB_HOST/PORT/NAME/USER_NAME/PASSWORD`,
@@ -56,6 +79,11 @@ DB에서 표현할 수 없는 NUL 등 정규화 필드는 조용히 삭제하지
 명령 오류는 `code=...`와 종료 코드 2다. 불완전 분석/FAIL 결과도 유효 산출물이므로 종료 코드 0일 수 있다.
 
 ## vwp-dev 입력과 출력
+
+회사 구현 작업의 통합 진입 문서는 [INTERNAL_AI_HANDOFF.md](INTERNAL_AI_HANDOFF.md), plan 원천 어댑터 계약은 [PLAN_INTEGRATION.md](vwp-bridge/PLAN_INTEGRATION.md)다.
+`SanityPlanProvider.get_plan(run_reference) → CollectionPlan`은 기존 아래 plan dict를 반환하는 동기 hook이며 자동 수집/실행/DB 주입이 아니다.
+`sanity_integration_contracts.py`의 `CollectionPlan`, `AdvisorContext`, `ClusteringProposalV2`, `ReviewProposal`은 기존 Python dict 계약의 타입 표기다. wire/storage 필드·schema·오류 판정·legacy V1 호환 처리는 바꾸지 않는다.
+새 회사 분류 출력은 `validate_clustering_advice(..., require_rationales=True)`로 검사하고, review의 참조 없는 PASS/FAIL 제한을 유지한다. SDK 출력에서 사용자 확정이나 운영 연결 완료를 기록하지 않는다.
 
 CLI: `python3 vwp-dev/main.py demo --out DIR [--scenario complete|missing|malformed|unsupported]`
 creates `DIR/run.json` and report files. CLI also supports
@@ -261,6 +289,10 @@ REVIEW_EVENT·current_review_revision/version·REPORT를 원자적으로 기록�
 사람 검토는 blocker를 무시하거나 알려진 FAIL을 PASS로 바꿀 수 없다.
 검토 완료와 sanity 통과는 별도이며 수신·다운로드는 검토를 승인하지 않는다.
 
+2026-10-15 합의한 후속 판정 정책은 [사람의 판정 기준 축적](requirement.md#human-judgment-learning)을 따른다.
+원본 규칙 FAIL과 별도로 사용자의 PASS를 사유/근거와 함께 저장하고, 확정 사례·조건을 다음 AI review에 참조하는 것이 목표다.
+위 FAIL 제한은 현재 legacy 구현 상태의 설명이며 새 합의의 목표 정책은 아니다. 실제 공통 코드/API·저장 계약은 후속 구현 전까지 그대로다.
+
 Jira 게시·시뮬레이터는 폐지했다. 과거 CLI publish는 --simulate/--dry-run을 포함해
 항상 JIRA_DISABLED로 즉시 실패하며 DB 작업을 만들지 않는다. --jira-context는 지원하지 않는다.
 과거 Jira context 보고서의 렌더러 호환만 유지하며 새 수신 맥락에는 Jira 데이터를 만들지 않는다.
@@ -437,6 +469,76 @@ PASS 기록에도 후보를 표시하지만 소속은 NOT_TARGET로 남는다. C
 봉인된 최초 분석 context이며 별도 분류 job의 모델 호출 provenance와 혼동하지 않는다. Jira는 사용하지 않는다.
 
 ## Coverage and finality
+
+2026-10-15 사용자 정정에 따른 1단계 목표는 **report 로그와 과거 사람 확정 사례를 참고한 AI 초기 그룹 생성 → 사람 수정·확정 → DB 사례 축적 → 다음 AI 초기 분류의 참고 입력**이다.
+AI는 각 report의 그룹 구성·이름·근거를 새로 제안한다. 과거 그룹과의 필수 일대일 매칭이나 고정 분류 유형 사전의 선택으로 대체하지 않는다.
+확정 사례를 다음 AI 입력 후보로 축적하는 것이 기본 동작이며 별도 재사용 체크/필수 기준 작성이 선행 조건은 아니다.
+일반 화면은 정확한 필드 비교·선택형 사례 재사용 엔진을 사용하며 사내 모델은 미연결이다. 운영 목표 전환의 공통 API/저장/worker/UI 변경은 별도 구현한다.
+외부 Codex의 실제 호출은 [합성 mock 시험](oa-bridge/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)에만 추가했다. 이는 회사 VWP/SDK 연결이 아니다.
+명시적으로 켠 합성 workspace의 전용 `/clustering/ai`와 **AI로 그룹 만들기** 버튼은 UUID 예약·고정 입력 검사 후 실제 모델을 호출한다. 기존 제안 API의 mode는 확장하지 않는다. 호출 상태/receipt는 기존 `WS_CLUSTER.state`에 보관하며 새 물리 테이블이나 브리지 간 전송 경로를 만들지 않는다.
+기존 `reusable`/버전 호환 승인·저장 데이터·어댑터 서명이나 내부 AI의 수정 허용 범위는 유지한다.
+
+독립 workspace의 두 단계는 `WS_CLUSTER_EVENT`의 확정 분류를 `WS_GROUP_REVIEW_EVENT/PROPOSAL`이 참조한다.
+원본 record ID 전체를 중복/누락 없이 배정하고, 분류 개정과 판정 개정을 분리한다. 그룹 ID·분류 event·구성 해시가 바뀌면
+이전 그룹 판정은 이력으로만 보존하고 최신 확정 판정/재사용 기준에 포함하지 않는다. 제거된 그룹도 이력을 조회할 수 있다.
+사람이 확인한 분류 사례와 판정 조건은 각각 다음 분류와 그룹 판정에 참고한다. 정확한 필드로 구분할 수 없는 분리·사례 충돌은
+임의 자동 배정/확정으로 처리하지 않는다. 상세 API와 명시적 처리 한도는 [두 단계 계약](oa-bridge/WORKSPACE.md#두-단계의-그룹-검토)을 따른다.
+
+후속 순차 검토의 기준은 [요구사항 18절](requirement.md#large-report-review-flow)이다. 입력 규모는 **한 sanity item의 report 안의 로그·위반 항목 평균 약 10,000건이며 100,000건 이상도 가능**하다. 10,000건은 상한이나 고정 크기가 아니며 report 파일 10,000개를 뜻하지 않는다.
+전체 로그 분류·사람 확정 이후에만 확정 그룹별 판정을 진행하며, 분류 초안/보류·오래된 개정으로 새 그룹 판정을 확정할 수 없다.
+분류 coverage는 전체 ID 집합을 대조하고 페이지 조회·분할 작업·대표 근거가 전체 처리/완료를 대신하지 않는다.
+그룹 판정 완료는 현재 유효한 전체 분류의 그룹별 사람 PASS/FAIL 확정을 기준으로 하며 미검토·보류·재검토가 남으면 미완료다. 원본 규칙 결과와 PoR은 변경하지 않는다.
+명세 작성 당시의 1,000 record/100 group 한도·모달 UI에 이어, 현재 코드에는 평균 10,000건과 100,000건 이상에 같은 구조를 사용하는 순차 작업 화면과 페이지/서버 편집 API를 추가했다.
+`WS_CLUSTER.state.task`는 참고 엔진의 가변 범위(`max(500, ceil(record_count/20))`)·입력/기준 해시·진행·오류·다음 작업을 보관하며 head의 분류 개정과 분리한다.
+완성된 전체 배정만 불변 event/head로 원자적으로 저장한다. 진행/실패/오래된 작업은 새 그룹 판정의 선행 확정으로 사용하지 않는다.
+기대 분류 개정이 다른 페이지는 409로 거부하며 편집 UUID와 명시적 ID로 전체 구성에서 변경한다. 과거 구성과 제거된 그룹은 읽기 전용 조회다.
+API·상한·task 재개 계약은 [대용량 순차 검토](oa-bridge/WORKSPACE.md#대용량-report의-순차-검토)를 따른다. 새 테이블·권한·DDL은 추가하지 않았다.
+현재 분할 실행은 모델 호출이 없는 참고 엔진이다. 사내 VWP 모델/운영 작업 전송을 연결한 것으로 표시하지 않는다.
+
+**그룹별 분류 근거 V2**는 [요구사항 18.10절](requirement.md#group-clustering-rationale)을 구현한다.
+물리 테이블·DDL은 추가하지 않는다. `groups`는 기존 `id`·`label`·`record_ids`를 유지하고
+불변 `WS_CLUSTER_EVENT`에 `rationale_schema=2`, `rationales`(group ID → 근거)를 추가한다.
+
+- `content`: `reason`(1–2,000자), `evidence_ids`(해당 그룹의 원본 ID 1–20개), `reference_groups`(최대 20개, 각 `case_id`, `group_id`, 적용 이유 `reason` 1–500자). 전체 사례 참조는 기존 최대 100개다.
+- `proposal`: 최초 제안의 `source`와 불변 `event_id`. 내용이 그대로이면 해당 event/content를 참조하여 중복 저장을 피하고, 사람 정정 직전에 원안을 `proposal.content`로 보존한다. 선택 그룹 상세 및 다음 AI 입력은 원안을 명시적으로 펼쳐 제공한다.
+- `source`: `AI`, `REFERENCE_ENGINE`, `HUMAN`. `status`: `DRAFT`, `CONFIRMED`, `STALE`; row 없는 구형 그룹은 계산 상태 `MISSING`이다.
+- `binding`: `source_sha256`, `cluster_event_id`, `cluster_revision`, `group_id`, `label`, `membership_sha256`(정렬한 해당 그룹 record IDs의 SHA-256).
+- `reviewed_by`/`reviewed_at`, 사람 작성 시 `edited_by`/`edited_at`, `change_reason`, `previous_event_id`로 검토/정정과 승계 이력을 보관한다.
+
+다수 그룹(현재 1,000개 이상)의 저장은 `rationale_encoding=bucket-zlib-v1`로 JSONB 생성 메모리를 제한한다.
+`rationales`에는 group ID → bucket 인덱스, `rationale_chunks`에는 최대 256개의 독립 zlib/base64 원문 JSON 묶음,
+`rationale_bytes`에는 압축 전 전체 바이트 수를 보관한다. 압축 전 근거는 128MiB까지이며 초과/손상은 명시적으로 거부한다.
+이는 같은 불변 event의 내부 저장 형식이다. 공통 store가 원래 객체로 복원하므로 API와 SDK의 위 V2 논리 계약은 바뀌지 않는다.
+선택 그룹 이력은 필요한 bucket만 읽고, 초기 metadata는 chunk 본문을 포함하지 않는다. 새 물리 테이블·DDL·자료 생략은 없다.
+사례/구형 전체 이력 조회의 바이트 예산에도 압축 해제 크기를 포함하며, 대용량 이력은 페이지 API를 사용한다.
+
+AI 출력 V2는 기존 세 키에 `group_rationales`를 추가한다. 모든 그룹에 정확히 하나의 설명이 있어야 하며,
+이 배열의 사례 ID 합집합이 `reference_ids`와 같아야 한다. 각 과거 group이 입력 case에 존재하는지 검사한다.
+합성 모델의 현재 prompt는 `sanity-group-rationales-feedback-v3`다. V1/V2 receipt도 각각 원래 고정 prompt/hash로 검증한다. V3는 적용 가능한 과거 통합 의도와 실제 group ID/소속의 일관성을 추가 점검하며 출력 JSON V2는 유지한다. 구형 결과에 근거/사람 확인을 보충 생성하지 않는다.
+
+그룹 상세/이력은 [`GET/POST /groups/{group_id}/rationale`](oa-bridge/WORKSPACE.md#v2-근거-저장확정-요청), metadata에는 네 상태의 `rationale_counts`를 제공한다.
+목록은 상태와 160자 이내 요약(`reason_truncated`), 상세는 대표 로그 기본 3개와 필요 시 나머지를 제공한다. 이 참조 수는 분석한 전체 로그 수와 다르다.
+
+MOVE의 출발/도착 그룹, RENAME 및 병합으로 구성/이름이 바뀐 그룹의 근거는 STALE, 새 그룹은 MISSING이다.
+변경 없는 그룹은 바인딩을 새 event로 연결하고 이전 event를 기록해 확인을 승계한다. 삭제 전 근거는 불변 과거 event에 남는다.
+근거만 바꿔도 새 분류 개정을 만들고 과거 그룹 판정은 현재 개정의 판정으로 사용하지 않는다.
+
+CONFIRM은 현재 기대 개정 전체의 **명시적인 DRAFT 일괄 채택 + 분류 확정**이며 MISSING/STALE/무효 참조는 차단한다.
+전역 reason은 선택 메모다. 개별 SAVE(reviewed=true)/ACCEPT만으로 전체 분류를 확정하지 않는다.
+근거 미기록의 구형 확정도 과거 이력으로 조회할 수 있지만 보완·새 분류 확정 전에는 새 그룹 판정/제안을 쓸 수 없다.
+`WS_GROUP_REVIEW_EVENT/PROPOSAL.clustering_rationale`는 유효한 분류 근거 snapshot이며 판정 `reason`과 별도다.
+다음 합성 AI 입력에는 최종 근거·대표 ID·최초 원안·수정 이유와 불변 이력 참조를 제공한다.
+회사 SDK/전송, 사내 원문, SSO 보호·내부 AI의 수정 허용 범위는 이 변경으로 확장되지 않는다.
+
+독립 `/workspace`의 사용자 판정은 기존 승인/coverage 계산과 별도다.
+`WS_REVIEW_EVENT`의 PASS/FAIL/DEFER는 원본 규칙 판정을 바꾸지 않으며 원본 FAIL에 사용자 PASS도 기록한다.
+검사 원문 미수신/파싱 미완료에는 DEFER만 허용한다. 기준/사유/해시/버전/검토자와 정정 이력은 불변 event로 남긴다.
+현재 head가 참조하는 다른 보고서의 확정 사례만 같은 scope·호환 버전으로 재사용한다.
+`WS_REVIEW_PROPOSAL`은 참조 event와 전체 사례 목록의 해시를 보관하며 기준 정정·추가 시 오래된 제안으로 확정하지 못한다.
+AI 제안은 자동 사람 확정이 아니며 제안과 최종 판정의 차이도 기록한다.
+현재 `CRITERIA` 모드는 확정 조건 적용, `model_called=false`다. `CORPORATE` 모드는 아직 `AI_NOT_CONFIGURED`로 차단한다.
+실제 VWP AI의 job/DB 전송 연결과 구형 승인 API는 이 별도 workspace 계약으로 자동 교체되지 않는다.
+상세 저장/API/역할 경계는 [WORKSPACE.md](oa-bridge/WORKSPACE.md#사용자-판정과-사례-재사용)를 따른다.
 
 Expected = reviewed + approved_na + unresolved (mutually exclusive unit counts).
 Completion requires confirmed nonempty inventory, matching units, no global blockers,

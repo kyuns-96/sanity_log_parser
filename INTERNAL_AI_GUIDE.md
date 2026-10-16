@@ -7,6 +7,8 @@
 운영 중 report를 분석하는 VWP AI와, 사내 코드를 작성하는 내부 AI는 서로 다른 역할이다.
 실제 report는 보안상 사내 AI/담당자가 사내에서만 열람·검증한다. Codex에는 원문을 보내지 않고 합성 재현 입력·기대값·비식별 코드만 전달한다.
 
+2026-10-16 사용자 요청의 통합 구현 지도는 [INTERNAL_AI_HANDOFF.md](INTERNAL_AI_HANDOFF.md)다. INT-01~06별 선행 정보·허용 메서드·수용 기준과 Codex의 COMMON 후속 작업을 구분한다. 이 가이드와 함께 읽으며, SDK 어댑터 검증을 운영 연결 완료로 보고하지 않는다. 현재 검토 UI와 업무 용어는 유지한다.
+
 - 아래 허용 목록에 없는 파일은 기본적으로 읽기 전용이다. 미구현 기능이 있다는 사실은 수정 허가가 아니다.
 - 사내에서만 확인 가능한 사실·SDK 호출·실제 형식 대응은 내부 AI가 준비한다. 공통 알고리즘·저장 계약·권한 정책은 Codex가 설계·구현·검토한다.
 - 처음 구현한 어댑터를 포함해 **예상하지 못한 오류나 테스트 실패가 발생하면 수정 시도를 멈춘다.** 자료 수집 후 6절 형식으로 문의한다.
@@ -22,7 +24,7 @@
 | SSO 인증 검증 어댑터 | OA, SSO 운영에 필수 | `CorporateIdentityProvider.authenticate`에서 승인된 SDK로 검증 후 `VerifiedIdentity` 반환 | 성공·위조·만료·잘못된 발급자/대상·서비스 장애를 검증. JWT decode/헤더 읽기만으로 성공시키지 않음 |
 | 영속 사용자 연결 조회 | OA, SSO 운영에 필수 | `CorporateUserDirectory.resolve`에서 승인된 저장소의 `(issuer, subject) → user_id`와 활성 상태 조회 | 동명이인/이름 변경/미연결/비활성/장애 구분. 승인된 영속 매핑 저장소가 없으면 저장 설계를 Codex에게 문의 |
 | 회사 SDK 클라이언트·인증 경로 | OA, 실제 SSO 방식에 따라 필요 | 클라이언트 초기화, 필요 시 `/auth` 로그인·콜백·로그아웃 router, 어댑터 주입 | 실제 회사 문서에 근거. 쿠키/콜백 검증 필요 조건 포함. 기존 업무 API·UI·보안 middleware 변경은 Codex 담당 |
-| 실제 sanity 예상 목록 연결 | VWP, 실제 report 처리에 필수 | 실행 설정/기준 목록에서 기존 `plan.json` 계약을 만드는 별도 입력 어댑터 | 생성된 파일 목록으로 예상 목록을 역추정하지 않음. 누락·실패·적용 제외와 출처/버전을 보존. 목록 확정은 담당자 확인 필요 |
+| 실제 sanity 예상 목록 연결 | VWP, 실제 report 처리에 필수 | `SanityPlanProvider.get_plan`을 구현해 실행 설정/기준 목록을 기존 `plan.json` 계약으로 반환 | [PLAN_INTEGRATION.md](vwp-bridge/PLAN_INTEGRATION.md)를 따름. 생성된 파일로 예상 목록을 역추정하지 않음. 누락·실패·적용 제외와 출처/버전 보존. 목록 승인 사실은 담당자 확인 필요 |
 | item별 report 추출 어댑터·정답 사례 | VWP, 실제 parser 지원에 필수 | `ReportParser.parse` 구현, 명시적 registry 등록, 전용 테스트와 사내 비공개 기대값 검증 | [PARSER_INTEGRATION.md](vwp-bridge/PARSER_INTEGRATION.md)의 고정 계약 안에서만 구현. 임계값·단위·동일성 규칙 추정 금지. 공통 엔진/판정/등록 인터페이스는 Codex 담당. 실제 원문은 외부에 전달하지 않음 |
 | 프로젝트·블록·버전 필드 대응 | VWP/OA, 운영 버전 화면에 필요 | 원천 필드와 project/block/NET_VER/REVISION/PRE·POST/ECO 대응표, 실제 식별/연결 근거 | 현재 전송 계약에 없는 필드는 설계 자료로 제출. payload/DB에 임의 추가하거나 기존 ID를 재해석하지 않음 |
 | DB·VWP AI 접속 설정 확인 | 각 실행 환경, 설정 작업 | 승인된 env 값 설정, 버전/지원 API/제한 확인, 정해진 확인 절차 결과 | 접속 드라이버/AI 어댑터는 이미 구현되어 있음. 오류 시 재작성하지 않음. 실제 사내 DB 연결 확인은 사용자가 수행 |
@@ -37,14 +39,25 @@ OA의 낮은 성능 AI에 운영 clustering을 맡기지 않는다. 운영 분�
 | `oa-bridge/corporate_sso.py` | 두 기존 메서드 본문, 필요한 import, SDK/조회 클라이언트 주입용 생성자 | 메서드 서명·반환 모델·오류 코드 변경, 인증 생략, 사용자 자동 등록/권한 자동 부여 |
 | `oa-bridge/sso_app.py` | 승인된 회사 모듈 import와 `identity_provider`, `user_directory`, `auth_router` 주입 | `auth_mode="sso"` 제거, 외부 bind, proxy/Host/로그 설정 완화, 기존 API 교체 |
 | `oa-bridge/company_sso/` — 신규 작업용 위치 | 위 어댑터를 지원하는 SDK wrapper·인증 router·모의 SDK 테스트만 추가 | 업무 데이터 조회/수정 API, 프로젝트 권한 엔진, DB migration, 공통 모듈 monkey patch |
+| `site_integration/corporate_plan.py` | `CorporatePlanProvider.get_plan` 본문, 필요한 import, 승인된 실행/예상 목록 조회 client 주입용 생성자 | 추상 서명/plan schema 변경, 목록 승인 자동 부여, report/설계 변경·sanity 실행·DB 쓰기·공통 CLI 수정 |
+| `site_integration/company_plan/` — 신규 작업용 위치 | 원천 SDK wrapper·기존 plan 입력 작성용 별도 launcher·합성/모의 전용 테스트 | 파일 목록으로 예상 unit 누락 은폐, 새 전송/DB 계약·worker 연결, 원본 report/설계 파일 변경 |
 | `site_integration/corporate_parsers.py` | `CorporateReportParser.parse` 본문, 필요한 import, `create_parser_registry`의 명시적 회사 파서 등록 | 메서드/함수 서명·반환 계약 변경, 자동 import/발견, 내장 파서 교체, 공통 판정 우회 |
 | `site_integration/company_parsers/` — 신규 작업용 위치 | 확인된 형식의 `ReportParser` 하위 클래스·전용 테스트 추가 | DB/AI/네트워크/shell 호출, 다른 report 읽기, 공통 모듈 monkey patch, 원문/객체명/비밀값 하드코딩 |
+| `site_integration/corporate_review.py` | `CorporateReviewAdvisor.propose` 본문, 필요한 import, 승인된 VWP AI SDK 주입용 생성자 | 메서드/출력 계약 변경, OA 모델 호출, DB/전송/worker 연결 변경, 판정/재사용 기준 자동 확정 |
+| `site_integration/company_review/` — 신규 작업용 위치 | 위 어댑터를 지원하는 SDK wrapper·합성/모의 SDK 전용 테스트 | 공통 AI/저장 모듈 대체, DB·파일·다른 report 조회, shell 실행, 운영 재시도/상태 우회 |
+| `site_integration/corporate_clustering.py` | `CorporateClusteringAdvisor.propose` 본문, 필요한 import, 승인된 VWP SDK 주입용 생성자 | 분류/판정/출력 계약 변경, OA 모델 호출, 공통 DB/worker/API 연결, 그룹 자동 확정 |
+| `site_integration/company_clustering/` — 신규 작업용 위치 | 위 어댑터의 SDK wrapper·합성/모의 SDK 전용 테스트 | DB·파일·다른 report 조회, shell 실행, 공통 모듈 변경/monkey patch, 실패의 성공 대체 |
 | `site_integration/` — 신규 작업용 위치 | 기존 `plan.json` 생성용 별도 VWP 입력 어댑터, 합성 fixture, 추출 기대값, 대응표, 해당 어댑터 테스트 | 공통 parser/판정/군집 엔진 대체, DB 직접 쓰기, 전송 계약 변경, 새 sanity 실행/설계 파일 변경 |
 | 각 서버의 비공개 `.env`/실행 환경 | 사용자가 허용한 실제 값과 기존 지원 키 설정 | 파일 내용을 대화/로그/Git에 출력, VWP 자격증명을 OA로 복사, 비밀을 `VITE_*`에 넣기 |
 | 로컬 `artifacts/` 또는 승인된 비공개 작업 폴더 | 진단 메모, 비식별 fixture, 실행 결과 | 원문 로그·비밀값·사내 SDK/접속 문서의 무검토 외부 반출 |
 
 신규 작업용 위치는 자동 발견되는 plugin 경로가 아니다. 회사 파서는 `create_parser_registry`에서 명시적으로 등록하고 기존 `vwp-bridge/corporate_analyze.py`로 주입한다. 이 연결과 공통 검증은 이미 제공되어 있으므로 내부 AI가 공통 파일을 수정하지 않는다.
+plan provider도 자동 수집/주입되지 않는다. 허용된 회사 wrapper에서 명시적으로 호출하고 기존 `vwp-dev/main.py:validate_plan`으로 검사한 plan만 기존 collector에 전달한다. 구조 검사 통과는 예상 목록 승인이나 실제 report 완료를 뜻하지 않는다. plan 계약·실제 원천 버전 필드 대응은 [PLAN_INTEGRATION.md](vwp-bridge/PLAN_INTEGRATION.md)를 따른다.
 `sanity_parsers.py`, `vwp-bridge/corporate_analyze.py`, `site_integration/parser_example.py`, `site_integration/__init__.py`는 읽기 전용이다. 같은 `site_integration/` 아래라는 이유로 이 고정 scaffold를 수정하지 않는다. 회사 파서 구현 완료와 사용자/Codex 검토·운영 적용 완료는 구분한다.
+공개 형식 참고용 `site_integration/public_parsers.py`와 [PUBLIC_REPORT_FORMATS.md](site_integration/PUBLIC_REPORT_FORMATS.md)도 고정 예제로 읽는다.
+사용자 판정 참고 AI 어댑터는 [REVIEW_INTEGRATION.md](vwp-bridge/REVIEW_INTEGRATION.md)를 따른다. 현재는 SDK/모델 미연결 scaffold이며 공통 workspace 제안 엔진은 정확한 조건 적용이다. SDK 구현과 VWP DB 전달/운영 연결은 구분한다. 내부 AI는 후자의 공통 코드를 수정하지 않는다.
+1단계 분류 SDK는 [CLUSTERING_INTEGRATION.md](vwp-bridge/CLUSTERING_INTEGRATION.md), 2단계 그룹 판정 SDK는 위 review 계약을 따른다. 두 어댑터는 사내 VWP용이며 workspace의 `CORPORATE` 경로는 아직 미연결이다. 기존 legacy AI 어댑터의 접속 설정 완료와 새 workspace 운영 연결 완료를 혼동하지 않는다.
+샘플 registry/완료 표식은 운영 계약이 아니다. 참고 패턴은 허용된 회사 구현 위치에서 실제 버전·종료/건수 계약에 맞춰 구현한다.
 새 SDK 의존성·환경변수 키가 필요하면 이름/용도/버전을 먼저 문의한다. `requirements.txt`, lockfile, `sanity_config.py`를 임의 수정하지 않는다.
 기존 사내 SDK로 충분한 경우에도 확인된 문서에 근거해 구현하며 인증·CSRF·TLS 조건을 추정하지 않는다.
 자격증명·실제 사내 사례는 이 공개 저장소에 넣지 않는다. 문서/fixture는 공개 가능 여부를 별도로 확인한다.
@@ -75,12 +88,21 @@ OA의 낮은 성능 AI에 운영 clustering을 맡기지 않는다. 운영 분�
 7. TLS 검증 끄기, 모든 Host/CORS 허용, 인증 header 무조건 신뢰, shell 실행 추가, 예외 무시, 테스트 삭제/skip/기대값 완화.
 8. UI 데모의 프로젝트·PoR·사용자 데이터를 실제 DB/SSO 결과로 취급하거나 운영 권한 필터 대신 브라우저 필터만 적용.
 
-프로젝트·블록 RBAC, 영속 관리 레코드/PoR 저장, 새 버전 전송 계약, 공통 parser/판정/등록 엔진 확장, UI SSO 연결은 **남은 작업이지만 내부 AI의 수정 허용 영역이 아니다**. Codex가 별도 구현한다. 회사 파서 등록은 위 허용 파일의 고정 인터페이스 사용만 허용한다.
+프로젝트·블록 RBAC, 영속 관리 레코드/PoR 저장, 새 버전 전송 계약, 공통 parser/판정/등록 엔진 확장, UI SSO 연결은 **내부 AI의 수정 허용 영역이 아니다**. 구현·변경·디버깅은 Codex가 담당한다. 회사 파서 등록은 위 허용 파일의 고정 인터페이스 사용만 허용한다.
+2026-10-15 Codex가 별도 테스트 workspace의 서버 범위 검사와 PoR 영속 저장을 추가했다.
+`sanity_workspace.py`, `oa-bridge/workspace_api.py`, `workspace_app.py`, `db/005_workspace.sql`, `tools/run_workspace.py`도 보호 공통 코드다.
+사용자 판정의 `sanity_workspace_review.py`, `sanity_review_advice.py`, `db/006_workspace_reviews.sql`과 화면/기존 테스트도 보호 대상이다. 회사 review SDK는 위 어댑터 본문에서만 구현한다.
+두 단계의 `sanity_workspace_clustering.py`, `sanity_workspace_group_review.py`, `db/007_workspace_pipeline.sql`과 UI/API·기존 테스트·QA helper도 보호 대상이다. 내부 AI가 분류/판정 개정이나 오래된 참조 검사를 완화하지 않는다.
+`sanity_codex_mock.py`, `tools/run_codex_mock.py`, `tools/seed_codex_mock.py`와 관련 테스트는 사용자 요청으로 Codex가 추가한 **외부 모델·합성 자료 전용 시험**이며 보호 대상이다. 내부 AI는 이를 회사 report/사례/SDK에 연결하거나 합성 입력 검사를 완화하지 않는다. 회사 VWP용 어댑터의 허용 범위와 `CORPORATE` 미연결 상태는 유지한다.
+`sanity_workspace_codex.py`와 전용 `/clustering/ai` API/버튼도 같은 보호 대상이다. 명시적으로 켠 독립 합성 환경만 사용하며 회사 어댑터의 OA 모델 호출 금지를 해제하지 않는다. 내부 AI가 `codex_mock_enabled`나 합성 입력 검사를 회사 환경에서 켜거나 우회하지 않는다.
+대용량 순차 검토의 `sanity_workspace_pipeline.py`, `sanity_large_samples.py`, `WorkspaceWorkbench.tsx`와 작업 재개·페이지·서버 편집 API/테스트도 같은 보호 대상이다. 내부 AI가 task 상태/전체 coverage·한도·권한을 바꾸거나 공통 worker 연결을 자체 추가하지 않는다.
+`sanity_integration_contracts.py`, `sanity_integration_examples.py`, `tests/test_integration_contracts.py`와 [INTERNAL_AI_HANDOFF.md](INTERNAL_AI_HANDOFF.md)도 Codex가 관리하는 고정 추상 계약/합성 예제/명세다. 내부 AI는 SDK 필드에 맞춰 이 타입/예제를 바꾸지 않고 허용된 회사 본문에서 대응한다. 현 review 계약의 PASS/FAIL 최소 사람 사례 참조 조건, workspace의 `CORPORATE` 차단과 SSO 업무 차단도 그대로다. 원본만으로 최초 AI 판정을 제안하는 공통 계약 확장은 Codex 후속 작업이다.
+[WORKSPACE.md](oa-bridge/WORKSPACE.md)의 공용 테스트 계정/환경 표식을 회사 인증 fallback으로 쓰거나 실제 SSO 보호 장치를 해제하지 않는다.
 DBA의 승인된 설치 SQL 실행과 실제 운영 배포는 사용자가 관리하며, 이 문서가 그 실행 권한을 내부 AI에게 자동 부여하지 않는다.
 
 ## 5. 작업·검증·인계 순서
 
-1. 이 문서 → `requirement.md`의 관련 절 → `PROTOCOL.md` → 해당 연동 문서를 읽는다. SSO는 `oa-bridge/SSO_INTEGRATION.md`, report 파서는 `vwp-bridge/PARSER_INTEGRATION.md`도 읽는다.
+1. 이 문서 → `INTERNAL_AI_HANDOFF.md` → `requirement.md`의 관련 절 → `PROTOCOL.md` → 해당 연동 문서를 읽는다. SSO는 `oa-bridge/SSO_INTEGRATION.md`, 예상 목록은 `vwp-bridge/PLAN_INTEGRATION.md`, report 파서는 `vwp-bridge/PARSER_INTEGRATION.md`도 읽는다.
 2. 작업 시작 시 `git status --short`로 기존 변경을 기록한다. 내부 AI가 새로 수정할 파일·메서드와 근거 문서를 짧게 제시한다. 범위가 불명확하면 먼저 문의한다.
 3. 사내 사실을 확인하고 한 번에 어댑터 하나만 구현한다. 예시를 실제 계약으로 추정하거나 관련 없는 리팩터링을 하지 않는다.
 4. 새 SDK/입력/report 어댑터 테스트를 추가한다. 기존 테스트를 수정하지 않는다. 파서는 정상·위반·경계값·명시적 0건·빈 파일·잘림·미해석 구간·도구 버전 변경을 검증한다. 합성/모의 검증과 사내 실환경 검증 결과를 구분한다.
@@ -91,6 +113,7 @@ DBA의 승인된 설치 SQL 실행과 실제 운영 배포는 사용자가 관�
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -p test_auth.py -v
+.venv/bin/python -m unittest discover -s tests -p test_integration_contracts.py -v
 .venv/bin/python -m unittest discover -s oa-bridge -p test_sso.py -v
 .venv/bin/python -m unittest discover -s tests -p test_parsers.py -v
 .venv/bin/python db/tests/run_mock.py --pg-bin /path/to/postgresql/bin
@@ -138,4 +161,4 @@ Codex 답변이 오면 해당 작업의 허용 파일·지시 범위에서만 �
 
 ## 7. 내부 AI에게 그대로 전달할 지시문
 
-> 먼저 저장소 루트 `AGENTS.md`와 `INTERNAL_AI_GUIDE.md`를 읽어라. 너의 역할은 사내 연동 구현자다. 허용 목록의 회사 어댑터·입력 매핑·item별 report 추출/명시적 등록·전용 테스트만 작성하고 공통 코드·DB SQL·판정/coverage·권한 검사·UI·기존 테스트는 수정하지 말라. report 작업은 `vwp-bridge/PARSER_INTEGRATION.md`를 따르고 실제 원문은 사내에서만 검증하며 외부 Codex 문의에는 합성 입력만 사용하라. 실제 SDK와 사내 자료로 확인한 사실만 사용하라. 예상하지 못한 오류가 발생하거나 보호 파일 변경이 필요하면 수정/재시도를 멈추고 `[Codex 디버깅 요청]`을 비식별화해 작성하라. 직접 문의 도구가 없으면 사용자에게 이 대화로 전달해 달라고 요청하고 `WAITING_FOR_CODEX`로 대기하라. SSO 업무 API의 의도된 차단이나 미완료 sanity 상태를 성공으로 바꾸지 말라. 작업 완료와 운영 적용 승인을 구분하라.
+> 먼저 저장소 루트 `AGENTS.md`, `INTERNAL_AI_GUIDE.md`, `INTERNAL_AI_HANDOFF.md`와 맡은 INT 작업의 세부 계약을 읽어라. 너의 역할은 사내 연동 구현자다. 허용 목록의 회사 SSO/plan/parser/clustering/review 어댑터·입력 매핑·명시적 파서 등록·전용 테스트만 작성하고 공통 코드·DB SQL·판정/coverage·권한 검사·UI·기존 테스트는 수정하지 말라. 실제 원문은 사내에서만 검증하며 외부 Codex 문의에는 합성 입력만 사용하라. 실제 SDK와 사내 자료로 확인한 사실만 사용하라. 예상하지 못한 오류가 발생하거나 보호 파일 변경이 필요하면 수정/재시도를 멈추고 `[Codex 디버깅 요청]`을 비식별화해 작성하라. 직접 문의 도구가 없으면 사용자에게 이 대화로 전달해 달라고 요청하고 `WAITING_FOR_CODEX`로 대기하라. SSO 업무 API·CORPORATE의 의도된 차단이나 미완료 sanity 상태를 성공으로 바꾸지 말라. 어댑터 검증과 COMMON 운영 연결·실제 적용 승인을 구분하라.

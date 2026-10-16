@@ -10,16 +10,33 @@ VWP AI와 사람이 함께 만드는 분류 루프, 대량 report 처리, 그룹
 
 프로젝트 등록·SSO 사용자 연결·담당 권한·블록별 NET_VER/REVISION·ECO·PoR의 최신 기준은
 [요구사항 15절](requirement.md#dashboard-domain-spec)에 정리했습니다. PoR은 각 블록 담당자가 지정합니다.
-해당 화면은 현재 브라우저 데모이며, 운영 SSO/RBAC와 관리 정보·PoR의 DB/API 연동은 후속 구현 대상입니다.
+기존 데모와 별도로 **`/workspace`에서 로그인·프로젝트·블록·버전·검사·PoR을 서버에 연결**했습니다.
+10개 테스트 계정의 범위를 서버에서 검사하고 PoR·변경 이력을 PostgreSQL에 저장합니다. 새로고침/다른 계정 조회/서버 재시작에도 유지됩니다.
+검사별 사용자 판정·사유·재사용 조건과 제안을 따로 저장합니다. 원본 FAIL에 사용자 PASS를 기록할 수 있고,
+확정한 조건을 다음 보고서의 제안에 재사용합니다. 현재는 조건 적용 엔진이며 실제 사내 AI는 미연결입니다.
+별도 [Codex 합성 mock 시험](oa-bridge/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)은 `gpt-6-luna`를 실제 호출해 AI 초기 분류 → 사람 수정·DB 확정 → 다음 AI 입력의 사례 활용을 검증합니다. 명시적으로 활성화한 합성 workspace의 **AI로 그룹 만들기** 버튼에서도 호출할 수 있으며 일반 회귀 테스트는 외부 모델을 호출하지 않습니다.
+sanity item의 **검토 시작**에서는 단일 report의 평균 10,000건·100,000건 이상 로그를 1단계 분류·확정 후 2단계 그룹별 판정으로 검토합니다.
+그룹/원문은 페이지로 조회하며 분류 작업은 저장한 위치에서 이어갈 수 있습니다. 분류 확정 전에 판정을 시작할 수 없습니다.
+확정 분류 사례와 그룹 판정 근거를 각각 재사용하고, 재분류된 그룹의 이전 판정은 재검토 대상으로 남깁니다.
+[워크스페이스 실행 안내](oa-bridge/WORKSPACE.md)를 따릅니다. 실제 회사 SSO·원천 버전 전송·운영 DB 연동은 후속 검증 대상입니다.
 
 SSO의 인증 검증·내부 사용자 연결은 교체 가능한 추상 인터페이스로 분리했습니다.
 사내 AI는 먼저 [내부 AI 작업 범위](INTERNAL_AI_GUIDE.md)와 [AGENTS.md](AGENTS.md)를 읽습니다.
+[사내 AI 통합 인계 명세](INTERNAL_AI_HANDOFF.md)에 작업별 선행 정보·허용 파일/메서드·입출력·수용 기준·실행 명령·Codex 후속 연결과 복사 가능한 시작 지시문을 정리했습니다.
+예상 목록은 [PlanProvider 계약](vwp-bridge/PLAN_INTEGRATION.md), 모델 입력/출력 타입은 [공통 타입](sanity_integration_contracts.py), SDK 모의 테스트에 쓸 작은 합성 packet은 [합성 예제](sanity_integration_examples.py)를 사용합니다.
+회사 SDK 어댑터 작성만으로 `/workspace`의 SSO·VWP 운영 실행이 연결되지는 않습니다. 현재 2단계 SDK의 참조 없는 AI PASS/FAIL 제한도 인계 문서에 명시했습니다.
 [SSO 연동 인수인계](oa-bridge/SSO_INTEGRATION.md)의 회사 어댑터, 허용된 입력 매핑과
-[report parser 인수인계](vwp-bridge/PARSER_INTEGRATION.md)의 item별 추출/명시적 등록만 구현하며,
+[report parser 인수인계](vwp-bridge/PARSER_INTEGRATION.md)의 item별 추출/명시적 등록과
+[review 인수인계](vwp-bridge/REVIEW_INTEGRATION.md)의 회사 VWP AI SDK 어댑터만 구현하며,
 DB 계약·분류·권한 검사·핵심 UI는 수정하지 않습니다. 예상 밖 오류는 수정/재시도를 멈추고 비식별 진단 자료와 함께 Codex에게 문의합니다.
 실제 report는 사내 AI/담당자가 사내에서만 검증합니다. Codex에는 합성 재현 입력만 전달합니다.
 파서 추상 인터페이스·완료/원문/건수 검사를 제공했으며 회사 registry는 초기값이 비어 있습니다.
 사내 구현은 `site_integration/corporate_parsers.py`에서 등록하고 `vwp-bridge/corporate_analyze.py analyze`로 실행합니다.
+
+GCA·VC LP·SpyGlass의 공개 문서를 참고한 **초기 추출 파서와 1,000개 합성 데이터 대시보드**도 제공합니다.
+가상 이용자 10명·프로젝트 3개·블록 9개를 구성하고, 독립 mock PostgreSQL에서 실제 수집/파싱/수신/저장을 검증한
+읽기 전용 스냅샷을 `/?demo=1&dataset=reports`에서 확인합니다. 생성·실행 방법과 사내 AI의 후속 구현 범위는
+[공개 report 형식 인계](site_integration/PUBLIC_REPORT_FORMATS.md)에 정리했습니다. native 현행 버전의 완료/정확성 검증과 구분합니다.
 
 사용자가 **psycopg2로 PostgreSQL 직접 접속 가능**함을 확인했습니다. 기본 접근 모드는 postgresql입니다.
 실제 호스트·DB 이름·계정·비밀번호는 각 서버의 비공개 `.env`/환경변수에서 설정합니다.
@@ -155,6 +172,7 @@ OA 대시보드에서도 다음 메시지 한 건을 수동 수신할 수 있습
 최근 50개 검토 개정과 전체 개정 수를 표시합니다. 모든 판정은 PASS/FAIL·사유·요청 UUID와
 expected_revision을 보내며 개정이 바뀌면 최신 상태 확인이 필요합니다.
 blocker 면제와 알려진 FAIL→PASS는 금지합니다. review=COMPLETE와 check=PASS는 별도 상태입니다.
+이 절은 legacy bundle/CLI 검토 계약입니다. `/workspace`의 별도 사용자 판정은 원본 FAIL에 PASS를 저장할 수 있으며 원본 결과를 보존합니다.
 새 번들은 기존 승인을 상속하지 않으며 A→B→A도 서로 다른 개정으로 남습니다.
 보고서 다운로드는 저장된 현재 개정의 불변 바이트를 검증해서 제공합니다.
 

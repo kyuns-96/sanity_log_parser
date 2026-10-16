@@ -6,7 +6,7 @@ SSO 공급자 SDK와 사내 계정 DB만 연결하면 `/api/session`에서 검�
 이 문서의 운영 권한·DB·UI 후속 계획은 **Codex 담당**이며 사내 AI에게 공통 파일 수정 권한을 주는 지시가 아니다.
 사내 AI는 회사 어댑터와 명시적으로 허용된 주입 부분만 구현한다. 자기 코드에서도 예상 밖 오류가 나면 수정/재시도를 멈추고 Codex에게 문의한다.
 
-현재 업무 API는 단일 사용자용이다. SSO 연동 완료와 프로젝트·블록 권한 연동 완료를 분리한다. 아래의 업무 권한 작업까지 끝내기 전 SSO 사용자의 업무 API는 `503 AUTHORIZATION_NOT_IMPLEMENTED`를 반환한다. 기존 로컬 토큰 모드는 종전처럼 동작한다.
+이 문서의 `/api/*`와 `sso_app.py`는 기존 단일 사용자용 dashboard API다. 별도 합성 `/workspace`에는 사용자/프로젝트·블록 범위·PoR 저장이 구현되어 있지만 회사 SSO와 연결되지 않았다. `/api/session`과 `/workspace/api/session`은 서로 다른 진입점이다. SSO 연동 완료와 업무 권한/워크스페이스 연결 완료를 분리하며, 공통 연결 전 SSO 사용자의 legacy 업무 API는 `503 AUTHORIZATION_NOT_IMPLEMENTED`를 유지한다. 기존 로컬 토큰 모드는 종전처럼 동작한다. 통합 인계는 [INTERNAL_AI_HANDOFF.md](../INTERNAL_AI_HANDOFF.md)를 따른다.
 
 ## 1. 파일과 구현 책임
 
@@ -72,7 +72,7 @@ HTTP 요청
 
 인터페이스가 사용자 DB 생성이나 자동 가입을 수행하지 않는다. 초기 관리자·사전 등록·첫 로그인 등록 정책은 사내 기준을 확인해 Codex에게 전달한다. 내부 AI가 정책을 선택하거나 자동 등록/권한 부여를 구현하지 않는다. 승인된 자동 등록을 추후 구현하더라도 `(issuer, subject)` 중복을 DB에서 방지하고 프로젝트/TOP/블록 권한을 자동 부여하지 않는다. 프로젝트·블록 배정은 업무 DB의 별도 권한 정보다.
 
-기존 4개 테이블에는 관리 레코드 확장 DDL이 아직 없다. 이름을 임시 ID로 저장하거나 가짜 run/bundle에 계정을 넣지 않는다. 승인된 영속 매핑 저장소가 없다면 중단하고 [요구사항 15.8절](../requirement.md#dashboard-domain-spec)의 증분 저장 구현을 Codex에게 요청한다. 내부 AI는 SQL을 새로 만들거나 DB 제약을 완화하지 않는다. 프로세스 재시작 후에도 같은 계정은 같은 내부 ID에 연결되어야 한다.
+`db/005_workspace.sql`로 기존 네 테이블 안에 `WS_USER` 등 관리 레코드는 추가되어 있다. 이것은 `(issuer, subject)`의 실제 영속 매핑·회사 사용자 등록이나 SSO 운영 연결 완료를 뜻하지 않는다. 이름을 임시 ID로 저장하거나 가짜 run/bundle에 계정을 넣지 않는다. 승인된 매핑 저장소가 없으면 기존 workspace와의 연결 요구를 Codex에게 인계한다. 내부 AI는 SQL을 새로 만들거나 DB 제약을 완화하지 않는다. 프로세스 재시작 후에도 같은 계정은 같은 내부 ID에 연결되어야 한다.
 
 ## 4. 실행과 로그인 경로 연결
 
@@ -139,7 +139,7 @@ app = create_app(
 1번의 회사 어댑터 검증은 내부 AI 범위다. **2~7번의 저장·권한·감사·기존 UI/API 변경은 Codex가 수행한다.** 내부 AI는 사내 사실과 요구 계약만 제공하고 관련 보호 파일은 수정하지 않는다.
 
 1. 위 두 어댑터를 구현하고 `/api/session`의 사용자 ID·활성/비활성·미연결·만료를 확인한다.
-2. 내부 사용자 ID에 프로젝트·블록 담당 배정을 저장하고 로그인 사용자의 조회 범위를 계산한다. TOP은 담당 프로젝트 전체 조회, PoR 지정은 해당 블록 담당자라는 [15절 업무 규칙](../requirement.md#dashboard-domain-spec)을 따른다.
+2. 실제 SSO 사용자와 기존 workspace 사용자/담당 배정의 연결·수명 주기를 검토한다. 합성 환경에서 구현된 저장/범위 검사를 실제 원천에 연결하되 테스트 사용자를 회사 계정으로 재사용하지 않는다. TOP은 담당 프로젝트 전체 조회, PoR 지정은 해당 블록 담당자라는 [15절 업무 규칙](../requirement.md#dashboard-domain-spec)을 따른다.
 3. API의 `authorized_actor`를 대상별 권한 검사로 확장한다. **`require_business_access`의 SSO 차단만 삭제하지 않는다.** `/api/bundles`의 SQL 목록·건수·페이지부터 허용 범위를 적용해야 한다. 현재는 전체 번들을 조회한다.
 4. bundle/unit/report/download, 근거 request/response/record, AI 작업·구성원·수신·변경 API까지 대상 ID의 실제 프로젝트·블록을 조회해 검사한다. `/api/receive`는 전역 큐 처리이므로 별도의 운영 권한·작업자 책임을 결정한다. URL의 ID나 사용자 입력 범위를 그대로 신뢰하지 않는다.
 5. 감사·검토·PoR 저장에 `actor.user_id`를 추가한다. 현재 review/clustering 저장 함수의 `reviewer` 문자열은 이름이다. 이름만 저장하면 동명이인·이름 변경 이력을 구분할 수 없다. 기존 불변 이력은 덮어쓰지 않고 새 계약으로 확장한다.

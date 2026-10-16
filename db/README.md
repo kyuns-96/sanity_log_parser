@@ -23,9 +23,19 @@ OA 브라우저의 로컬 API 접속은 브리지 간 통신과 별개다.
 | [002_indexes.sql](002_indexes.sql) | 추가 인덱스·부분 UNIQUE·테이블 간 FK·저장 설정 | 테이블 생성 후 SQL 실행 |
 | [003_grants.sql](003_grants.sql) | VWP/OA 역할별 테이블·컬럼 권한 | 역할 준비 후 SQL 실행 |
 | [004_clustering.sql](004_clustering.sql) | 분류 작업·개정용 컬럼 2개, CHECK 확장, 인덱스 추가 | 기존 테이블의 `002`·`003` 준비 후 owner/DBA가 한 번 실행 |
+| [005_workspace.sql](005_workspace.sql) | OA 관리 레코드·PoR·세션, scope/FK/인덱스 확장 | `004` 적용 후 workspace를 도입할 때 owner/DBA가 한 번 실행 |
+| [006_workspace_reviews.sql](006_workspace_reviews.sql) | OA 사용자 판정 head·불변 사례/제안, 원본/버전/사례 참조 FK | `005` 적용 후 사용자 판정 기능 도입 시 owner/DBA가 한 번 실행 |
+| [007_workspace_pipeline.sql](007_workspace_pipeline.sql) | OA 분류 개정·그룹 판정/제안, 확정 분류 event 참조 FK | `006` 적용 후 두 단계 그룹 검토를 도입할 때 owner/DBA가 한 번 실행 |
 
 전체 준비 순서는 **신청한 `form`으로 생성 → `002` → 역할 준비 → `003` → `004`**다.
 이미 완료한 단계는 반복하지 않는다. 생성·`002`·`003`까지 완료했다면 **`004`만 실행**한다.
+workspace에는 이어서 `005 → 006 → 007`을 적용한다. 각 증분은 직전의 검증된 kind/scope 제약을 확인하고 기존 행·테이블·권한을 보존한다.
+OA에 `WS_REVIEW`, `WS_REVIEW_EVENT`, `WS_REVIEW_PROPOSAL`을 추가하며, 사례/제안은 state/version/갱신 시각을 고정한다.
+`007`은 `WS_CLUSTER`, `WS_CLUSTER_EVENT`, `WS_GROUP_REVIEW`, `WS_GROUP_REVIEW_EVENT`, `WS_GROUP_REVIEW_PROPOSAL`을 추가한다.
+새 행은 원본 보고서/버전과 분류 event를 FK로 참조한다. 분류/판정 event·제안은 추가 전용이며 head만 갱신한다.
+기존 payload UPDATE 권한은 없으며 신규 head의 state/version만 갱신한다. 새 테이블/역할/광범위 GRANT는 없다.
+owner/DBA가 점검 시간에 파일 전체를 한 트랜잭션으로 실행한다. 잠금 시간 초과나 사전 제약 불일치 시 rollback한다.
+앱은 자동 migration을 실행하지 않으며 성공한 SQL의 재실행은 실패한다. 합성 로컬 fixture 전용 upgrade는 [WORKSPACE](../oa-bridge/WORKSPACE.md)를 따른다.
 `tests/`는 개발자용 로컬 검증 도구이며 DB 신청이나 운영 설치 시 실행할 파일이 아니다.
 사내 DB 없이 새 합성 DB를 만드는 명령은 `.venv/bin/python db/tests/run_mock.py`다.
 PostgreSQL 16+ 서버 바이너리가 필요하며, 별도 로컬 소켓 DB 생성·권한/회귀 테스트·종료를 수행한다.
@@ -73,6 +83,16 @@ SQL의 대상 스키마는 `public`이다. 다른 스키마에 신청했다면 �
   `003` 재실행이나 권한 확대는 필요 없다. 변경된 앱은 추가 UNIQUE 계약을 확인한다.
 
 `004`는 분류 기능용 DB 기반이다. SQL 적용만으로 AI 작업자·OA 분류 화면·실제 AI 연동이 완성되지는 않는다.
+
+### `005` 워크스페이스 관리 레코드
+
+`005_workspace.sql`은 `004` 다음에 적용하는 별도 증분 변경이다. 기존 네 테이블과 form/002/003/004는 유지한다.
+OA에 명시적인 `WS_*` 관리 종류·고유 키·프로젝트/블록/버전 참조를 추가한다. 관리 행만 run/bundle이 NULL이며
+기존 분석/분류 행의 필수 scope는 새 CHECK로 보존한다. 가짜 실행·번들 ID를 넣지 않는다.
+기존 payload·근거·보고서를 변경하지 않고 UPDATE 허용 컬럼/앱 역할도 늘리지 않는다.
+명시적인 004 kind 계약이 다르면 실패하고 전체 rollback한다. 이미 성공한 파일은 재실행하지 않는다.
+owner/DBA가 작업 중지·백업/복구·잠금 시간을 검토한 뒤 파일 전체를 적용한다. 앱이 DDL을 실행하지 않는다.
+이번 실제 실행은 독립 테스트 DB뿐이며 운영 설치를 대신하지 않는다. 기능·실행 방법은 [WORKSPACE.md](../oa-bridge/WORKSPACE.md)에 있다.
 
 ## 2. 데이터 계약
 

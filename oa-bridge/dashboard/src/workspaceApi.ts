@@ -1,0 +1,91 @@
+export type WorkspaceUser = { id: string; name: string; username: string; role: string }
+export type WorkspaceSession = { user: WorkspaceUser; csrf: string; expires_at: string; environment: string }
+export type WorkspaceVersion = { id: string; project_id: string; block_id: string; net_ver: string; revision: string; layout: 'PRE' | 'POST'; source_pre_id: string | null; ecos: (string | null)[] }
+export type WorkspacePor = { revision: number; version: WorkspaceVersion | null; assigned_by: WorkspaceUser | null; assigned_at: string | null }
+export type WorkspaceBlock = { id: string; project_id: string; name: string; owners: WorkspaceUser[]; can_assign_por: boolean; por: WorkspacePor; report_version: WorkspaceVersion | null; counts: Record<string, number>; total: number }
+export type WorkspaceProject = { id: string; name: string; description: string; tops: WorkspaceUser[]; blocks: WorkspaceBlock[] }
+export type WorkspaceOverview = { user: WorkspaceUser; projects: WorkspaceProject[]; data_origin: string }
+export type WorkspaceVersions = { items: WorkspaceVersion[]; por: WorkspacePor; can_assign_por: boolean }
+export type WorkspaceRecord = { id: string; fields: Record<string, unknown>; check_status: string; raw: string; raw_display_truncated?: boolean; line_start: number; line_end: number; reasons: string[] }
+export type WorkspaceReport = { id: string; item_id?: string; project_id: string; block_id: string; version_id: string; eco: string | null; family: string; rule: string; check_status: string; parse_status: string; parser: string; raw_report?: string | null; record_count: number; records?: WorkspaceRecord[]; blockers: string[]; analysis_ready: boolean; human_review?: { conclusion: string; actor: WorkspaceUser; at: string; revision: number; reusable: boolean } | null; group_review_summary?: PipelineSummary | null }
+export type WorkspaceItemGroup = { item_id: string; total: number; counts: Record<string, number>; parse_counts: Record<string, number>; families: string[] }
+export type WorkspaceReports = { items: WorkspaceReport[]; total: number; offset: number; limit: number; counts: Record<string, number>; groups: WorkspaceItemGroup[]; version: WorkspaceVersion }
+export type WorkspaceEvent = { id: string; previous_version_id: string | null; version: WorkspaceVersion; actor: WorkspaceUser; reason: string; at: string; revision: number }
+export type Judgment = 'PASS' | 'FAIL' | 'DEFER'
+export type ReviewCase = { id: string; report_id: string; version_id: string; conclusion: Judgment; reason: string; criteria: string; conditions: Record<string, string>; reusable: boolean; compatible_versions: boolean; revision: number; actor: WorkspaceUser; at: string; source_sha256: string; source_version: WorkspaceVersion; proposal_id: string | null; proposal_conclusion: Judgment | null; proposal_agreed: boolean | null; group_id?: string; cluster_revision?: number; group_snapshot?: PipelineGroup }
+export type ReviewProposal = { id: string; conclusion: Judgment; reason: string; references: ReviewCase[]; advisor: string; model_called: boolean; at: string; stale?: boolean }
+export type ReportReview = { current: ReviewCase | null; revision: number; history: ReviewCase[]; facts: Record<string, string>; ready: boolean; can_review: boolean; cases: ReviewCase[]; case_count: number; reusable_count: number; cases_displayed: number; proposal: ReviewProposal | null; corporate_ai_connected: boolean; current_stale?: boolean; blocked_reason?: string | null }
+export type PipelineGroup = { id: string; label: string; record_ids: string[] }
+export type RationaleStatus = 'MISSING' | 'DRAFT' | 'CONFIRMED' | 'STALE'
+export type RationaleContent = { reason: string; evidence_ids: string[]; reference_groups: { case_id: string; group_id: string; reason: string }[] }
+export type GroupRationale = { content: RationaleContent; proposal?: { content: RationaleContent; source: string; event_id: string }; source: string; status: RationaleStatus; binding: { source_sha256: string; cluster_event_id: string; cluster_revision: number; group_id: string; label: string; membership_sha256: string }; reviewed_by: WorkspaceUser | null; reviewed_at: string | null; change_reason: string; previous_event_id: string | null; edited_by?: WorkspaceUser; edited_at?: string }
+export type RationaleDetail = { group_id: string; cluster_revision: number; event_id: string; status: RationaleStatus; rationale: GroupRationale | null; samples: WorkspaceRecord[]; references: { id: string; report_id: string; revision: number; group: { id: string; label: string }; rationale: GroupRationale | null }[]; history: PageResult<{ id: string; revision: number; at: string; actor: WorkspaceUser; rationale: GroupRationale }> }
+export type PipelineSummary = { cluster_revision: number; confirmed: boolean; total: number; reviewed: number; stale: number; groups: Record<string, { conclusion: Judgment | null; stale: boolean; revision: number }>; removed: { id: string; label: string; conclusion: Judgment }[] }
+export type ClusterModelMetadata = { model: string; prompt_version: string; input_sha256: string; usage: Record<string, number>; seconds: number; input_case_count: number; synthetic_only: boolean }
+export type ClusterEvent = { id: string; report_id: string; revision: number; action: 'PROPOSE' | 'EDIT' | 'CONFIRM' | 'WITHDRAW'; confirmed: boolean; reusable: boolean; compatible_versions: boolean; criteria: string; reason: string; identity_fields: string[]; groups: PipelineGroup[]; at: string; actor: WorkspaceUser; references: { id: string; report_id: string; revision: number; criteria: string; source_sha256: string }[]; advisor: string; model_called: boolean; model_metadata?: ClusterModelMetadata; initial_ai_event_id?: string }
+export type PipelineView = { current: ClusterEvent | null; revision: number; ready: boolean; can_edit: boolean; stale: boolean; history: ClusterEvent[]; case_count: number; reusable_count: number; summary: PipelineSummary | null; corporate_ai_connected: boolean; record_count: number }
+export type ClusterBrief = Omit<ClusterEvent, 'groups'> & { group_count: number; record_count: number; rationale_counts: Record<RationaleStatus, number> }
+export type PipelineTask = { id: string; status: 'PENDING' | 'RUNNING' | 'FAILED' | 'STALE' | 'CANCELLED' | 'COMPLETED'; record_count: number; processed: number; next_chunk: number; error: string | null; chunks: { index: number; start: number; stop: number; record_count: number; input_sha256: string; status: string }[] }
+export type CodexJob = { id: string; status: 'RUNNING' | 'RESULT_READY' | 'COMPLETED' | 'FAILED' | 'STALE' | 'UNKNOWN' | 'SAVE_FAILED'; error: string | null; model: string; created_at: string; finished_at?: string; expected_revision: number; input_case_count: number; event_id?: string }
+export type CodexCapability = { available: boolean; supported: boolean; enabled: boolean; model: string; remaining: number; job: CodexJob | null }
+export type WorkbenchView = { report: WorkspaceReport; version: WorkspaceVersion; current: ClusterBrief | null; revision: number; ready: boolean; can_edit: boolean; stale: boolean; task: PipelineTask | null; ai?: CodexCapability; record_count: number; raw_line_count: number; source_sha256: string; case_count: number; reusable_count: number; removed_count: number; corporate_ai_connected: boolean; summary: { confirmed: boolean; total: number; reviewed: number; pending: number; complete: boolean; rationale_counts: Record<RationaleStatus, number>; counts: Record<string, number> } }
+export type GroupBrief = { id: string; label: string; record_count: number; status: string; revision: number; example: Record<string, unknown>; rationale: { status: RationaleStatus; reason: string; reason_truncated: boolean; reason_omitted_chars: number; source: string | null; evidence_count: number } }
+export type PageResult<T> = { items: T[]; total: number; offset: number; limit: number }
+export type GroupRecords = PageResult<WorkspaceRecord & { raw_display_truncated: boolean }> & { group: { id: string; label: string; record_count: number; check_status: string } | null; cluster_revision: number }
+
+const messages: Record<string, string> = {
+  UNAUTHORIZED: '로그인 정보가 올바르지 않거나 세션이 만료되었습니다.',
+  FORBIDDEN: '이 블록의 담당자에게만 허용되는 작업입니다.',
+  REVISION_CONFLICT: '다른 사용자가 PoR을 변경했습니다. 최신 내용을 불러왔으니 다시 확인해 주세요.',
+  REQUEST_CONFLICT: '저장 요청 내용이 달라졌습니다. 화면을 새로고침한 뒤 확인해 주세요.',
+  POR_UNCHANGED: '이미 현재 PoR로 지정된 버전입니다.',
+  NOT_FOUND: '이 계정의 담당 범위에서 요청한 항목을 찾을 수 없습니다.',
+  INVALID_RATIONALE: '이 그룹의 분류 근거와 대표 로그(1–20건), 참고 사례를 확인해 주세요.',
+  RATIONALE_REQUIRED: '근거가 없는 그룹을 먼저 작성한 뒤 전체 분류를 확정해 주세요.',
+  RATIONALE_STALE: '변경된 그룹의 근거를 재검토한 뒤 전체 분류를 확정해 주세요.',
+  INVALID_REQUEST: '입력한 값과 변경 사유를 확인해 주세요.',
+  INVALID_CSRF: '로그인 상태를 새로고침한 뒤 다시 확인해 주세요.',
+  TOO_MANY_ATTEMPTS: '로그인 시도가 많습니다. 잠시 후 다시 시도해 주세요.',
+  DATABASE_UNAVAILABLE: '저장 서버에 연결하지 못했습니다. 잠시 후 다시 확인해 주세요.',
+  DATABASE_ERROR: '저장 결과를 확인하지 못했습니다. 같은 요청을 다시 확인할 수 있습니다.',
+  INVALID_CRITERIA: '재사용할 기준과 원본에서 확인한 적용 조건을 함께 지정해 주세요.',
+  REVIEW_BLOCKED: '검사 근거가 미수신 또는 미완료입니다. 먼저 근거를 확인하거나 보류로 기록해 주세요.',
+  PROPOSAL_STALE: '판정 또는 참조 기준이 변경되었습니다. 최신 기준으로 제안을 다시 받아 주세요.',
+  AI_NOT_CONFIGURED: '사내 AI 검토가 아직 연결되지 않았습니다.',
+  AI_BUSY: '다른 AI 분류 요청이 진행 중입니다. 완료 후 다시 요청해 주세요.',
+  AI_MOCK_LIMIT: '이 합성 report의 AI 테스트 호출 한도에 도달했습니다.',
+  SYNTHETIC_ONLY: 'Codex 연결은 지정된 합성 mock report에서만 사용할 수 있습니다.',
+  CASE_LIMIT: '참고 사례가 조회 한도를 넘었습니다. 적용 범위를 좁혀 주세요.',
+  CLUSTER_NOT_CONFIRMED: 'Clustering 구성이 변경되었거나 아직 확정되지 않았습니다. 1단계를 확인해 주세요.',
+  CLUSTER_NOT_READY: '먼저 clustering 초안을 만들고 그룹 구성을 확인해 주세요.',
+  CLUSTER_BLOCKED: '확정할 검사 근거가 미수신 또는 미완료입니다.',
+  INVALID_PARTITION: '모든 원본 로그를 빠짐없이 한 그룹에만 배정해 주세요.',
+  CLUSTER_LIMIT: '보고서 전체가 처리 한도를 넘었습니다. 일부만 처리해 완료로 표시하지 않습니다.',
+  CLUSTER_TASK_ACTIVE: '분류 작업이 진행 중이거나 확인이 필요합니다. 1단계에서 이어서 처리하거나 취소해 주세요.',
+  REPORT_LIMIT: '보고서 전체가 서버의 바이트 예산을 넘었습니다. 일부만 처리하지 않았습니다. 처리 예산을 확인해 주세요.',
+}
+
+export class WorkspaceError extends Error {
+  code: string
+  constructor(code: string) { super(messages[code] || '요청을 완료하지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해 주세요.'); this.code = code }
+}
+
+export async function workspaceRequest<T>(path: string, options: { body?: unknown; csrf?: string; signal?: AbortSignal } = {}): Promise<T> {
+  let response: Response
+  try {
+    response = await fetch(`/workspace/api${path}`, {
+      method: options.body === undefined ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: options.body === undefined ? undefined : { 'Content-Type': 'application/json', 'X-CSRF-Token': options.csrf || '' },
+      body: options.body === undefined ? undefined : JSON.stringify(options.body), signal: options.signal,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
+    throw new WorkspaceError('NETWORK_ERROR')
+  }
+  const value = await response.json().catch(() => ({ code: 'INVALID_RESPONSE' }))
+  if (!response.ok) throw new WorkspaceError(value.code || 'REQUEST_FAILED')
+  return value as T
+}
+
+export const workspaceLabels: Record<string, string> = { GCA: 'GCA', VCLP: 'VC LP', SPYGLASS: 'SpyGlass', PASS: 'PASS', FAIL: 'FAIL', DEFER: '보류', UNKNOWN: '판정 보류', COMPLETE: '완료', PARTIAL: '일부 해석', MISSING: '미수신' }
+export const workspaceTime = (value: string | null) => value ? new Date(value).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'

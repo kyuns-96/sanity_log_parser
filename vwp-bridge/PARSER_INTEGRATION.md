@@ -4,6 +4,8 @@
 
 먼저 [AGENTS.md](../AGENTS.md)와 [INTERNAL_AI_GUIDE.md](../INTERNAL_AI_GUIDE.md)를 읽는다. 이 문서는 사용자가 요청한 파서 개발 범위를 구체화한다. 내부 AI는 아래 회사 구현 지점만 수정하고 공통 코드·DB·판정·coverage·기존 테스트는 수정하지 않는다. 예상 밖 오류는 자기 어댑터에서도 수정/재시도를 멈추고 `WAITING_FOR_CODEX`로 문의한다.
 
+작업별 선행 정보/공통 연결 의존성은 [INTERNAL_AI_HANDOFF.md](../INTERNAL_AI_HANDOFF.md)의 INT-02/03을 따른다. 파서에 전달할 예상 목록은 [PLAN_INTEGRATION.md](PLAN_INTEGRATION.md)의 `SanityPlanProvider`로 기존 plan 계약에 대응한다. 이 provider와 파서가 workspace 버전 수신이나 회사 AI worker를 자동 연결하는 것은 아니다.
+
 ## 1. 제공 파일과 수정 책임
 
 | 파일/위치 | 제공 내용 | 사내 AI의 작업 |
@@ -104,6 +106,11 @@ return registry
 추출 코드·정규화·완료 검사 변경 시 **`implementation_version`을 올린다**. 새로운 원문 형식이나 추출 필드의 의미 변경은 parser ID의 버전도 바꾸고 업무 판정/동일성 기준 변경은 plan의 rule_version을 바꾼다. 분류 규칙 재사용 범위는 기존 parser ID·rule_version을 사용하므로 의미가 달라진 어댑터를 implementation_version만 올려 같은 형식으로 등록하지 않는다. 사용된 등록의 버전·범위는 VWP 불변 RUN 계약과 번들 `producer.parsers`에 들어가므로 기존 봉인 결과를 덮어쓰지 않고 새 분석/번들을 생성한다.
 
 ## 6. 실행과 검증
+
+공개 문서에서 확인한 GCA·VC LP·SpyGlass의 초기 추출 참고 구현은
+[public_parsers.py](../site_integration/public_parsers.py)와 [형식·샘플 인계](../site_integration/PUBLIC_REPORT_FORMATS.md)에 있습니다.
+이는 sample profile에서만 완성되는 고정 예제이며 실제 회사 registry에 자동 등록되지 않습니다.
+회사 구현은 확인한 native 버전/종료 계약과 전용 parser ID로 허용 지점에 작성합니다.
 
 공통 합성 테스트는 DB/실제 report/AI 접속 없이 실행한다.
 

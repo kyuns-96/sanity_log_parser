@@ -32,7 +32,7 @@ class SchemaTests(unittest.TestCase):
                 self.assertNotRegex(body, r"(?i)\bCREATE\s+TABLE\b|\b(?:BEGIN|COMMIT);|;")
 
     def test_only_required_post_creation_sql_is_shipped(self):
-        self.assertEqual({"002_indexes.sql", "003_grants.sql", "004_clustering.sql"},
+        self.assertEqual({"002_indexes.sql", "003_grants.sql", "004_clustering.sql", "005_workspace.sql", "006_workspace_reviews.sql", "007_workspace_pipeline.sql"},
                          {path.name for path in (ROOT / "db").glob("*.sql")})
 
     def test_new_oa_schema_contains_only_dashboard_records(self):

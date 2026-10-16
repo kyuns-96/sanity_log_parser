@@ -1,5 +1,397 @@
 # 프로토타입 구현 검토 기록
 
+## 2026-10-16 사내 AI 구현 인계와 추상 계약 정리
+
+- 사용자 요청으로 [INTERNAL_AI_HANDOFF.md](INTERNAL_AI_HANDOFF.md)를 통합 진입 문서로 추가했다. SSO·예상 sanity 목록·item parser·1단계 분류·2단계 판정·원천 버전/담당 매핑을 INT-01~06으로 나누고 선행 정보·허용 메서드·입출력·수용 기준·실행 명령·인계 상태·복사 가능한 시작 지시문을 정리했다. 내부 AI의 구현 범위와 Codex의 COMMON 운영 연결을 구분했다.
+- `sanity_integration_contracts.py`에 기존 dict 기반의 plan/context/case/분류 V2/판정 타입과 `SanityPlanProvider.get_plan` 추상화를 추가했다. `site_integration/corporate_plan.py`는 명시적으로 `PLAN_NOT_CONFIGURED`를 반환하며 자동 collector/DB/UI 연결이 없다. 회사 입력 wrapper의 허용 위치를 `INTERNAL_AI_GUIDE.md`에서 구체화하고 [PLAN_INTEGRATION.md](vwp-bridge/PLAN_INTEGRATION.md)에 기존 schema 1 대응·예상 누락 보존·미승인 목록과 실제 원천 버전 연결 경계를 작성했다.
+- 기존 `ClusteringAdvisor`/`ReviewAdvisor`와 회사 두 SDK stub에 타입/계약 설명을 추가했다. 인자 순서·출력 키·기존 런타임 validator·V1 호환·DB schema는 변경하지 않았다. 새 회사 분류는 `require_rationales=True` 검증을 명시한다. `sanity_integration_examples.py`에 최초/사람 정정 사례 분류·선택 그룹 판정·미승인 plan의 작은 순수 합성 packet을 추가했다. 실회사 SDK나 DB를 import/호출하지 않는다.
+- 현 review가 사람 사례 참조 없는 AI PASS/FAIL을 거부한다는 실제 제한, 회사 SDK만으로 새 workspace 운영 VWP job이 연결되지 않는 점, legacy `/api` SSO와 합성 `/workspace/api`의 차이를 명시했다. SSO 문서의 ‘관리 DDL 없음’을 현재 005 관리 레코드와 미구현 신원 매핑의 구분으로 정정했다. 직접 원본을 이용한 최초 AI 판정·사례 기본 활용 정책/선택형 기준 관계·대규모 모델 orchestration은 Codex 공통 후속 작업으로 남겼다.
+- 새 계약 시험 14개는 실제 기존 validator로 전체 ID 배정·V2 근거 누락·다른 그룹 대표 ID·미지 사례 group·참조 합집합·AI의 사용자 승인 필드 삽입·최초 판정 DEFER·도구 FAIL과 독립 제안·선택 그룹/원본 hash·미승인/실패 목록을 검증한다. 공통 SSO 진입점 시험은 회사 구현이 영원히 미구현일 것을 전제하지 않도록 명시적 회사 모듈 테스트 더블을 주입했다. mock source 수집의 회사 plan/분류/판정 구현 제외도 확장 검증했다.
+- 비공개 설정을 포함하지 않는 임시 코드 snapshot에서 새 계약 14개·인증 12개·파서 27개·판정 참고 3개·분류 참고 3개·근거 V2 7개·mock 수집 5개·SSO API 8개, 총 **79개 통과, skip 0**을 확인했다. 검증 내역과 로그는 `artifacts/internal-handoff-verification.json` 및 `artifacts/internal-handoff-checks/`에 있다. 실제 DB/모델 연결·운영 적용은 0회다. 추가/연관 Python 8개 파일은 Python 3.10 문법으로도 파싱했다(3.10 실런타임 시험과 구분).
+- 기존 UI 소스 5개는 마지막 승인 화면의 hash와 같음을 확인했다. 프런트엔드 배포/운영 서버 재시작·DB/SSO/CORPORATE 보호 변경은 없다. 실제 사내 report/SDK 정확성·실제 계정/DB 연결·대규모 회사 모델 성능을 검증한 것으로 보고하지 않는다.
+
+## 2026-10-16 검토 화면의 시각적 구조 재정리 — 사용자 정정 반영
+
+- 사용자는 문장 수준을 낮추는 대신 처음 방문해도 UI를 한눈에 파악하도록 요청했다. 이전의 대화형 문구와 큰 안내 제목을 수정하고 **로그 분류 / 그룹별 판정 / 분류 근거 / 사용자 판정 / PASS·FAIL·보류** 등 업무 용어를 복원했다. 요구사항 18.11절과 사용 문서를 정정했다.
+- 상단을 보고서 맥락·단계·진행률·주요 동작으로 압축하고 데스크톱에 **그룹 목록 / 선택 그룹의 로그 / 분류 근거 또는 판정**을 정렬했다. 그룹명·로그 수·도구 판정은 공통 헤더로 모으고 목록의 긴 근거 반복을 제거했다. 로그 미리보기는 원본 메시지를 우선 표시하며 원본·행 번호·접힌 전문을 유지한다. 2단계도 원문 로그를 계속 표시한다.
+- 분류 확정 동작은 상단의 **분류 확정 · 판정 시작**으로 통일했다. 전체 그룹 수와 유효 초안 일괄 채택 범위를 함께 명시하며 근거 누락·재검토·미저장 보호를 유지한다. 상세 집계·대표 원문·AI 원안·사례·설정·이력은 필요할 때 펼친다. 초록색 테마, 드래그·키보드·터치, 페이지 선택, 사용자 판정과 AI 출처 계약을 보존했다.
+- 새 배치의 세 영역이 데스크톱 첫 화면에서 나란히 보이고 첫 원본 로그가 900px 화면 안에 표시됨을 브라우저로 검증했다. 두 단계 실제 저장·보류·정정·완료·모바일 미저장 보호·TOP 조회 **4개**, 근거/원안·대표 로그 **5개**, 이동/재시도/충돌 **8개**, 저장된 실제 AI 결과 조회 **3개**, 기존 workspace/PoR/권한/모바일/판정/분류 **13개**, 총 **33개 통과**했다. 첫 workspace 프로세스는 10개 통과 후 종료 코드 143으로 중단되어 전체 13개를 재실행해 완료했다. 결과는 `artifacts/clear-review-browser-summary.json`과 `artifacts/clear-review-tests/`에 보존한다.
+- TypeScript/production 빌드·관련 문서의 로컬 링크 55개·`git diff --check`를 확인했다. 이번 작업의 외부 모델 호출은 0회이며 API/SQL/분류·판정 저장 모듈은 수정하지 않았다. 10,000/100,000건 규모 시험을 이번 UI 정정에서 다시 실행한 것은 아니다.
+- 공개 테스트 페이지는 프런트엔드 자산/index만 교체했다. 기존 OA row **1,126개**, 네 테이블 OID·스키마/내용 snapshot이 배포 전후 동일함을 확인했고 API/DB를 재시작하지 않았다(`artifacts/clear-review-deploy.json`). 공개 HTTPS의 1440/1024/390px에서 가로 넘침·브라우저 오류 없이 조회했고, 분류 개정 9·두 그룹의 검토 완료 근거·원본 hash가 유지됨을 확인했다. 1440×900px에서 세 작업 영역과 첫 로그가 화면 안에 표시되며 판정 단계에서도 로그와 결과 선택이 함께 보인다(`artifacts/clear-review-public-check.json`). 조회 중 검토 저장·외부 모델 호출은 0회다. 별도 worktree의 5173 서버도 HTTP 200을 유지한다. 아래 ‘첫 방문 안내’ 기록은 정정 전 구현의 이력이다.
+
+## 2026-10-16 첫 방문 안내와 검토 화면 정리
+
+- 기존 두 단계를 **그룹 확인 → PASS·FAIL 판정**으로 설명한다. 현재 할 일과 다음 행동을 큰 제목으로 안내하고, 이미 분류를 확정한 보고서에는 상단에 **판정 이어하기**를 제공한다. 기본 진행 정보는 전체 로그/그룹 수와 현재 단계의 확인 수다. 상세 상태 집계는 펼쳐서 조회한다.
+- 선택 그룹의 **왜 같은 그룹인가요?**에서 현재 설명과 확인 상태를 먼저 보여 준다. 긴 설명은 실제 생략량과 함께 펼치며, 대표 원문·AI 원안·과거 사례·이력은 접었다. 병합 체크박스는 **합치기**를 누른 뒤 표시한다. 전체 메모·재사용 설정·AI 재실행·모델/버전 정보는 **설정과 이전 기록**에 보관한다.
+- 판정 입력은 **통과 / 수정 필요 / 나중에 결정**과 이유·저장 버튼에 집중한다. 사내 AI 미연결과 현재 참고 엔진의 출처를 그대로 설명하며 분류 근거를 판정 사유로 복사하지 않는다. 보류는 완료로 세지 않고 모든 그룹을 마치면 목록으로 돌아가는 버튼을 제공한다.
+- 보고서 목록의 중복된 선택/시작 양식을 없애고 행의 **검토 시작**으로 통일했다. 규칙·보고서 전체 판정·분석 상태는 **상세 열 보기**에서 조회한다. 초록색 토큰과 기존 사용자/버전/PoR·권한 범위를 유지하고, 화면 문구와 접근성 이름을 일치시켰다.
+- 첫 검증에서 하단 고정 영역이 로그 손잡이를 가리는 문제를 발견해 고정을 제거했다. 다음 그룹 조회 중 이전 입력 양식이 잠깐 남아 빠른 입력이 다른 초기값과 섞일 수 있는 문제도 확인해, 로딩 표시와 새 그룹 맥락 수신 후 입력으로 수정했다. 실제 브라우저의 보류 저장/정정/완료 시나리오로 검증했다. 마지막 미확인 그룹에서 다시 다음 버튼을 눌러도 현재 로그 맥락과 수정 기능을 유지하며, 조회 중에는 기존 그룹의 편집을 막는다. 마우스 시험은 드롭 대상을 먼저 화면 안에 배치하고, 터치 시험은 가장자리 자동 스크롤을 계속 검증한다.
+- 첫 방문·기본/상세 표시·두 단계 완료·PASS/FAIL/보류/정정·모바일 미저장 보호·TOP 조회의 신규 브라우저 **4개 통과**, 기존 그룹별 근거 **5개**, 마우스/터치/키보드·51건 이동·응답 유실/개정 충돌/취소 **8개**, 저장된 실제 AI 결과·출처·이력 조회 **3개**를 통과했다. 로그인/로그아웃·PoR 저장·버전/ECO·범위 권한·보고서/모바일 팝업·개별 판정·소규모 두 단계/재사용/무효화를 포함한 기존 workspace **13개**도 통과해 총 **33개 브라우저 시나리오**를 확인했다. 시험의 모든 AI 관련 조회는 저장 결과 또는 참고 엔진이며 이번 UI 작업에서 외부 모델을 추가 호출하지 않았다.
+- QA 초기화가 로그인 완료보다 먼저 실행되던 새 테스트의 대기를 수정했고, 첫 실패와 고정 영역/좌표 문제의 기록은 `artifacts/easy-review-{guidance,drag}-*-run.json`에 남겼다. 확장한 workspace 첫 시험에서 모바일 팝업의 가로 넘침 2건을 발견했다. 화면 밖 표의 절대 위치 `sr-only` 열 제목이 원인이어서 일반 열 제목으로 바꾸고 13개 전체를 재검증했다. 첫 결과는 `artifacts/easy-review-workspace-first-run/`에 보존한다. 최종 결과는 dashboard `artifacts/{guidance,rationale,drag,codex,workspace}-browser-tests.json`과 화면 캡처에 있다. 실제 초등학생 사용성 시험을 수행한 것은 아니다.
+- TypeScript/production 빌드·문서 경로·`git diff --check`를 확인했다. 기존 500kB bundle 안내는 남아 있다. API·SQL·모델/저장 모듈은 변경하지 않았고 10,000/100,000건의 분할/페이지 계약을 유지한다. 이 UI 작업에서는 대규모 재분류/모델 추론을 다시 수행하지 않았다.
+- 공유 테스트 페이지는 자산과 index만 교체한다. API/DB를 재시작하거나 기존 검토/PoR을 초기화하지 않는다. 배포 전후 전체 행/테이블 OID·스키마 해시 비교는 `artifacts/easy-review-deploy.json`, 공개 HTTPS 1440/1024/390px의 화면/무변경 조회 검증은 `artifacts/easy-review-public-check.json`에 기록한다. 회사 연동·SSO 보호·내부 AI의 허용 범위는 그대로다.
+
+## 2026-10-15 그룹별 분류 근거 V2 구현과 실제 모델 검증
+
+- `sanity_workspace_rationale.py`와 불변 분류 event에 그룹별 본문·대표 원본 ID·참고 사례 group·최초 원안·사람 정정/채택·작성자/시각과 구성 바인딩을 추가했다. 같은 source/group/이름/전체 소속인 근거는 출처를 기록해 이어받고, 이동 양쪽·이름 변경·병합은 재검토, 새 그룹은 미작성으로 표시한다. 근거만 바꾸어도 새 분류 개정이며 새 그룹 판정에는 전체 분류 재확정이 필요하다.
+- 그룹별 `SAVE`/`ACCEPT`와 개정 고정 상세/이력 API, 네 상태 집계·필터, 대표 로그 선택·수정, AI 원안/사례/이력의 펼침 조회를 구현했다. 전역 메모는 선택 입력이다. `CONFIRM`은 현재 전체 개정의 유효한 초안을 명시적으로 일괄 채택하고 확정하며 미작성/재검토/무효 참조는 차단한다. 2단계의 판정 근거는 별도로 보관한다.
+- AI JSON V2는 기존 세 키와 `group_rationales`를 반환한다. 회사 SDK 인계 문서를 갱신했으며 공통 코드/DB/UI를 회사 AI가 임의 변경할 권한은 추가하지 않았다. SSO 보호와 `CORPORATE` 503은 유지한다.
+- 1,000개 이상 근거는 같은 event 안의 독립 압축 bucket/index로 저장하고 공통 store가 원래 객체로 복원한다. 압축 전 128MiB를 검사하며 전체 내용을 생략하지 않는다. 원안 중복 저장과 변경 없는 본문의 복사를 줄이고, 최종 task 저장은 이미 검증한 입력을 다시 읽지 않는다. 새 물리 테이블·DDL은 없다.
+- 공유 4GiB 환경의 초기 10만 고유 그룹/브라우저 시험에서 메모리 부족을 발견했다. 압축 저장과 workspace의 짧은 DB 처리 구간 직렬화로 동시 원본 디코딩을 제한했고, 오래된/자기 의존 사례는 records를 읽기 전에 제외한다. 실제 추론은 DB 처리 구간 밖이다. 브라우저 부하로 종료된 별도 worktree의 기존 5173 Vite는 동일 실행 인자로 복구했으며 그 worktree의 파일은 수정하지 않았다.
+- **DB·API/모델 단위 50개 통과**, 10,000건/10,000개 고유 그룹과 사례 재사용·재개·페이지·실패/취소의 **규모 회귀 8개 통과**. 100,000건/100그룹의 근거/일괄 채택 시험도 통과했다. 별도 100,000건/100,000개 고유 그룹에서는 전체 분류 121.712초, workflow 206.009초, peak RSS 889,912KiB, metadata 7,016 bytes, 그룹 25개·로그 50건 및 마지막 그룹 PASS를 검증했다. 이 대규모 시험은 모델 호출 0회다.
+- 새 근거 UI **5개**, 기존 마우스·터치·키보드/다중 선택·UUID·충돌/취소의 drag & drop **8개**, 기존 두 단계 분류·판정/다음 사례/모바일 회귀 **3개**를 실제 별도 PostgreSQL에서 통과했다. GCA/VC LP/SpyGlass의 10,000건 브라우저 흐름과 모바일도 통과했다. DB 처리 구간 직렬화 후 **100,000건 브라우저 1개도 3.9분에 통과**했다(전체 분류·마지막 원문·사람 PASS·새로고침). 검사 대장으로 돌아갈 때 최신 요약을 다시 조회하도록 하고, 재로드 후 검색 조건을 명시적으로 선택해 대상 report의 결과를 확인하도록 시험을 맞췄다.
+- 합성 report 12건에 `gpt-6-luna`를 총 **2회** 호출했다. 첫 V2 응답은 구조 검증을 통과했지만 사람이 통합한 두 패턴을 같은 이름의 두 ID로 나누었다. 원래 결과를 이력에 남기고, 실제 소속과 통합 의도의 일관성을 명시한 **prompt V3**로 별도의 한 요청을 평가했다. 최종 결과는 **제약 설정 누락 8건 / 데이터 폭 불일치 4건**과 서로 다른 그룹별 근거·자기 원본 참조이며 모두 사람 미확인 초안이다. 입력 사례 1건의 사람 최종 근거를 사용했다. 모델 결과를 코드로 합치거나 실패/불확실 호출을 자동 재호출하지 않았다. V1/V2의 고정 receipt 검증도 유지하고 실제 저장 V2 receipt의 입력 hash를 다시 검증했다.
+- V3 호출 전 존재한 불변 OA row **1,094개**의 hash와 원본 report/PoR이 호출 후 같음을 확인했다. 공개 서버 반영은 기존 row/테이블 OID를 그대로 보존했으며 합성 사용자/모델 조작은 새 event와 해당 head에만 기록했다. 구형 근거 미작성 event/모델 원문/판정은 변경하지 않는다.
+- 공개 HTTPS에서 실제 모델 V3의 8/4건 두 그룹·각 근거·미확인 상태·빈 전체 메모로 확정 가능한 상태, 데스크톱/모바일·가로 넘침 없음·검사 대장 복귀를 확인했다. 이전 참고 엔진 작업 기록은 현재 AI 실행과 구분해 표시한다. 화면 조회 중 추가 모델 호출은 0회다.
+- 실제 회사 자료·SSO/SDK·VWP 운영 job/전송·10만 건 모델 호출/2단계 LLM 판정은 검증하지 않았다. 대규모 수치는 한 공유 개발 환경의 합성 시험이며 운영 SLA가 아니다. 출력 schema는 [공식 Codex CLI 안내](https://developers.openai.com/codex/cli/reference/)의 `--output-schema`를 사용한다.
+
+
+## 2026-10-15 그룹별 분류 근거 명세 갱신 — 구현 전
+
+- 사용자 확인에 따라 [요구사항 18.10절](requirement.md#group-clustering-rationale)을 추가하고 17.4/18.3~18.5/18.7/18.9를 맞췄다.
+  각 그룹의 AI 분류 설명·원본 record 참조·참고 사례, 사람의 채택/정정 근거·작성자/시각·이력을 현재 구성/개정에 연결한다.
+  전체 분류 메모·자동 조작 문장·2단계 PASS/FAIL 이유가 그룹별 분류 근거를 대신하지 않도록 구분했다.
+- 근거 미기록/미검토/확인/재검토 상태, 이동 양쪽 그룹·분리/병합/이름 변경·근거만 정정할 때의 처리,
+  전체 분류 확정/2단계 저장의 서버 차단, 초안 저장과 명시적 채택 범위를 명시했다.
+  최종 목표의 전체 메모는 선택 입력이며 현재 구현의 공통 사유 필수 동작과 구분한다.
+- 사람 확정 사례를 다음 AI에 제공할 때 그룹별 최종 근거/원본 참조/정정 이력을 함께 전달하도록 정의했다.
+  기존 근거 미기록 자료의 이력 보존·누락 표시·새 확정 전 보완, 대규모 페이지/참조 한도와 수용 시나리오도 추가했다.
+- PROTOCOL·WORKSPACE·사내 clustering/review 인계에 동일한 목표와 현재 미구현 상태를 기록했다.
+  기존 세 필드 adapter 출력은 여전히 현재 계약이며 문서만 보고 내부 AI가 키/서명/공통 코드·SQL·UI를 바꾸지 않도록 구분했다.
+- 이번 작업은 문서 6개만 수정한다. 코드/SQL/기존 데이터/실행 중 서비스는 변경하지 않고 모델을 호출하지 않았다.
+  문서 내용·로컬 링크/anchor 100개·`git diff --check`를 확인했다. 문서만 변경해 런타임/브라우저 테스트는 재실행하지 않았다.
+
+## 2026-10-15 로그 drag & drop과 분류 검토 화면 정리
+
+- 1단계의 로그 손잡이를 그룹에 끌어 기존 `MOVE` API로 소속을 저장한다. 선택 로그는 페이지 간 선택 전체,
+  선택하지 않은 로그는 한 건만 이동하며 새 그룹에 놓으면 이름을 입력한다. 기존 선택 이동 버튼·그룹 병합·이름 변경도 유지했다.
+  별도 라이브러리 없이 Pointer Events로 마우스/터치·가장자리 자동 스크롤, 키보드 Space/Enter·방향키·Escape를 제공한다.
+- 화면은 보고서 맥락과 두 단계, 왼쪽 그룹 목록·오른쪽 로그·하단 전체 분류 확정을 중심으로 정리했다.
+  블록/버전·PoR·항목 목록을 중복 표시하지 않고 검사 대장으로 돌아가면 다시 제공한다.
+  설정·출처·원본 검색·이력·참고 엔진 재사용 옵션은 접고 초록색 토큰을 유지했다. 로그에 짧은 내용 미리보기를 추가했다.
+- 드롭은 기대 개정·UUID·전체 ID 단일 배정을 그대로 검사한다. 같은 그룹/화면 밖/취소는 저장하지 않고,
+  개정 충돌은 최신 구성을 조회한다. 새 그룹과 검색 중 이름 변경은 대상 이름을 필터에 표시하고 검색 지우기로 전체 목록에 돌아간다.
+  개별 조작 사유를 비우면 수행 내역을 기록하며 전체 분류 확정에는 별도의 사람 검토 사유가 필요하다.
+  원본/PoR·과거 event를 수정하지 않고, 이동 후 다시 분류를 확정해야 그룹 판정을 진행한다.
+- 독립 합성 8003 DB의 report 8개·각 120건에서 **브라우저 8개 통과**(최종 35.8초).
+  단일 이동·페이지 간 51건 이동·이름을 정해 분리/취소·키보드·390px 실제 터치 자동 스크롤·동시 개정 거부·
+  저장 응답 유실 후 같은 UUID 재시도·TOP 읽기 전용을 확인했다. 매 이동의 120건 전체 누락/중복 없음과 원본/PoR 불변을 대조했다.
+  `tools/seed_drag_qa.py`는 제한된 로컬 8003 합성 DB만 허용하고 기존 report 교체를 거부한다.
+  결과는 dashboard의 `artifacts/drag-browser-tests.json`, `artifacts/workbench-drag-{desktop,mobile}.png`다.
+- 저장된 실제 AI 결과의 조회/출처·수정 이력·TOP 화면 **3개 통과**(최종 7.8초).
+  8002의 기존 10,000건 업무 흐름 **3개 통과**(3.0분): GCA의 51건 분리·병합·분류 확정·규칙 FAIL에 사람 PASS·TOP 재조회,
+  VC LP/SpyGlass 전체 초안과 마지막 원문 검색, 모바일 미저장 이름/필드 변경의 단계 차단을 확인했다.
+  대용량 저장은 전체 배정 검사와 재조회가 5초를 넘길 수 있어 통합 검증은 저장 창 닫힘을 기다리고 기대 대기를 30초로 설정했다.
+  서버 timeout·검사·권한은 바꾸지 않았다. 이 시험은 참고 엔진이며 외부 AI를 호출하지 않았다.
+- 별도 100,000건 보고서의 실제 DB/화면을 읽어 그룹 25개·로그 50건과 각각 다음 페이지, 원본 해시·PoR·분류 개정 불변을 확인했다.
+  조회 검증이며 이번 작업에서 10만 건 모델 호출/재분류는 수행하지 않았다.
+  결과 dashboard의 `artifacts/workbench-drag-100000-result.json`·`artifacts/workbench-drag-100000.png`.
+- TypeScript/production 빌드·QA 도구 Python 구문·`git diff --check`를 통과했다. Vite의 기존 500kB chunk 안내는 남아 있다.
+  공유 8001은 API 재시작 없이 자산과 index만 교체했고 **기존 1,108행**의 payload/state/version/시각 해시와 네 테이블/OID가 동일했다.
+  HTTPS의 데스크톱/390px에서 두 그룹·로그 손잡이·모델 버튼·접힌 상세·초록색과 브라우저 오류 없음을 확인했다.
+  공유 업무 데이터 변경/추가 모델 호출/DDL은 없고 QA 8002/8003은 종료했다.
+  배포 `artifacts/log-drag-deploy.json`, 공유 조회 dashboard의 `artifacts/workbench-drag-public-result.json`.
+
+## 2026-10-15 화면에서 실제 AI 분류 요청
+
+- 사용자 요청에 따라 1단계의 **AI 분류 초안 생성** 버튼을 `gpt-6-luna` 실제 호출에 연결했다. 기존 참고 엔진 버튼과 구분하며
+  명시적으로 활성화한 독립 합성 workspace의 `codex-mock-source/control/feedback`만 지원한다. TOP은 조회 전용이고 회사 SDK/SSO 차단은 유지한다.
+- 전용 `POST /clustering/ai`는 기존 로그인·범위·Origin/CSRF와 기대 개정/UUID를 검사한다. 호출 전에 기존 `WS_CLUSTER.state`에 요청을 예약하고
+  DB 쓰기 트랜잭션 밖에서 모델을 호출한다. 받은 결과도 먼저 저장하고 현재 개정/사례·전체 ID를 검증한 뒤 미확정 초안을 원자 적용한다.
+  생성 중 수동 분류/그룹 판정·중복 AI 작업을 차단한다. 같은 UUID는 상태/결과를 반환하며 다시 호출하지 않는다.
+  서버 중단의 불명확한 호출은 UNKNOWN이며 자동 재실행하지 않는다. 저장 실패 재시도는 보관한 receipt를 사용한다.
+  공개 mock 예산은 전체 동시 1개·report별 UUID 20개이고 이전 UUID를 삭제하지 않는다. 회사 report/대용량 모델 연결과 구분한다.
+- 모델 호출 없는 관련 순수/PG **21개**, 기존 두 단계 저장/참조 회귀 **12개**를 통과했다. 실패/오류/skip 0개다.
+  실제 HTTP 모드 차단 유지, 새 opt-in 경로, 권한/CSRF/위조 입력, 중복/동시 요청, 사례 변경의 늦은 결과, 사람 확정 사례의 다음 입력,
+  timeout/재시작의 재호출 없음, 저장 재시도의 추가 호출 없음과 예산/오류 비밀정보 제외를 확인했다.
+  결과 `artifacts/codex-button-focused-tests.json`, `artifacts/codex-button-pipeline-regression.json`.
+- 브라우저의 버튼 클릭으로 합성 feedback 12건을 **실제 1회 호출**했다. 호출 중 페이지를 새로고침한 뒤 요청/결과를 복원했고,
+  다시 보낸 같은 UUID는 기존 event를 반환했다. 남은 호출 예산도 정확히 1회만 줄었다. 원본 해시·PoR은 동일했다.
+  확정 사례 1건을 참고해 두 그룹(8/4건)을 만들고 사람이 확정한 한국어 이름을 유지했다. 모델 9.018초, 입력 13,749 / 출력 300 tokens,
+  실제 호출 브라우저 시험 12.7초(전체 13.5초)였다. 그룹 구성은 여전히 사람이 확정해야 한다.
+  `artifacts/codex-button-live-result.json`과 `artifacts/codex-button-live-browser.json`, dashboard의 `artifacts/codex-button-{desktop,mobile}.png`에 기록했다.
+- 저장 결과/이력·모델/사례 출처·TOP·390px 표시의 브라우저 **3개**도 최종 결과에서 통과했다(7.7초). 실제 호출 시험은 별도 환경 flag/실행 설정으로 분리해 일반 회귀에서 실행하지 않는다.
+  frontend TypeScript/production 빌드·Python 구문·문서 링크·`git diff --check`를 확인했다.
+- 공유 8001에 최종 자산과 서버 opt-in을 반영했다. 기존 **1,106행**의 payload/state/version/시각 해시와 네 테이블/OID가 같았다.
+  배포/화면 조회는 추가 모델 호출을 하지 않았다. 회사 DB나 DDL을 사용하지 않았다. 배포 결과 `artifacts/codex-button-deploy.json`.
+
+## 2026-10-15 저비용 Codex 모델의 실제 합성 feedback 시험
+
+- 사용자 요청으로 Codex CLI의 기존 ChatGPT 로그인과 `gpt-6-luna`를 연결했다. API 키·회사 `.env`·실제 report는 사용하지 않았다.
+  연결 확인 1회와 분류 비교 3회를 실제 호출했다. CLI 로그인 사용량이며 API 단가로 청구액을 계산하지 않는다.
+- `sanity_codex_mock.py`는 정확히 생성된 합성 fixture만 받는 opt-in advisor다. 모델은 빈 폴더에서 도구 없이 JSON을 반환한다.
+  회사/DB/API 환경변수를 전달하지 않으며 일반 회귀 테스트와 HTTP API는 외부 호출을 켤 수 없다. 회사 `CORPORATE`와 SSO 차단은 유지한다.
+- 실제 source 8건에서 초기 2개 그룹을 생성했다. 수정 사례가 없는 control 12건은 3개 그룹이었다.
+  테스트 코드가 source를 **제약 설정 누락 통합 검토** 1개로 합치고 한국어 이름·검토 이유를 작성해 확정했다.
+  `reusable=false`·기준 입력 없음에도 해당 DB 확정 사례를 다음 실제 호출에 제공했다.
+  경로·문구가 달라진 feedback 12건에서는 관련 8건을 같은 한국어 이름으로 묶고 새 폭 불일치 4건은 별도 그룹으로 제안했다.
+  확정 사례 1건을 참조했고 모든 record ID·원본 해시·PoR을 보존했다. AI 결과는 미확정 초안이며 사람 수정은 자동 모사한 테스트다.
+- 모델 출력·입력 해시·prompt 버전·사용량·소요 시간을 불변 event에 저장하고 사람 수정/확정 이후에도 최초 출처를 보존한다.
+  실제 분류 3회의 입력 38,855 / 출력 732 tokens, fixture 준비·저장·종료 포함 24.418초였다. 연결 확인 호출은 이 수치에서 제외한다.
+  source/control 최초 이름·설명은 한국어 지시에도 중국어로 반환됐다. 실제 출력을 그대로 남겼으며 한국어 지시 준수를 보장하지 않는다.
+  feedback에서는 사람이 확정한 한국어 이름을 유지했다. 성공 결과는 `artifacts/codex-mock-feedback-live/result.json`·`trace.json`·`export.json`이다.
+- 실제 출력 이관은 기존 서비스의 같은 범위/개정/UUID/전체 ID 검사를 재사용하며 외부 모델을 재호출하지 않는다.
+  독립 QA DB에 이관·재실행 시 기존 행/현재 구성 불변을 확인했다. 공유 workspace에도 3개 report와 이력을 추가했고 기존 **1,092행**의 payload/state/version/시각 해시가 동일했다.
+  API·DB 재시작 후 HTTPS에서 모델명·8/4건의 두 그룹·확정 사례 참조 1건과 미확정 상태를 확인했다. 새 SQL/물리 테이블/권한 확대는 없다.
+- 신규 순수/PG 검증 **13개 통과, 실패/오류/skip 0개**(`artifacts/codex-focused-tests.json`). 외부 호출 opt-in, 합성 입력 강제,
+  누락/중복/외부 ID·도구 실행·실패/timeout 거부, prompt/source/case 고정, UUID 재시도·stale 사례·권한/HTTP 경계를 검사했다.
+  첫 전체 회귀는 318개 중 2개 실패/skip 0개였다. 새 테스트의 HTTP 기대값 422를 기존 계약 400에 맞춰 정정하고 13개를 재검증했다.
+  나머지 100,000개 고유 그룹 시험은 브라우저 동시 실행 중 DB statement timeout이었다. 병행 부하를 제거해 동일한 기존 시험을 **165.524초에 통과**했다.
+  최초 실패 결과는 `artifacts/codex-regression-first-run.json`, 단독 재검증은 `artifacts/codex-scale-recheck.json`에 보존했다. 시간/권한/판정 검사를 완화하지 않았다.
+- 실제 저장 결과를 쓰는 브라우저 **3개 통과**(8.1초, skip/flaky 0개). 모델/사례 출처·초기 2그룹→수정 1그룹 이력·feedback 2그룹·새로고침·TOP 조회·390px 가로 넘침 없음을 확인했다.
+  `artifacts/codex-browser-tests.json`과 `oa-bridge/dashboard/artifacts/codex-feedback-{desktop,mobile}.png`에 남겼다.
+  병행 부하 때 기존 브라우저 37개 중 1개의 renderer가 종료됐다. 다른 36개는 통과했고 해당 프로젝트 생성 시나리오도 단독 **4.3초에 통과**했다. 새 mock 브라우저 시험의 첫 screenshot timeout도 순차 실행에서 해소됐다.
+  frontend TypeScript/production 빌드·Python 구문·문서 상대 링크·`git diff --check`를 확인했다. QA 8003과 임시 DB는 종료하고 공유 8001은 재시작 후 유지했다.
+- 이번 모델 실험은 **8/12/12건·1단계 분류**다. 10,000/100,000건 모델 처리·2단계 모델 판정·회사 SDK/운영 job·전송은 검증하지 않았다.
+  일반 새 초안/판정 제안 버튼은 기존 참고 엔진이다. 확정 사례를 다음 prompt에 제공하는 동작이며 모델 fine-tuning은 하지 않는다.
+  실행·저장 계약은 [WORKSPACE.md](oa-bridge/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)를 따른다.
+
+## 2026-10-15 AI initial groups·사람 확정 사례 축적 의도 정정
+
+- 사용자 결정은 **AI가 매 report의 초기 그룹을 생성 → 사람이 소속/이름/근거를 수정·확정 → DB 저장 → 다음 AI가 확정 사례를 참고해 초기 그룹 생성**이다.
+  기존 그룹 유형과의 일대일 매칭·고정 그룹 사전이나 별도 공통 분류 유형 ID를 필수 구조로 제안했던 대화 설명을 정정했다.
+- 요구사항 18.3/18.5/18.7과 PROTOCOL·WORKSPACE·사내 분류 인계에 최초 사례 0건, 새 그룹 생성/분리/병합,
+  AI 이름 제안과 사람의 정정 피드백을 다음 입력으로 활용하는 흐름을 명시했다. 확정 사례의 축적은 기본 동작이며 별도 재사용 체크/필수 기준 입력을 요구하지 않는 것이 목표다.
+- 현재 필드 일치 참고 엔진·선택형 재사용 UI·임시 그룹 이름·실제 모델 미연결은 목표의 완료 상태로 취급하지 않는다.
+  공통 후보 조회/저장/API/UI·VWP 연결 전환은 Codex가 담당하고, 내부 AI의 회사 SDK 어댑터 허용 범위는 유지한다.
+  과거 재사용/버전 호환 승인 기록과 고정 어댑터 서명은 이번 문서로 변경하거나 소급 재해석하지 않는다.
+- 이번 작업은 문서 정정이다. 코드·SQL·DB·실행 중 서비스는 변경하지 않았다. 문서 diff/로컬 링크를 확인하며 런타임 테스트는 재실행하지 않는다.
+
+## 2026-10-15 평균 10,000건·100,000건 대용량 순차 검토 구현
+
+- 사용자 정정대로 **10,000건은 평균이며 100,000건 이상도 가능**한 입력으로 요구사항 18절과 인계 문서를 갱신했다.
+  10,000건/100,000건을 고정 크기나 업무상 상한으로 쓰지 않는다. 기술적 자원 예산과 실제 검증 범위를 구분했다.
+- Sanity item/명시적 report 선택에서 **1. 전체 로그 분류 → 사람 확정 → 2. 확정 그룹별 판정**으로 진행하는 전용 작업 화면을 구현했다.
+  그룹 25개·원문 50건, 검색/과거 개정 고정 페이지, 페이지 간 선택을 보존하는 서버 분리·병합·이동·이름 변경,
+  현재 분류 근거/참조 출처, 전체·확정·남은 그룹 수와 다음 미검토 그룹을 연결했다. 미저장 이름/필드 변경과 미확정/오래된 분류는 2단계로 진행하지 못한다.
+- 기존 `WS_CLUSTER.state.task`에 요청 UUID·고정 원본/사례 해시·범위별 해시·진행·오류·재개 위치를 저장한다.
+  평균 10,000건은 500건씩, 100,000건은 5,000건씩 처리한다. 전체 ID의 누락/중복 검증을 통과한 완성 결과만 불변 event와 head로 원자 적용한다.
+  실패/참조 변경을 일부 성공으로 확정하거나 자동 재시도하지 않는다. 과거 판정·제거된 그룹 이력을 보존하며 그룹 구성 개정이 바뀌면 재검토한다.
+  원본 규칙 FAIL에도 사람이 사유를 적어 그룹 PASS를 확정할 수 있고, 원본·별도 보고서 판정·PoR은 유지된다.
+- 모델 호출 없는 기존 참고 엔진을 사용했다. 실제 회사 parser/SDK 검증과 VWP 모델/운영 전송 연결은 미완료이며
+  `CORPORATE`의 503, SSO 보호 장치와 내부 AI의 회사 어댑터 허용 범위를 유지한다. 대용량 확장에는 새 DDL/물리 테이블·권한 확대가 없다.
+- 독립 PostgreSQL **305개 통과, 실패/오류/skip 0개**(테스트 478.003초, 전체 runner 494.734초),
+  기존 CLI 4개 시나리오와 별도 10,000행/100그룹 저장 probe(7.288초)도 통과했다. fixture DB 종료 확인.
+  결과 `artifacts/workspace-large-backend-tests.json`, 원본 `/tmp/sanity-mock-pg-vjuftteq/summary.json`.
+- GCA·VC LP·SpyGlass 각각 **단일 합성 report의 10,000건과 100,000건**을 실제 공개 참고 parser로 추출하고
+  모든 ID·건수와 첫/중간/마지막 원문 위치를 확인했다. 여러 개의 한 건짜리 report로 대체하지 않았다.
+  100,000건/100,000개 고유 그룹의 전체 분류 118.851초, 분류·확정·마지막 그룹 사람 PASS까지 163.692초,
+  원본 JSON 60,845,516 bytes, metadata 직렬화 6,831 bytes, 그룹/원문 페이지 25/50개를 확인했다.
+  `runner_peak_rss_kib=699168`은 이 테스트까지의 회귀 프로세스 누적 최대 RSS이며 순수 분류만의 최대 메모리는 아니다.
+  결과 `artifacts/workspace-100000-unique.json`.
+- 최종 빌드에서 workspace 브라우저 **16개**(2.8분)와 별도 **100,000건 시나리오 1개**(2.9분), 기존 브라우저 **37개**(1.7분)를 통과했다.
+  10,000건/100그룹은 분류 11.150초, metadata 응답 6,357 bytes였다. 페이지 간 51건 선택·분리/병합·사례 재사용·TOP 조회,
+  VC LP/SpyGlass의 마지막 원문 검색, 사람 FAIL→PASS 독립 판정과 390px 화면을 확인했다.
+  100,000건/100그룹은 5,000건 저장 후 API·DB를 실제 재시작하고 같은 task/cursor를 복원했다. 과거 범위 재요청도 중복 처리하지 않았다.
+  브라우저에서 남은 95,000건을 89.520초에 처리하고 20개 전체 범위·분류 확정·사람 판정·새로고침·모바일·원본/PoR 보존을 확인했다.
+  metadata 6,704 bytes/최초 조회 4.326초, 초기 그룹/원문 25/50개, 페이지 오류/가로 넘침 없음.
+  결과 `artifacts/workspace-large-persistence.json`, `artifacts/workspace-100000-browser-tests.json`,
+  `artifacts/workspace-large-frontend-tests.json`, `oa-bridge/dashboard/artifacts/workspace-100000-browser-metrics.json`과 데스크톱/모바일 PNG.
+- 4GB 개발 환경에서 다른 검증과 함께 실행한 참고 수치다. 서버는 요청마다 해당 report/구성을 읽어 전체 검증하므로 원본 크기에 비례하는 비용이 남는다.
+  report JSON 128MiB, 로그/그룹 각각 1,000,000개와 사례 조회 예산을 명시적으로 검사하며, 한도 초과는 부분 처리 없이 중단한다.
+  더 큰 입력·긴 행·동시 사용자 부하, 실제 사내 형식/모델 품질과 운영 지연 목표는 별도 사내 검증 대상이다.
+- 공유 `/workspace`에 최종 빌드/API와 도구별 10,000건 report 3개·GCA 100,000건 report 1개를 추가했다.
+  API를 잠시 중단한 상태에서 기존 **1,081개 행의 payload/state/개정/시각 해시와 네 테이블 OID가 동일**함을 확인했다.
+  기존 1,000개를 포함한 총 report 1,004개·추출 record 131,000건이다. 새 대형 report에는 검증용 분류/사람 판정을 작성하지 않았다.
+  실제 HTTPS 주소에서 100,000건 진입·50건 페이지·마지막 원문 검색·2단계 잠금·390px/초록색 테마·Secure/HttpOnly 쿠키를 확인했다.
+  최초 metadata 1,252 bytes, 페이지 오류/가로 넘침 0개. 결과 `artifacts/workspace-large-deployment.json`,
+  `oa-bridge/dashboard/artifacts/workspace-large-live-smoke.json`과 `workspace-large-live-desktop/mobile.png`.
+  별도 QA API/DB는 종료했고 설정의 static 경로는 영속 dist로 복원했다. 공유 서비스와 다른 작업자의 개발 서버는 유지했다.
+
+## 2026-10-15 단일 report 10,000건의 순차 검토 — 명세 우선 갱신
+
+- 사용자가 규모를 **한 sanity item의 report 안의 로그·위반 항목 약 10,000건**으로 확인하고 구현 전에 명세 갱신을 요청했다.
+- [요구사항 18절](requirement.md#large-report-review-flow)에 Sanity item 진입 → 전체 로그 분류·사람 확정 → 확정 그룹별 판정·사람 확정의 주 동선과 단계 전환 조건을 추가했다.
+  전체 ID coverage, 분리/병합·초안 저장, 그룹별 진행률·보류·재분류, 두 종류의 DB 사례 재사용, 대용량 페이지/분할 처리와 수용 시나리오를 명시했다.
+- 현행 report당 1,000건/100그룹 한도·모달 UI·대부분 한 건짜리 샘플을 10,000건 지원 완료로 취급하지 않는다.
+  기존 10,000행 DB 측정과 소규모 기능 검증도 이 종단 시나리오의 검증 결과와 구분했다.
+- PROTOCOL과 WORKSPACE 안내에 최신 명세/현재 한도를 연결했다. 이번 작업은 문서 변경이며 코드·SQL·샘플·실행 중 API/DB는 변경하지 않았다.
+  문서 diff·로컬 링크를 확인했으며 런타임 변경이 없어 앱/DB 테스트는 재실행하지 않았다. 후속 구현은 아직 진행하지 않았다.
+
+## 2026-10-15 두 단계 clustering·그룹 판정 연결
+
+- `/workspace`의 **근거·검토 → Clustering·그룹 판정**을 추가했다. 1단계에서 원본 로그 전체의
+  초안을 받고 사람이 분리·병합·이름·사유·재사용 기준을 저장/확정한다. 2단계는 확정된 그룹마다
+  제안과 참고 근거를 조회하고 사람이 PASS/FAIL/보류·사유·재사용 조건을 별도로 저장한다.
+- 원본 record 전체를 중복/누락 없이 배정하며 PASS 로그도 포함한다. `007_workspace_pipeline.sql`은
+  기존 OA 테이블에 분류 head/불변 event와 그룹 판정 head/불변 event/proposal을 추가한다.
+  원본/버전/분류 event를 실제 FK로 연결하며 기존 네 테이블·앱 권한과 원본 규칙 판정·PoR을 보존한다.
+- 그룹 판정은 분류 event ID/개정·전체 구성 해시·그룹 snapshot에 연결한다. 분류를 바꾸면 같은 그룹 ID의
+  이전 판정도 재검토가 필요하며 삭제된 그룹과 제안 수정 이력도 보존한다. 다른 보고서가 참조한 분류의
+  정정/철회와 자기 자신에 의존하는 사례를 검사한다. 기존 보고서 전체 판정과 목록 열은 별도로 유지한다.
+- 다음 초안은 명시적으로 재사용을 승인한 분류 사례를 참고한다. 현재 유효한 확정 그룹의 사람 판정만
+  다음 그룹 판정 기준으로 사용하며 출처/개정을 표시한다. 담당자/TOP 범위, CSRF/Origin, UUID 재시도,
+  동시 개정 충돌과 오래된 분류에 대한 저장 거부를 검증했다.
+- 현재 초안/판정 제안은 `CONFIRMED_PARTITION_V1`/`CONFIRMED_CRITERIA_V1` 참고 엔진이며 실제 모델이 아니다.
+  모호한 사람의 분리나 충돌을 임의 순서로 재현하지 않는다. `CORPORATE`는 `503 AI_NOT_CONFIGURED`를 유지한다.
+  사내 AI용 추상 계약·검증·제한은 [분류 인계](vwp-bridge/CLUSTERING_INTEGRATION.md)와
+  [판정 인계](vwp-bridge/REVIEW_INTEGRATION.md)에 기록했다. 실제 SDK와 운영 VWP job/DB 전달 연결은 미연결이다.
+- 독립 PostgreSQL **293개 통과, 실패/오류/skip 0개**(169.566초), CLI 4개 시나리오와
+  10,000건/100그룹 저장(6.874초) 통과. 결과 `artifacts/workspace-pipeline-backend-tests.json`; 테스트 DB 종료 확인.
+  기존 브라우저 회귀 **37개**, 실제 별도 API/DB 통합 **13개**(최종 빌드 50.2초)도 통과했다.
+- 별도 QA에만 합성 다중 로그 보고서 2개를 추가해 분리→병합→확정→그룹 PASS, 다음 보고서의 분류/판정
+  재사용→사람의 FAIL 정정, 재분류에 따른 판정/참조 무효화를 확인했다. 이 QA 자료는 공유 DB에 넣지 않았다.
+  API/DB 재시작 후 두 보고서의 분류·그룹 판정 이력 5개와 PoR의 동일성을 확인했다.
+  결과 `artifacts/workspace-pipeline-persistence.json`; QA API/DB는 검증 후 종료했다.
+- 모바일 모달의 높이 변경 애니메이션과 줄바꿈된 탭의 축소 때문에 생기던 화면 초과/겹침을 수정하고
+  실제 브라우저의 모달 경계·탭/본문 경계 검사로 확인했다. 초록색 토큰은 유지한다.
+  직접 확인한 캡처는 `oa-bridge/dashboard/artifacts/workspace-pipeline-stale-mobile.png`,
+  `workspace-pipeline-clustering-desktop.png`, `workspace-pipeline-public-desktop.png`, `workspace-pipeline-public-mobile.png`다.
+- 공유 DB는 기존 **1,079개 OA 행 전체 해시·건수와 네 테이블 OID를 보존**하며 `007`만 적용했다.
+  검증한 API/정적 빌드를 공유 HTTPS에 반영했다. 실주소에서 두 단계·담당자 초안 버튼·초록색·모바일을 확인하고
+  원본/보고서 판정/분류/PoR이 동일함과 page error 0개를 확인했다. 공유 환경에는 업무 판정/분류를 시험 저장하지 않았다.
+  결과 `artifacts/workspace-pipeline-publish.json`, `artifacts/workspace-pipeline-public-smoke.json`에 기록했다.
+- TypeScript 포함 빌드·Python 구문 검사·`git diff --check`와 관련 문서의 로컬 링크 112개를 확인했다.
+  합성 검증을 실제 회사 report/SSO/AI의 운영 검증으로 표시하지 않는다.
+
+## 2026-10-15 최초 초록색 테마 복원
+
+- 사용자 요청으로 최초 Git 팔레트의 색상 토큰 22개를 복원했다. 강조색 `#294f46`,
+  배경 `#f5f4f0`, 사이드바 `#eeeee7`과 모달/모바일 배경의 중성 그림자 색을 함께 적용했다.
+- TypeScript 포함 빌드·`git diff --check`와 데스크톱/모바일 브라우저 검사 4개를 통과했다.
+  공유 HTTPS에서 실제 색상·사용자 판정 입력·모바일 메뉴·overflow/page error 없음과 PoR 불변을 확인했다.
+- 공유 정적 자산을 갱신했다. 결과 `artifacts/workspace-green-smoke.json`, 캡처
+  `oa-bridge/dashboard/artifacts/workspace-green-overview.png`, `workspace-green-review.png`,
+  `workspace-green-mobile.png`를 직접 확인했다. 별도 QA 서버/DB는 종료했다.
+
+## 2026-10-15 사용자 판정·확정 조건·제안의 영속 연결
+
+- `/workspace` 검사별 **근거·검토 → 사용자 판정·AI review**를 구현했다.
+  원본 규칙 FAIL에도 독립 사용자 PASS와 사유를 저장하며 규칙 결과·원문·PoR은 보존한다.
+  목록의 규칙/사용자 판정을 분리하고 담당자의 저장/제안과 TOP의 조회 권한을 서버에서 검사한다.
+- `006_workspace_reviews.sql`은 기존 네 테이블/권한을 유지하면서 OA에 현재 판정 head,
+  불변 판정 사례/제안을 추가한다. UUID 재시도·개정 충돌·CSRF/Origin·다른 블록/버전 차단을 검증했다.
+  원본 해시·버전 snapshot·조건·이유·판정자·이전 개정과 제안/최종 판정의 일치·수정을 보존한다.
+- 일회성 사례와 명시적 재사용 조건을 구분한다. 현재 같은 scope·호환 버전의 다른 보고서 최신 사례만 조회하며,
+  조건의 정확한 일치에만 제안한다. 원문 미수신/파싱 미완료·기준 부재·판정 충돌은 보류다.
+  조건 정정/철회뿐 아니라 새 반례 추가도 전체 사례 목록 해시로 감지하여 기존 제안 확정을 거부한다.
+- `ReviewAdvisor` 추상 계약과 회사 어댑터·[인수인계](vwp-bridge/REVIEW_INTEGRATION.md)를 제공했다.
+  현재 엔진은 `CONFIRMED_CRITERIA_V1`, `model_called=false`이며 사내 AI 미연결을 표시한다.
+  실제 SDK·VWP job/DB 전달 연결, 자유 사유로부터 일반 기준 추출, 별도 검증 집합의 모델 정확도 평가는 미구현이다.
+  구형 승인 API/PR #6 원본 snapshot의 `FAIL_CANNOT_PASS`를 이 새 사용자 판정 API와 혼동하지 않는다.
+- 독립 PostgreSQL 전체 **277개 통과, 실패/오류/skip 0개**(130.732초), CLI 4개 시나리오와
+  10,000건/100그룹 저장(7.972초) 통과. 결과 `/tmp/sanity-mock-pg-my6mjywq/summary.json`; DB 종료 확인.
+  테스트 중 신규 원본 변경 검사의 기대 HTTP status를 기존 `STATE_CORRUPT=503` 계약에 맞췄다.
+- 기존 Chromium 회귀 **37개 통과**(1.8분), 실제 별도 API/DB 통합 **10개 통과**(35.7초).
+  FAIL→사용자 PASS, 새로고침·다른 TOP 조회, 다음 보고서의 기준/출처 참조, 제안 수정 이력과 모바일 보류 저장을 확인했다.
+  저장된 사유를 다시 읽을 때 label에 textarea 내용이 포함되던 문제는 label/입력 분리로 수정했다.
+  API와 DB를 실제 재시작한 뒤 3개 판정의 개정·전체 이력·제안과 PoR이 동일함을 확인했다.
+- 별도 QA DB는 기존 1,110행, 공유 DB는 기존 1,074행을 보존하며 `006`을 적용했다.
+  합성 fixture 전용 offline upgrade는 네 테이블 OID와 기존 OA 행 전체 해시/건수가 동일한지 비교했고,
+  이미 적용된 QA DB의 재실행은 `MIGRATION_CURRENT`로 종료했다. 앱 권한·인증 설정·회사 환경은 변경하지 않았다.
+- 검증한 빌드와 API를 공유 HTTPS `/workspace`에 반영했다. 실주소 브라우저 읽기 검증에서
+  FAIL의 사용자 PASS 입력 가능·사내 AI 미연결·PoR 불변·모바일 overflow 없음·page error 0개와
+  Secure/HttpOnly/SameSite=Strict cookie를 확인했다. 공유 DB에 사용자 판정/기준을 시험 저장하지 않았다.
+  별도 QA의 판정 데이터와 공유 환경은 분리했으며 QA API/DB는 종료했다.
+- TypeScript 포함 프런트엔드 빌드, Python 구문 검사, `git diff --check`, 관련 문서 로컬 링크 84개 통과.
+  직접 확인한 캡처는 `oa-bridge/dashboard/artifacts/workspace-human-review-desktop.png`,
+  `workspace-review-proposal.png`, `workspace-human-review-mobile.png`, `workspace-review-public-mobile.png`다.
+  합성 통합 결과를 실제 회사 report/SSO/AI 검증으로 표시하지 않는다.
+
+## 2026-10-15 사람 판정 기준을 축적하는 AI review 목표 확인
+
+- 사용자 결정: 사람이 확정한 판정·근거·적용 조건을 계속 축적해 AI가 같은 기준으로 판정을 제안하도록 한다.
+  원본 규칙 판정·AI 제안·사용자 판정을 분리하며 원본 FAIL을 보존한 사용자 PASS를 허용하는 후속 정책을 기록했다.
+- [요구사항 17절](requirement.md#human-judgment-learning)에 사례/기준 저장, 조건·예외·반례, 일회성 승인과 재사용 기준의 구분,
+  범위/버전 호환, 기준 정정 이력, AI 입력의 참조 출처, 사람과의 일치/정정/보류 평가를 정리했다.
+  기존 문제 그룹 분류 기준과 업무상 PASS/FAIL 판정 기준을 구분한다.
+- 우선 방식은 확정 사례·기준을 다음 AI 입력에 참조하는 것이며 모델 가중치 자동 학습으로 표시하지 않는다.
+  실제 report와 AI 실행은 사내 VWP, 검토·확정은 OA라는 역할과 DB 통신 경계를 유지한다.
+- 이번 변경은 요구사항/프로토콜/워크스페이스 안내의 합의 기록이다. 런타임과 PR #6 원본 테스트 화면,
+  `FAIL_CANNOT_PASS`, 기존 테스트·DB·회사 어댑터는 변경하지 않았다. 실제 기능 연결 완료를 주장하지 않는다.
+
+## 2026-10-15 sanity item별 검사 대장·브라운 테마
+
+- `/workspace` 검사 대장에 `item_id`별 선택과 전체/PASS/FAIL/보류/미수신 건수를 추가했다.
+  현재 예시는 GCA 제약조건·VC LP 저전력·SpyGlass Lint 검사이며 실제 ID로 구분한다.
+  같은 도구의 다른 item은 분리하고 ID가 없는 과거 자료는 항목 미분류로 표시한다.
+- reports API에 선택적 `item_id`와 `groups` 집계를 추가했다. 프로젝트/블록/버전/ECO 권한을 확인한 뒤,
+  페이지·검색·결과 필터 적용 전에 항목별 건수를 DB에서 계산한다. 기존 API의 item 생략 동작은 유지한다.
+  UI는 한 항목의 보고서만 표시하고 검색/필터/페이지를 그 안에 적용한다. 항목 전환은 검색·필터·페이지를 초기화하고
+  선택 항목은 URL에 보관해 새로고침 후 복원한다. 검색 중 입력 포커스와 항목 선택 버튼을 유지한다.
+- 테마의 붉은기를 줄여 커피 브라운 `#79583a`, 베이지 선택 배경, 따뜻한 중성색으로 변경했다.
+  공통 토큰과 modal/backdrop 색을 함께 바꾸고 PASS/FAIL 상태 의미 색은 유지했다.
+- 동일 GCA 도구의 별도 item 40건과 미분류 자료를 넣어 페이지 밖 집계·정확한 item 필터·미수신·타 블록 접근 거부를 검증했다.
+  독립 PostgreSQL 전체 **256개 통과, 실패/오류/skip 0개**(89.136초), CLI 4개 시나리오 및
+  10,000건/100그룹 저장(6.869초) 통과. 결과 `/tmp/sanity-mock-pg-o14v2x3b/summary.json`; DB 종료 확인.
+- 기존 Chromium 회귀 **37개 통과**(1.8분), 실제 별도 API/DB 브라우저 통합 **7개 통과**(30.1초).
+  항목별 38/37/37건, 항목 안의 25건 페이지, 타 항목 보고서 검색 제외, 연속 타이핑 포커스,
+  키보드 선택·새로고침 복원·모바일·PoR 불변과 기존 지정/권한/로그아웃을 확인했다.
+  기존 전체 검색 사례는 현재 선택 item에 속하고 첫 페이지 밖에 있는 `sample-1000`으로 검증한다.
+- 프런트엔드 빌드·TypeScript/Python 구문 검사·`git diff --check` 통과.
+  캡처 `oa-bridge/dashboard/artifacts/workspace-items-desktop.png`, `workspace-mobile.png`를 직접 확인했다.
+  검증한 빌드를 공유 HTTPS 주소에 반영해 item 3개·VC LP 37건·선택 복원·모바일 overflow 없음·PoR 불변·page error 0개를 확인했다.
+  공유 서버/DB는 유지하고 검증용 8002 API/DB는 종료했다. 문서 로컬 링크 24개도 통과했다.
+  원본 report·판정·사용자 배정·PoR·DB 스키마는 수정하지 않았다. 사용 범위는 [WORKSPACE.md](oa-bridge/WORKSPACE.md)를 따른다.
+
+## 2026-10-15 영속 워크스페이스·PoR 저장·버건디 색상
+
+- `/workspace`를 실제 FastAPI·독립 PostgreSQL에 연결했다. 테스트 계정 10개·프로젝트 3개·블록 9개와
+  기존 공개 parser로 DB 수신까지 검증한 1,000개 예시 항목을 하나의 로그인/조회 흐름에서 사용한다.
+  계정과 자료는 합성이며 회사 SSO·운영 DB·실제 report·실제 AI를 호출하지 않는다.
+- 서버에서 활성 사용자·프로젝트 TOP/블록 담당 배정·조회/지정 범위를 확인한다. PoR 변경은 담당자만 허용하며
+  기대 개정·요청 UUID 잠금·PoR 행 잠금·불변 이력 저장을 한 트랜잭션에서 처리한다.
+  동일 요청 재시도, 다른 내용의 UUID 재사용, 동시 개정 충돌, 다른 프로젝트/블록 접근을 검증했다.
+  버전/ECO 조회는 PoR을 변경하지 않고 PoR 지정도 원문·판정·다른 블록을 수정하지 않는다.
+- 새 `db/005_workspace.sql`만으로 OA 관리 레코드의 종류·키·FK·필수 scope를 확장했다.
+  기존 form/002/003/004, 네 테이블/OID, 기존 행, 제한된 앱 UPDATE 권한을 보존한다.
+  이전 종류 제약이 예상과 다르면 전체 migration을 rollback한다. 실제 사내 DB에는 적용하지 않았다.
+- 세션은 DB에 저장하고 HttpOnly/SameSite=Strict cookie, HTTPS Secure, 쓰기 Origin/CSRF,
+  입력 크기·Host 검사와 로그인 제한을 적용했다. 기존 SSO `AUTHORIZATION_NOT_IMPLEMENTED`는 유지한다.
+  테스트용 실행기는 회사 `.env`와 DB 환경변수를 상속하지 않는 공개 소스 snapshot으로 실행한다.
+- 현재 확인된 report는 NET_001 POST/chip_finish에만 연결했다. 미수신 PRE/이전 버전/ECO를 다른 결과로 채우지 않는다.
+  현황도 PoR 버전의 검사만 집계하고, 미지정일 때만 최신 수신 버전임을 표시한다.
+- 공통 색상 토큰을 버건디 `#913c4b`와 따뜻한 붉은 중성색으로 변경했다.
+  로그인·사이드바·선택·버튼·포커스에 적용하고 PASS/FAIL 의미 색은 구분했다.
+  데스크톱과 390px 모바일을 실제 Chromium 캡처로 확인했다.
+- 최종 독립 PostgreSQL 회귀: **255개 통과, 실패/오류/skip 0개**(87.453초).
+  기존 CLI 4개 시나리오 및 10,000건/100그룹 저장(6.924초)도 통과했고 DB 종료를 확인했다.
+  결과: `/tmp/sanity-mock-pg-y3u1s_ns/summary.json`, `tests.json`, `tests.log`, `scale.json`.
+- 기존 브라우저 회귀 **37개 통과**. 별도 API/DB의 실제 워크스페이스 브라우저 통합 **6개 통과**(10.4초).
+  로그인 범위·전체 검색/원문·PoR 저장/새로고침/별도 TOP 계정 조회·권한 거부·미수신·모바일·로그아웃을 검증했다.
+  검증용 8002 DB를 분리해 사용자의 8001 PoR을 변경하지 않았다.
+  캡처: `oa-bridge/dashboard/artifacts/workspace-login.png`, `workspace-overview.png`,
+  `workspace-history.png`, `workspace-mobile.png`(로컬 생성물, Git 제외).
+- 별도 검증 서버에서 **API와 PostgreSQL을 모두 재시작한 뒤에도 PoR/개정/지정 이력이 동일**함을 확인했다.
+  공유 HTTPS 경로는 loopback 8001로 연결하고 `/` → `/workspace`, Secure cookie, 실제 조회,
+  버건디 토큰, 모바일 overflow 없음, 로그아웃을 확인했다. 다른 worktree의 5173 서버는 보존했다.
+- `npm run build` 통과. 실행·테스트 계정·지원 범위·운영 미연결 항목은 [WORKSPACE.md](oa-bridge/WORKSPACE.md)에 기록했다.
+  Python 구문 검사·문서 로컬 링크 91개·`git diff --check`도 통과했다. 검증용 8002 API/DB는 종료하고 확인용 8001은 유지했다.
+  서버 config/DB/로그/생성 자료는 Git에 포함하지 않는다.
+
+## 2026-10-14 공개 report 초기 파서·1,000개 데이터·대시보드
+
+- 사용자 요청의 가상 이용자 10명·프로젝트 3개·각 프로젝트 3개 블록을 구성했다.
+  TOP 3명과 블록 담당자 7명, 프로젝트별 CPU/GPU/DDR을 사용하며 일부 담당자는 두 프로젝트에 배정했다.
+- 공급자 공개 문서의 GCA full text·VC LP Tree Summary/Tag 상세·SpyGlass non-turbo moresimple 구조를 조사했다.
+  `site_integration/public_parsers.py`에 추상 계약을 사용하는 초기 추출기를 추가하고
+  `PUBLIC_REPORT_FORMATS.md`에 출처·지원 subset·미지원 형식·회사 구현 인계를 명시했다.
+  실제 사내 report, 실제 EDA 실행 결과, vendor 원문의 복제는 없다.
+- 초기 registry는 명시적인 합성 tool/rule version만 허용한다. native 부분은 추출하되 실제 완료 계약 미확인 시 PARTIAL을 유지한다.
+  `SANITY_SAMPLE/ZERO/END`는 공급자 문법이 아닌 fixture 전용 표식이다. 수치 판정은 기존 공통 evaluator가 수행한다.
+  rule/design/mode·요약/상세 건수·waiver·종료 후 내용·미해석 섹션을 검사하며 일반/회사 실행 경로에는 자동 등록하지 않았다.
+- `tools/build_public_preview.py`로 독립 PostgreSQL의 수집 → 파싱 → VWP DB evidence/queue → OA 수신/저장 → DB 재조회 경로를 실행했다.
+  원래 payload와 OA 저장 payload의 일치를 확인하고 읽기 전용 JSON을 내보낸 뒤 mock DB를 종료했다.
+  마지막 데이터 결과: `/tmp/sanity-mock-pg-ou_3ks1y/dataset-summary.json`.
+  예상 item 1,000개(합성 report 파일 950개·누락 50개), 묶음 27개, DB evidence 1,000건.
+  GCA 334 / VC LP 333 / SpyGlass 333, PASS 600 / FAIL 350 / UNKNOWN 50,
+  COMPLETE 850 / PARTIAL 100 / MISSING 50. PARTIAL 100건에도 확인된 위반은 FAIL로 유지된다.
+- `/?demo=1&dataset=reports`에서 스냅샷을 표시한다. 가상 계정/프로젝트/블록 범위 전환,
+  전체 선택 범위 검색·도구/결과 필터·25건 페이지·원문/줄 위치/추출 필드/차단 사유·합성 report 다운로드를 제공한다.
+  실제 SSO/RBAC·실시간 DB·사람의 검토/PoR 저장을 구현한 화면으로 표시하지 않는다.
+  기존 Tailscale static dist 경로에서 HTTP 200과 Chromium 렌더링(25개 행·계정 10개·page error 0개)을 확인했다.
+- 공개 파서 회귀 12개를 추가했다. 실제 독립 mock PostgreSQL 전체: **236개 통과, 실패/오류/skip 0개**(66.655초).
+  기존 CLI 4개 시나리오와 10,000건/100그룹 파싱·저장(6.371초)도 통과했다.
+  결과: `/tmp/sanity-mock-pg-9cc_wkrp/summary.json`, `tests.json`, `tests.log`, `scale.json`; DB 종료 확인.
+- 기존 브라우저 회귀와 신규 preview 7개를 포함해 **Chromium 35개 통과**(1.1분).
+  다운로드 바이트, 누락 report의 다운로드 차단, PARTIAL 원문, 계정별 범위, 전체 검색, 390px 모바일,
+  명시적 demo 조건·데이터 조회 실패 시 다른 demo로 대체하지 않는 동작을 확인했다.
+  기본 5173에 다른 worktree 서버가 있어 테스트 전용 5188을 사용했다. 기존 서버는 변경하지 않았다.
+  캡처: `oa-bridge/dashboard/artifacts/reports-library-desktop.png`, `reports-library-mobile.png`,
+  `reports-library-mobile-dialog.png`, `reports-library-hosted.png`(로컬 생성물, Git 제외).
+- `npm run build`, Python 구문 검사, 변경 문서의 로컬 링크 검사, `git diff --check` 통과.
+  샘플 JSON/DB/report는 Git에서 제외한다. 회사 registry/비공개 fixture·실제 `.env`/DB/AI·SQL·운영 인증 계약을 변경하지 않았다.
+
 ## 2026-10-14 사내 item별 report parser 추상 인터페이스·인수인계
 
 - 사용자 결정: 실제 report는 사내 AI/담당자가 사내에서만 열람·검증한다. 현재 Codex는

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import re
 import sys
+from types import ModuleType
 import unittest
 from unittest.mock import patch
 
@@ -126,10 +127,24 @@ class SSOApiTests(unittest.TestCase):
             self.assertEqual({"status": "TEST_ROUTE_ONLY"}, response.json())
             self.assertEqual(503, client.get("/api/session").status_code)
 
-    def test_company_entrypoint_stays_unconfigured_and_never_falls_back(self):
+    def test_unconfigured_company_entrypoint_never_uses_a_local_token(self):
+        # This common contract must not import the company's real SDK or require
+        # its adapter to stay unimplemented after an authorized integration.
+        class UnconfiguredIdentity(SSOIdentityProvider):
+            def authenticate(self, request):
+                raise AuthError("AUTH_SSO_NOT_CONFIGURED")
+
+        class UnconfiguredDirectory(UserDirectory):
+            def resolve(self, identity):
+                raise AuthError("AUTH_DIRECTORY_NOT_CONFIGURED")
+
+        company = ModuleType("corporate_sso")
+        company.CorporateIdentityProvider = UnconfiguredIdentity
+        company.CorporateUserDirectory = UnconfiguredDirectory
         spec = importlib.util.spec_from_file_location("company_sso_entrypoint_test", Path(__file__).with_name("sso_app.py"))
         entrypoint = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(entrypoint)
+        with patch.dict(sys.modules, {"corporate_sso": company}):
+            spec.loader.exec_module(entrypoint)
         with TestClient(entrypoint.app, base_url="http://127.0.0.1", raise_server_exceptions=False) as client:
             response = client.get("/api/session", headers={"Authorization": "Bearer " + os.environ["SANITY_DASHBOARD_TOKEN"]})
         self.assertEqual(503, response.status_code)

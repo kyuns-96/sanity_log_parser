@@ -64,9 +64,13 @@ class MockRunnerTests(unittest.TestCase):
         from sanity_common import atomic_text
         with tempfile.TemporaryDirectory() as temp:
             source, target = Path(temp) / "input", Path(temp) / "snapshot"
-            public = {"site_integration/__init__.py", "site_integration/parser_example.py"}
+            public = {"site_integration/__init__.py", "site_integration/parser_example.py",
+                      "site_integration/public_parsers.py"}
             private = {"site_integration/corporate_parsers.py", "site_integration/company_parsers/item.py",
                        "site_integration/company_parsers/test_item.py", "site_integration/private/real_report.txt",
+                       "site_integration/corporate_plan.py", "site_integration/company_plan/source.py",
+                       "site_integration/corporate_clustering.py", "site_integration/company_clustering/sdk.py",
+                       "site_integration/corporate_review.py", "site_integration/company_review/sdk.py",
                        "artifacts/parser-fixtures/real_report.txt"}
             for path in public | private:
                 atomic_text(source / path, "synthetic fixture")

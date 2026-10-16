@@ -84,7 +84,7 @@ pre, code, .cluster-id, .vf-revision, .identity-tags, .run-name, .detail-header 
 .sidebar, .af-sidebar, .vf-sidebar { background: var(--sidebar-surface); color: var(--text-secondary); border-right: 1px solid var(--line); }
 .sidebar { width: var(--sidebar-width); padding: 28px 16px 0; }
 .sidebar .console-brand { margin-left: 10px; }
-.workspace-picker, .af-workspace-label, .vf-workspace { background: #f5f5ef; border-color: var(--line); color: var(--ink); padding: 12px; margin: 32px 0 28px; }
+.workspace-picker, .af-workspace-label, .vf-workspace { background: var(--surface-soft); border-color: var(--line); color: var(--ink); padding: 12px; margin: 32px 0 28px; }
 .workspace-icon, .af-workspace-label > span, .vf-workspace > span { background: var(--accent-soft); color: var(--accent); font-family: var(--font-mono); }
 .workspace-picker strong, .vf-workspace strong { font-size: 12px; color: var(--ink); }
 .workspace-picker small, .af-workspace-label small, .vf-workspace small { font-size: 10px; color: var(--text-muted); }
@@ -92,8 +92,8 @@ pre, code, .cluster-id, .vf-revision, .identity-tags, .run-name, .detail-header 
 .sidebar nav { gap: 4px; }
 .sidebar nav button, .af-sidebar nav button, .vf-sidebar nav a { min-height: 44px; color: var(--text-secondary); border-radius: 6px; font-size: 13px; }
 .sidebar nav button:hover, .af-sidebar nav button:hover, .vf-sidebar nav a:hover { background: var(--line-soft); }
-.sidebar nav button.nav-active, .af-sidebar nav button.is-active, .vf-sidebar nav a.is-active { background: #dfe7dd; color: var(--accent); box-shadow: none; font-weight: 600; }
-.sidebar nav button .nav-count, .af-sidebar nav button > span { background: #cedbcf; color: var(--accent); }
+.sidebar nav button.nav-active, .af-sidebar nav button.is-active, .vf-sidebar nav a.is-active { background: var(--accent-soft); color: var(--accent); box-shadow: none; font-weight: 600; }
+.sidebar nav button .nav-count, .af-sidebar nav button > span { background: var(--accent-line); color: var(--accent); }
 .sidebar nav button .nav-text { background: transparent; padding: 0; margin: 0; font-size: inherit; color: inherit; }
 .sidebar-toggle { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 10px 12px; margin: 0 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); font-size: 12px; }
 .sidebar-toggle:hover { background: var(--line-soft); color: var(--accent); }
@@ -182,13 +182,13 @@ select { font-size: 12px; padding: 8px 11px; color: var(--ink); }
 .workspace [data-slot='table-head'] { font-size: 11px; font-weight: 500; height: 40px; background: var(--surface-soft); }
 [data-slot='table-cell'] { padding-block: 12px; font-size: 12px; color: var(--text-secondary); }
 [data-slot='table-head']:first-child, [data-slot='table-cell']:first-child { padding-left: 24px; }
-.selected-row { background: #f0f4ed; }
+.selected-row { background: var(--accent-soft); }
 .selected-row:hover { background: var(--accent-soft); }
 .selected-row [data-slot='table-cell']:first-child { box-shadow: inset 3px 0 var(--accent); }
 .workspace .unit-select strong { font-size: 13px; color: var(--ink); font-weight: 550; }
 .workspace .unit-select small { font-family: var(--font-mono); font-size: 10px; margin-top: 4px; }
 .unit-select { min-height: 36px; }
-.unit-detail { padding: 26px 24px; background: #fdfdfb; }
+.unit-detail { padding: 26px 24px; background: var(--surface); }
 .unit-detail-heading h3 { font-size: 19px; letter-spacing: -.5px; }
 .unit-detail-heading .eyebrow { font-size: 10px; margin-bottom: 7px; }
 .unit-facts { gap: 16px; margin-top: 18px; font-size: 12px; }
@@ -198,7 +198,7 @@ select { font-size: 12px; padding: 8px 11px; color: var(--ink); }
 .finding-head strong { color: var(--ink); font-family: var(--font-mono); font-size: 13px; }
 .finding-head > span:last-child { font-size: 11px; }
 .workspace .identity-tags span { font-size: 11px; background: var(--surface-soft); border-color: var(--line-soft); }
-.workspace .code-example > div { font-size: 10px; background: #efefe8; padding: 9px 12px; }
+.workspace .code-example > div { font-size: 10px; background: var(--surface-soft); padding: 9px 12px; }
 .workspace .code-example pre { font-size: 12px; color: var(--ink); line-height: 1.9; padding: 12px; }
 .measurement { padding-inline: 12px; font-size: 11px; }
 .workspace .identity-note, .workspace .example-note { font-size: 11px; line-height: 1.8; }
@@ -235,8 +235,8 @@ select { font-size: 12px; padding: 8px 11px; color: var(--ink); }
 .login-decoration h1 { font-size: clamp(38px, 4vw, 56px); line-height: 1.4; letter-spacing: -2px; font-weight: 550; margin: 24px 0; }
 .login-decoration p { color: var(--text-secondary); font-size: 15px; line-height: 1.9; }
 .login-decoration > span { color: var(--text-muted); font-size: 10px; }
-.login-process { list-style: none; padding: 0; margin: 44px 0 0; max-width: 390px; border-top: 1px solid #ced2c6; }
-.login-process li { display: flex; align-items: center; gap: 22px; border-bottom: 1px solid #ced2c6; padding: 15px 0; }
+.login-process { list-style: none; padding: 0; margin: 44px 0 0; max-width: 390px; border-top: 1px solid var(--line); }
+.login-process li { display: flex; align-items: center; gap: 22px; border-bottom: 1px solid var(--line); padding: 15px 0; }
 .login-process li > span:first-child { color: var(--accent); font-family: var(--font-mono); font-size: 11px; }
 .login-process strong { display: block; font-size: 13px; font-weight: 600; }
 .login-process small { display: block; font-size: 11px; color: var(--text-muted); margin-top: 3px; }
@@ -311,7 +311,7 @@ select { font-size: 12px; padding: 8px 11px; color: var(--ink); }
 .vf-root thead th { background: var(--surface-soft); font-size: 11px; }
 .vf-root tbody td { font-size: 12px; }
 .vf-root tbody th button { font-size: 12px; min-height: 66px; color: var(--ink); }
-.vf-root tbody tr.is-selected { background: #f0f4ed; }
+.vf-root tbody tr.is-selected { background: var(--accent-soft); }
 .vf-root tbody tr.is-selected th { box-shadow: inset 3px 0 var(--accent); }
 .vf-root tbody tr:hover { background: var(--accent-soft); }
 .vf-root .is-selected .vf-selection-dot { background: var(--accent); border-color: var(--accent); }

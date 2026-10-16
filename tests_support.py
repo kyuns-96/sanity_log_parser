@@ -19,6 +19,9 @@ ROOT = Path(__file__).resolve().parent
                      "PostgreSQL integration requires SANITY_TEST_ADMIN_DSN and both restricted app DSNs")
 class PgTestCase(unittest.TestCase):
     migrate_clustering = True
+    migrate_workspace = True
+    migrate_workspace_reviews = True
+    migrate_workspace_pipeline = True
 
     def setUp(self):
         self.admin = connect(os.environ["SANITY_TEST_ADMIN_DSN"], autocommit=True)
@@ -35,8 +38,14 @@ class PgTestCase(unittest.TestCase):
             columns = (ROOT / "db/form" / f"{name}.columns.sql").read_text(encoding="utf-8")
             self.admin.execute(sql.SQL("CREATE TABLE {}.{} (").format(
                 sql.Identifier(self.schema), sql.Identifier(name)) + sql.SQL(columns) + sql.SQL(")"))
-        for name in ("002_indexes.sql", "003_grants.sql", "004_clustering.sql"):
+        for name in ("002_indexes.sql", "003_grants.sql", "004_clustering.sql", "005_workspace.sql", "006_workspace_reviews.sql", "007_workspace_pipeline.sql"):
             if name == "004_clustering.sql" and not self.migrate_clustering:
+                continue
+            if name == "005_workspace.sql" and (not self.migrate_clustering or not self.migrate_workspace):
+                continue
+            if name == "006_workspace_reviews.sql" and (not self.migrate_clustering or not self.migrate_workspace or not self.migrate_workspace_reviews):
+                continue
+            if name == "007_workspace_pipeline.sql" and (not self.migrate_clustering or not self.migrate_workspace or not self.migrate_workspace_reviews or not self.migrate_workspace_pipeline):
                 continue
             script = (ROOT / "db" / name).read_text(encoding="utf-8")
             script = script.replace("public.", self.schema + ".").replace("SCHEMA public", "SCHEMA " + self.schema)

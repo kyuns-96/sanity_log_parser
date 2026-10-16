@@ -29,3 +29,6 @@ playwright-report/
 *.local
 *.log
 artifacts/
+
+# Generated synthetic parser/DB preview snapshot (rebuild with tools/build_public_preview.py).
+/oa-bridge/dashboard/public/sample-data/
