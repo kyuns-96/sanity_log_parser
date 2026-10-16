@@ -1,0 +1,15 @@
+# Optional: append -f oa/docker/compose.ca.yaml when the DB needs a private CA.
+x-ca: &ca
+  volumes:
+    - type: bind
+      source: ${OA_CA_DIR:?Set an absolute path to the private CA directory}
+      target: /run/sanity-ca
+      read_only: true
+      bind:
+        create_host_path: false
+
+services:
+  oa:
+    <<: *ca
+  oa-receiver:
+    <<: *ca
