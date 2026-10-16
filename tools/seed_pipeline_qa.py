@@ -6,10 +6,12 @@ from pathlib import Path
 import subprocess
 import sys
 
-from run_workspace import database_from_config
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tools.run_workspace import database_from_config
 
 
-SEED = r'''
+SEED = """
 import json,os,sys
 from pathlib import Path
 from psycopg2.extensions import parse_dsn
@@ -19,8 +21,8 @@ if (params.get('host')!=config['root'] or params.get('port')!='55439'
     or params.get('dbname')!='sanity_test_mock' or params.get('user')!='sanity_mock_oa'):
     raise RuntimeError('Only the restricted local synthetic fixture login is allowed')
 os.environ.update(config['settings'])
-from sanity_db import Database
-from sanity_workspace import WorkspaceStore,record_id
+from common.sanity_db import Database
+from oa.sanity_workspace import WorkspaceStore, record_id
 with Database('oa') as db,db.transaction():
     ws=WorkspaceStore(db); ws.check_workspace()
     for name in ('qa-cluster-source','qa-cluster-target'):
@@ -41,7 +43,7 @@ with Database('oa') as db,db.transaction():
         else:
             ws.put('WS_REPORT',name,payload,project='project-3',block='project-3-gpu')
 print(json.dumps({'status':'QA_PIPELINE_READY','reports':2,'data_retained':True}))
-'''
+"""
 
 
 def main():

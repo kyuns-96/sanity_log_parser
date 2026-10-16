@@ -38,19 +38,19 @@ class MockRunnerTests(unittest.TestCase):
         self.assertEqual({"PATH": "/usr/bin", "LANG": "C.UTF-8"}, runner.isolated_environment(source))
 
     def test_snapshot_includes_only_code_and_sql_not_env_private_docs_or_reports(self):
-        from sanity_common import atomic_text
+        from common.sanity_common import atomic_text
         with tempfile.TemporaryDirectory() as temp:
             source, target = Path(temp) / "input", Path(temp) / "snapshot"
-            for path in ("sanity_config.py", "db/form/fixture.sql", "db/tests/run_mock.py", "tests/test_one.py",
-                         ".env", "dbaccess.md", "reports/customer.txt", "oa-bridge/dashboard/.env"):
+            for path in ("common/sanity_config.py", "db/form/fixture.sql", "db/tests/run_mock.py", "tests/test_one.py",
+                         ".env", "dbaccess.md", "reports/customer.txt", "oa/dashboard/.env"):
                 atomic_text(source / path, "synthetic fixture")
             runner.stage_source(source, target)
-            self.assertEqual({"sanity_config.py", "db/form/fixture.sql", "db/tests/run_mock.py", "tests/test_one.py"},
+            self.assertEqual({"common/sanity_config.py", "db/form/fixture.sql", "db/tests/run_mock.py", "tests/test_one.py"},
                              {str(path.relative_to(target)) for path in target.rglob("*") if path.is_file()})
             self.assertEqual("synthetic fixture", (source / ".env").read_text())
 
     def test_snapshot_rejects_symlinked_code(self):
-        from sanity_common import atomic_text
+        from common.sanity_common import atomic_text
         with tempfile.TemporaryDirectory() as temp:
             source = Path(temp) / "input"
             source.mkdir()
@@ -61,16 +61,16 @@ class MockRunnerTests(unittest.TestCase):
                 runner.stage_source(source, Path(temp) / "snapshot")
 
     def test_parser_snapshot_excludes_company_implementations_and_private_fixtures(self):
-        from sanity_common import atomic_text
+        from common.sanity_common import atomic_text
         with tempfile.TemporaryDirectory() as temp:
             source, target = Path(temp) / "input", Path(temp) / "snapshot"
-            public = {"site_integration/__init__.py", "site_integration/parser_example.py",
-                      "site_integration/public_parsers.py"}
-            private = {"site_integration/corporate_parsers.py", "site_integration/company_parsers/item.py",
-                       "site_integration/company_parsers/test_item.py", "site_integration/private/real_report.txt",
-                       "site_integration/corporate_plan.py", "site_integration/company_plan/source.py",
-                       "site_integration/corporate_clustering.py", "site_integration/company_clustering/sdk.py",
-                       "site_integration/corporate_review.py", "site_integration/company_review/sdk.py",
+            public = {"vwp_bridge/integration/__init__.py", "vwp/integration/__init__.py", "oa/integration/__init__.py", "vwp_bridge/integration/parser_example.py",
+                      "vwp_bridge/integration/public_parsers.py"}
+            private = {"vwp_bridge/integration/corporate_parsers.py", "vwp_bridge/integration/company_parsers/item.py",
+                       "vwp_bridge/integration/company_parsers/test_item.py", "vwp_bridge/integration/private/real_report.txt", "oa/integration/corporate_sso.py", "oa/integration/company_sso/sdk.py",
+                       "vwp/integration/corporate_plan.py", "vwp/integration/company_plan/source.py",
+                       "vwp_bridge/integration/corporate_clustering.py", "vwp_bridge/integration/company_clustering/sdk.py",
+                       "vwp_bridge/integration/corporate_review.py", "vwp_bridge/integration/company_review/sdk.py",
                        "artifacts/parser-fixtures/real_report.txt"}
             for path in public | private:
                 atomic_text(source / path, "synthetic fixture")

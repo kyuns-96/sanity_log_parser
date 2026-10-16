@@ -5,9 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from sanity_config import load_environment
-from sanity_auth import (Actor, AuthError, AuthRequest, AuthenticationService, LocalUser,
-                         SSOIdentityProvider, UserDirectory, VerifiedIdentity, require_business_access)
+from common.sanity_config import load_environment
+from oa.sanity_auth import Actor, AuthError, AuthRequest, AuthenticationService, LocalUser, SSOIdentityProvider, UserDirectory, VerifiedIdentity, require_business_access
 
 LOCAL = {"SANITY_AUTH_MODE": "local_token", "SANITY_DASHBOARD_TOKEN": "test-only-local-token-at-least-32-characters",
          "SANITY_DASHBOARD_REVIEWER": "local reviewer"}

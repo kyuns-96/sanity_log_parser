@@ -7,9 +7,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from sanity_common import (ReviewError, atomic_json, canonical_json, coverage, read_bundle,
-                           read_json, render_report, safe_path, validate_payload, write_bundle,
-                           pack_json, unpack_json, unpack_bundle, digest)
+from common.sanity_common import ReviewError, atomic_json, canonical_json, coverage, read_bundle, read_json, render_report, safe_path, validate_payload, write_bundle, pack_json, unpack_json, unpack_bundle, digest
 
 
 def pass_payload():

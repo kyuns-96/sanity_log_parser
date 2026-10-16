@@ -2,7 +2,7 @@
 import hashlib
 import unittest
 
-from tests_support import ROOT
+from tests.support import ROOT
 
 
 class SchemaTests(unittest.TestCase):

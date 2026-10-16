@@ -7,9 +7,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from sanity_common import ReviewError, digest
-from sanity_codex_mock import (CodexMockClusteringAdvisor, decode_events, fixture_report,
-                               validate_receipt)
+from common.sanity_common import ReviewError, digest
+from devtools.sanity_codex_mock import CodexMockClusteringAdvisor, decode_events, fixture_report, validate_receipt
 
 
 FIELDS = ["check_point", "mode", "object"]

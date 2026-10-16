@@ -1,12 +1,11 @@
 import copy
 import unittest
 
-from sanity_common import ReviewError, digest
-from sanity_codex_mock import (CodexMockClusteringAdvisor, LEGACY_PROMPT_VERSION, PROMPT_VERSION,
-                               RATIONALE_PROMPT_VERSION, request_packet, validate_receipt)
-from sanity_workspace_clustering import validate_clustering_advice
-import sanity_workspace_rationale as rationale
-from test_codex_mock import answer, context, events, FIELDS
+from common.sanity_common import ReviewError, digest
+from devtools.sanity_codex_mock import CodexMockClusteringAdvisor, LEGACY_PROMPT_VERSION, PROMPT_VERSION, RATIONALE_PROMPT_VERSION, request_packet, validate_receipt
+from oa.sanity_workspace_clustering import validate_clustering_advice
+import common.sanity_workspace_rationale as rationale
+from tests.test_codex_mock import answer, context, events, FIELDS
 from unittest.mock import patch
 
 

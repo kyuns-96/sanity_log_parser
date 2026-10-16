@@ -4,12 +4,12 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from sanity_common import sha256_file
-from sanity_sample_reports import generate_library, sample_body
-from site_integration.public_parsers import FAMILIES, PROFILE, RULE_VERSION, create_public_registry
+from common.sanity_common import sha256_file
+from devtools.sanity_sample_reports import generate_library, sample_body
+from vwp_bridge.integration.public_parsers import FAMILIES, PROFILE, RULE_VERSION, create_public_registry
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("public_parser_bridge", ROOT / "vwp-bridge/main.py")
+spec = importlib.util.spec_from_file_location("public_parser_bridge", ROOT / "vwp_bridge/main.py")
 bridge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge)
 

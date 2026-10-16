@@ -7,17 +7,18 @@ import subprocess
 import sys
 import time
 
-from run_workspace import load_runner
-
 ROOT = Path(__file__).resolve().parents[1]
-CHILD = r'''
+sys.path.insert(0, str(ROOT))
+
+from tools.run_workspace import load_runner
+CHILD = """
 import json,sys,uuid
 from pathlib import Path
-from sanity_common import canonical_json,digest
-from sanity_codex_mock import CodexMockClusteringAdvisor,fixture_report,REPORT_IDS,MODEL
-from sanity_db import Database
-from sanity_workspace import seed_workspace
-from sanity_workspace_clustering import WorkspaceClusteringStore
+from common.sanity_common import canonical_json, digest
+from devtools.sanity_codex_mock import CodexMockClusteringAdvisor, fixture_report, REPORT_IDS, MODEL
+from common.sanity_db import Database
+from oa.sanity_workspace import seed_workspace
+from oa.sanity_workspace_clustering import WorkspaceClusteringStore
 
 out=Path(sys.argv[1]);base=json.loads(Path(sys.argv[2]).read_text())
 reports=[fixture_report(name) for name in REPORT_IDS]
@@ -49,7 +50,7 @@ def propose(name):
     return event
 original={name:inputs(name)[0]['source_sha256'] for name in REPORT_IDS}
 with Database('oa') as db,db.transaction(readonly=True):
-    from sanity_workspace import WorkspaceStore
+    from oa.sanity_workspace import WorkspaceStore
     por=WorkspaceStore(db).por('project-1-cpu')
 source=propose(REPORT_IDS[0])
 control=propose(REPORT_IDS[1])
@@ -90,7 +91,7 @@ summary={'status':'PASSED','model':MODEL,'real_model_called':True,'model_calls':
     'usage':[item['receipt']['metadata']['usage'] for item in trace],'export_sha256':digest(export)}
 (out/'result.json').write_bytes(canonical_json(summary))
 print(json.dumps(summary),flush=True)
-'''
+"""
 
 
 def main():
@@ -114,7 +115,7 @@ def main():
         runner.stage_source(ROOT, staged)
         database.start(); database.setup(staged)
         script = staged/'run_live_codex_mock.py'; script.write_text(CHILD)
-        source = ROOT/'oa-bridge/dashboard/public/sample-data/reports-library.json'
+        source = ROOT/'oa/dashboard/public/sample-data/reports-library.json'
         with (args.out/'live.log').open('wb') as log:
             result = subprocess.run([sys.executable, str(script), str(args.out), str(source)],
                 cwd=staged, env=database.test_environment(), stdout=log, stderr=subprocess.STDOUT, timeout=600)

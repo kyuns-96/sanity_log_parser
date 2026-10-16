@@ -2,8 +2,8 @@
 import hashlib
 import uuid
 
-from sanity_db import Database
-from tests_support import PgTestCase, ROOT, psycopg2
+from common.sanity_db import Database
+from tests.support import PgTestCase, ROOT, psycopg2
 
 
 class ClusteringMigrationTests(PgTestCase):

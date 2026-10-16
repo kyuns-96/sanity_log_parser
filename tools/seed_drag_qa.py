@@ -29,15 +29,15 @@ def main():
             or params.get('host') != config['root'] or params.get('port') != '55439'
             or params.get('dbname') != 'sanity_test_mock' or params.get('user') != 'sanity_mock_oa'):
         parser.error('Only a restricted local synthetic 8003 QA database is allowed')
-    from run_workspace import load_runner
+    from tools.run_workspace import load_runner
     safe = load_runner().isolated_environment(os.environ)
     safe.update({key: config['settings'][key] for key in ('SANITY_DB_ACCESS', 'SANITY_DB_SCHEMA', 'SANITY_OA_DSN')})
     safe['SANITY_AI_MODE'] = 'disabled'
     os.environ.clear()
     os.environ.update(safe)
-    from sanity_db import Database
-    from sanity_workspace import WorkspaceStore, record_id
-    from sanity_workspace_clustering import WorkspaceClusteringStore
+    from common.sanity_db import Database
+    from oa.sanity_workspace import WorkspaceStore, record_id
+    from oa.sanity_workspace_clustering import WorkspaceClusteringStore
     with Database('oa') as db, db.transaction():
         ws = WorkspaceStore(db)
         ws.check_workspace()

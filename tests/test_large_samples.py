@@ -1,6 +1,6 @@
 import unittest
 
-from sanity_large_samples import large_report
+from devtools.sanity_large_samples import large_report
 
 
 class LargePublicSampleTests(unittest.TestCase):

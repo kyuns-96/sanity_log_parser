@@ -1,7 +1,7 @@
 import unittest
 
-from sanity_common import ReviewError
-from sanity_workspace_clustering import ConfirmedPartitionAdvisor, validate_clustering_advice
+from common.sanity_common import ReviewError
+from oa.sanity_workspace_clustering import ConfirmedPartitionAdvisor, validate_clustering_advice
 
 
 class PartitionAdviceTests(unittest.TestCase):

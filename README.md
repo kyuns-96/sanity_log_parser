@@ -1,8 +1,18 @@
 # Sanity Reviewer — OA 대시보드 prototype
 
 VWP bridge와 OA bridge는 **같은 PostgreSQL DB의 4개 테이블로만 통신**합니다.
-검토 화면은 React·shadcn 기반 [OA 대시보드](oa-bridge/README.md)입니다.
+검토 화면은 React·shadcn 기반 [OA 대시보드](oa/README.md)입니다.
 Jira 조회·게시와 시뮬레이터는 폐지했습니다. VWP AI 어댑터는 구현했으며 기본 설정은 disabled입니다.
+
+서버별 코드는 아래 위치에 있습니다. 각 사내 AI는 자기 `integration/`의 허용 파일만 구현합니다. 실행·의존성·설정 위치는 [소스 구조와 실행 안내](DEPLOYMENT.md)를 따릅니다.
+
+| 담당 | 실제 코드 | 회사 연동 구현 |
+|---|---|---|
+| VWP | [vwp/](vwp/README.md) — 원천 수집 | `vwp/integration/` |
+| VWP-bridge | [vwp_bridge/](vwp_bridge/README.md) — parser·모델·worker | `vwp_bridge/integration/` |
+| OA | [oa/](oa/README.md) — API·검토·SSO·dashboard | `oa/integration/` |
+| 공통 | [common/](common/README.md) — 계약·DB·설정·검증 | 사내 AI 읽기 전용 |
+| 개발 시험 | [devtools/](devtools/README.md), `tools/`, `tests/` | 합성 자료·mock·회귀 |
 
 VWP AI와 사람이 함께 만드는 분류 루프, 대량 report 처리, 그룹별 evidence 추가의 **확장 설계**는
 [요구사항 14절](requirement.md#ai-clustering)에 정리했습니다. 알려진 두 report 형식에 대해 AI 규칙 제안·전체 시험·사람 확정 루프를 구현했습니다.
@@ -14,29 +24,23 @@ VWP AI와 사람이 함께 만드는 분류 루프, 대량 report 처리, 그룹
 10개 테스트 계정의 범위를 서버에서 검사하고 PoR·변경 이력을 PostgreSQL에 저장합니다. 새로고침/다른 계정 조회/서버 재시작에도 유지됩니다.
 검사별 사용자 판정·사유·재사용 조건과 제안을 따로 저장합니다. 원본 FAIL에 사용자 PASS를 기록할 수 있고,
 확정한 조건을 다음 보고서의 제안에 재사용합니다. 현재는 조건 적용 엔진이며 실제 사내 AI는 미연결입니다.
-별도 [Codex 합성 mock 시험](oa-bridge/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)은 `gpt-6-luna`를 실제 호출해 AI 초기 분류 → 사람 수정·DB 확정 → 다음 AI 입력의 사례 활용을 검증합니다. 명시적으로 활성화한 합성 workspace의 **AI로 그룹 만들기** 버튼에서도 호출할 수 있으며 일반 회귀 테스트는 외부 모델을 호출하지 않습니다.
+별도 [Codex 합성 mock 시험](oa/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)은 `gpt-6-luna`를 실제 호출해 AI 초기 분류 → 사람 수정·DB 확정 → 다음 AI 입력의 사례 활용을 검증합니다. 명시적으로 활성화한 합성 workspace의 **AI로 그룹 만들기** 버튼에서도 호출할 수 있으며 일반 회귀 테스트는 외부 모델을 호출하지 않습니다.
 sanity item의 **검토 시작**에서는 단일 report의 평균 10,000건·100,000건 이상 로그를 1단계 분류·확정 후 2단계 그룹별 판정으로 검토합니다.
 그룹/원문은 페이지로 조회하며 분류 작업은 저장한 위치에서 이어갈 수 있습니다. 분류 확정 전에 판정을 시작할 수 없습니다.
 확정 분류 사례와 그룹 판정 근거를 각각 재사용하고, 재분류된 그룹의 이전 판정은 재검토 대상으로 남깁니다.
-[워크스페이스 실행 안내](oa-bridge/WORKSPACE.md)를 따릅니다. 실제 회사 SSO·원천 버전 전송·운영 DB 연동은 후속 검증 대상입니다.
+[워크스페이스 실행 안내](oa/WORKSPACE.md)를 따릅니다. 실제 회사 SSO·원천 버전 전송·운영 DB 연동은 후속 검증 대상입니다.
 
 SSO의 인증 검증·내부 사용자 연결은 교체 가능한 추상 인터페이스로 분리했습니다.
 사내 AI는 먼저 [내부 AI 작업 범위](INTERNAL_AI_GUIDE.md)와 [AGENTS.md](AGENTS.md)를 읽습니다.
 [사내 AI 통합 인계 명세](INTERNAL_AI_HANDOFF.md)에 작업별 선행 정보·허용 파일/메서드·입출력·수용 기준·실행 명령·Codex 후속 연결과 복사 가능한 시작 지시문을 정리했습니다.
-예상 목록은 [PlanProvider 계약](vwp-bridge/PLAN_INTEGRATION.md), 모델 입력/출력 타입은 [공통 타입](sanity_integration_contracts.py), SDK 모의 테스트에 쓸 작은 합성 packet은 [합성 예제](sanity_integration_examples.py)를 사용합니다.
-회사 SDK 어댑터 작성만으로 `/workspace`의 SSO·VWP 운영 실행이 연결되지는 않습니다. 현재 2단계 SDK의 참조 없는 AI PASS/FAIL 제한도 인계 문서에 명시했습니다.
-[SSO 연동 인수인계](oa-bridge/SSO_INTEGRATION.md)의 회사 어댑터, 허용된 입력 매핑과
-[report parser 인수인계](vwp-bridge/PARSER_INTEGRATION.md)의 item별 추출/명시적 등록과
-[review 인수인계](vwp-bridge/REVIEW_INTEGRATION.md)의 회사 VWP AI SDK 어댑터만 구현하며,
-DB 계약·분류·권한 검사·핵심 UI는 수정하지 않습니다. 예상 밖 오류는 수정/재시도를 멈추고 비식별 진단 자료와 함께 Codex에게 문의합니다.
-실제 report는 사내 AI/담당자가 사내에서만 검증합니다. Codex에는 합성 재현 입력만 전달합니다.
-파서 추상 인터페이스·완료/원문/건수 검사를 제공했으며 회사 registry는 초기값이 비어 있습니다.
-사내 구현은 `site_integration/corporate_parsers.py`에서 등록하고 `vwp-bridge/corporate_analyze.py analyze`로 실행합니다.
+사내 개발 AI 세 명에게는 [VWP 원천 입력 지시문](vwp/INTERNAL_AI_TASK.md), [VWP-bridge parser·모델 SDK 지시문](vwp_bridge/INTERNAL_AI_TASK.md), [OA SSO·사용자 연결 지시문](oa/INTERNAL_AI_TASK.md)을 각각 전달합니다. 각 문서 마지막에 복사할 시작 명령이 있습니다.
+DB 설정 키·역할/컬럼 권한·서버별 확인 명령·비공개 접속 인계 양식은 [DB 연결 인계](db/CONNECTION_HANDOFF.md)에 있습니다. VWP 원천 수집에는 DB 계정이 없고, 두 bridge만 별도 제한 로그인을 사용합니다.
+코드는 서버별로 **`vwp/`·`vwp_bridge/`·`oa/`**, 공통 계약은 **`common/`**, 합성 시험은 **`devtools/`**에 분리했습니다. 각 서버는 Git 저장소 루트에서 자기 모듈만 실행합니다. [서버별 코드·실행 안내](DEPLOYMENT.md)에 디렉터리 책임·의존성·실행 명령·설정 위치를 정리했습니다.
 
 GCA·VC LP·SpyGlass의 공개 문서를 참고한 **초기 추출 파서와 1,000개 합성 데이터 대시보드**도 제공합니다.
 가상 이용자 10명·프로젝트 3개·블록 9개를 구성하고, 독립 mock PostgreSQL에서 실제 수집/파싱/수신/저장을 검증한
 읽기 전용 스냅샷을 `/?demo=1&dataset=reports`에서 확인합니다. 생성·실행 방법과 사내 AI의 후속 구현 범위는
-[공개 report 형식 인계](site_integration/PUBLIC_REPORT_FORMATS.md)에 정리했습니다. native 현행 버전의 완료/정확성 검증과 구분합니다.
+[공개 report 형식 인계](vwp_bridge/integration/PUBLIC_REPORT_FORMATS.md)에 정리했습니다. native 현행 버전의 완료/정확성 검증과 구분합니다.
 
 사용자가 **psycopg2로 PostgreSQL 직접 접속 가능**함을 확인했습니다. 기본 접근 모드는 postgresql입니다.
 실제 호스트·DB 이름·계정·비밀번호는 각 서버의 비공개 `.env`/환경변수에서 설정합니다.
@@ -47,7 +51,7 @@ SQLite, 브리지 간 직접 HTTP/RPC·파일 전달, 로컬 DB fallback은 없�
 ## 1. 설치와 DB 준비
 
 Python 3.10 이상, PostgreSQL 16 이상·UTF-8을 전제로 합니다. 프런트엔드 의존성은
-oa-bridge/dashboard/package-lock.json에 고정되어 있습니다. 현재 Vite의 Node.js 조건은
+oa/dashboard/package-lock.json에 고정되어 있습니다. 현재 Vite의 Node.js 조건은
 20.19 이상인 20.x 또는 22.12 이상입니다.
 
 ```bash
@@ -72,18 +76,11 @@ GUI에는 컬럼 정의 전체만 넣고 CREATE TABLE이나 바깥 괄호를 붙
 owner/DBA가 작업을 중지한 점검 시간에 파일 전체를 한 번 실행합니다.
 앱은 DDL이나 자동 테이블 생성을 하지 않습니다.
 
-각 환경에 해당 폴더와 루트 `sanity_*.py`, `requirements.txt`를 함께 배포합니다.
-AI 접속 설정은 VWP에만 두며 OA에서는 어댑터를 실행하지 않습니다.
-VWP/OA는 서로 다른 제한된 로그인과 각각 sanity_vwp_app/sanity_oa_app 역할을 사용합니다.
-owner·superuser·상대 역할 상속·과도한 유효 권한은 거부됩니다.
+각 서버는 [서버별 코드·실행 안내](DEPLOYMENT.md)에 따라 자기 역할의 `requirements.txt`를 설치하고 자기 진입점만 실행합니다. `common/`은 공유 계약이며 서버 앱을 import하지 않습니다. VWP-bridge/OA는 별도 제한 로그인과 각각 `sanity_vwp_app`/`sanity_oa_app` 역할을 사용합니다. 모델 자격증명은 VWP-bridge에만 두고, owner·superuser·상대 역할 상속·과도한 유효 권한은 거부합니다.
 
 ## 2. 비공개 PostgreSQL 접속 설정
 
-[.env.example](.env.example)의 변수 이름을 저장소 루트 private .env에 옮기고 실제 값은 현장에서 입력합니다.
-.env 및 변형 파일은 버전 관리에서 제외하며 해당 실행 계정만 읽도록 권한을 제한합니다.
-사내 접속 원문 `dbaccess.md`도 Git에서 제외합니다. 공개 저장소에는
-[접속 설정 예시](dbaccess.example.md)만 포함합니다.
-브라우저나 VITE_* 변수에 DB 접속값·토큰을 넣지 않습니다.
+VWP-bridge는 [자기 설정 예제](vwp_bridge/.env.example), OA는 [자기 설정 예제](oa/.env.example)의 키를 각 서버의 **저장소 루트 private `.env`**에 설정합니다. `vwp_bridge/.env`, `oa/.env`, `common/.env`는 자동으로 읽지 않습니다. `.env`·실제 접속 문서 `dbaccess.md`는 Git 제외 대상이며 실행 계정만 읽도록 관리합니다. 공개 저장소에는 [접속 인계 예시](dbaccess.example.md)만 남깁니다. 브라우저나 `VITE_*`에는 비밀값을 넣지 않습니다.
 
 - `SANITY_DB_ACCESS=postgresql`: 기본값. 드라이버는 `psycopg2`입니다.
 - `SANITY_DB_HOST`, `SANITY_DB_NAME`: 같은 DB 서버와 DB 이름. DB 이름과 스키마는 다릅니다.
@@ -103,16 +100,16 @@ owner·superuser·상대 역할 상속·과도한 유효 권한은 거부됩니�
 
 ```bash
 # VWP 서버
-.venv/bin/python sanity_db.py check --side vwp
+.venv/bin/python -m common.sanity_db check --side vwp
 # OA 서버
-.venv/bin/python sanity_db.py check --side oa
+.venv/bin/python -m common.sanity_db check --side oa
 ```
 
 이 명령은 데이터나 DDL을 쓰지 않습니다. 접속 가능해도 기존 권한/스키마 계약과 다르면 실패합니다.
 사내 DB의 실제 역할·잠금·트랜잭션·TLS·DDL 적용 경로는 현장에서 검증해야 합니다.
 방화벽은 VWP/OA 실행 서버 → DB 실제 호스트·포트 연결이 필요합니다. DB가 브리지로 새 연결을 열지는 않습니다.
 
-기존 `sanity_dbaas.py check --resources`는 임시 HTTP 읽기 확인용으로 남습니다.
+기존 `python -m common.sanity_dbaas check --resources`는 임시 HTTP 읽기 확인용으로 남습니다.
 별도 `DBAAS_BASE_URL`, `DBAAS_TOKEN`, `DBAAS_CA_PATH`를 사용하며 PostgreSQL 연결에는 필요하지 않습니다.
 `dbaas_http` 모드의 저장은 `DBAAS_SQL_CONTRACT_REQUIRED`로 중단하고 직접 접속으로 우회하지 않습니다.
 
@@ -123,11 +120,11 @@ SANITY_DASHBOARD_REVIEWER(서버가 고정할 검토자 이름)를 설정합니�
 로그인 토큰은 브라우저 메모리에만 유지하며 localStorage·URL·로그에 저장하지 않습니다.
 
 ```bash
-cd oa-bridge/dashboard
+cd oa/dashboard
 npm ci
 npm run build
 cd ../..
-.venv/bin/python oa-bridge/dashboard_api.py
+.venv/bin/python oa/dashboard_api.py
 ```
 
 브라우저에서 http://127.0.0.1:8000 에 접속합니다. 빌드된 dist와 API가 같은 origin으로 제공됩니다.
@@ -137,7 +134,7 @@ SSO/RBAC·TLS proxy·운영 인증은 구현되지 않았습니다. 서버 검�
 프런트엔드 개발 시 Python API를 실행한 상태에서 별도 터미널로 다음을 실행합니다.
 
 ```bash
-cd oa-bridge/dashboard
+cd oa/dashboard
 npm run dev
 ```
 
@@ -155,11 +152,11 @@ UI demo는 사용자가 명시적으로 선택하는 합성 메모리 상태이�
 SANITY_TEST_ADMIN_DSN은 테스트에만 사용하며 실제 앱 환경에 설정하지 않습니다.
 
 ```bash
-.venv/bin/python vwp-dev/main.py collect --plan plan.json --reports /path/to/reports --out /tmp/sanity-source
-.venv/bin/python vwp-bridge/main.py analyze --input /tmp/sanity-source/run.json --out /tmp/sanity-receipt
-.venv/bin/python oa-bridge/main.py receive --message-id BUNDLE_ID --brief
-.venv/bin/python oa-bridge/main.py status --bundle-id BUNDLE_ID --brief
-.venv/bin/python oa-bridge/main.py report --bundle-id BUNDLE_ID --out review.md
+.venv/bin/python vwp/main.py collect --plan plan.json --reports /path/to/reports --out /tmp/sanity-source
+.venv/bin/python vwp_bridge/main.py analyze --input /tmp/sanity-source/run.json --out /tmp/sanity-receipt
+.venv/bin/python oa/main.py receive --message-id BUNDLE_ID --brief
+.venv/bin/python oa/main.py status --bundle-id BUNDLE_ID --brief
+.venv/bin/python oa/main.py report --bundle-id BUNDLE_ID --out review.md
 ```
 
 BUNDLE_ID는 분석 결과의 실제 ID입니다. VWP의 --out은 로컬 접수증일 뿐 전송 경로가 아닙니다.
@@ -180,10 +177,10 @@ blocker 면제와 알려진 FAIL→PASS는 금지합니다. review=COMPLETE와 c
 같은 요청 재시도에는 같은 UUID, 새 판단에는 새 UUID를 사용합니다.
 
 ```bash
-.venv/bin/python oa-bridge/main.py review --bundle-id BUNDLE_ID --unit-id u-numeric --request-id REQUEST_UUID --reviewer NAME --conclusion FAIL --reason '전체 판정과 근거 확인' --brief
-.venv/bin/python oa-bridge/main.py request-evidence --bundle-id BUNDLE_ID --unit-id u-numeric --record-id RECORD_ID --request-id REQUEST_UUID --reason '원문 추가 확인'
-.venv/bin/python vwp-bridge/main.py respond --request-id REQUEST_UUID
-.venv/bin/python oa-bridge/main.py receive-evidence --request-id REQUEST_UUID --out evidence.json
+.venv/bin/python oa/main.py review --bundle-id BUNDLE_ID --unit-id u-numeric --request-id REQUEST_UUID --reviewer NAME --conclusion FAIL --reason '전체 판정과 근거 확인' --brief
+.venv/bin/python oa/main.py request-evidence --bundle-id BUNDLE_ID --unit-id u-numeric --record-id RECORD_ID --request-id REQUEST_UUID --reason '원문 추가 확인'
+.venv/bin/python vwp_bridge/main.py respond --request-id REQUEST_UUID
+.venv/bin/python oa/main.py receive-evidence --request-id REQUEST_UUID --out evidence.json
 ```
 
 근거 요청은 단위별 record ID 1~100개, TTL 기본 3,600초·최대 24시간입니다.
@@ -221,9 +218,9 @@ API 실패 시 CLI·다른 모델·합성 응답으로 우회하지 않습니다
 
 ```bash
 # VWP에서: 분류 요청 + 일반 원문 요청 처리
-.venv/bin/python vwp-bridge/main.py work --interval 2
+.venv/bin/python vwp_bridge/main.py work --interval 2
 # OA에서: 분류 결과 조각 수신 (화면의 수동 수신으로 대체 가능)
-.venv/bin/python oa-bridge/main.py work --interval 2
+.venv/bin/python oa/main.py work --interval 2
 ```
 
 `--once`는 한 번만 처리합니다. OA 작업자는 최초 분석 번들/원문 응답을 자동 수신하지 않으므로 기존 화면의 수신 버튼을 사용합니다.
@@ -262,8 +259,8 @@ VWP/OA 로그인은 서로 다르며 임시 비밀번호를 자동 생성합니�
 CLI demo는 준비된 별도 테스트 DB와 양쪽 제한된 앱 DSN이 필요하며 UI 메모리 demo와 다릅니다.
 
 ```bash
-.venv/bin/python demo.py --out demo-output-postgresql
-.venv/bin/python demo.py --scenario missing --out demo-output-postgresql-missing
+.venv/bin/python devtools/demo.py --out demo-output-postgresql
+.venv/bin/python devtools/demo.py --scenario missing --out demo-output-postgresql-missing
 .venv/bin/python run_tests.py
 # 별도 sanity_test_* DB의 admin/VWP/OA DSN과 postgresql 모드를 설정한 뒤
 .venv/bin/python run_tests.py --require-db
@@ -274,7 +271,7 @@ CLI demo는 complete/missing/malformed/unsupported를 지원합니다.
 동일 DB의 동일 번들은 기존 검토 이력을 유지합니다. AI는 NOT_CONFIGURED입니다.
 테스트는 자신이 만든 임시 스키마만 정리하며 운영 DB를 초기화하지 않습니다.
 DB 테스트 skip은 통합 검증 성공이 아니고 --require-db는 조건 누락 시 실패합니다.
-UI 검증 명령과 실제 실행 결과는 [OA 안내](oa-bridge/README.md)와 [REVIEW.md](REVIEW.md)를 확인합니다.
+UI 검증 명령과 실제 실행 결과는 [OA 안내](oa/README.md)와 [REVIEW.md](REVIEW.md)를 확인합니다.
 
 ## 복구와 제한
 

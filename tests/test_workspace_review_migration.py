@@ -1,4 +1,4 @@
-from tests_support import PgTestCase, ROOT, psycopg2
+from tests.support import PgTestCase, ROOT, psycopg2
 
 
 class WorkspaceReviewMigrationTests(PgTestCase):
@@ -13,8 +13,8 @@ class WorkspaceReviewMigrationTests(PgTestCase):
             raise
 
     def test_upgrade_preserves_tables_installed_rows_and_restricted_roles(self):
-        from sanity_db import Database
-        from sanity_workspace import WorkspaceStore
+        from common.sanity_db import Database
+        from oa.sanity_workspace import WorkspaceStore
         with Database("oa") as db, db.transaction():
             WorkspaceStore(db).put("WS_CONFIG", "preserved-config", {"migration_fixture": True})
         before = self.admin_query("SELECT record_id,payload,state,version FROM {oa} ORDER BY record_id").fetchall()

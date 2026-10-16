@@ -2,6 +2,8 @@
 
 기준: 2026-10-16. 현재 승인된 검토 UI와 두 단계 흐름을 유지한다. 이 문서는 사내 구현을 시작할 때 보는 작업 지도이며, 권한은 [INTERNAL_AI_GUIDE.md](INTERNAL_AI_GUIDE.md)의 허용 목록을 따른다. 내부 AI는 이 문서나 지침을 수정해 자신의 역할을 넓히지 않는다.
 
+소스와 사내 구현 위치는 [서버별 소스·실행 안내](DEPLOYMENT.md)에 따른다. 각 서버는 Git 저장소 루트에서 자기 모듈만 실행한다. VWP=`vwp/`, VWP-bridge=`vwp_bridge/`, OA=`oa/`, 공통=`common/`, 합성 시험=`devtools/`다. 회사 어댑터도 각 서버의 `integration/`에 분리되어 있다.
+
 ## 1. 목표와 현재 상태
 
 1. VWP에서 실제 report를 수집·파싱한다. 예상 sanity 목록에 있는 누락·실패 항목도 유지한다.
@@ -22,7 +24,7 @@
 | 실제 프로젝트·블록·버전/담당 | workspace 범위 검사·PoR·불변 판정 저장 | 실제 원천 필드/안정 ID/담당 범위의 대응 자료 | 원천 수신→workspace 운영 연결과 SSO 연결은 공통 후속 작업 |
 | DB·TLS·운영 실행 | 직접 PostgreSQL·네 테이블·기존 전송/작업자 | 회사 환경의 확인된 접속/SDK 제약 자료 | 실제 DB 확인·DDL/배포는 사용자/DBA 관리 |
 
-타입 선언은 [sanity_integration_contracts.py](sanity_integration_contracts.py)에 있다. 기존 dict/JSON 키, 메서드 인자 순서와 저장 계약은 유지했다. 타입 힌트는 런타임 검증·권한 검사·회사 연결을 대신하지 않는다. 작은 합성 입력/출력은 [sanity_integration_examples.py](sanity_integration_examples.py), 실행 가능한 계약 검증은 [test_integration_contracts.py](tests/test_integration_contracts.py)에 있다.
+타입 선언은 [sanity_integration_contracts.py](common/sanity_integration_contracts.py)에 있다. 기존 dict/JSON 키, 메서드 인자 순서와 저장 계약은 유지했다. 타입 힌트는 런타임 검증·권한 검사·회사 연결을 대신하지 않는다. 작은 합성 입력/출력은 [sanity_integration_examples.py](common/sanity_integration_examples.py), 실행 가능한 계약 검증은 [test_integration_contracts.py](tests/test_integration_contracts.py)에 있다.
 
 ## 2. 책임과 시스템 경계
 
@@ -44,20 +46,34 @@ flowchart LR
 
 OA에서 사내 AI SDK를 실행하지 않는다. VWP와 OA는 기존 DB 경계로만 전달하며 HTTP/RPC·공유 파일 전송을 추가하지 않는다. **기존 VWP legacy worker의 AI 접속 설정 완료는 새 workspace 분류/판정의 운영 연결 완료가 아니다.**
 
+### 2.1. 세 개발 AI의 작업 소유권
+
+사용자는 사내 개발 AI를 VWP·VWP-bridge·OA 세 담당으로 구분했다. 아래의 개별 지시문을 각각 전달하며, 운영 추론 모델인 VWP AI와 개발 담당 이름을 혼동하지 않는다. 원천 수집은 `vwp/`, bridge는 `vwp_bridge/`, OA는 `oa/`에 대응한다.
+
+| 개발 담당 | 맡는 작업 | 소유하는 회사 코드 | 직접 전달할 문서 |
+|---|---|---|---|
+| VWP | INT-02, INT-06 실행·예상 목록·버전/report 원천; item 형식/정답 자료 준비 | `vwp/integration/corporate_plan.py`, `company_plan/` | [VWP 지시문](vwp/INTERNAL_AI_TASK.md) |
+| VWP-bridge | INT-03 parser, INT-04·05 VWP 모델 SDK, INT-06 VWP 접속/한도 | `vwp_bridge/integration/`의 회사 parser·clustering·review와 각 전용 `company_*/` | [VWP-bridge 지시문](vwp_bridge/INTERNAL_AI_TASK.md) |
+| OA | INT-01 SSO·계정 조회, INT-06 사용자·담당 원천/OA 접속 | `oa/integration/corporate_sso.py`, `sso_app.py`의 주입, `company_sso/` | [OA 지시문](oa/INTERNAL_AI_TASK.md) |
+
+VWP가 형식/판정 의미·정답을 준비하고 VWP-bridge가 parser를 구현한다. VWP-bridge는 고정 SDK 계약을 확인하며 VWP 자료 준비와 독립적으로 모의 wrapper를 검증할 수 있다. OA는 SSO/사용자 연결을 독립적으로 준비한다. 결과는 각 지시문의 인계 형식으로 사용자/Codex 검토에 제출하며, 서로의 파일을 대신 고치거나 자동 연락 채널을 만들지 않는다.
+
+**DB 연결은 두 bridge만 담당한다.** 원천 VWP는 DB 계정이 없고, VWP-bridge는 VWP 로그인/`sanity_vwp_app`, OA는 별도 OA 로그인/`sanity_oa_app`을 사용한다. 실제 접속값은 비공개 `.env`에 현장 입력한다. 지원 키·우선순위·역할별 권한·읽기 전용 확인 명령·비공개 인계 양식은 [DB 연결 인계](db/CONNECTION_HANDOFF.md)에 있다. 실제 DB 확인·설치·배포는 사용자/DBA 관리 범위를 유지한다.
+
 ## 3. 읽는 순서와 수정 위치
 
-먼저 [AGENTS.md](AGENTS.md) → [INTERNAL_AI_GUIDE.md](INTERNAL_AI_GUIDE.md) → 이 문서 → 해당 세부 계약을 읽는다. 필요한 `requirement.md` 절과 `PROTOCOL.md`는 각 계약에서 연결한다.
+먼저 [AGENTS.md](AGENTS.md) → [INTERNAL_AI_GUIDE.md](INTERNAL_AI_GUIDE.md) → 이 문서 → 자기 역할의 지시문 → 해당 세부 계약을 읽는다. 필요한 `requirement.md` 절과 `PROTOCOL.md`는 각 계약에서 연결한다. 아래 INT별 허용 위치 중 **자기 역할이 소유하는 파일만** 수정한다.
 
 | 작업 ID | 수정 가능한 회사 지점 | 필수 세부 계약 |
 |---|---|---|
-| INT-01 | `oa-bridge/corporate_sso.py`: `authenticate`, `resolve`; 허용된 생성자/import, `company_sso/`, `sso_app.py`의 주입 | [SSO_INTEGRATION](oa-bridge/SSO_INTEGRATION.md) |
-| INT-02 | `site_integration/corporate_plan.py`: `get_plan`; 허용된 생성자/import, `company_plan/`의 입력 wrapper/테스트 | [PLAN_INTEGRATION](vwp-bridge/PLAN_INTEGRATION.md) |
-| INT-03 | `site_integration/corporate_parsers.py`: `parse`, 명시적 registry 등록; `company_parsers/` | [PARSER_INTEGRATION](vwp-bridge/PARSER_INTEGRATION.md) |
-| INT-04 | `site_integration/corporate_clustering.py`: `propose`; 허용된 생성자/import, `company_clustering/` | [CLUSTERING_INTEGRATION](vwp-bridge/CLUSTERING_INTEGRATION.md) |
-| INT-05 | `site_integration/corporate_review.py`: `propose`; 허용된 생성자/import, `company_review/` | [REVIEW_INTEGRATION](vwp-bridge/REVIEW_INTEGRATION.md) |
-| INT-06 | 허용된 `site_integration/`의 별도 비식별 대응표·진단 자료 | 아래 5절과 PLAN_INTEGRATION의 원천 대응표 |
+| INT-01 | `oa/integration/corporate_sso.py`: `authenticate`, `resolve`; 허용된 생성자/import, `company_sso/`, `sso_app.py`의 주입 | [SSO_INTEGRATION](oa/SSO_INTEGRATION.md) |
+| INT-02 | `vwp/integration/corporate_plan.py`: `get_plan`; 허용된 생성자/import, `company_plan/`의 입력 wrapper/테스트 | [PLAN_INTEGRATION](vwp/PLAN_INTEGRATION.md) |
+| INT-03 | `vwp_bridge/integration/corporate_parsers.py`: `parse`, 명시적 registry 등록; `company_parsers/` | [PARSER_INTEGRATION](vwp_bridge/PARSER_INTEGRATION.md) |
+| INT-04 | `vwp_bridge/integration/corporate_clustering.py`: `propose`; 허용된 생성자/import, `company_clustering/` | [CLUSTERING_INTEGRATION](vwp_bridge/CLUSTERING_INTEGRATION.md) |
+| INT-05 | `vwp_bridge/integration/corporate_review.py`: `propose`; 허용된 생성자/import, `company_review/` | [REVIEW_INTEGRATION](vwp_bridge/REVIEW_INTEGRATION.md) |
+| INT-06 | 자기 `company_*/`의 비식별 원천 대응표·역할별 비공개 진단 기록 | 위 역할별 지시문, 4절의 INT-06, [DB 연결 인계](db/CONNECTION_HANDOFF.md) |
 
-표의 `company_*/`는 사내 AI가 추가할 수 있는 위치다. 자동 plugin 탐색·운영 등록 경로가 아니다. `sanity_integration_contracts.py`, `sanity_integration_examples.py`와 기존 공통 코드/SQL/UI/테스트는 사내 AI에게 읽기 전용이다. 새 의존성·env 키·서명/반환 변경이 필요하면 먼저 Codex에게 문의한다.
+표의 `company_*/`는 사내 AI가 추가할 수 있는 위치다. 자동 plugin 탐색·운영 등록 경로가 아니다. `common/sanity_integration_contracts.py`, `common/sanity_integration_examples.py`와 기존 공통 코드/SQL/UI/테스트는 사내 AI에게 읽기 전용이다. 새 의존성·env 키·서명/반환 변경이 필요하면 먼저 Codex에게 문의한다.
 
 ## 4. 사내 AI 작업 명세
 
@@ -145,7 +161,7 @@ COMMON-03의 요청/결과 envelope에는 원본 snapshot·project/block/item/�
 
 위 상태는 인계 문서의 작업 보고용이며 DB/AI job의 상태 코드를 추가하는 것이 아니다. `READY_FOR_REVIEW`는 변경·검증·남은 의존성을 정리해 Codex 검토에 제출할 준비가 되었다는 뜻이며 운영 사용 가능을 의미하지 않는다.
 
-사내망·DB·모델 호출 없이 실행할 수 있는 공통 시험:
+전체 개발 의존성을 설치한 Git checkout의 저장소 루트에서 사내망·DB·모델 호출 없이 실행하는 공통 시험:
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -p test_integration_contracts.py -v
@@ -154,24 +170,25 @@ COMMON-03의 요청/결과 envelope에는 원본 snapshot·project/block/item/�
 .venv/bin/python -m unittest discover -s tests -p test_review_advice.py -v
 .venv/bin/python -m unittest discover -s tests -p test_workspace_pipeline_advice.py -v
 .venv/bin/python -m unittest discover -s tests -p test_workspace_rationale.py -v
-.venv/bin/python -m unittest discover -s oa-bridge -p test_sso.py -v
+.venv/bin/python -m unittest discover -s oa -p test_sso.py -v
 ```
 
 회사 어댑터 테스트를 해당 디렉터리에 **작성한 후**, 맡은 작업의 명령만 실행한다:
 
 | 작업 | 전용 테스트 명령 |
 |---|---|
-| SSO | `.venv/bin/python -m unittest discover -s oa-bridge/company_sso -p 'test_*.py' -v` |
-| plan | `.venv/bin/python -m unittest discover -s site_integration/company_plan -p 'test_*.py' -v` |
-| parser | `.venv/bin/python -m unittest discover -s site_integration/company_parsers -p 'test_*.py' -v` |
-| clustering | `.venv/bin/python -m unittest discover -s site_integration/company_clustering -p 'test_*.py' -v` |
-| review | `.venv/bin/python -m unittest discover -s site_integration/company_review -p 'test_*.py' -v` |
+| SSO | `.venv/bin/python -m unittest discover -s oa/integration/company_sso -p 'test_*.py' -v` |
+| plan | `.venv/bin/python -m unittest discover -s vwp/integration/company_plan -p 'test_*.py' -v` |
+| parser | `.venv/bin/python -m unittest discover -s vwp_bridge/integration/company_parsers -p 'test_*.py' -v` |
+| clustering | `.venv/bin/python -m unittest discover -s vwp_bridge/integration/company_clustering -p 'test_*.py' -v` |
+| review | `.venv/bin/python -m unittest discover -s vwp_bridge/integration/company_review -p 'test_*.py' -v` |
 
 합성 예제의 `clustering_example(with_history=False/True)`와 `group_review_example(with_history=False/True)`는 SDK wrapper 모의 테스트의 입력/기대 응답으로 사용할 수 있다. 실제 SDK 대신 명시적인 테스트 더블을 주입하고, 입력 불변·예외/timeout·JSON 오류·미지 참조·원본 ID coverage를 검증한다. 예제의 가상 확정 기록을 운영 DB에 seed하거나 회사 정답으로 취급하지 않는다. `codex-button-live`나 `run_codex_mock`은 이 검증 절차에 포함되지 않는다.
 
 ## 7. 인계 완료 보고 형식
 
 ```text
+담당 개발 AI: VWP / VWP-bridge / OA 중 하나
 작업 ID / 기준 commit / 작업 전부터 있던 변경:
 현재 상태: FACTS_REQUIRED / ADAPTER_VERIFIED / WAITING_FOR_CODEX / READY_FOR_REVIEW
 수정한 허용 파일·메서드:
@@ -190,4 +207,12 @@ COMMON-03의 요청/결과 envelope에는 원본 snapshot·project/block/item/�
 
 ## 8. 그대로 전달할 시작 지시문
 
-> AGENTS.md, INTERNAL_AI_GUIDE.md, INTERNAL_AI_HANDOFF.md와 맡은 INT 작업의 연동 문서를 읽어라. 너는 사내 연동 구현자이며 허용된 회사 어댑터·전용 wrapper/테스트·비식별 대응표만 작성한다. 기존 검토 UI와 공통 저장/판정/권한/DB 전송/worker를 수정하지 않는다. 회사 문서와 실제 자료로 확인한 사실만 사용하고 실제 report는 사내에서만 검증한다. 한 작업씩 구현·검증하며 신규 SDK 의존성·env 키·출력 변경은 먼저 Codex에게 문의한다. 예상 밖 오류나 보호 파일 변경이 필요하면 수정/재시도를 멈추고 비식별 문의와 WAITING_FOR_CODEX 상태를 남긴다. 어댑터 검증 완료와 COMMON 운영 연결·실제 배포 완료를 구분하고, 보호 장치나 합성 환경 조건을 해제하지 않는다.
+각 담당자에게 아래 문서의 **7절 시작 명령**을 따로 전달한다. 역할별 구현 순서·소유 파일·검증·다음 담당자 인계까지 같은 문서에 있다.
+
+| 전달 대상 | 작업 지시문 | DB side |
+|---|---|---|
+| VWP 개발 AI | [VWP 전용 지시문](vwp/INTERNAL_AI_TASK.md) | 없음 |
+| VWP-bridge 개발 AI | [VWP-bridge 전용 지시문](vwp_bridge/INTERNAL_AI_TASK.md) | `vwp` |
+| OA 개발 AI | [OA 전용 지시문](oa/INTERNAL_AI_TASK.md) | `oa` |
+
+공통으로 AGENTS/가이드의 보호 범위와 `WAITING_FOR_CODEX` 중단 규칙을 따른다. 실제 회사 사실은 사내에서 검증하고 Codex에는 합성 입력만 전달한다. SDK 어댑터 검증·공통 운영 연결·실제 적용 승인은 별도다.

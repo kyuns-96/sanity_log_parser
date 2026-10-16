@@ -1,7 +1,7 @@
 import unittest
 
-from sanity_common import ReviewError
-from sanity_review_advice import ApprovedCriteriaAdvisor, report_facts, validate_advice
+from common.sanity_common import ReviewError
+from common.sanity_review_advice import ApprovedCriteriaAdvisor, report_facts, validate_advice
 
 
 class ReviewAdviceTests(unittest.TestCase):

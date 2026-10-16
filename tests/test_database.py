@@ -10,13 +10,14 @@ import unittest
 from unittest.mock import patch
 import uuid
 
-from demo import demo
-from sanity_common import ReviewError, pack_json, unpack_bundle, unpack_json
-from sanity_db import Database, Queue, json_value
-from sanity_exchange import request_evidence, respond_evidence, receive_evidence
-from sanity_oa_store import OAStore
-from sanity_workers import work
-from tests_support import PgTestCase, ROOT
+from devtools.demo import demo
+from common.sanity_common import ReviewError, pack_json, unpack_bundle, unpack_json
+from common.sanity_db import Database, Queue, json_value
+from oa.sanity_exchange import request_evidence, receive_evidence
+from vwp_bridge.sanity_exchange import respond_evidence
+from oa.sanity_oa_store import OAStore
+from devtools.worker_dispatch import work
+from tests.support import PgTestCase, ROOT
 
 
 def module(name, path):
@@ -26,7 +27,7 @@ def module(name, path):
     return value
 
 
-oa = module("oa_database_test", "oa-bridge/main.py")
+oa = module("oa_database_test", "oa/main.py")
 
 
 class DatabaseTests(PgTestCase):
@@ -80,7 +81,7 @@ class DatabaseTests(PgTestCase):
                         "SANITY_DB_NAME": params["dbname"], "SANITY_DB_USER_NAME": params["user"],
                         "SANITY_DB_PASSWORD": params.get("password", "synthetic-fixture-password"),
                         "SANITY_DB_SSLMODE": params.get("sslmode", "disable"), "SANITY_DB_SCHEMA": self.schema}
-            import sanity_db
+            import common.sanity_db as sanity_db
             with self.subTest(side=side), patch.object(sanity_db, "load_environment", return_value=settings):
                 with Database(side) as db:
                     self.assertEqual(params["user"], db.conn.execute("SELECT current_user AS name").fetchone()["name"])
@@ -224,8 +225,8 @@ class DatabaseTests(PgTestCase):
 
     def test_receive_ack_failure_rolls_back_oa_records_then_recovers(self):
         # Generate a valid message without receiving it first.
-        collector = module("collector_database_test", "vwp-dev/main.py")
-        bridge = module("vwp_database_test", "vwp-bridge/main.py")
+        collector = module("collector_database_test", "vwp/main.py")
+        bridge = module("vwp_database_test", "vwp_bridge/main.py")
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         source = Path(temp.name) / "source"

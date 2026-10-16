@@ -6,9 +6,11 @@ from pathlib import Path
 import subprocess
 import sys
 
-from run_workspace import database_from_config
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-SEED = r'''
+from tools.run_workspace import database_from_config
+
+SEED = """
 import json,os,sys
 from pathlib import Path
 from psycopg2.extensions import parse_dsn
@@ -19,9 +21,9 @@ if (not set(params)<={'host','port','dbname','user','password','sslmode','connec
     or params.get('dbname')!='sanity_test_mock' or params.get('user')!='sanity_mock_oa'):
     raise RuntimeError('Expected the restricted local synthetic fixture login')
 os.environ.update(config['settings'])
-from sanity_db import Database
-from sanity_workspace import WorkspaceStore,record_id
-from sanity_large_samples import large_report
+from common.sanity_db import Database
+from oa.sanity_workspace import WorkspaceStore, record_id
+from devtools.sanity_large_samples import large_report
 block_id=sys.argv[2]
 count=int(sys.argv[3])
 families=sys.argv[4].split(',')
@@ -39,7 +41,7 @@ with Database('oa') as db,db.transaction():
             if existing['payload']!=payload:raise RuntimeError('Existing source differs; never overwrite reports')
         else:ws.put('WS_REPORT',report['id'],payload,project=block['project_id'],block=block_id)
 print(json.dumps({'status':'LARGE_REPORTS_READY','reports':len(families),'records_per_report':count,'block_id':block_id,'existing_data_retained':True}))
-'''
+"""
 
 
 def main():

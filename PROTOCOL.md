@@ -26,11 +26,11 @@ PoR은 블록의 버전 참조이고 ECO/특정 검사 실행을 포함하지 �
 같은 요청은 같은 결과, 다른 내용의 UUID 재사용/오래된 개정은 409다. 검사 판정·원문·다른 블록은 변경하지 않는다.
 세션/Origin/CSRF와 서버의 프로젝트·블록 범위를 검사하고 조회 응답에도 같은 범위를 적용한다.
 
-현재 실행 진입점은 **독립 합성 workspace**를 명시적으로 초기화한 `oa-bridge/workspace_app.py`다.
+현재 실행 진입점은 **독립 합성 workspace**를 명시적으로 초기화한 `devtools/workspace_app.py`다.
 검증된 공개 parser 스냅샷을 해당 테스트 버전에 연결하며 실제 회사 SSO/자료/운영 DB를 쓰지 않는다.
 회사 인증 실패 시 이 계정을 선택하거나 기존 `AUTHORIZATION_NOT_IMPLEMENTED`를 해제하지 않는다.
 이 계약은 실제 VWP 버전 메타데이터 수신 구현이나 회사 SSO 완성을 뜻하지 않는다.
-필드·실행·인계는 [WORKSPACE.md](oa-bridge/WORKSPACE.md)를 따른다.
+필드·실행·인계는 [WORKSPACE.md](oa/WORKSPACE.md)를 따른다.
 
 검사 조회는 같은 버전·ECO 안에서 `item_id`로 구분한다. reports API의 `groups`는 필터·페이지 적용 전의 항목별 집계이며,
 선택적 `item_id`는 해당 항목의 상세 목록에 정확히 적용한다. 도구가 같아도 다른 item을 합치지 않는다.
@@ -41,12 +41,12 @@ PoR은 블록의 버전 참조이고 ECO/특정 검사 실행을 포함하지 �
 기본 `SANITY_DB_ACCESS=postgresql`이며 `SANITY_DB_HOST/PORT/NAME/USER_NAME/PASSWORD`,
 `SANITY_DB_SCHEMA`, `SANITY_DB_SSLMODE/SSLROOTCERT`를 각 서버의 비공개 설정에서 읽는다.
 비어 있지 않은 해당 side DSN은 호환성을 위해 연결 필드보다 우선한다. 비밀번호는 문자열 조립 없이 드라이버 인자로 전달한다.
-`sanity_postgres.py`는 psycopg2 커서·트랜잭션/savepoint와 UUID·JSONB·BYTEA 변환을 기존 저장 계약에 연결한다.
+`common/sanity_postgres.py`는 psycopg2 커서·트랜잭션/savepoint와 UUID·JSONB·BYTEA 변환을 기존 저장 계약에 연결한다.
 트랜잭션 밖 autocommit, 내부 commit/rollback, 서버 측 커서와 세션 advisory lock을 유지한다.
 직접 접속 성공과 실제 배포 DB의 역할/DDL/트랜잭션 검증 완료는 구분한다.
 [공개용 접속 안내](dbaccess.example.md)의 이전 DBaaS HTTPS API는 **임시 읽기 전용**으로 남는다.
 실제 사내 접속 안내 `dbaccess.md`는 Git 업로드에서 제외한다.
-`sanity_config.py`는 저장소 루트 `.env`/환경변수에서 설정을 읽고 `sanity_dbaas.py`는
+`common/sanity_config.py`는 저장소 루트 `.env`/환경변수에서 설정을 읽고 `common/sanity_dbaas.py`는
 Bearer·사내 CA 검증·trust_env=False·30초 timeout·redirect 금지·응답 크기 제한을 적용한다.
 URL/토큰/CA 경로/서버 오류 본문은 출력하지 않는다. `/api/vi/me`는 `/api/v1/me`의 오타로 해석했다.
 현재 HTTP API는 운영 저장·메시지 등록·DDL 경로가 아니며, 이 API의 쓰기 지원을 전제로 확장하지 않는다.
@@ -57,17 +57,17 @@ URL/토큰/CA 경로/서버 오류 본문은 출력하지 않는다. `/api/vi/me
 
 ## 모듈과 데이터 소유권
 
-- `vwp-dev/`: VWP 내부 입력 snapshot 생성. DB 계정 불필요.
-- `vwp-bridge/`, `sanity_evidence.py`: 전체 판정, VWP private 근거, 봉인·번들 등록.
-- `sanity_parsers.py`, `site_integration/corporate_parsers.py`: 회사 report 추출 추상 계약·결과 검사와 명시적 registry. 회사 진입점은 `vwp-bridge/corporate_analyze.py`.
-- `oa-bridge/`, `sanity_oa_store.py`: 수신본, 검토 개정, 불변 보고서, 대시보드/API.
-- `oa-bridge/dashboard_api.py`, `oa-bridge/dashboard/`: OA 로컬 인증·조회·수동 수신·검토·근거 요청 UI.
-- `sanity_db.py`: 제한된 계정·유효 권한 검사, 짧은 트랜잭션, 방향별 큐.
-- `sanity_exchange.py`, `sanity_privacy.py`: OA 원문 요청 → VWP 범위/무결성 확인·자격증명 마스킹 → OA 수신.
-- `sanity_ai.py`, `sanity_cluster_worker.py`: VWP AI 호출·규칙 제안·전체 적용·체크포인트/분할 전송.
-- `sanity_clustering.py`, `sanity_cluster_store.py`: 선언형 규칙·지속 ID·OA 분류 개정·후보 판단·규칙 저장.
-- `sanity_workers.py`: 명시적으로 실행하는 VWP/OA DB polling 프로세스.
-- `sanity_common.py`: 입력/번들/근거 동일성·coverage 검증, 제한된 gzip·JSON, 결정적 보고서 렌더링.
+- `vwp/`: VWP 내부 입력 snapshot 생성. DB 계정 불필요.
+- `vwp_bridge/`, `vwp_bridge/sanity_evidence.py`: 전체 판정, VWP private 근거, 봉인·번들 등록.
+- `common/sanity_parsers.py`, `vwp_bridge/integration/corporate_parsers.py`: 회사 report 추출 추상 계약·결과 검사와 명시적 registry. 회사 진입점은 `vwp_bridge/corporate_analyze.py`.
+- `oa/`, `oa/sanity_oa_store.py`: 수신본, 검토 개정, 불변 보고서, 대시보드/API.
+- `oa/dashboard_api.py`, `oa/dashboard/`: OA 로컬 인증·조회·수동 수신·검토·근거 요청 UI.
+- `common/sanity_db.py`: 제한된 계정·유효 권한 검사, 짧은 트랜잭션, 방향별 큐.
+- `common/sanity_exchange.py`, `common/sanity_privacy.py`: OA 원문 요청 → VWP 범위/무결성 확인·자격증명 마스킹 → OA 수신.
+- `vwp_bridge/sanity_ai.py`, `vwp_bridge/sanity_cluster_worker.py`: VWP AI 호출·규칙 제안·전체 적용·체크포인트/분할 전송.
+- `common/sanity_clustering.py`, `oa/sanity_cluster_store.py`: 선언형 규칙·지속 ID·OA 분류 개정·후보 판단·규칙 저장.
+- `common/sanity_workers.py`: 명시적으로 실행하는 VWP/OA DB polling 프로세스.
+- `common/sanity_common.py`: 입력/번들/근거 동일성·coverage 검증, 제한된 gzip·JSON, 결정적 보고서 렌더링.
 
 원본 bytes와 JSONB를 혼동하지 않는다. 전송 해시는 `payload_gzip`, 보고서 해시는 `payload_bytes`,
 개별 근거 해시는 `raw_bytes`에 대해 계산한다. JSONB 키 순서는 보존되지 않으므로 렌더링 시 정렬한다.
@@ -78,14 +78,14 @@ DB에서 표현할 수 없는 NUL 등 정규화 필드는 조용히 삭제하지
 앱 실행 경로는 `pack_json/unpack_json/unpack_bundle`과 DB 큐만 사용한다.
 명령 오류는 `code=...`와 종료 코드 2다. 불완전 분석/FAIL 결과도 유효 산출물이므로 종료 코드 0일 수 있다.
 
-## vwp-dev 입력과 출력
+## VWP 수집 입력과 출력
 
-회사 구현 작업의 통합 진입 문서는 [INTERNAL_AI_HANDOFF.md](INTERNAL_AI_HANDOFF.md), plan 원천 어댑터 계약은 [PLAN_INTEGRATION.md](vwp-bridge/PLAN_INTEGRATION.md)다.
+회사 구현 작업의 통합 진입 문서는 [INTERNAL_AI_HANDOFF.md](INTERNAL_AI_HANDOFF.md), plan 원천 어댑터 계약은 [PLAN_INTEGRATION.md](vwp/PLAN_INTEGRATION.md)다.
 `SanityPlanProvider.get_plan(run_reference) → CollectionPlan`은 기존 아래 plan dict를 반환하는 동기 hook이며 자동 수집/실행/DB 주입이 아니다.
-`sanity_integration_contracts.py`의 `CollectionPlan`, `AdvisorContext`, `ClusteringProposalV2`, `ReviewProposal`은 기존 Python dict 계약의 타입 표기다. wire/storage 필드·schema·오류 판정·legacy V1 호환 처리는 바꾸지 않는다.
+`common/sanity_integration_contracts.py`의 `CollectionPlan`, `AdvisorContext`, `ClusteringProposalV2`, `ReviewProposal`은 기존 Python dict 계약의 타입 표기다. wire/storage 필드·schema·오류 판정·legacy V1 호환 처리는 바꾸지 않는다.
 새 회사 분류 출력은 `validate_clustering_advice(..., require_rationales=True)`로 검사하고, review의 참조 없는 PASS/FAIL 제한을 유지한다. SDK 출력에서 사용자 확정이나 운영 연결 완료를 기록하지 않는다.
 
-CLI: `python3 vwp-dev/main.py demo --out DIR [--scenario complete|missing|malformed|unsupported]`
+CLI: `python3 vwp/main.py demo --out DIR [--scenario complete|missing|malformed|unsupported]`
 creates `DIR/run.json` and report files. CLI also supports
 `collect --plan PLAN --reports REPORT_DIR --out DIR` to snapshot existing reports.
 The collector does not run arbitrary shell commands. The plan describes already-finished
@@ -139,8 +139,8 @@ Never turn failed/missing execution into non-applicable based on observed report
 ### Company report adapters
 
 The two built-ins retain their contracts. Company formats implement
-`ReportParser.parse(ReportSource, ParseContext)` from `sanity_parsers.py` and are
-explicitly registered in `site_integration/corporate_parsers.py`. The default
+`ReportParser.parse(ReportSource, ParseContext)` from `common/sanity_parsers.py` and are
+explicitly registered in `vwp_bridge/integration/corporate_parsers.py`. The default
 registry is empty; the company stub raises `PARSER_NOT_CONFIGURED`.
 `corporate_analyze.py analyze` injects that registry into the existing analyzer;
 normal `main.py` does not load company code. A plan cannot select Python modules.
@@ -171,13 +171,13 @@ Expected malformed input yields PARTIAL/UNKNOWN evidence. Unexpected adapter
 exceptions/invalid return contracts stop without sealing/enqueueing a success,
 using fixed `PARSER_*` codes without exception text or automatic retries.
 The common UTF-8 reader limits physical lines to 1MiB, raw spans to 64MiB and JSON
-Pointer documents to 16MiB. See [parser handoff](vwp-bridge/PARSER_INTEGRATION.md)
+Pointer documents to 16MiB. See [parser handoff](vwp_bridge/PARSER_INTEGRATION.md)
 for field requirements, source coverage and company-only validation. Real reports
 stay inside the company; external Codex debugging uses synthetic inputs only.
 
 ## vwp-bridge payload
 
-CLI: `python3 vwp-bridge/main.py analyze --input DIR/run.json [--out RECEIPT_DIR]`
+CLI: `python3 vwp_bridge/main.py analyze --input DIR/run.json [--out RECEIPT_DIR]`
 Must validate readiness, inventory hash, safe paths and actual file hashes/sizes before
 parsing. Produce valid incomplete payload for missing/unsupported/malformed units.
 Integrity mismatch is an operational error. Preserve all occurrence/evidence records in the VWP private PostgreSQL table.
@@ -273,7 +273,7 @@ OA private `sanity_oa_data`의 record_type은 RECEIVED_BUNDLE, REVIEW_UNIT, REVI
 
 ## 사람 검토·불변 보고서
 
-실제 CLI 목록은 [OA 안내](oa-bridge/README.md)를 따른다. `--state`, `--manifest`는 없다.
+실제 CLI 목록은 [OA 안내](oa/README.md)를 따른다. `--state`, `--manifest`는 없다.
 검토할 번들 ID는 명시적으로 선택하며 최신 번들 자동 선택/번들 순서 관리는 미구현이다.
 
 검토마다 UUID request_id를 받는다. 동일 명령 재시도는 동일 UUID를 쓰고,
@@ -326,7 +326,7 @@ OA 수신은 요청한 ID 집합과 정확히 일치하는지, source/unit 연�
 
 ## 대시보드 API와 인증
 
-SSO 확장 계약과 사내 구현 방법은 [SSO_INTEGRATION.md](oa-bridge/SSO_INTEGRATION.md)를 따른다.
+SSO 확장 계약과 사내 구현 방법은 [SSO_INTEGRATION.md](oa/SSO_INTEGRATION.md)를 따른다.
 기본 `SANITY_AUTH_MODE=local_token`은 아래의 기존 Bearer 방식이다. `sso` 모드에서는 검증된
 `VerifiedIdentity(issuer, subject)`를 `UserDirectory`로 내부 `user_id`에 연결한다.
 `create_app(auth_mode="sso", identity_provider=..., user_directory=..., auth_router=...)`로 주입하며,
@@ -339,7 +339,7 @@ SSO 세션은 신원 확인만 지원하며 `writable=false`, `authorization_rea
 회사 로그인 redirect·callback·세션 생성/폐기와 브라우저 SSO 흐름은 사내 구현 범위다.
 
 
-서버는 python oa-bridge/dashboard_api.py로 실행하며 127.0.0.1:8000에만 bind한다.
+서버는 python oa/dashboard_api.py로 실행하며 127.0.0.1:8000에만 bind한다.
 npm ci / npm run build 결과 dist를 같은 origin으로 제공한다. 개발 서버는
 127.0.0.1:5173에서 /api를 8000으로 proxy한다. 외부 bind는 금지한다.
 이 HTTP는 OA 브라우저→OA API이며 bridge 간 통신은 여전히 공유 DB만 사용한다.
@@ -474,7 +474,7 @@ PASS 기록에도 후보를 표시하지만 소속은 NOT_TARGET로 남는다. C
 AI는 각 report의 그룹 구성·이름·근거를 새로 제안한다. 과거 그룹과의 필수 일대일 매칭이나 고정 분류 유형 사전의 선택으로 대체하지 않는다.
 확정 사례를 다음 AI 입력 후보로 축적하는 것이 기본 동작이며 별도 재사용 체크/필수 기준 작성이 선행 조건은 아니다.
 일반 화면은 정확한 필드 비교·선택형 사례 재사용 엔진을 사용하며 사내 모델은 미연결이다. 운영 목표 전환의 공통 API/저장/worker/UI 변경은 별도 구현한다.
-외부 Codex의 실제 호출은 [합성 mock 시험](oa-bridge/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)에만 추가했다. 이는 회사 VWP/SDK 연결이 아니다.
+외부 Codex의 실제 호출은 [합성 mock 시험](oa/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)에만 추가했다. 이는 회사 VWP/SDK 연결이 아니다.
 명시적으로 켠 합성 workspace의 전용 `/clustering/ai`와 **AI로 그룹 만들기** 버튼은 UUID 예약·고정 입력 검사 후 실제 모델을 호출한다. 기존 제안 API의 mode는 확장하지 않는다. 호출 상태/receipt는 기존 `WS_CLUSTER.state`에 보관하며 새 물리 테이블이나 브리지 간 전송 경로를 만들지 않는다.
 기존 `reusable`/버전 호환 승인·저장 데이터·어댑터 서명이나 내부 AI의 수정 허용 범위는 유지한다.
 
@@ -482,7 +482,7 @@ AI는 각 report의 그룹 구성·이름·근거를 새로 제안한다. 과거
 원본 record ID 전체를 중복/누락 없이 배정하고, 분류 개정과 판정 개정을 분리한다. 그룹 ID·분류 event·구성 해시가 바뀌면
 이전 그룹 판정은 이력으로만 보존하고 최신 확정 판정/재사용 기준에 포함하지 않는다. 제거된 그룹도 이력을 조회할 수 있다.
 사람이 확인한 분류 사례와 판정 조건은 각각 다음 분류와 그룹 판정에 참고한다. 정확한 필드로 구분할 수 없는 분리·사례 충돌은
-임의 자동 배정/확정으로 처리하지 않는다. 상세 API와 명시적 처리 한도는 [두 단계 계약](oa-bridge/WORKSPACE.md#두-단계의-그룹-검토)을 따른다.
+임의 자동 배정/확정으로 처리하지 않는다. 상세 API와 명시적 처리 한도는 [두 단계 계약](oa/WORKSPACE.md#두-단계의-그룹-검토)을 따른다.
 
 후속 순차 검토의 기준은 [요구사항 18절](requirement.md#large-report-review-flow)이다. 입력 규모는 **한 sanity item의 report 안의 로그·위반 항목 평균 약 10,000건이며 100,000건 이상도 가능**하다. 10,000건은 상한이나 고정 크기가 아니며 report 파일 10,000개를 뜻하지 않는다.
 전체 로그 분류·사람 확정 이후에만 확정 그룹별 판정을 진행하며, 분류 초안/보류·오래된 개정으로 새 그룹 판정을 확정할 수 없다.
@@ -492,7 +492,7 @@ AI는 각 report의 그룹 구성·이름·근거를 새로 제안한다. 과거
 `WS_CLUSTER.state.task`는 참고 엔진의 가변 범위(`max(500, ceil(record_count/20))`)·입력/기준 해시·진행·오류·다음 작업을 보관하며 head의 분류 개정과 분리한다.
 완성된 전체 배정만 불변 event/head로 원자적으로 저장한다. 진행/실패/오래된 작업은 새 그룹 판정의 선행 확정으로 사용하지 않는다.
 기대 분류 개정이 다른 페이지는 409로 거부하며 편집 UUID와 명시적 ID로 전체 구성에서 변경한다. 과거 구성과 제거된 그룹은 읽기 전용 조회다.
-API·상한·task 재개 계약은 [대용량 순차 검토](oa-bridge/WORKSPACE.md#대용량-report의-순차-검토)를 따른다. 새 테이블·권한·DDL은 추가하지 않았다.
+API·상한·task 재개 계약은 [대용량 순차 검토](oa/WORKSPACE.md#대용량-report의-순차-검토)를 따른다. 새 테이블·권한·DDL은 추가하지 않았다.
 현재 분할 실행은 모델 호출이 없는 참고 엔진이다. 사내 VWP 모델/운영 작업 전송을 연결한 것으로 표시하지 않는다.
 
 **그룹별 분류 근거 V2**는 [요구사항 18.10절](requirement.md#group-clustering-rationale)을 구현한다.
@@ -516,7 +516,7 @@ AI 출력 V2는 기존 세 키에 `group_rationales`를 추가한다. 모든 그
 이 배열의 사례 ID 합집합이 `reference_ids`와 같아야 한다. 각 과거 group이 입력 case에 존재하는지 검사한다.
 합성 모델의 현재 prompt는 `sanity-group-rationales-feedback-v3`다. V1/V2 receipt도 각각 원래 고정 prompt/hash로 검증한다. V3는 적용 가능한 과거 통합 의도와 실제 group ID/소속의 일관성을 추가 점검하며 출력 JSON V2는 유지한다. 구형 결과에 근거/사람 확인을 보충 생성하지 않는다.
 
-그룹 상세/이력은 [`GET/POST /groups/{group_id}/rationale`](oa-bridge/WORKSPACE.md#v2-근거-저장확정-요청), metadata에는 네 상태의 `rationale_counts`를 제공한다.
+그룹 상세/이력은 [`GET/POST /groups/{group_id}/rationale`](oa/WORKSPACE.md#v2-근거-저장확정-요청), metadata에는 네 상태의 `rationale_counts`를 제공한다.
 목록은 상태와 160자 이내 요약(`reason_truncated`), 상세는 대표 로그 기본 3개와 필요 시 나머지를 제공한다. 이 참조 수는 분석한 전체 로그 수와 다르다.
 
 MOVE의 출발/도착 그룹, RENAME 및 병합으로 구성/이름이 바뀐 그룹의 근거는 STALE, 새 그룹은 MISSING이다.
@@ -538,7 +538,7 @@ CONFIRM은 현재 기대 개정 전체의 **명시적인 DRAFT 일괄 채택 + �
 AI 제안은 자동 사람 확정이 아니며 제안과 최종 판정의 차이도 기록한다.
 현재 `CRITERIA` 모드는 확정 조건 적용, `model_called=false`다. `CORPORATE` 모드는 아직 `AI_NOT_CONFIGURED`로 차단한다.
 실제 VWP AI의 job/DB 전송 연결과 구형 승인 API는 이 별도 workspace 계약으로 자동 교체되지 않는다.
-상세 저장/API/역할 경계는 [WORKSPACE.md](oa-bridge/WORKSPACE.md#사용자-판정과-사례-재사용)를 따른다.
+상세 저장/API/역할 경계는 [WORKSPACE.md](oa/WORKSPACE.md#사용자-판정과-사례-재사용)를 따른다.
 
 Expected = reviewed + approved_na + unresolved (mutually exclusive unit counts).
 Completion requires confirmed nonempty inventory, matching units, no global blockers,

@@ -1,0 +1,2 @@
+# The VWP collector and plan contract use Python 3.10+ standard library only.
+# Company source SDK dependencies require a separate reviewed integration.

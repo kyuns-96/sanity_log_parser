@@ -22,8 +22,8 @@ def main():
             parser.error("--require-db needs psycopg2; install requirements.txt")
     root = Path(__file__).resolve().parent
     suite = unittest.TestSuite()
-    for directory in ("tests", "vwp-dev", "vwp-bridge", "oa-bridge"):
-        suite.addTests(unittest.TestLoader().discover(str(root / directory), pattern="test_*.py"))
+    for directory in ("tests", "vwp", "vwp_bridge", "oa"):
+        suite.addTests(unittest.TestLoader().discover(str(root / directory), pattern="test_*.py", top_level_dir=str(root)))
     started = time.monotonic()
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     if args.report_json:

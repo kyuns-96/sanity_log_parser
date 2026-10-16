@@ -50,7 +50,7 @@ def setup(args):
                     if key in ("SANITY_DB_ACCESS", "SANITY_DB_SCHEMA", "SANITY_OA_DSN", "SANITY_AI_MODE")}
         config = {"environment": "SYNTHETIC_WORKSPACE", "settings": settings,
                   "root": str(destination), "binaries": str(database.binaries),
-                  "static_dir": str(ROOT / "oa-bridge/dashboard/dist"), "origins": args.origin,
+                  "static_dir": str(ROOT / "oa/dashboard/dist"), "origins": args.origin,
                   "port": args.port, "library_path": database.env.get("LD_LIBRARY_PATH", "")}
         seed_config = destination / "seed-config.json"
         write_private(seed_config, settings)
@@ -58,8 +58,8 @@ def setup(args):
 from pathlib import Path
 root,config,source=map(Path,sys.argv[1:])
 sys.path.insert(0,str(root));os.environ.update(json.loads(config.read_text()))
-from sanity_db import Database
-from sanity_workspace import seed_workspace
+from common.sanity_db import Database
+from oa.sanity_workspace import seed_workspace
 with Database('oa') as db,db.transaction():
     result=seed_workspace(db,json.loads(source.read_text()))
 print(json.dumps(result))
@@ -100,8 +100,10 @@ def database_from_config(config):
 def is_workspace_process(pid, config):
     try:
         arguments = Path(f"/proc/{pid}/cmdline").read_bytes().split(b'\0')
-        expected = str(Path(config["root"]) / "source/oa-bridge/workspace_app.py").encode()
-        return expected in arguments and b'--config' in arguments
+        source = Path(config["root"]) / "source"
+        # Recognize a retained synthetic process across the source-layout move.
+        expected = (source / "devtools/workspace_app.py", source / "oa-bridge/workspace_app.py")
+        return any(str(path).encode() in arguments for path in expected) and b'--config' in arguments
     except (FileNotFoundError, ProcessLookupError, PermissionError):
         return False
 
@@ -122,7 +124,7 @@ def start(args, config):
         if is_workspace_process(pid, config):
             print(json.dumps({"status": "ALREADY_RUNNING", "port": config["port"]})); return
     environment = database.env
-    command = [sys.executable, str(database.root / "source/oa-bridge/workspace_app.py"), "--config", str(args.config.resolve())]
+    command = [sys.executable, str(database.root / "source/devtools/workspace_app.py"), "--config", str(args.config.resolve())]
     with (database.root / "api.log").open("ab") as log:
         process = subprocess.Popen(command, cwd=database.root / "source", env=environment,
                                    stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
@@ -240,7 +242,7 @@ def main():
     parser.add_argument("--config", type=Path, default=CONFIG)
     parser.add_argument("--pg-bin")
     parser.add_argument("--runtime-dir", type=Path, default=Path("/var/lib/sanity-review-workspace"))
-    parser.add_argument("--source", type=Path, default=ROOT / "oa-bridge/dashboard/public/sample-data/reports-library.json")
+    parser.add_argument("--source", type=Path, default=ROOT / "oa/dashboard/public/sample-data/reports-library.json")
     parser.add_argument("--origin", action="append", default=[])
     parser.add_argument("--port", type=int, default=8001)
     args = parser.parse_args()

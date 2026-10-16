@@ -2,7 +2,7 @@
 
 ## 1. 현재 기준과 범위
 
-이 문서는 2026-10-15 기준 요구사항과 prototype의 경계를 정리한다. 사용자 결정에 따라 **Jira 조회·후보 연결·게시·시뮬레이터를 폐지**하고, oa-bridge/dashboard의 React·shadcn UI를 검토와 제어 화면으로 사용한다. 과거 Jira 맥락이 들어간 보고서의 렌더러 호환은 기존 기록 검증용이며 새 실행의 조회·게시 기능이 아니다.
+이 문서는 2026-10-15 기준 요구사항과 prototype의 경계를 정리한다. 사용자 결정에 따라 **Jira 조회·후보 연결·게시·시뮬레이터를 폐지**하고, oa/dashboard의 React·shadcn UI를 검토와 제어 화면으로 사용한다. 과거 Jira 맥락이 들어간 보고서의 렌더러 호환은 기존 기록 검증용이며 새 실행의 조회·게시 기능이 아니다.
 
 2026-10-13 논의한 VWP AI 기반 clustering, 최초 report부터의 사람 검토 루프, 대량 처리와 evidence 추가는 [14절 확장 명세](#ai-clustering)에 정리한다. 1~13절의 현재 구현과 14절의 목표 동작을 구분한다. 추가로 확인한 AI 접속 방식·OA 원문 조회 범위·정보 제공 일정은 [14.13절](#integration-decisions)을 따른다. 요구사항 확정과 코드 구현·실환경 검증 완료를 구분한다.
 
@@ -26,9 +26,9 @@ VWP와 OA는 망 분리 환경이다. 두 bridge는 같은 PostgreSQL DB의 4개
 
 | 위치 | 책임 | 보관·표시 |
 |---|---|---|
-| vwp-dev | 예상 목록·완료된 실행 상태와 report snapshot 수집 | VWP 내부 원본 파일·크기·해시 |
-| vwp-bridge | 목록 대조, item별 전체 파싱·판정, 동일 문제 집계, 근거 봉인 | sanity_vwp_data, VWP→OA 큐 |
-| oa-bridge | 수신 검증, 검토 대장·개정별 보고서, 추가 근거 요청 | sanity_oa_data, OA→VWP 큐 |
+| VWP (`vwp/`) | 예상 목록·완료된 실행 상태와 report snapshot 수집 | VWP 내부 원본 파일·크기·해시 |
+| VWP-bridge (`vwp_bridge/`) | 목록 대조, item별 전체 파싱·판정, 동일 문제 집계, 근거 봉인 | sanity_vwp_data, VWP→OA 큐 |
+| OA (`oa/`) | 수신 검증, 검토 대장·개정별 보고서, 추가 근거 요청 | sanity_oa_data, OA→VWP 큐 |
 | OA 대시보드 | 번들 선택, 단위·근거 확인, 사람 판정, 수신·요청 제어 | 인증된 API 응답과 명시적 demo |
 
 VWP 내부 snapshot을 분석하여 공유 DB에 번들을 등록하고 OA가 수신한다. 대시보드에서 사람이 최종 판정한다. 추가 근거는 OA→VWP 요청과 VWP→OA 응답으로 전달한다. collector는 현재 sanity 도구를 실행하지 않으며 실제 실행기 연동은 추후 작업이다. 한 번의 수신 명령은 처리 가능한 한 건만 처리하며 상시 polling daemon이 아니다.
@@ -67,7 +67,7 @@ registry가 관리할 내용은 item·도구 버전 적용 범위, report 파일
 | numeric_csv_v1 | 고정 컬럼과 마지막 # END rows=N | le/ge, 유한 수, 단위·모드 확인 |
 | summary_json_v1 | format_version, complete, results, total | 개별 PASS/FAIL과 전체 건수 정합성 |
 
-사내 구현은 [PARSER_INTEGRATION.md](vwp-bridge/PARSER_INTEGRATION.md)의 `parse` 이벤트와 회사 등록 함수를 사용한다. 공통 엔진은 item·도구/규칙 버전, 원문 span·EOF·미해석 구간·건수와 기존 판정을 검사하고 구현 버전을 분석 ID에 반영한다. 실제 report는 외부 Codex에게 전달하지 않는다. 명시적 위반 0건은 원문 근거를 가진 결과 기록으로 표현하며 0개 결과/빈 파일을 정상으로 간주하지 않는다. 새로운 판정 정책이나 공통 계약 변경은 Codex 담당이다.
+사내 구현은 [PARSER_INTEGRATION.md](vwp_bridge/PARSER_INTEGRATION.md)의 `parse` 이벤트와 회사 등록 함수를 사용한다. 공통 엔진은 item·도구/규칙 버전, 원문 span·EOF·미해석 구간·건수와 기존 판정을 검사하고 구현 버전을 분석 ID에 반영한다. 실제 report는 외부 Codex에게 전달하지 않는다. 명시적 위반 0건은 원문 근거를 가진 결과 기록으로 표현하며 0개 결과/빈 파일을 정상으로 간주하지 않는다. 새로운 판정 정책이나 공통 계약 변경은 Codex 담당이다.
 
 숫자는 Decimal로 비교하며 소수 임계값은 JSON 실수가 아닌 정확한 문자열로 지정한다. 미지원 형식·빈 report·누락·잘린 종료·헤더 변경·건수 불일치를 조용히 PASS로 처리하지 않는다. 각 유효 행을 판정하거나 UNKNOWN으로 남기고, 미해석 내용·디코딩 실패 근거도 보존한다. 필수 정보가 없으면 임의 추정 대신 미완료로 남긴다.
 
@@ -124,7 +124,7 @@ DB는 타입·CHECK·고유 키·바이트 해시·parent/scope FK·lease 상태
 
 ## 9. OA 대시보드와 로컬 API
 
-UI는 React·shadcn 구성 요소를 사용하며 oa-bridge/dashboard_api.py의 FastAPI로 OA 저장 계층을 호출한다. npm ci와 npm run build로 생성한 dist를 API가 같은 origin으로 제공한다. Python 실행 주소는 127.0.0.1:8000이다. 개발 UI는 127.0.0.1:5173에서 /api를 8000으로 proxy한다. 브라우저가 DB나 VWP bridge에 직접 접근하지 않는다.
+UI는 React·shadcn 구성 요소를 사용하며 oa/dashboard_api.py의 FastAPI로 OA 저장 계층을 호출한다. npm ci와 npm run build로 생성한 dist를 API가 같은 origin으로 제공한다. Python 실행 주소는 127.0.0.1:8000이다. 개발 UI는 127.0.0.1:5173에서 /api를 8000으로 proxy한다. 브라우저가 DB나 VWP bridge에 직접 접근하지 않는다.
 
 | 화면·동작 | 계약 |
 |---|---|
@@ -465,7 +465,7 @@ AI 호출 동안 DB의 긴 트랜잭션을 유지하지 않는다. 작업 점유
 
 사용자는 고객 보고 시 sanity report의 전체 screenshot을 활용하기도 한다고 설명했다. 이를 바탕으로 본 프로젝트 report의 OA 조회에 별도 제한을 두지 않는 방향을 정했다. 이 설명을 회사 전체 보안 정책의 검증 완료나 임의 외부 전송 허가로 확대하지 않는다.
 
-OpenAI 호환이라는 확인만으로 특정 세부 API·구조화 출력 지원·파일 읽기 기능까지 검증된 것으로 보지 않는다. URL/token의 실제 값은 소스·명세서·공유 작업 데이터에 적지 않으며, 설정 누락 시 임의 서비스·모델·합성 응답으로 자동 대체하지 않는다. 기존 `sanity_ai.py` 초안 작성과 OpenAI 호환 연동의 완료도 구분한다.
+OpenAI 호환이라는 확인만으로 특정 세부 API·구조화 출력 지원·파일 읽기 기능까지 검증된 것으로 보지 않는다. URL/token의 실제 값은 소스·명세서·공유 작업 데이터에 적지 않으며, 설정 누락 시 임의 서비스·모델·합성 응답으로 자동 대체하지 않는다. 기존 `vwp_bridge/sanity_ai.py` 초안 작성과 OpenAI 호환 연동의 완료도 구분한다.
 
 일반 원문 조회의 승인 생략과 그룹 구성원 확정·규칙 재사용 승인·최종 sanity 판정은 서로 다른 절차다. 원문을 요청·수신·열람했다고 사람의 검토 완료나 PASS를 자동 기록하지 않는다. 기존 form 4개와 `002`·`003`은 유지하고 필요한 DB 변경은 `004` 이후의 증분 SQL로 관리한다. 이번 정리는 코드·SQL·실제 `.env`를 변경하거나 사내 DB에 실행했다는 의미가 아니다.
 
@@ -526,7 +526,7 @@ flowchart LR
 - VWP 작업자는 DB의 요청을 읽고 VWP 안에서 AI 호출·근거 조회를 수행한다. 결과는 DB를 통해 OA로 돌려준다. 브리지 간 직접 HTTP/RPC를 추가하지 않는다.
 - OA 요청을 계속 처리하려면 VWP 작업자가 실행 중이어야 한다. DB 직접 접속이 가능해도 DB 자체가 AI 요청을 실행하지 않는다. VWP에 외부에서 호출할 HTTP 서버가 반드시 필요하다는 뜻은 아니며, 상시 DB polling 프로세스로 처리할 수 있다.
 - 작업자가 멈추면 요청은 처리 대기 상태로 남는다. 수신·작업·오류 상태를 구분하며 접수만으로 완료를 표시하지 않는다.
-- 현재 `vwp-bridge/main.py work`는 분류·추가 근거 요청을 처리하고, `oa-bridge/main.py work`는 분류 결과를 수신한다. 일반 분석 번들 수신까지 모두 자동화된 것으로 표시하지 않는다.
+- 현재 `vwp_bridge/main.py work`는 분류·추가 근거 요청을 처리하고, `oa/main.py work`는 분류 결과를 수신한다. 일반 분석 번들 수신까지 모두 자동화된 것으로 표시하지 않는다.
 - 사용자 브라우저는 OA API를 이용한다. DB 계정과 VWP AI 접속값은 각 서버의 비공개 설정으로 유지한다.
 
 ### 15.3. 관리 단위와 식별 관계
@@ -682,7 +682,7 @@ VWP 결과에는 기존 실행·item·report 정보와 함께 프로젝트·블�
 
 ### 15.11. GCA 예시와 현재 데모 범위
 
-GCA는 이 프로젝트에서 PrimeTime 제약조건 검사를 다루는 **Galaxy Constraints Analyzer**를 뜻한다. 현재 예시는 공개 GCA 문서를 참고해 작성한 프로젝트·블록·item별 보고서이며 실제 사내 report나 실제 PrimeTime 실행 결과가 아니다. 참고 자료와 예시 구성은 [대시보드 안내](oa-bridge/dashboard/README.md)에 기록한다. 다운로드에도 예시 보고서임을 표시한다.
+GCA는 이 프로젝트에서 PrimeTime 제약조건 검사를 다루는 **Galaxy Constraints Analyzer**를 뜻한다. 현재 예시는 공개 GCA 문서를 참고해 작성한 프로젝트·블록·item별 보고서이며 실제 사내 report나 실제 PrimeTime 실행 결과가 아니다. 참고 자료와 예시 구성은 [대시보드 안내](oa/dashboard/README.md)에 기록한다. 다운로드에도 예시 보고서임을 표시한다.
 
 | 데모 | 경로 | 현재 확인 가능한 범위 |
 |---|---|---|
@@ -693,7 +693,7 @@ GCA는 이 프로젝트에서 PrimeTime 제약조건 검사를 다루는 **Galax
 기존 각 데모는 초기 예시를 사용하고 새로고침하면 초기화된다. 담당자 데모와 버전 데모는 초기 계정 배정을 공유하지만 변경 상태는 서로 연동되지 않는다.
 2026-10-15 별도 `/workspace`에 테스트 계정 로그인·프로젝트/블록 범위 검사·버전/검사 조회·PoR DB 저장/이력을 연결했다.
 이는 독립 PostgreSQL에 저장하는 서버 기능이며 기존 메모리 데모와 구분한다. 새로고침·다른 계정·서버 재시작에도 유지한다.
-물리 계약은 `db/005_workspace.sql`, 사용/검증 범위는 [WORKSPACE.md](oa-bridge/WORKSPACE.md)를 따른다.
+물리 계약은 `db/005_workspace.sql`, 사용/검증 범위는 [WORKSPACE.md](oa/WORKSPACE.md)를 따른다.
 실제 회사 SSO, 프로젝트 생성/담당 배정의 운영 관리 API, 실제 VWP 버전 수신은 아직 연결하지 않았다. 새 workspace의 예시 자료를 운영 자료로 표시하지 않는다.
 
 현재 Tailscale로 공유한 `/workspace`는 독립 테스트 DB를 사용하는 확인 환경이다. 운영 서비스의 사내 SSO·접속 경로·배포 구성을 확정한 주소가 아니다. 기존 메모리 데모와 새 서버 통합의 검증 결과는 [REVIEW.md](REVIEW.md)에 구분해 기록하며, 이 결과를 실제 사내 인증·운영 DB 검증으로 대신하지 않는다.
@@ -733,7 +733,7 @@ GCA는 이 프로젝트에서 PrimeTime 제약조건 검사를 다루는 **Galax
 ### 15.14. 사내 SSO 구현을 위한 추상 인터페이스
 
 2026-10-14 요청에 따라 실제 회사 SDK에 의존하지 않는 연결 경계를 구현했다.
-구현 인수인계는 [SSO_INTEGRATION.md](oa-bridge/SSO_INTEGRATION.md)를 기준으로 한다.
+구현 인수인계는 [SSO_INTEGRATION.md](oa/SSO_INTEGRATION.md)를 기준으로 한다.
 
 - `SSOIdentityProvider.authenticate(AuthRequest) → VerifiedIdentity(issuer, subject)`: 사내 인증을 검증하는 추상 메서드.
 - `UserDirectory.resolve(VerifiedIdentity) → LocalUser | None`: 영속 내부 사용자 ID·표시 이름·활성 상태를 조회하는 추상 메서드.
@@ -741,7 +741,7 @@ GCA는 이 프로젝트에서 PrimeTime 제약조건 검사를 다루는 **Galax
 - `create_app` 주입과 `sso_app.py`: 사내 어댑터 두 개를 연결하고 필요 시 `/auth`의 로그인·콜백·로그아웃 router 등록.
 - `/api/session`: 내부 `user_id`·표시 이름·인증 방식 반환. 원본 토큰·쿠키·SSO claims는 반환하지 않음.
 
-사내 AI는 `oa-bridge/corporate_sso.py`의 두 메서드와 허용된 회사 SDK/인증 router 연결만 구현한다.
+사내 AI는 `oa/integration/corporate_sso.py`의 두 메서드와 허용된 회사 SDK/인증 router 연결만 구현한다.
 승인된 영속 사용자 매핑 저장소가 없으면 Codex에게 저장 설계를 문의한다. 프런트엔드 연결·프로젝트/블록 RBAC·
 DB 증분 저장과 감사 계약은 Codex 담당이며 내부 AI가 임의 수정하지 않는다. 현재의 미구현 메서드는 명시적인 오류를 반환한다.
 기존 로컬 토큰 인증은 유지한다. SSO 사용자의 업무 API는 전체 번들 노출을 막기 위해
@@ -758,7 +758,7 @@ DB 증분 저장과 감사 계약은 Codex 담당이며 내부 AI가 임의 수�
   실제 sanity 목록·기대값·원천 버전 필드 대응 수집.
   실제 env 값과 report 원문/현장 fixture는 사내에만 두며 Codex에는 합성 입력만 전달한다.
 - Codex: DB/큐/무결성·판정/coverage·분류/규칙·기존 parser·서버 인증/권한 핵심·프로젝트/PoR 저장·UI/API 계약·기존 테스트의 변경과 디버깅.
-- 새 parser는 Codex가 작성한 [추상 계약과 검사](vwp-bridge/PARSER_INTEGRATION.md)에 맞춰 내부 AI가 회사 파일에서 구현·등록한다.
+- 새 parser는 Codex가 작성한 [추상 계약과 검사](vwp_bridge/PARSER_INTEGRATION.md)에 맞춰 내부 AI가 회사 파일에서 구현·등록한다.
   공통 parser/판정/등록 인터페이스 변경과 새 버전 전송 계약은 Codex가 수행한다. 현장 원문의 의미적 정확성은 사내 담당자가 검증한다.
 - 예상 밖 오류는 허용 파일 안에서 발생해도 내부 AI가 수정/재시도를 멈추고 비식별 문의문을 작성한다.
   직접 연락 경로가 없으면 사용자가 현재 Codex 대화로 중계하며, 답변 전에는 `WAITING_FOR_CODEX`다.
@@ -769,14 +769,32 @@ DB 증분 저장과 감사 계약은 Codex 담당이며 내부 AI가 임의 수�
 
 사용자 요청에 따라 [INTERNAL_AI_HANDOFF.md](INTERNAL_AI_HANDOFF.md)를 통합 작업 진입 문서로 둔다. 각 작업은 선행 회사 사실·허용 파일/메서드·입출력·정상/오류 수용 기준·검증 명령·인계 상태를 명시한다. INT-01 SSO, INT-02 예상 목록, INT-03 item parser, INT-04 AI 초기 분류, INT-05 그룹 판정, INT-06 실제 원천/권한/버전 대응 자료를 구분한다.
 
-- 기존 SSO·파서 추상 모델을 유지하고 `sanity_integration_contracts.py`에 기존 AI context/case/V2 분류/판정 dict의 타입을 제공한다. 인자 순서·출력 키·JSON/DB schema는 변경하지 않는다. 타입 선언은 런타임 검증이나 자동 연결이 아니다.
-- `SanityPlanProvider.get_plan(run_reference) → CollectionPlan`과 회사 `CorporatePlanProvider` 기본 stub을 제공한다. 사내 원천 조회는 VWP의 허용된 회사 wrapper에 구현하며, 기존 `validate_plan`과 collector를 명시적으로 사용한다. 파일 목록에서 예상 목록을 만들거나 조회 성공으로 승인 여부를 true로 바꾸지 않는다. 세부 계약은 [PLAN_INTEGRATION](vwp-bridge/PLAN_INTEGRATION.md)이다.
-- `sanity_integration_examples.py`는 작은 비식별 합성 입력/기대 응답만 제공한다. 최초 사례 0건/과거 사람 정정 포함 분류, 선택 그룹 판정, 미확인 plan을 공통 validator로 검사할 수 있다. 이 예제의 승인 기록을 운영 사례로 저장하거나 대규모 모델 성능 검증으로 해석하지 않는다.
+- 기존 SSO·파서 추상 모델을 유지하고 `common/sanity_integration_contracts.py`에 기존 AI context/case/V2 분류/판정 dict의 타입을 제공한다. 인자 순서·출력 키·JSON/DB schema는 변경하지 않는다. 타입 선언은 런타임 검증이나 자동 연결이 아니다.
+- `SanityPlanProvider.get_plan(run_reference) → CollectionPlan`과 회사 `CorporatePlanProvider` 기본 stub을 제공한다. 사내 원천 조회는 VWP의 허용된 회사 wrapper에 구현하며, 기존 `validate_plan`과 collector를 명시적으로 사용한다. 파일 목록에서 예상 목록을 만들거나 조회 성공으로 승인 여부를 true로 바꾸지 않는다. 세부 계약은 [PLAN_INTEGRATION](vwp/PLAN_INTEGRATION.md)이다.
+- `common/sanity_integration_examples.py`는 작은 비식별 합성 입력/기대 응답만 제공한다. 최초 사례 0건/과거 사람 정정 포함 분류, 선택 그룹 판정, 미확인 plan을 공통 validator로 검사할 수 있다. 이 예제의 승인 기록을 운영 사례로 저장하거나 대규모 모델 성능 검증으로 해석하지 않는다.
 - `ADAPTER_VERIFIED`와 운영 연결/실환경 검증 완료를 구분한다. legacy `/api` SSO와 합성 `/workspace/api`는 별도 진입점이고, 기존 VWP legacy worker와 새 workspace V2의 운영 job도 같은 계약이 아니다.
 - 공통 SSO/RBAC 연결·원천→workspace import·VWP DB job/worker 연결·회사 모델의 대량 분할/개정/중복 호출 제어는 Codex의 COMMON 후속 작업이다. 회사 어댑터에 이 공통 기능을 자체 구현하거나 보호 상태를 해제하지 않는다.
 - 현 `ReviewAdvisor`의 PASS/FAIL은 제공된 사람 확정 사례 참조가 필요하며 사례가 없으면 DEFER다. 최초 AI가 원본만으로 판정하는 목표의 공통 출력/검증 확장은 후속 범위로 명시한다. 사내 AI가 가짜 참조를 만들거나 검사를 완화하지 않는다.
 
 이 정리는 기존 검토 UI·초록색 테마·사람 확정/불변 이력·네 테이블·SSO 및 `CORPORATE` 보호 상태를 유지한다. 내부 AI의 허용 목록은 Codex가 `corporate_plan.py`/`company_plan/`로 구체화했으며, 지침/공통 코드 수정 권한을 내부 AI에게 주지 않는다. 실제 회사 report와 접속/SDK 사실은 계속 사내에서만 검증한다.
+
+### 16.2. 세 사내 개발 AI와 서버별 소스 분리 — 2026-10-16 사용자 정정 반영
+
+각 서버는 Git을 사용한다. 전달용 묶음 생성이 아니라 **실제 소스·import·실행 진입점을 서버별로 분리**한다. 개발 AI의 담당과 운영 추론 모델을 구분한다.
+
+| 개발 담당 / 코드 | 구현·확인 범위 | DB / 회사 구현 위치 |
+|---|---|---|
+| VWP / `vwp/` | INT-02 plan, INT-06 실행·버전·item/report 원천·정답 자료 | 앱 DB 없음 / `vwp/integration/` |
+| VWP-bridge / `vwp_bridge/` | INT-03 parser·등록, INT-04·05 분류/판정 SDK, VWP 접속·한도 | VWP 로그인·`sanity_vwp_app` / `vwp_bridge/integration/` |
+| OA / `oa/` | INT-01 SSO·영속 사용자 조회·허용 주입, INT-06 사용자·담당·OA 접속 | OA 로그인·`sanity_oa_app` / `oa/integration/` |
+
+공통 계약·설정·DB·추상 타입·순수 검증은 `common/`, 합성 report·외부 모델 mock·시험 진입점은 `devtools/`에 둔다. `tools/`는 개발 실행/seed 도우미, `tests/`는 공통 회귀, `db/`는 기존 SQL·form·DBA 인계다. 공통 코드는 서버 앱/시험 코드를 import하지 않고, 각 서버 worker는 자기 side만 import한다. OA의 외부 Codex 시험은 명시적으로 활성화한 합성 환경에서만 지연 import한다.
+
+각 서버는 [소스·실행 명세](DEPLOYMENT.md)에 따라 저장소 루트에서 `python -m vwp.main`, `python -m vwp_bridge.corporate_analyze`, `python -m oa.sso_app` 등 자기 진입점을 사용한다. 각 서버의 `requirements.txt`로 필요한 의존성을 설치한다. UI는 `oa/dashboard/`에서 빌드하며 출력 `dist/`는 Git 제외다. 비공개 설정 위치는 각 서버 checkout의 **저장소 루트 `.env`**로 유지한다. `vwp_bridge/.env.example`과 `oa/.env.example`은 키를 안내하는 역할별 예제다.
+
+각 [VWP](vwp/INTERNAL_AI_TASK.md)·[VWP-bridge](vwp_bridge/INTERNAL_AI_TASK.md)·[OA](oa/INTERNAL_AI_TASK.md) 지시문과 scoped `AGENTS.md`를 따른다. 소유권·허용 메서드·비식별 문의·`WAITING_FOR_CODEX` 경계는 유지한다. 공통 코드·SQL·UI·기존 테스트 변경/디버깅은 설계 담당 Codex가 맡는다. 사내 회사 구현·원문·비밀값을 덮어쓰거나 공개하지 않는다.
+
+[DB 연결 인계](db/CONNECTION_HANDOFF.md)에 기존 키·우선순위·TLS·역할/컬럼 권한·읽기 전용 check·설치 단계·비공개 인계 양식을 둔다. 두 bridge는 같은 논리 DB/스키마를 서로 다른 제한 로그인으로 사용한다. 실제 사내 값·설치 상태는 현장 확인 대상이다. 소스 분리는 회사 SDK·SSO→workspace·원천 import·신규 VWP job의 연동 완료를 뜻하지 않는다. COMMON 후속 작업·사람 확정·`AUTHORIZATION_NOT_IMPLEMENTED`·`CORPORATE` 보호를 유지한다.
 
 <a id="human-judgment-learning"></a>
 
@@ -814,7 +832,7 @@ DB 증분 저장과 감사 계약은 Codex 담당이며 내부 AI가 임의 수�
 
 실제 report 분석과 AI 호출은 VWP의 사내 환경에서 수행하고 OA는 사람의 검토·확정·이력 조회를 맡는다. 브리지 간 전달은 기존 DB 경계를 유지한다. 실제 사례·사내 모델/접속 정보는 외부 Codex에 제공하지 않는다. 회사 어댑터는 내부 AI가 허용된 범위에서 구현하며, 판정 정책·사례/기준 저장·권한·UI/API·검증은 Codex가 구현한다.
 
-현재 `/workspace`에는 독립 사용자 PASS/FAIL/보류, 사유·불변 이력, 명시적 조건 확정, 사례 조회와 참조 제안·최종 판정 비교를 연결했다. [실행/저장 계약](oa-bridge/WORKSPACE.md#사용자-판정과-사례-재사용)을 따른다. PR #6 원본 테스트 화면/구형 승인 API와 별도의 경로다.
+현재 `/workspace`에는 독립 사용자 PASS/FAIL/보류, 사유·불변 이력, 명시적 조건 확정, 사례 조회와 참조 제안·최종 판정 비교를 연결했다. [실행/저장 계약](oa/WORKSPACE.md#사용자-판정과-사례-재사용)을 따른다. PR #6 원본 테스트 화면/구형 승인 API와 별도의 경로다.
 
 ### 17.4. 두 단계 검토의 연결 — 사용자 확정
 
@@ -822,11 +840,11 @@ DB 증분 저장과 감사 계약은 Codex 담당이며 내부 AI가 임의 수�
 2단계는 **1단계에서 확정된 각 그룹**의 AI PASS/FAIL/보류와 근거 제안 → 사람의 검토·정정·확정 → 그룹 판정/근거/조건/이력 저장 → 다음 그룹 판정의 참고 사례 재사용이다.
 같은 그룹 이름이나 원래 report 판정만으로 두 단계를 합치지 않는다. 판정은 그룹 ID, 원본 해시, 확정 분류 event/개정과 구성 해시에 연결한다.
 
-현재 `/workspace`의 [두 단계 화면/API](oa-bridge/WORKSPACE.md#두-단계의-그룹-검토)에 분류 초안·소속 편집/확정과 그룹별 판정·이력/사례 참조를 연결했다.
+현재 `/workspace`의 [두 단계 화면/API](oa/WORKSPACE.md#두-단계의-그룹-검토)에 분류 초안·소속 편집/확정과 그룹별 판정·이력/사례 참조를 연결했다.
 분류 개정 변경·확정 해제·원천 참조 변경은 이전 그룹 판정을 재검토 대상으로 표시하며, 제거된 그룹의 과거 판정도 보존·조회한다.
 그룹 판정을 기존 보고서 전체 판정에 자동 승계하지 않는다. 다음 분류와 판정은 각각 현재 유효한 사람 확정 사례만 참고한다.
 
-첫 제안 엔진은 사람이 확정한 조건의 정확한 일치만 적용하며 사내 AI 결과로 표시하지 않는다. 실제 AI 미연결은 `AI_NOT_CONFIGURED`다. 사내 [ReviewAdvisor 추상 계약](vwp-bridge/REVIEW_INTEGRATION.md)은 제공했으나 VWP 모델 호출/DB 전달의 운영 연결, 자유 사유로부터 일반 기준 제안, 별도 검증 집합의 item별 일치율 평가는 후속 작업이다. 모델 가중치가 학습 중이라는 뜻은 아니다.
+첫 제안 엔진은 사람이 확정한 조건의 정확한 일치만 적용하며 사내 AI 결과로 표시하지 않는다. 실제 AI 미연결은 `AI_NOT_CONFIGURED`다. 사내 [ReviewAdvisor 추상 계약](vwp_bridge/REVIEW_INTEGRATION.md)은 제공했으나 VWP 모델 호출/DB 전달의 운영 연결, 자유 사유로부터 일반 기준 제안, 별도 검증 집합의 item별 일치율 평가는 후속 작업이다. 모델 가중치가 학습 중이라는 뜻은 아니다.
 
 <a id="large-report-review-flow"></a>
 
@@ -939,7 +957,7 @@ sanity item에서 시작하는 전용 작업 화면에 **1. 로그 분류 → 2.
 | 과거 사례와 다른 패턴 또는 달라진 그룹 구성이 필요한 report | AI가 새 그룹·분리·병합을 제안할 수 있고 현재 report 전체 ID를 보존. 과거 그룹 사전에 강제로 배정하지 않음 |
 | 브라우저의 초기 진입·그룹 선택·검색·마지막 페이지 | 렌더 행 수 제한, 전체 원문/구성의 동시 전개 없음, 페이지 이동과 입력 가능, 측정값 기록 |
 
-명세 작성 시점의 `/workspace`는 report당 로그 1,000건·그룹 100개 한도와 개별 report 모달이었다. 이후 사용자 지시에 따라 Sanity item의 전용 순차 화면, 서버 편집·페이지 API, DB에 진행 상태를 저장하는 분할 작업을 구현했다. 평균 10,000건과 100,000건 입력은 같은 경로를 사용한다. 구현 계약과 명시적 자원 예산은 [WORKSPACE.md](oa-bridge/WORKSPACE.md), 완료한 검증의 규모·측정값·실행 환경은 [REVIEW.md](REVIEW.md)에 기록한다.
+명세 작성 시점의 `/workspace`는 report당 로그 1,000건·그룹 100개 한도와 개별 report 모달이었다. 이후 사용자 지시에 따라 Sanity item의 전용 순차 화면, 서버 편집·페이지 API, DB에 진행 상태를 저장하는 분할 작업을 구현했다. 평균 10,000건과 100,000건 입력은 같은 경로를 사용한다. 구현 계약과 명시적 자원 예산은 [WORKSPACE.md](oa/WORKSPACE.md), 완료한 검증의 규모·측정값·실행 환경은 [REVIEW.md](REVIEW.md)에 기록한다.
 
 실제 사내 모델은 미연결이다. 합성 데이터/결정적 참고 엔진 검증과 실제 report/AI 운영 검증을 구분한다. 더 큰 입력·실제 사내 형식/SDK·운영 지연/메모리 목표는 사내 검증 대상이며 이 문서의 100,000건 수용 시나리오를 무제한 처리 보장으로 표현하지 않는다.
 위 사용자 정정은 목표 동작의 명세다. 현재의 정확한 필드 일치·선택형 사례 재사용·임시 그룹 이름과 실제 모델 미연결 상태를 그대로 완료된 AI 초기 분류로 간주하지 않는다. 이번 정정에서는 코드·SQL·기존 저장 데이터·실행 중 서비스를 변경하지 않았다.
@@ -957,7 +975,7 @@ sanity item에서 시작하는 전용 작업 화면에 **1. 로그 분류 → 2.
 사내 자료·회사 인증·DB 자격증명은 외부 모델로 전달하지 않는다. 실제 출력·모델·입력 해시·사용량을 보존하고,
 AI 초안과 테스트에서 모사한 사람 확정을 구분한다. 불확실한 호출은 자동 재시도하지 않는다.
 이번 8/12/12건 합성 실험으로 평균 10,000건·100,000건 이상의 모델 성능, 한국어 출력 품질이나 2단계 사내 AI 판정 완료를 주장하지 않는다.
-운영 VWP SDK·DB 전달/worker 연결은 별도이며 `CORPORATE`·SSO 보호 상태는 유지한다. 실행·결과·한계는 [WORKSPACE.md](oa-bridge/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)를 따른다.
+운영 VWP SDK·DB 전달/worker 연결은 별도이며 `CORPORATE`·SSO 보호 상태는 유지한다. 실행·결과·한계는 [WORKSPACE.md](oa/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)를 따른다.
 
 버튼 요청은 호출 전에 기존 DB head에 UUID·범위·고정 입력 해시와 진행 상태를 기록하며 동일 UUID를 다시 호출하지 않는다.
 모델 호출 중 DB 쓰기 잠금을 유지하지 않고, 수동 분류 변경/그룹 판정 및 중복 AI 작업을 막는다. 새로고침 시 DB 상태를 조회하며 자동으로 AI 요청을 만들지 않는다.
@@ -1059,7 +1077,7 @@ drag & drop은 기존처럼 구성 초안을 저장하고 영향받은 근거의
 | 그룹별 근거가 없는 기존 실제 AI mock/확정 이력 | 원본 이력 불변·미기록 표시·새 확정 전 보완. 미수행 모델 호출/사람 검토를 소급 생성하지 않음 |
 | 10,000/100,000건과 고유 그룹 다수, 일괄 채택·마지막 페이지 | 초기 전개/참조 수 제한, 전체 상태 집계/배정 검증, 명시적 전체 대상과 페이지 선택 구분 |
 
-저장·페이지/편집 API·확정 검증·UI와 합성 모델 V2 입력/출력은 Codex가 구현했다. 구체적인 직렬화와 원안의 불변 참조는 [PROTOCOL](PROTOCOL.md), 회사 SDK 출력 V2는 [CLUSTERING_INTEGRATION](vwp-bridge/CLUSTERING_INTEGRATION.md)을 따른다. 과거 V1 응답/receipt의 검증은 유지하지만 그룹별 근거 없는 새 분류 확정은 허용하지 않는다. 내부 AI는 문서만 보고 공통 코드/SQL/UI를 변경하거나 허용 범위를 넓히지 않는다. 실제 report와 회사 SDK 검증은 계속 사내에서 수행하며 네 테이블·DB 전달·SSO 보호 경계를 유지한다.
+저장·페이지/편집 API·확정 검증·UI와 합성 모델 V2 입력/출력은 Codex가 구현했다. 구체적인 직렬화와 원안의 불변 참조는 [PROTOCOL](PROTOCOL.md), 회사 SDK 출력 V2는 [CLUSTERING_INTEGRATION](vwp_bridge/CLUSTERING_INTEGRATION.md)을 따른다. 과거 V1 응답/receipt의 검증은 유지하지만 그룹별 근거 없는 새 분류 확정은 허용하지 않는다. 내부 AI는 문서만 보고 공통 코드/SQL/UI를 변경하거나 허용 범위를 넓히지 않는다. 실제 report와 회사 SDK 검증은 계속 사내에서 수행하며 네 테이블·DB 전달·SSO 보호 경계를 유지한다.
 
 ### 18.11. 처음 방문한 사람을 위한 검토 화면
 

@@ -10,8 +10,8 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from sanity_common import atomic_json, atomic_text, digest, sha256_file
-from tests_support import PgTestCase
+from common.sanity_common import atomic_json, atomic_text, digest, sha256_file
+from tests.support import PgTestCase
 
 
 def main():
@@ -23,7 +23,7 @@ def main():
         parser.error("Require 1 <= groups <= rows <= 100000")
     if getattr(PgTestCase, "__unittest_skip__", False):
         parser.error("Configure the PostgreSQL driver and all three test DSNs first")
-    spec = importlib.util.spec_from_file_location("vwp_scale", ROOT / "vwp-bridge/main.py")
+    spec = importlib.util.spec_from_file_location("vwp_scale", ROOT / "vwp_bridge/main.py")
     bridge = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(bridge)
     fixture = PgTestCase()

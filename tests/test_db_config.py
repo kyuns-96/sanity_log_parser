@@ -8,10 +8,10 @@ import traceback
 import unittest
 from unittest.mock import MagicMock, patch
 
-from sanity_common import ReviewError
-from sanity_config import access_mode, load_environment, postgres_parameters
-import sanity_db
-from sanity_privacy import MASK, SecretGuard
+from common.sanity_common import ReviewError
+from common.sanity_config import access_mode, load_environment, postgres_parameters
+import common.sanity_db as sanity_db
+from common.sanity_privacy import MASK, SecretGuard
 
 
 class ConnectionConfigTests(unittest.TestCase):
@@ -35,7 +35,7 @@ class ConnectionConfigTests(unittest.TestCase):
     def test_local_env_is_allowlisted_without_interpolation_and_exported_values_win(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
             path = Path(tmp) / ".env"
-            from sanity_common import atomic_text
+            from common.sanity_common import atomic_text
             atomic_text(path, 'SANITY_DB_HOST=file.invalid\nSANITY_DB_PASSWORD="literal ${TOKEN}"\n'
                         'SANITY_DB_PORT=6543\nSANITY_DB_SSLROOTCERT=/synthetic/root.pem\nUNRELATED=no\n')
             with patch.dict(os.environ, {"SANITY_DB_HOST": "export.invalid"}):

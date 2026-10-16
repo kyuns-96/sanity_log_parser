@@ -13,10 +13,10 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sanity_codex_mock import MODEL, REPORT_IDS, fixture_report
-from sanity_common import ReviewError, digest
-from sanity_workspace import WorkspaceStore
-from sanity_workspace_clustering import WorkspaceClusteringStore
+from devtools.sanity_codex_mock import MODEL, REPORT_IDS, fixture_report
+from common.sanity_common import ReviewError, digest
+from oa.sanity_workspace import WorkspaceStore
+from oa.sanity_workspace_clustering import WorkspaceClusteringStore
 
 
 def without_import_clock(value):
@@ -101,12 +101,12 @@ def main():
             or params.get('host') != config['root'] or params.get('port') != '55439'
             or params.get('dbname') != 'sanity_test_mock' or params.get('user') != 'sanity_mock_oa'):
         parser.error('Only the restricted local fixture login is supported')
-    from run_workspace import load_runner
+    from tools.run_workspace import load_runner
     environment = load_runner().isolated_environment(os.environ)
     environment.update({key: config['settings'][key] for key in ('SANITY_DB_ACCESS', 'SANITY_DB_SCHEMA', 'SANITY_OA_DSN')})
     environment['SANITY_AI_MODE'] = 'disabled'
     os.environ.clear(); os.environ.update(environment)
-    from sanity_db import Database
+    from common.sanity_db import Database
     with Database('oa') as db, db.transaction():
         value = install(db, json.loads((directory/'export.json').read_text()),
                         json.loads((directory/'result.json').read_text()), json.loads((directory/'trace.json').read_text()))

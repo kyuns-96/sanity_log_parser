@@ -12,15 +12,14 @@ import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from sanity_common import sha256_file
-from sanity_parsers import (LINE_LIMIT, ParseContext, ParseFinished, ParsedRecord, ParserError,
-                            ParserRegistry, ReportMetadata, ReportParser, SourceSpan, UnparsedRegion)
-from site_integration.parser_example import SyntheticTextParser
+from common.sanity_common import sha256_file
+from common.sanity_parsers import LINE_LIMIT, ParseContext, ParseFinished, ParsedRecord, ParserError, ParserRegistry, ReportMetadata, ReportParser, SourceSpan, UnparsedRegion
+from vwp_bridge.integration.parser_example import SyntheticTextParser
 
-spec = importlib.util.spec_from_file_location("parser_bridge", Path(__file__).resolve().parents[1] / "vwp-bridge/main.py")
+spec = importlib.util.spec_from_file_location("parser_bridge", Path(__file__).resolve().parents[1] / "vwp_bridge/main.py")
 bridge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge)
-spec_cli = importlib.util.spec_from_file_location("corporate_parser_cli", Path(__file__).resolve().parents[1] / "vwp-bridge/corporate_analyze.py")
+spec_cli = importlib.util.spec_from_file_location("corporate_parser_cli", Path(__file__).resolve().parents[1] / "vwp_bridge/corporate_analyze.py")
 corporate_cli = importlib.util.module_from_spec(spec_cli)
 spec_cli.loader.exec_module(corporate_cli)
 
@@ -303,7 +302,7 @@ class ParserTests(unittest.TestCase):
         for failure, code in ((RuntimeError("SYNTHETIC_SECRET"), "PARSER_FAILED"),
                               (ParserError("PARSER_REGISTRATION_ERROR"), "PARSER_REGISTRATION_ERROR")):
             errors = io.StringIO()
-            company_module = ModuleType("site_integration.corporate_parsers")
+            company_module = ModuleType('vwp_bridge.integration.corporate_parsers')
             company_module.create_parser_registry = Mock(side_effect=failure)
             with patch.dict(sys.modules, {company_module.__name__: company_module}), redirect_stderr(errors):
                 self.assertEqual(2, corporate_cli.corporate_main(["analyze", "--input", "unused"]))

@@ -1,8 +1,8 @@
 """Management migration preserves installed data, ACLs and the original four tables."""
 import uuid
 
-from sanity_db import Database
-from tests_support import PgTestCase, ROOT, psycopg2
+from common.sanity_db import Database
+from tests.support import PgTestCase, ROOT, psycopg2
 
 
 class WorkspaceMigrationTests(PgTestCase):

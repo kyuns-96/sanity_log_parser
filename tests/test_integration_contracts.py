@@ -4,13 +4,13 @@ import importlib.util
 from pathlib import Path
 import unittest
 
-from sanity_common import ReviewError, digest
-from sanity_integration_contracts import SanityPlanProvider
-from sanity_integration_examples import collection_plan_example, clustering_example, group_review_example
-from sanity_review_advice import ReviewAdvisor, report_facts, validate_advice
-from sanity_workspace_clustering import ClusteringAdvisor, validate_clustering_advice
+from common.sanity_common import ReviewError, digest
+from common.sanity_integration_contracts import SanityPlanProvider
+from common.sanity_integration_examples import collection_plan_example, clustering_example, group_review_example
+from common.sanity_review_advice import ReviewAdvisor, report_facts, validate_advice
+from oa.sanity_workspace_clustering import ClusteringAdvisor, validate_clustering_advice
 
-spec = importlib.util.spec_from_file_location("handoff_collector", Path(__file__).resolve().parents[1] / "vwp-dev/main.py")
+spec = importlib.util.spec_from_file_location("handoff_collector", Path(__file__).resolve().parents[1] / "vwp/main.py")
 collector = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(collector)
 

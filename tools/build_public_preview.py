@@ -61,7 +61,7 @@ def build(output, count, pg_bin):
         database.stop()
 
 
-PROCESS_SCRIPT = r'''
+PROCESS_SCRIPT = """
 import argparse
 from collections import Counter
 import importlib.util
@@ -78,14 +78,14 @@ def load(name, path):
     result = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(result)
     return result
-from sanity_common import atomic_json, coverage, digest
-from sanity_db import Database
-from sanity_oa_store import OAStore
-from sanity_sample_reports import generate_library
-from site_integration.public_parsers import create_public_registry
-collector = load('preview_collector', root / 'vwp-dev/main.py')
-bridge = load('preview_bridge', root / 'vwp-bridge/main.py')
-oa = load('preview_oa', root / 'oa-bridge/main.py')
+from common.sanity_common import atomic_json, coverage, digest
+from common.sanity_db import Database
+from oa.sanity_oa_store import OAStore
+from devtools.sanity_sample_reports import generate_library
+from vwp_bridge.integration.public_parsers import create_public_registry
+collector = load('preview_collector', root / 'vwp/main.py')
+bridge = load('preview_bridge', root / 'vwp_bridge/main.py')
+oa = load('preview_oa', root / 'oa/main.py')
 library = generate_library(root.parent / 'reports', count)
 parsed, stored_records, bundle_count = {}, 0, 0
 for key, run in sorted(library['runs'].items()):
@@ -133,14 +133,14 @@ data = {'schema_version': 1, 'summary': summary, 'users': library['users'], 'pro
 data['dataset_sha256'] = digest(data)
 atomic_json(output, data)
 atomic_json(root.parent / 'dataset-summary.json', summary)
-'''
+"""
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--count", type=int, default=1000)
     parser.add_argument("--pg-bin")
-    parser.add_argument("--out", type=Path, default=ROOT / "oa-bridge/dashboard/public/sample-data/reports-library.json")
+    parser.add_argument("--out", type=Path, default=ROOT / "oa/dashboard/public/sample-data/reports-library.json")
     args = parser.parse_args(argv)
     if not 27 <= args.count <= 10000:
         parser.error("Choose 27 to 10000 sample items")

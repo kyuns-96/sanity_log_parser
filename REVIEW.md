@@ -1,10 +1,31 @@
 # 프로토타입 구현 검토 기록
 
+## 2026-10-16 불필요한 로컬 폴더 정리와 Git 인계
+
+- 사용자 요청으로 빈 `examples/`, 이전 `demo-output*/`, 폐기한 서버 전달용 ZIP 생성물, 중복 프런트엔드 빌드, 임시 소스 백업 등 18개 디렉터리와 캐시 11곳을 정리했다. 현재 workspace·별도 QA 설정의 정적 파일, 비공개 설정·DB·검증 기록은 보존했다.
+- `.gitignore`의 합성 snapshot 제외 경로를 `oa/dashboard/public/sample-data/`로 갱신했다. 경로 이동 중 누락된 내부 AI의 기존 검증·승인 순서와 SSO 보호 상태 설명도 복원했다. 회사 파일/메서드 허용 범위는 그대로다.
+- 이전 전체 회귀 360개가 통과한 Python/SQL 106개 파일과 현재 파일이 동일함을 확인했다. 정리 후 서버 import/설정 경계·합성 snapshot 격리 점검 10개가 추가로 통과했다. 로컬·공개 workspace는 HTTP 200이며 실제 비공개 설정과 생성 데이터는 커밋에서 제외한다.
+
+## 2026-10-16 Git 저장소의 실제 코드를 서버별로 분리
+
+- 사용자 정정에 따라 실제 소스를 `vwp/`(수집), `vwp_bridge/`(parser·근거·모델·worker), `oa/`(API·인증·검토 저장·dashboard)로 이동했다. 공통 계약·DB·설정·순수 검증은 `common/`, 합성 report·외부 모델 mock·시험 진입점은 `devtools/`에 모았다. 이전 소스 디렉터리와 루트의 평면 모듈은 남기지 않았다. import·CLI·테스트 수집·합성 실행 도우미도 새 namespace를 사용한다.
+- 회사 어댑터는 각 서버의 `integration/`에 분리하고 scoped `AGENTS.md`, 역할별 `INTERNAL_AI_TASK.md`, 통합 가이드·요구사항·DB 인계를 갱신했다. [서버별 소스 안내](DEPLOYMENT.md)에 실행 명령·의존성·구현 위치를 정리했다. 비공개 설정은 각 checkout의 저장소 루트 `.env`를 읽는 기존 계약을 유지한다. 기존 수정 허용 메서드·SSO/CORPORATE 보호·사람 확정·네 테이블 SQL은 유지했다.
+- 서버별 worker와 추가 근거 요청/응답 처리를 분리했다. 옮긴 전송 함수 7개의 본문은 import 외에 동일하다. 새 회귀 5개는 VWP의 표준 라이브러리 실행, 공통/서버별 import 경계, VWP-bridge의 OA 미의존, 일반 OA 실행의 모델/mock 미로딩, 설정 루트를 검증한다. 회사 구현·비공개 fixture·설정은 mock source 수집에서 제외한다.
+- 새 독립 PostgreSQL fixture에서 **회귀 360개 통과, 실패/오류/skip 0**을 확인했다(682.338초). 10,000/100,000건 parser·분류/그룹 근거·100,000개 고유 그룹·작업 재개·마지막 그룹 판정을 포함한다. 별도 complete/missing/malformed/unsupported 실행과 10,000건 DB 송수신 scale probe도 통과했다. 테스트 DB는 종료했으며 실제 사내 DB·report·외부 모델은 사용하지 않았다. 검증한 snapshot의 Python/SQL과 현재 소스가 동일하다.
+- 실행 진입점 15개와 Python 3.10 문법 검사, TypeScript/production build를 통과했다. 이동한 프런트엔드 추적 파일 70개의 내용은 이전 HEAD와 동일하며 JS/CSS 자산 hash도 기존과 같다. 소스 구조 변경과 기존 UI 변경을 구분한다.
+- 기존 공개 workspace는 새 소스 경로와 `oa/dashboard/dist`로 전환했다. DB 프로세스를 재시작하지 않았고 기존 1,130개 행·네 테이블·전체 내용 hash가 전후 동일하다. 공개 HTTPS workspace/JS/CSS는 200, 미인증 업무 API는 401이다. seed·DDL·판정 저장·외부 모델 호출은 하지 않았다.
+- 상세 증거: `artifacts/server-code-layout-verification.json`, `artifacts/server-code-layout-db-summary.json`, `artifacts/layout-cli-smoke.json`, `artifacts/layout-workspace-preservation.json`, `artifacts/layout-public-smoke.json`. 실제 사내 SSO·SDK·원천 import·신규 workspace 운영 job 연결은 기존 COMMON 후속 작업이다.
+
+## 2026-10-16 세 사내 AI·DB 인계와 배포 묶음 제안의 정정
+
+- VWP·VWP-bridge·OA의 역할별 지시문과 DB 연결 인계를 작성했다. 수정 허용 메서드·공통 코드 보호·비식별 문의·`WAITING_FOR_CODEX` 규칙을 유지했다.
+- 처음에는 전달용 ZIP 생성으로 해석했으나, 사용자는 **서버별 Git을 사용하며 실제 코드를 정리하라는 뜻**이라고 정정했다. 묶음 생성 도구·manifest·별도 배포 템플릿은 제거하고 실제 소스를 서버별 Python 패키지로 옮기는 작업으로 대체했다. 이전 묶음의 검증 결과는 현재 소스 구조의 검증으로 사용하지 않는다. 최신 디렉터리/진입점/설정은 [소스 안내](DEPLOYMENT.md)를 따른다.
+
 ## 2026-10-16 사내 AI 구현 인계와 추상 계약 정리
 
 - 사용자 요청으로 [INTERNAL_AI_HANDOFF.md](INTERNAL_AI_HANDOFF.md)를 통합 진입 문서로 추가했다. SSO·예상 sanity 목록·item parser·1단계 분류·2단계 판정·원천 버전/담당 매핑을 INT-01~06으로 나누고 선행 정보·허용 메서드·입출력·수용 기준·실행 명령·인계 상태·복사 가능한 시작 지시문을 정리했다. 내부 AI의 구현 범위와 Codex의 COMMON 운영 연결을 구분했다.
-- `sanity_integration_contracts.py`에 기존 dict 기반의 plan/context/case/분류 V2/판정 타입과 `SanityPlanProvider.get_plan` 추상화를 추가했다. `site_integration/corporate_plan.py`는 명시적으로 `PLAN_NOT_CONFIGURED`를 반환하며 자동 collector/DB/UI 연결이 없다. 회사 입력 wrapper의 허용 위치를 `INTERNAL_AI_GUIDE.md`에서 구체화하고 [PLAN_INTEGRATION.md](vwp-bridge/PLAN_INTEGRATION.md)에 기존 schema 1 대응·예상 누락 보존·미승인 목록과 실제 원천 버전 연결 경계를 작성했다.
-- 기존 `ClusteringAdvisor`/`ReviewAdvisor`와 회사 두 SDK stub에 타입/계약 설명을 추가했다. 인자 순서·출력 키·기존 런타임 validator·V1 호환·DB schema는 변경하지 않았다. 새 회사 분류는 `require_rationales=True` 검증을 명시한다. `sanity_integration_examples.py`에 최초/사람 정정 사례 분류·선택 그룹 판정·미승인 plan의 작은 순수 합성 packet을 추가했다. 실회사 SDK나 DB를 import/호출하지 않는다.
+- `common/sanity_integration_contracts.py`에 기존 dict 기반의 plan/context/case/분류 V2/판정 타입과 `SanityPlanProvider.get_plan` 추상화를 추가했다. `vwp/integration/corporate_plan.py`는 명시적으로 `PLAN_NOT_CONFIGURED`를 반환하며 자동 collector/DB/UI 연결이 없다. 회사 입력 wrapper의 허용 위치를 `INTERNAL_AI_GUIDE.md`에서 구체화하고 [PLAN_INTEGRATION.md](vwp/PLAN_INTEGRATION.md)에 기존 schema 1 대응·예상 누락 보존·미승인 목록과 실제 원천 버전 연결 경계를 작성했다.
+- 기존 `ClusteringAdvisor`/`ReviewAdvisor`와 회사 두 SDK stub에 타입/계약 설명을 추가했다. 인자 순서·출력 키·기존 런타임 validator·V1 호환·DB schema는 변경하지 않았다. 새 회사 분류는 `require_rationales=True` 검증을 명시한다. `common/sanity_integration_examples.py`에 최초/사람 정정 사례 분류·선택 그룹 판정·미승인 plan의 작은 순수 합성 packet을 추가했다. 실회사 SDK나 DB를 import/호출하지 않는다.
 - 현 review가 사람 사례 참조 없는 AI PASS/FAIL을 거부한다는 실제 제한, 회사 SDK만으로 새 workspace 운영 VWP job이 연결되지 않는 점, legacy `/api` SSO와 합성 `/workspace/api`의 차이를 명시했다. SSO 문서의 ‘관리 DDL 없음’을 현재 005 관리 레코드와 미구현 신원 매핑의 구분으로 정정했다. 직접 원본을 이용한 최초 AI 판정·사례 기본 활용 정책/선택형 기준 관계·대규모 모델 orchestration은 Codex 공통 후속 작업으로 남겼다.
 - 새 계약 시험 14개는 실제 기존 validator로 전체 ID 배정·V2 근거 누락·다른 그룹 대표 ID·미지 사례 group·참조 합집합·AI의 사용자 승인 필드 삽입·최초 판정 DEFER·도구 FAIL과 독립 제안·선택 그룹/원본 hash·미승인/실패 목록을 검증한다. 공통 SSO 진입점 시험은 회사 구현이 영원히 미구현일 것을 전제하지 않도록 명시적 회사 모듈 테스트 더블을 주입했다. mock source 수집의 회사 plan/분류/판정 구현 제외도 확장 검증했다.
 - 비공개 설정을 포함하지 않는 임시 코드 snapshot에서 새 계약 14개·인증 12개·파서 27개·판정 참고 3개·분류 참고 3개·근거 V2 7개·mock 수집 5개·SSO API 8개, 총 **79개 통과, skip 0**을 확인했다. 검증 내역과 로그는 `artifacts/internal-handoff-verification.json` 및 `artifacts/internal-handoff-checks/`에 있다. 실제 DB/모델 연결·운영 적용은 0회다. 추가/연관 Python 8개 파일은 Python 3.10 문법으로도 파싱했다(3.10 실런타임 시험과 구분).
@@ -33,7 +54,7 @@
 
 ## 2026-10-15 그룹별 분류 근거 V2 구현과 실제 모델 검증
 
-- `sanity_workspace_rationale.py`와 불변 분류 event에 그룹별 본문·대표 원본 ID·참고 사례 group·최초 원안·사람 정정/채택·작성자/시각과 구성 바인딩을 추가했다. 같은 source/group/이름/전체 소속인 근거는 출처를 기록해 이어받고, 이동 양쪽·이름 변경·병합은 재검토, 새 그룹은 미작성으로 표시한다. 근거만 바꾸어도 새 분류 개정이며 새 그룹 판정에는 전체 분류 재확정이 필요하다.
+- `common/sanity_workspace_rationale.py`와 불변 분류 event에 그룹별 본문·대표 원본 ID·참고 사례 group·최초 원안·사람 정정/채택·작성자/시각과 구성 바인딩을 추가했다. 같은 source/group/이름/전체 소속인 근거는 출처를 기록해 이어받고, 이동 양쪽·이름 변경·병합은 재검토, 새 그룹은 미작성으로 표시한다. 근거만 바꾸어도 새 분류 개정이며 새 그룹 판정에는 전체 분류 재확정이 필요하다.
 - 그룹별 `SAVE`/`ACCEPT`와 개정 고정 상세/이력 API, 네 상태 집계·필터, 대표 로그 선택·수정, AI 원안/사례/이력의 펼침 조회를 구현했다. 전역 메모는 선택 입력이다. `CONFIRM`은 현재 전체 개정의 유효한 초안을 명시적으로 일괄 채택하고 확정하며 미작성/재검토/무효 참조는 차단한다. 2단계의 판정 근거는 별도로 보관한다.
 - AI JSON V2는 기존 세 키와 `group_rationales`를 반환한다. 회사 SDK 인계 문서를 갱신했으며 공통 코드/DB/UI를 회사 AI가 임의 변경할 권한은 추가하지 않았다. SSO 보호와 `CORPORATE` 503은 유지한다.
 - 1,000개 이상 근거는 같은 event 안의 독립 압축 bucket/index로 저장하고 공통 store가 원래 객체로 복원한다. 압축 전 128MiB를 검사하며 전체 내용을 생략하지 않는다. 원안 중복 저장과 변경 없는 본문의 복사를 줄이고, 최종 task 저장은 이미 검증한 입력을 다시 읽지 않는다. 새 물리 테이블·DDL은 없다.
@@ -119,7 +140,7 @@
 
 - 사용자 요청으로 Codex CLI의 기존 ChatGPT 로그인과 `gpt-6-luna`를 연결했다. API 키·회사 `.env`·실제 report는 사용하지 않았다.
   연결 확인 1회와 분류 비교 3회를 실제 호출했다. CLI 로그인 사용량이며 API 단가로 청구액을 계산하지 않는다.
-- `sanity_codex_mock.py`는 정확히 생성된 합성 fixture만 받는 opt-in advisor다. 모델은 빈 폴더에서 도구 없이 JSON을 반환한다.
+- `devtools/sanity_codex_mock.py`는 정확히 생성된 합성 fixture만 받는 opt-in advisor다. 모델은 빈 폴더에서 도구 없이 JSON을 반환한다.
   회사/DB/API 환경변수를 전달하지 않으며 일반 회귀 테스트와 HTTP API는 외부 호출을 켤 수 없다. 회사 `CORPORATE`와 SSO 차단은 유지한다.
 - 실제 source 8건에서 초기 2개 그룹을 생성했다. 수정 사례가 없는 control 12건은 3개 그룹이었다.
   테스트 코드가 source를 **제약 설정 누락 통합 검토** 1개로 합치고 한국어 이름·검토 이유를 작성해 확정했다.
@@ -139,12 +160,12 @@
   나머지 100,000개 고유 그룹 시험은 브라우저 동시 실행 중 DB statement timeout이었다. 병행 부하를 제거해 동일한 기존 시험을 **165.524초에 통과**했다.
   최초 실패 결과는 `artifacts/codex-regression-first-run.json`, 단독 재검증은 `artifacts/codex-scale-recheck.json`에 보존했다. 시간/권한/판정 검사를 완화하지 않았다.
 - 실제 저장 결과를 쓰는 브라우저 **3개 통과**(8.1초, skip/flaky 0개). 모델/사례 출처·초기 2그룹→수정 1그룹 이력·feedback 2그룹·새로고침·TOP 조회·390px 가로 넘침 없음을 확인했다.
-  `artifacts/codex-browser-tests.json`과 `oa-bridge/dashboard/artifacts/codex-feedback-{desktop,mobile}.png`에 남겼다.
+  `artifacts/codex-browser-tests.json`과 `oa/dashboard/artifacts/codex-feedback-{desktop,mobile}.png`에 남겼다.
   병행 부하 때 기존 브라우저 37개 중 1개의 renderer가 종료됐다. 다른 36개는 통과했고 해당 프로젝트 생성 시나리오도 단독 **4.3초에 통과**했다. 새 mock 브라우저 시험의 첫 screenshot timeout도 순차 실행에서 해소됐다.
   frontend TypeScript/production 빌드·Python 구문·문서 상대 링크·`git diff --check`를 확인했다. QA 8003과 임시 DB는 종료하고 공유 8001은 재시작 후 유지했다.
 - 이번 모델 실험은 **8/12/12건·1단계 분류**다. 10,000/100,000건 모델 처리·2단계 모델 판정·회사 SDK/운영 job·전송은 검증하지 않았다.
   일반 새 초안/판정 제안 버튼은 기존 참고 엔진이다. 확정 사례를 다음 prompt에 제공하는 동작이며 모델 fine-tuning은 하지 않는다.
-  실행·저장 계약은 [WORKSPACE.md](oa-bridge/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)를 따른다.
+  실행·저장 계약은 [WORKSPACE.md](oa/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)를 따른다.
 
 ## 2026-10-15 AI initial groups·사람 확정 사례 축적 의도 정정
 
@@ -186,7 +207,7 @@
   브라우저에서 남은 95,000건을 89.520초에 처리하고 20개 전체 범위·분류 확정·사람 판정·새로고침·모바일·원본/PoR 보존을 확인했다.
   metadata 6,704 bytes/최초 조회 4.326초, 초기 그룹/원문 25/50개, 페이지 오류/가로 넘침 없음.
   결과 `artifacts/workspace-large-persistence.json`, `artifacts/workspace-100000-browser-tests.json`,
-  `artifacts/workspace-large-frontend-tests.json`, `oa-bridge/dashboard/artifacts/workspace-100000-browser-metrics.json`과 데스크톱/모바일 PNG.
+  `artifacts/workspace-large-frontend-tests.json`, `oa/dashboard/artifacts/workspace-100000-browser-metrics.json`과 데스크톱/모바일 PNG.
 - 4GB 개발 환경에서 다른 검증과 함께 실행한 참고 수치다. 서버는 요청마다 해당 report/구성을 읽어 전체 검증하므로 원본 크기에 비례하는 비용이 남는다.
   report JSON 128MiB, 로그/그룹 각각 1,000,000개와 사례 조회 예산을 명시적으로 검사하며, 한도 초과는 부분 처리 없이 중단한다.
   더 큰 입력·긴 행·동시 사용자 부하, 실제 사내 형식/모델 품질과 운영 지연 목표는 별도 사내 검증 대상이다.
@@ -195,7 +216,7 @@
   기존 1,000개를 포함한 총 report 1,004개·추출 record 131,000건이다. 새 대형 report에는 검증용 분류/사람 판정을 작성하지 않았다.
   실제 HTTPS 주소에서 100,000건 진입·50건 페이지·마지막 원문 검색·2단계 잠금·390px/초록색 테마·Secure/HttpOnly 쿠키를 확인했다.
   최초 metadata 1,252 bytes, 페이지 오류/가로 넘침 0개. 결과 `artifacts/workspace-large-deployment.json`,
-  `oa-bridge/dashboard/artifacts/workspace-large-live-smoke.json`과 `workspace-large-live-desktop/mobile.png`.
+  `oa/dashboard/artifacts/workspace-large-live-smoke.json`과 `workspace-large-live-desktop/mobile.png`.
   별도 QA API/DB는 종료했고 설정의 static 경로는 영속 dist로 복원했다. 공유 서비스와 다른 작업자의 개발 서버는 유지했다.
 
 ## 2026-10-15 단일 report 10,000건의 순차 검토 — 명세 우선 갱신
@@ -224,8 +245,8 @@
   동시 개정 충돌과 오래된 분류에 대한 저장 거부를 검증했다.
 - 현재 초안/판정 제안은 `CONFIRMED_PARTITION_V1`/`CONFIRMED_CRITERIA_V1` 참고 엔진이며 실제 모델이 아니다.
   모호한 사람의 분리나 충돌을 임의 순서로 재현하지 않는다. `CORPORATE`는 `503 AI_NOT_CONFIGURED`를 유지한다.
-  사내 AI용 추상 계약·검증·제한은 [분류 인계](vwp-bridge/CLUSTERING_INTEGRATION.md)와
-  [판정 인계](vwp-bridge/REVIEW_INTEGRATION.md)에 기록했다. 실제 SDK와 운영 VWP job/DB 전달 연결은 미연결이다.
+  사내 AI용 추상 계약·검증·제한은 [분류 인계](vwp_bridge/CLUSTERING_INTEGRATION.md)와
+  [판정 인계](vwp_bridge/REVIEW_INTEGRATION.md)에 기록했다. 실제 SDK와 운영 VWP job/DB 전달 연결은 미연결이다.
 - 독립 PostgreSQL **293개 통과, 실패/오류/skip 0개**(169.566초), CLI 4개 시나리오와
   10,000건/100그룹 저장(6.874초) 통과. 결과 `artifacts/workspace-pipeline-backend-tests.json`; 테스트 DB 종료 확인.
   기존 브라우저 회귀 **37개**, 실제 별도 API/DB 통합 **13개**(최종 빌드 50.2초)도 통과했다.
@@ -235,7 +256,7 @@
   결과 `artifacts/workspace-pipeline-persistence.json`; QA API/DB는 검증 후 종료했다.
 - 모바일 모달의 높이 변경 애니메이션과 줄바꿈된 탭의 축소 때문에 생기던 화면 초과/겹침을 수정하고
   실제 브라우저의 모달 경계·탭/본문 경계 검사로 확인했다. 초록색 토큰은 유지한다.
-  직접 확인한 캡처는 `oa-bridge/dashboard/artifacts/workspace-pipeline-stale-mobile.png`,
+  직접 확인한 캡처는 `oa/dashboard/artifacts/workspace-pipeline-stale-mobile.png`,
   `workspace-pipeline-clustering-desktop.png`, `workspace-pipeline-public-desktop.png`, `workspace-pipeline-public-mobile.png`다.
 - 공유 DB는 기존 **1,079개 OA 행 전체 해시·건수와 네 테이블 OID를 보존**하며 `007`만 적용했다.
   검증한 API/정적 빌드를 공유 HTTPS에 반영했다. 실주소에서 두 단계·담당자 초안 버튼·초록색·모바일을 확인하고
@@ -251,7 +272,7 @@
 - TypeScript 포함 빌드·`git diff --check`와 데스크톱/모바일 브라우저 검사 4개를 통과했다.
   공유 HTTPS에서 실제 색상·사용자 판정 입력·모바일 메뉴·overflow/page error 없음과 PoR 불변을 확인했다.
 - 공유 정적 자산을 갱신했다. 결과 `artifacts/workspace-green-smoke.json`, 캡처
-  `oa-bridge/dashboard/artifacts/workspace-green-overview.png`, `workspace-green-review.png`,
+  `oa/dashboard/artifacts/workspace-green-overview.png`, `workspace-green-review.png`,
   `workspace-green-mobile.png`를 직접 확인했다. 별도 QA 서버/DB는 종료했다.
 
 ## 2026-10-15 사용자 판정·확정 조건·제안의 영속 연결
@@ -265,7 +286,7 @@
 - 일회성 사례와 명시적 재사용 조건을 구분한다. 현재 같은 scope·호환 버전의 다른 보고서 최신 사례만 조회하며,
   조건의 정확한 일치에만 제안한다. 원문 미수신/파싱 미완료·기준 부재·판정 충돌은 보류다.
   조건 정정/철회뿐 아니라 새 반례 추가도 전체 사례 목록 해시로 감지하여 기존 제안 확정을 거부한다.
-- `ReviewAdvisor` 추상 계약과 회사 어댑터·[인수인계](vwp-bridge/REVIEW_INTEGRATION.md)를 제공했다.
+- `ReviewAdvisor` 추상 계약과 회사 어댑터·[인수인계](vwp_bridge/REVIEW_INTEGRATION.md)를 제공했다.
   현재 엔진은 `CONFIRMED_CRITERIA_V1`, `model_called=false`이며 사내 AI 미연결을 표시한다.
   실제 SDK·VWP job/DB 전달 연결, 자유 사유로부터 일반 기준 추출, 별도 검증 집합의 모델 정확도 평가는 미구현이다.
   구형 승인 API/PR #6 원본 snapshot의 `FAIL_CANNOT_PASS`를 이 새 사용자 판정 API와 혼동하지 않는다.
@@ -284,7 +305,7 @@
   Secure/HttpOnly/SameSite=Strict cookie를 확인했다. 공유 DB에 사용자 판정/기준을 시험 저장하지 않았다.
   별도 QA의 판정 데이터와 공유 환경은 분리했으며 QA API/DB는 종료했다.
 - TypeScript 포함 프런트엔드 빌드, Python 구문 검사, `git diff --check`, 관련 문서 로컬 링크 84개 통과.
-  직접 확인한 캡처는 `oa-bridge/dashboard/artifacts/workspace-human-review-desktop.png`,
+  직접 확인한 캡처는 `oa/dashboard/artifacts/workspace-human-review-desktop.png`,
   `workspace-review-proposal.png`, `workspace-human-review-mobile.png`, `workspace-review-public-mobile.png`다.
   합성 통합 결과를 실제 회사 report/SSO/AI 검증으로 표시하지 않는다.
 
@@ -319,10 +340,10 @@
   키보드 선택·새로고침 복원·모바일·PoR 불변과 기존 지정/권한/로그아웃을 확인했다.
   기존 전체 검색 사례는 현재 선택 item에 속하고 첫 페이지 밖에 있는 `sample-1000`으로 검증한다.
 - 프런트엔드 빌드·TypeScript/Python 구문 검사·`git diff --check` 통과.
-  캡처 `oa-bridge/dashboard/artifacts/workspace-items-desktop.png`, `workspace-mobile.png`를 직접 확인했다.
+  캡처 `oa/dashboard/artifacts/workspace-items-desktop.png`, `workspace-mobile.png`를 직접 확인했다.
   검증한 빌드를 공유 HTTPS 주소에 반영해 item 3개·VC LP 37건·선택 복원·모바일 overflow 없음·PoR 불변·page error 0개를 확인했다.
   공유 서버/DB는 유지하고 검증용 8002 API/DB는 종료했다. 문서 로컬 링크 24개도 통과했다.
-  원본 report·판정·사용자 배정·PoR·DB 스키마는 수정하지 않았다. 사용 범위는 [WORKSPACE.md](oa-bridge/WORKSPACE.md)를 따른다.
+  원본 report·판정·사용자 배정·PoR·DB 스키마는 수정하지 않았다. 사용 범위는 [WORKSPACE.md](oa/WORKSPACE.md)를 따른다.
 
 ## 2026-10-15 영속 워크스페이스·PoR 저장·버건디 색상
 
@@ -350,12 +371,12 @@
 - 기존 브라우저 회귀 **37개 통과**. 별도 API/DB의 실제 워크스페이스 브라우저 통합 **6개 통과**(10.4초).
   로그인 범위·전체 검색/원문·PoR 저장/새로고침/별도 TOP 계정 조회·권한 거부·미수신·모바일·로그아웃을 검증했다.
   검증용 8002 DB를 분리해 사용자의 8001 PoR을 변경하지 않았다.
-  캡처: `oa-bridge/dashboard/artifacts/workspace-login.png`, `workspace-overview.png`,
+  캡처: `oa/dashboard/artifacts/workspace-login.png`, `workspace-overview.png`,
   `workspace-history.png`, `workspace-mobile.png`(로컬 생성물, Git 제외).
 - 별도 검증 서버에서 **API와 PostgreSQL을 모두 재시작한 뒤에도 PoR/개정/지정 이력이 동일**함을 확인했다.
   공유 HTTPS 경로는 loopback 8001로 연결하고 `/` → `/workspace`, Secure cookie, 실제 조회,
   버건디 토큰, 모바일 overflow 없음, 로그아웃을 확인했다. 다른 worktree의 5173 서버는 보존했다.
-- `npm run build` 통과. 실행·테스트 계정·지원 범위·운영 미연결 항목은 [WORKSPACE.md](oa-bridge/WORKSPACE.md)에 기록했다.
+- `npm run build` 통과. 실행·테스트 계정·지원 범위·운영 미연결 항목은 [WORKSPACE.md](oa/WORKSPACE.md)에 기록했다.
   Python 구문 검사·문서 로컬 링크 91개·`git diff --check`도 통과했다. 검증용 8002 API/DB는 종료하고 확인용 8001은 유지했다.
   서버 config/DB/로그/생성 자료는 Git에 포함하지 않는다.
 
@@ -364,7 +385,7 @@
 - 사용자 요청의 가상 이용자 10명·프로젝트 3개·각 프로젝트 3개 블록을 구성했다.
   TOP 3명과 블록 담당자 7명, 프로젝트별 CPU/GPU/DDR을 사용하며 일부 담당자는 두 프로젝트에 배정했다.
 - 공급자 공개 문서의 GCA full text·VC LP Tree Summary/Tag 상세·SpyGlass non-turbo moresimple 구조를 조사했다.
-  `site_integration/public_parsers.py`에 추상 계약을 사용하는 초기 추출기를 추가하고
+  `vwp_bridge/integration/public_parsers.py`에 추상 계약을 사용하는 초기 추출기를 추가하고
   `PUBLIC_REPORT_FORMATS.md`에 출처·지원 subset·미지원 형식·회사 구현 인계를 명시했다.
   실제 사내 report, 실제 EDA 실행 결과, vendor 원문의 복제는 없다.
 - 초기 registry는 명시적인 합성 tool/rule version만 허용한다. native 부분은 추출하되 실제 완료 계약 미확인 시 PARTIAL을 유지한다.
@@ -387,7 +408,7 @@
   다운로드 바이트, 누락 report의 다운로드 차단, PARTIAL 원문, 계정별 범위, 전체 검색, 390px 모바일,
   명시적 demo 조건·데이터 조회 실패 시 다른 demo로 대체하지 않는 동작을 확인했다.
   기본 5173에 다른 worktree 서버가 있어 테스트 전용 5188을 사용했다. 기존 서버는 변경하지 않았다.
-  캡처: `oa-bridge/dashboard/artifacts/reports-library-desktop.png`, `reports-library-mobile.png`,
+  캡처: `oa/dashboard/artifacts/reports-library-desktop.png`, `reports-library-mobile.png`,
   `reports-library-mobile-dialog.png`, `reports-library-hosted.png`(로컬 생성물, Git 제외).
 - `npm run build`, Python 구문 검사, 변경 문서의 로컬 링크 검사, `git diff --check` 통과.
   샘플 JSON/DB/report는 Git에서 제외한다. 회사 registry/비공개 fixture·실제 `.env`/DB/AI·SQL·운영 인증 계약을 변경하지 않았다.
@@ -396,13 +417,13 @@
 
 - 사용자 결정: 실제 report는 사내 AI/담당자가 사내에서만 열람·검증한다. 현재 Codex는
   공통 추상 계약·검증·합성 재현을 담당하고 실제 원문을 전달받지 않는다.
-- `sanity_parsers.py`에 `ReportParser`, 읽기 전용 context, source span/reader,
+- `common/sanity_parsers.py`에 `ReportParser`, 읽기 전용 context, source span/reader,
   추출·metadata·미해석 구간·완료 이벤트와 명시적 registry를 구현했다.
   공통 코드가 원문 위치/Pointer·EOF·미해석 구간·선언 건수와 기존 Decimal/report 판정을 검사한다.
   정상 0건은 명시적 근거를 가진 결과 기록으로 남기며 빈 report/0개 기록은 미완료를 유지한다.
-- 회사 구현 지점은 `site_integration/corporate_parsers.py`의 parse/등록과
-  `site_integration/company_parsers/`의 전용 어댑터/테스트다.
-  `vwp-bridge/corporate_analyze.py`로 주입하며 일반 main은 회사 코드를 자동 로드하지 않는다.
+- 회사 구현 지점은 `vwp_bridge/integration/corporate_parsers.py`의 parse/등록과
+  `vwp_bridge/integration/company_parsers/`의 전용 어댑터/테스트다.
+  `vwp_bridge/corporate_analyze.py`로 주입하며 일반 main은 회사 코드를 자동 로드하지 않는다.
   기본 registry는 비어 있고 미구현 메서드의 `PARSER_NOT_CONFIGURED`를 별도 smoke로 확인했다.
 - 등록은 item·tool·tool/rule version과 고정 판정 방식으로 제한한다. 내장 파서 교체·wildcard를 거부한다.
   사용한 구현 버전/범위를 불변 RUN 계약과 `producer.parsers`에 포함하여
@@ -480,11 +501,11 @@
 - 사용자 확인에 따라 기본 DB 모드를 `postgresql`로 전환하고 드라이버를 `psycopg2-binary 2.9.13`으로 변경했다.
   `SANITY_DB_HOST/PORT/NAME/USER_NAME/PASSWORD`, 스키마·TLS 설정을 비공개 env에서 읽는다.
   해당 side의 기존 DSN 우선순위는 유지하고 HTTP/다른 계정/낮은 TLS 수준으로 자동 재시도하지 않는다.
-- `sanity_postgres.py`에 커서 실행, 외부 트랜잭션 보존 및 중첩 savepoint,
+- `common/sanity_postgres.py`에 커서 실행, 외부 트랜잭션 보존 및 중첩 savepoint,
   UUID/JSONB/BYTEA 변환을 연결했다. named cursor와 짧은 트랜잭션·세션 advisory lock을 유지한다.
   트랜잭션/커서 동작과 타입 등록은 [Psycopg 공식 연결 문서](https://www.psycopg.org/docs/connection.html)와
   [공식 타입 확장 문서](https://www.psycopg.org/docs/extras.html)를 참고했다.
-- `sanity_db.py check --side vwp|oa`는 연결·설치된 스키마·유효 권한을 읽기 전용으로 확인한다.
+- `common/sanity_db.py check --side vwp|oa`는 연결·설치된 스키마·유효 권한을 읽기 전용으로 확인한다.
   DSN/비밀번호/드라이버의 서버 상세 오류를 출력하지 않는다. UI에 DB 자격증명을 전달하지 않는다.
 - PostgreSQL 16.15의 전용 로컬 소켓 DB와 서로 다른 제한된 앱 로그인으로
   `run_tests.py --require-db`: **160개 통과, skip 0개**.
@@ -497,7 +518,7 @@
 
 ## 2026-10-13 VWP AI 분류 루프 · OA 조작 · 원문 조회
 
-- `sanity_ai.py`에 OpenAI 호환 Chat Completions/Responses와 선택 CLI 어댑터를 연결했다.
+- `vwp_bridge/sanity_ai.py`에 OpenAI 호환 Chat Completions/Responses와 선택 CLI 어댑터를 연결했다.
   공식 요청/응답 형식을 확인했지만 실제 사내 endpoint/model을 호출하지 않았다. 기본 disabled,
   명시적 설정·strict JSON·근거 ID·크기/TLS/timeout 검사, HTTP 로그 억제, 자동 재시도/CLI 우회 금지를 적용했다.
 - VWP 작업자는 전체 기록 스캔/최대 64건 표본 → AI 선언형 규칙 제안 → 전체 기록 적용 → 분할 전송을 수행한다.
@@ -540,7 +561,7 @@
 - `run_tests.py --require-db`: **124개 통과, skip 0개, 30.783초**.
   이후 추가한 원본 보존 검사를 포함한 `test_schema.py`: **4개 통과**.
   `git diff --check` 및 기존 form/002/003의 변경 없음 검사도 통과했다.
-- 이 기록은 DB 기반과 기존 기능 회귀 검증이다. 작성 중인 `sanity_clustering.py`·`sanity_ai.py`는
+- 이 기록은 DB 기반과 기존 기능 회귀 검증이다. 작성 중인 `common/sanity_clustering.py`·`vwp_bridge/sanity_ai.py`는
   아직 작업자/API/화면에 연결되지 않았으며, 전체 AI 분류 루프나 실제 사내 AI 호출 완료를 의미하지 않는다.
   사내 DB에는 실행하지 않았고 Git commit/push도 하지 않았다.
 
@@ -554,7 +575,7 @@
   `JIRA_DISABLED`로 실패하며 새 보고서에는 Jira 후보가 없다. 과거 보고서 바이트 검증용 렌더러만 유지한다.
   사용하지 않는 `examples/jira_context.json`을 삭제했다. 삭제본·문서·이전 OA 코드는
   `/tmp/sanity-dashboard-change.JaBp6a/before-dashboard.tar.gz`에 보존했다(`/tmp` 정리 전 복구 가능).
-- React·실제 shadcn/ui 구성 요소와 로컬 FastAPI를 `oa-bridge/`에 추가했다.
+- React·실제 shadcn/ui 구성 요소와 로컬 FastAPI를 `oa/`에 추가했다.
   토큰은 브라우저 메모리에만 보관하며 서버 고정 검토자를 사용한다. 모든 업무 API는 인증이 필요하고
   호스트·본문 크기·입력 형식 검증과 비밀정보 없는 오류 응답을 적용한다. UI에는 DB 자격증명이 없다.
 - 기존의 전체 inventory·coverage·블로커·알려진 FAIL 보호와 원자적 개정/보고서 저장을 사용한다.
@@ -573,7 +594,7 @@
   명시적 데모, 토큰 비저장, 전체 대장·판정 기준, 검토/개정/이력, 추가 근거와 다운로드,
   API 실패·읽기 전용·UUID 재시도·번들/페이지 전환의 이전 자료 차단, 390px 모바일을 검증했다.
   데스크톱·모바일 합성 화면을 직접 확인했고 본문 대비를 보완했다.
-  화면 캡처는 로컬 `oa-bridge/dashboard/artifacts/`에 있으며 Git에는 포함하지 않는다.
+  화면 캡처는 로컬 `oa/dashboard/artifacts/`에 있으며 Git에는 포함하지 않는다.
   Python 의존성 검사와 npm 운영 의존성 audit도 통과했다.
 - 기본 DBaaS 방식은 여전히 임시 읽기 전용이고 정식 전체 접근 방식은 사용자 제공 대기 중이다.
   데모는 명시적 합성 메모리 화면이며 API 오류 시 전환하지 않는다. 실제 AI는 NOT_CONFIGURED다.
@@ -629,7 +650,7 @@
 
 ## 2026-10-12 dbaccess.md 기반 HTTP 접근 보완
 
-- 현장 경로가 DBaaS HTTP API임을 확인해 `sanity_dbaas.py`, `sanity_config.py`, `.env.example`을 추가했다.
+- 현장 경로가 DBaaS HTTP API임을 확인해 `common/sanity_dbaas.py`, `common/sanity_config.py`, `.env.example`을 추가했다.
   실제 URL/토큰/CA 경로는 만들거나 출력하지 않았으며 사용자가 작성한 `dbaccess.md`와 swap 파일은 수정하지 않았다.
 - Bearer 인증, CA/호스트 검증(PEM/DER), proxy 환경 무시, timeout 30초, redirect 거부,
   HTTP 상세 로그/오류 본문 비노출, 요청·응답 크기 제한, POST 결과 불명 시 무재시도를 구현했다.
@@ -755,7 +776,7 @@ DB 원문 보관 금지 환경용 local_evidence_ref 어댑터도 후속 과제�
 
 ## 이전 프로토타입 구현
 
-세 sub-agent가 각각 `vwp-dev/`, `vwp-bridge/`, `oa-bridge/`를 구현했다.
+세 sub-agent가 각각 `vwp/`, `vwp_bridge/`, `oa/`를 구현했다.
 부모 에이전트가 공통 데이터 계약·검토 완료 검사·통합 실행을 구현하고, 각 환경 코드를 읽어
 입력 계약, 판정, 동일성, 누락 방지, 재수신·재게시 및 사람 검토 경계를 검토했다.
 
@@ -804,7 +825,7 @@ VWP·OA 구현은 해당 작업자에게 분리했고, 부모 에이전트가 �
 
 환경: Linux, Python 3.12.3. 최종 코드에서 `python3 run_tests.py`로 **65개 테스트 통과**.
 구성은 공통 12개·통합 3개, VWP dev 8개, VWP bridge 21개, OA bridge 21개다.
-`python3 -m compileall -q sanity_common.py demo.py run_tests.py tests vwp-dev vwp-bridge oa-bridge`도 통과했다.
+`python3 -m compileall -q common/sanity_common.py devtools/demo.py run_tests.py tests vwp-dev vwp-bridge oa-bridge`도 통과했다.
 
 확인한 주요 시나리오:
 
@@ -852,19 +873,19 @@ RSS는 Linux `getrusage(RUSAGE_CHILDREN)`의 실행 누적 최대값이다. 단�
 
 ## 2026-10-14 — 사내 SSO 추상 인터페이스와 인수인계
 
-- `sanity_auth.py`의 `SSOIdentityProvider`·`UserDirectory` 추상 계약, 검증된 외부 계정 → 내부 ID 연결,
+- `oa/sanity_auth.py`의 `SSOIdentityProvider`·`UserDirectory` 추상 계약, 검증된 외부 계정 → 내부 ID 연결,
   활성/미연결 처리, `local_token`/`sso` 모드 분리와 고정 오류 응답을 추가했다.
 - `corporate_sso.py`는 사내에서 채울 두 메서드를 명시적으로 미구현 상태로 제공하며,
   `sso_app.py`가 `create_app`에 주입한다. `/auth` router는 UI 정적 mount보다 먼저 등록한다.
 - `/api/session`에서 정규화된 신원을 확인한다. 업무 범위 필터가 없는 현재 API는
   SSO 신원만으로 접근하지 못하도록 `AUTHORIZATION_NOT_IMPLEMENTED`를 반환한다.
   기존 토큰 로그인과 서버 고정 검토자 동작은 유지한다.
-- `tests/test_auth.py` 12개, `oa-bridge/test_sso.py` 8개, 기존 dashboard 경계 6개,
+- `tests/test_auth.py` 12개, `oa/test_sso.py` 8개, 기존 dashboard 경계 6개,
   환경/DB 설정 회귀 30개로 **56개 통과, 실패 0개**를 확인했다.
   함께 발견된 dashboard PostgreSQL 통합 테스트 7개는 테스트 DB 환경 미설정으로 skip했다.
-- `oa-bridge/dashboard`의 `tsc --noEmit` 통과. 사용자 화면 동작은 변경하지 않았으며 브라우저 테스트는 재실행하지 않았다.
+- `oa/dashboard`의 `tsc --noEmit` 통과. 사용자 화면 동작은 변경하지 않았으며 브라우저 테스트는 재실행하지 않았다.
 - 검증 범위: 위조 사용자 헤더·로컬 토큰의 SSO 우회 거부, issuer별 계정 분리, 미연결·비활성·만료 재확인,
   어댑터 장애·잘못된 반환의 고정 오류 처리, 세션 비밀정보 비노출, 모든 업무 API의 저장소 접근 전 차단,
   인증 router 연결, 기존 토큰 인증 및 설정 회귀.
 - 실제 사내 SSO/계정 DB, 로그인 callback·서버 세션·프런트엔드 SSO, 프로젝트/블록 RBAC는 검증하지 않았다.
-  사내 구현 순서·계약·작업 요청문은 [SSO_INTEGRATION.md](oa-bridge/SSO_INTEGRATION.md)에 제공한다.
+  사내 구현 순서·계약·작업 요청문은 [SSO_INTEGRATION.md](oa/SSO_INTEGRATION.md)에 제공한다.

@@ -12,15 +12,15 @@ import uuid
 
 import httpx
 
-from demo import demo, stage
-from sanity_ai import AIAdapter, parse_output
-from sanity_clustering import assignment, classify_record, scope_for, validate_ai_response
-from sanity_cluster_store import ClusterStore, receive_cluster
-from sanity_cluster_worker import process_cluster
-from sanity_common import ReviewError, digest, pack_json, unpack_json, atomic_json, atomic_text
-from sanity_db import Database, Queue, json_value
-from sanity_privacy import SecretGuard
-from tests_support import PgTestCase, ROOT
+from devtools.demo import demo, stage
+from vwp_bridge.sanity_ai import AIAdapter, parse_output
+from common.sanity_clustering import assignment, classify_record, scope_for, validate_ai_response
+from oa.sanity_cluster_store import ClusterStore, receive_cluster
+from vwp_bridge.sanity_cluster_worker import process_cluster
+from common.sanity_common import ReviewError, digest, pack_json, unpack_json, atomic_json, atomic_text
+from common.sanity_db import Database, Queue, json_value
+from common.sanity_privacy import SecretGuard
+from tests.support import PgTestCase, ROOT
 
 
 def rule(ref="r-one", fields=None):
@@ -242,7 +242,7 @@ class ClusterDatabaseTests(PgTestCase):
         self.bid = dependency_bundle
         self.action("DEFER", dependency, dependency_revision)
         self.next_report()
-        with patch("sanity_cluster_store.CATALOG_PAGE_SIZE", 1):
+        with patch('oa.sanity_cluster_store.CATALOG_PAGE_SIZE', 1):
             jid = self.request(mode="AUTO")["job_id"]
         with Database("oa") as db:
             payload = ClusterStore(db, self.bid, self.uid).get("CLUSTER_JOB", jid)["payload"]
@@ -252,7 +252,7 @@ class ClusterDatabaseTests(PgTestCase):
         self.assertEqual({"STALE_REFERENCE"}, {e["reason"] for e in payload["catalog_exclusions"]})
         # Hitting a bound is an error, never an apparently complete partial catalog.
         before = self.admin_query("SELECT count(*) FROM {oa_to_vwp}").fetchone()[0]
-        with patch("sanity_cluster_store.MAX_CATALOG_SOURCES", 1), self.assertRaises(ReviewError) as error:
+        with patch('oa.sanity_cluster_store.MAX_CATALOG_SOURCES', 1), self.assertRaises(ReviewError) as error:
             self.request(mode="AUTO")
         self.assertEqual("CATALOG_LIMIT", error.exception.code)
         self.assertEqual(before, self.admin_query("SELECT count(*) FROM {oa_to_vwp}").fetchone()[0])
@@ -366,7 +366,7 @@ class ClusterDatabaseTests(PgTestCase):
         self.assertEqual(0, self.admin_query("SELECT count(*) FROM {oa} WHERE record_type='CLUSTER_MEMBER'").fetchone()[0])
 
     def next_report(self, count=4, pass_a=False):
-        spec = importlib.util.spec_from_file_location("cluster_collector", ROOT / "vwp-dev/main.py")
+        spec = importlib.util.spec_from_file_location("cluster_collector", ROOT / "vwp/main.py")
         collector = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(collector)
         root = Path(self.temp.name) / uuid.uuid4().hex
@@ -379,8 +379,8 @@ class ClusterDatabaseTests(PgTestCase):
         rows = [f"top/{'A' if n % 2 == 0 else 'B'},P1,M1,CHECK-101,WARNING,{8 if pass_a and n % 2 == 0 else 12},ns\n" for n in range(count)]
         atomic_text(reports / "numeric.csv", "object,check_point,mode,code,severity,observed,unit\n" + "".join(rows) + f"# END rows={count}\n")
         collector.collect(root / "plan.json", reports, root / "collected")
-        sent = json.loads(stage("vwp-bridge", "analyze", "--input", root / "collected/run.json"))
-        received = json.loads(stage("oa-bridge", "receive", "--message-id", sent["message_id"]))
+        sent = json.loads(stage("vwp_bridge", "analyze", "--input", root / "collected/run.json"))
+        received = json.loads(stage("oa", "receive", "--message-id", sent["message_id"]))
         self.bid = received["bundle_id"]
 
     def test_saved_rules_cross_run_candidates_pass_separation_and_stale_reference(self):
@@ -479,7 +479,8 @@ class ClusterDatabaseTests(PgTestCase):
         self.assertEqual("RULE_EVIDENCE_NOT_FOUND", process_cluster(jid, FakeAI)["code"])
 
     def test_raw_export_masks_credentials_preserving_private_bytes_and_source_hash(self):
-        from sanity_exchange import request_evidence, respond_evidence, receive_evidence
+        from oa.sanity_exchange import request_evidence, receive_evidence
+        from vwp_bridge.sanity_exchange import respond_evidence
         row = self.admin_query("SELECT record_id,entity_key,raw_bytes FROM {vwp} WHERE record_type='EVIDENCE' AND review_unit_id=%s LIMIT 1", (self.uid,)).fetchone()
         # Isolated fixture: emulate a secret outside the previously transmitted example excerpt.
         raw = row[2] + b' token=synthetic-private-value password="hidden password"'
@@ -500,8 +501,8 @@ class ClusterDatabaseTests(PgTestCase):
 
     def test_dashboard_classification_and_full_raw_are_authenticated_scoped_and_separate(self):
         from fastapi.testclient import TestClient
-        from sanity_exchange import respond_evidence
-        spec = importlib.util.spec_from_file_location("cluster_dashboard_test", ROOT / "oa-bridge/dashboard_api.py")
+        from vwp_bridge.sanity_exchange import respond_evidence
+        spec = importlib.util.spec_from_file_location("cluster_dashboard_test", ROOT / "oa/dashboard_api.py")
         module = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = module
         spec.loader.exec_module(module)

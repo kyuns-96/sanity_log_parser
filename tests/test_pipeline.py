@@ -9,11 +9,11 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from demo import demo, stage
-from sanity_common import digest, unpack_bundle, pack_json
+from devtools.demo import demo, stage
+from common.sanity_common import digest, unpack_bundle, pack_json
 
-from sanity_db import Database, Queue
-from tests_support import PgTestCase
+from common.sanity_db import Database, Queue
+from tests.support import PgTestCase
 
 
 class PipelineTests(PgTestCase):
@@ -50,9 +50,9 @@ class PipelineTests(PgTestCase):
         self.assertEqual({"RECEIVED_BUNDLE", "REVIEW_UNIT", "REVIEW_EVENT", "REPORT"},
                          {row[0] for row in self.admin_query("SELECT DISTINCT record_type FROM {oa}").fetchall()})
         for unit_id in ("u-numeric", "u-summary"):
-            stage("oa-bridge", "review", *args, "--unit-id", unit_id,
+            stage("oa", "review", *args, "--unit-id", unit_id,
                   "--request-id", str(uuid.uuid4()), "--reviewer", "test-reviewer", "--conclusion", "FAIL", "--reason", "synthetic evidence checked")
-        status = json.loads(stage("oa-bridge", "status", *args))
+        status = json.loads(stage("oa", "status", *args))
         self.assertEqual(status["coverage"]["review_status"], "COMPLETE")
         self.assertEqual(status["coverage"]["check_status"], "FAIL")
         self.assertEqual(status["context"], {"ai": {"status": "NOT_CONFIGURED"}})
@@ -81,9 +81,9 @@ class PipelineTests(PgTestCase):
 
     def test_receive_cli_rejects_semantic_forgery_without_creating_state(self):
         source = self.root / "source"
-        stage("vwp-dev", "demo", "--out", str(source))
+        stage("vwp", "demo", "--out", str(source))
         export = self.root / "export"
-        receipt = json.loads(stage("vwp-bridge", "analyze", "--input", str(source / "run.json"),
+        receipt = json.loads(stage("vwp_bridge", "analyze", "--input", str(source / "run.json"),
               "--out", str(export)))
         with Database("vwp") as db:
             original = unpack_bundle(Queue(db, "vwp_to_oa").get(receipt["message_id"]))
@@ -107,7 +107,7 @@ class PipelineTests(PgTestCase):
                         "bundle_id": payload["bundle_id"], "project": payload["run"]["project"],
                         "run_id": payload["run"]["run_id"], "payload": {"schema_version": 1},
                         **pack_json(payload)})
-                result = subprocess.run([sys.executable, str(ROOT / "oa-bridge/main.py"),
+                result = subprocess.run([sys.executable, str(ROOT / "oa/main.py"),
                                          "receive", "--message-id", payload["bundle_id"]],
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, 2, result.stderr)

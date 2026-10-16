@@ -10,10 +10,10 @@ import traceback
 import unittest
 from unittest.mock import patch
 
-from sanity_common import ReviewError, atomic_text
-import sanity_config
-import sanity_dbaas
-from sanity_db import Database
+from common.sanity_common import ReviewError, atomic_text
+import common.sanity_config as sanity_config
+import common.sanity_dbaas as sanity_dbaas
+from common.sanity_db import Database
 
 try:
     import httpx

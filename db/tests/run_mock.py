@@ -17,9 +17,10 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE_PATTERNS = ("*.py", "tests/*.py", "vwp-dev/*.py", "vwp-bridge/*.py", "oa-bridge/*.py",
-                   "site_integration/__init__.py", "site_integration/parser_example.py",
-                   "site_integration/public_parsers.py",
+SOURCE_PATTERNS = ("*.py", "common/*.py", "devtools/*.py", "tests/*.py", "vwp/*.py", "vwp_bridge/*.py", "oa/*.py",
+                   "vwp/integration/__init__.py", "oa/integration/__init__.py",
+                   "vwp_bridge/integration/__init__.py", "vwp_bridge/integration/parser_example.py",
+                   "vwp_bridge/integration/public_parsers.py",
                    "db/*.sql", "db/form/*.sql", "db/tests/*.sql", "db/tests/*.py")
 DB_NAME = "sanity_test_mock"
 
@@ -162,7 +163,9 @@ class MockDatabase:
 
 def execute(staged, environment, log, script, *args):
     with log.open("wb") as output:
-        process = subprocess.run([sys.executable, str(staged / script), *map(str, args)], cwd=staged,
+        command = ([sys.executable, str(staged / script)] if script.endswith(".py")
+                   else [sys.executable, "-m", script])
+        process = subprocess.run([*command, *map(str, args)], cwd=staged,
                                  env=environment, stdout=output, stderr=subprocess.STDOUT)
     if process.returncode:
         raise MockError(f"{script} failed; see {log.name}")
@@ -191,7 +194,7 @@ def main(argv=None):
         environment = database.test_environment()
         print("phase=schema_and_permissions_passed", flush=True)
         for side in ("vwp", "oa"):
-            execute(staged, environment, database.root / f"check-{side}.log", "sanity_db.py", "check", "--side", side)
+            execute(staged, environment, database.root / f"check-{side}.log", "common.sanity_db", "check", "--side", side)
         print("phase=regression_tests", flush=True)
         execute(staged, environment, database.root / "tests.log", "run_tests.py", "--require-db",
                 "--report-json", database.root / "tests.json")
@@ -202,7 +205,7 @@ def main(argv=None):
         scenarios = {}
         for scenario in ("complete", "missing", "malformed", "unsupported"):
             output = database.root / ("demo-" + scenario)
-            execute(staged, environment, database.root / ("demo-" + scenario + ".log"), "demo.py",
+            execute(staged, environment, database.root / ("demo-" + scenario + ".log"), "devtools/demo.py",
                     "--scenario", scenario, "--out", output)
             scenarios[scenario] = json.loads((output / "receipt.json").read_text(encoding="utf-8"))["coverage"]
         summary["scenarios"] = scenarios

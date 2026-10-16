@@ -7,6 +7,7 @@
 OA 브라우저의 로컬 API 접속은 브리지 간 통신과 별개다.
 이 문서는 DDL/권한 계약이다. Python 실행 코드도 이 4개 테이블을 사용한다.
 설치·환경변수 접속 설정·실행·통합 테스트는 [루트 README](../README.md)를 따른다.
+세 개발 AI의 DB 역할·기존 설정 키·서버별 읽기 전용 확인·비공개 접속 기록 양식은 [연결 인계](CONNECTION_HANDOFF.md)를 따른다. 각 서버는 [소스 구조·실행 안내](../DEPLOYMENT.md)에 따라 자기 모듈만 실행한다. 이 폴더의 SQL/fixture는 앱 시작과 함께 실행하지 않는다.
 접속 안내 [공개용 설정 문서](../dbaccess.example.md)의 DBaaS HTTP API는 **임시 읽기 전용**이다.
 사용자가 psycopg2 직접 PostgreSQL 접속 가능함을 확인했으며 이 방식을 기본으로 사용한다.
 4개 테이블 설계·신청 원본·기존 SQL은 변경하지 않는다. HTTP 인증·조회 클라이언트와 PostgreSQL 저장 어댑터는 별개다.
@@ -35,7 +36,7 @@ OA에 `WS_REVIEW`, `WS_REVIEW_EVENT`, `WS_REVIEW_PROPOSAL`을 추가하며, 사�
 새 행은 원본 보고서/버전과 분류 event를 FK로 참조한다. 분류/판정 event·제안은 추가 전용이며 head만 갱신한다.
 기존 payload UPDATE 권한은 없으며 신규 head의 state/version만 갱신한다. 새 테이블/역할/광범위 GRANT는 없다.
 owner/DBA가 점검 시간에 파일 전체를 한 트랜잭션으로 실행한다. 잠금 시간 초과나 사전 제약 불일치 시 rollback한다.
-앱은 자동 migration을 실행하지 않으며 성공한 SQL의 재실행은 실패한다. 합성 로컬 fixture 전용 upgrade는 [WORKSPACE](../oa-bridge/WORKSPACE.md)를 따른다.
+앱은 자동 migration을 실행하지 않으며 성공한 SQL의 재실행은 실패한다. 합성 로컬 fixture 전용 upgrade는 [WORKSPACE](../oa/WORKSPACE.md)를 따른다.
 `tests/`는 개발자용 로컬 검증 도구이며 DB 신청이나 운영 설치 시 실행할 파일이 아니다.
 사내 DB 없이 새 합성 DB를 만드는 명령은 `.venv/bin/python db/tests/run_mock.py`다.
 PostgreSQL 16+ 서버 바이너리가 필요하며, 별도 로컬 소켓 DB 생성·권한/회귀 테스트·종료를 수행한다.
@@ -92,7 +93,7 @@ OA에 명시적인 `WS_*` 관리 종류·고유 키·프로젝트/블록/버전 
 기존 payload·근거·보고서를 변경하지 않고 UPDATE 허용 컬럼/앱 역할도 늘리지 않는다.
 명시적인 004 kind 계약이 다르면 실패하고 전체 rollback한다. 이미 성공한 파일은 재실행하지 않는다.
 owner/DBA가 작업 중지·백업/복구·잠금 시간을 검토한 뒤 파일 전체를 적용한다. 앱이 DDL을 실행하지 않는다.
-이번 실제 실행은 독립 테스트 DB뿐이며 운영 설치를 대신하지 않는다. 기능·실행 방법은 [WORKSPACE.md](../oa-bridge/WORKSPACE.md)에 있다.
+이번 실제 실행은 독립 테스트 DB뿐이며 운영 설치를 대신하지 않는다. 기능·실행 방법은 [WORKSPACE.md](../oa/WORKSPACE.md)에 있다.
 
 ## 2. 데이터 계약
 

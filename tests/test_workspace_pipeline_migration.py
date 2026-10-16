@@ -1,4 +1,4 @@
-from tests_support import PgTestCase, ROOT, psycopg2
+from tests.support import PgTestCase, ROOT, psycopg2
 
 
 class WorkspacePipelineMigrationTests(PgTestCase):
@@ -12,8 +12,8 @@ class WorkspacePipelineMigrationTests(PgTestCase):
             raise
 
     def test_existing_records_table_identity_and_application_rights_are_preserved(self):
-        from sanity_db import Database
-        from sanity_workspace import WorkspaceStore
+        from common.sanity_db import Database
+        from oa.sanity_workspace import WorkspaceStore
         with Database("oa") as db, db.transaction(): WorkspaceStore(db).put("WS_CONFIG", "preserved", {"original": True})
         before = self.admin_query("SELECT record_id,payload,state,version FROM {oa} ORDER BY record_id").fetchall()
         tables = self.admin.execute("SELECT oid FROM pg_class WHERE relnamespace=%s::regnamespace AND relkind='r' ORDER BY oid", (self.schema,)).fetchall()

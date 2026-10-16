@@ -6,7 +6,7 @@
 
 - 수정은 가이드의 파일/메서드 허용 목록에 한정한다. 그 밖의 코드·SQL·UI·기존 테스트·설정 계약은 읽기 전용이다.
 - 실제 SSO SDK/계정 조회는 회사 어댑터에 연결하고, `AUTHORIZATION_NOT_IMPLEMENTED` 등 보호 장치를 해제하지 않는다.
-- item별 report 파서는 [PARSER_INTEGRATION.md](vwp-bridge/PARSER_INTEGRATION.md)의 추상 계약과 허용된 회사 구현/등록 지점만 사용한다. 실제 report는 사내에서 검증하고 외부 Codex 문의에는 합성 입력만 전달한다.
+- item별 report 파서는 [PARSER_INTEGRATION.md](vwp_bridge/PARSER_INTEGRATION.md)의 추상 계약과 허용된 회사 구현/등록 지점만 사용한다. 실제 report는 사내에서 검증하고 외부 Codex 문의에는 합성 입력만 전달한다.
 - 예상하지 못한 오류·테스트 실패·보호 파일 변경 필요 시 **수정/재시도를 중단하고 Codex에게 문의**한다. 자기 어댑터의 오류도 같다.
 - 문의는 가이드의 비식별 템플릿을 사용한다. 직접 연결 수단이 없으면 사용자가 현재 Codex 대화로 전달하도록 요청한다. 답변 전 상태는 `WAITING_FOR_CODEX`다.
 - 비밀값·실제 사내 자료를 공개 저장소/대화에 내보내지 않는다. 다른 작업자의 변경을 덮어쓰거나 되돌리지 않는다.
