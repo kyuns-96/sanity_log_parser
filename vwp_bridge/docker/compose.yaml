@@ -1,0 +1,37 @@
+name: sanity-vwp-bridge
+
+x-vwp-bridge: &vwp-bridge
+  image: ${VWP_BRIDGE_IMAGE:-sanity-vwp-bridge:local}
+  build:
+    context: ../..
+    dockerfile: vwp_bridge/docker/Dockerfile-prod
+    args:
+      VWP_BRIDGE_BASE_IMAGE: ${VWP_BRIDGE_BASE_IMAGE:?Set the approved company Python base image}
+  # raw preserves literal dollar signs in passwords. Requires Compose 2.30+.
+  env_file:
+    - path: ${VWP_BRIDGE_ENV_FILE:?Set an absolute path to the VWP-only runtime env file}
+      format: raw
+  user: "10001:10001"
+  init: true
+  restart: "no"
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  stop_grace_period: 20s
+
+services:
+  # One-shot CLI. Its default command only prints usage and exits successfully.
+  vwp-bridge:
+    <<: *vwp-bridge
+
+  # Existing legacy classification/evidence worker. Starting it writes to the DB
+  # and may call the configured VWP model; enable explicitly after site checks.
+  vwp-worker:
+    <<: *vwp-bridge
+    profiles: [worker]
+    restart: unless-stopped
+    command: [python, -m, vwp_bridge.main, work, --interval, "2"]

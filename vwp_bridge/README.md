@@ -2,6 +2,8 @@
 
 VWP-bridge의 파서·근거·모델·worker는 이 디렉터리, 회사 구현은 `integration/`에 있습니다. [담당 AI 지시문](INTERNAL_AI_TASK.md), [서버별 소스·실행 안내](../DEPLOYMENT.md), [DB 연결 인계](../db/CONNECTION_HANDOFF.md)를 따릅니다. 저장소 루트에서 `python -m vwp_bridge.main`으로 실행합니다.
 
+Docker 이미지 빌드·비공개 설정·CA/분석 입력 마운트와 worker 실행은 [Docker 안내](docker/README.md)를 따릅니다.
+
 완료된 VWP snapshot을 검증하고 개별 판정·군집·전체 근거를 `sanity_vwp_data`에 저장합니다.
 OA에 전달할 압축 번들은 `sanity_vwp_to_oa`에 등록합니다.
 SQLite·OA 파일 복사·직접 통신은 사용하지 않습니다.

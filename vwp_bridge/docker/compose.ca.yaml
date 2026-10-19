@@ -1,0 +1,15 @@
+# Optional: append -f vwp_bridge/docker/compose.ca.yaml for private DB/model CAs.
+x-ca: &ca
+  volumes:
+    - type: bind
+      source: ${VWP_BRIDGE_CA_DIR:?Set an absolute path to the private CA directory}
+      target: /run/sanity-ca
+      read_only: true
+      bind:
+        create_host_path: false
+
+services:
+  vwp-bridge:
+    <<: *ca
+  vwp-worker:
+    <<: *ca
