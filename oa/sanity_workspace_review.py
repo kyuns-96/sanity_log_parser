@@ -2,6 +2,7 @@
 from common.sanity_common import ReviewError, digest
 from common.sanity_db import json_value, lock_key, uuid_value
 from common.sanity_review_advice import ApprovedCriteriaAdvisor, report_facts, validate_advice
+from common.sanity_submission import source_digest
 from oa.sanity_workspace import WorkspaceStore, record_id, utcnow
 
 
@@ -16,15 +17,17 @@ class WorkspaceReviewStore:
     def row(self, kind, key):
         return self.db.execute("SELECT * FROM {oa} WHERE record_type=%s AND workspace_key=%s", (kind, key)).fetchone()
 
-    def context(self, user_id, block_id, version_id, report_id, write=False):
+    def context(self, user_id, block_id, version_id, report_id, write=False, *, hydrate_source=True):
         block, _ = self.ws.access(user_id, block_id, write=write)
         version = self.ws.version(user_id, block_id, version_id)["payload"]
-        report = self.ws.report(user_id, block_id, version_id, report_id)
+        report = self.ws.report(user_id, block_id, version_id, report_id,hydrate_source=hydrate_source)
         scope = {key: report.get(key) for key in ("project_id", "block_id", "item_id", "family", "parser", "rule_version", "eco")}
         scope["layout"] = version["layout"]
         return {"report": report, "version": version, "scope": scope, "facts": report_facts(report),
-                "source_sha256": digest(report), "can_review": user_id in block["payload"]["owners"],
-                "ready": bool(report.get("analysis_ready") and report.get("parse_status") == "COMPLETE" and report.get("raw_report"))}
+                "source_sha256": source_digest(report), "can_review": user_id in block["payload"]["owners"],
+                "ready": bool(report.get("analysis_ready") and report.get("parse_status") == "COMPLETE"
+                              and (report.get('source_complete') and report.get('delivery_ready')
+                                   if report.get('source_storage')=='PARTS_V2' else report.get("raw_report")))}
 
     @staticmethod
     def metadata(context):
@@ -77,7 +80,7 @@ class WorkspaceReviewStore:
                 # References must still point to the immutable source that was reviewed.
                 if event["report_id"] not in sources:
                     source = self.row("WS_REPORT", event["report_id"])
-                    sources[event["report_id"]] = digest(source["payload"]) if source else None
+                    sources[event["report_id"]] = source_digest(source["payload"]) if source else None
                 if sources[event["report_id"]] != event["source_sha256"]:
                     raise ReviewError("STATE_CORRUPT", "Confirmed case source differs")
                 result.append(event)
@@ -94,7 +97,7 @@ class WorkspaceReviewStore:
             current, _ = self.current(reference["report_id"], reference.get("group_id"))
             source = self.row("WS_REPORT", reference["report_id"])
             if (not current or current["id"] != reference["id"] or not source
-                    or digest(source["payload"]) != reference["source_sha256"]):
+                    or source_digest(source["payload"]) != reference["source_sha256"]):
                 return True
         return False
 

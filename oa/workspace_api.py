@@ -210,6 +210,7 @@ def create_app(*, origins, static_dir=None, codex_mock_enabled=False, codex_advi
                   "CLUSTER_NOT_CONFIRMED": 409, "CLUSTER_NOT_READY": 409, "CLUSTER_BLOCKED": 409,
                   "CLUSTER_LIMIT": 413,
                   "REPORT_LIMIT": 413,
+                  "SOURCE_CONTEXT_LIMIT": 413, "SOURCE_FILE_ON_VWP": 409,
                   "CLUSTER_TASK_ACTIVE": 409,
                   "RATIONALE_REQUIRED": 409, "RATIONALE_STALE": 409,
                   "AI_BUSY": 409, "AI_MOCK_LIMIT": 429, "SYNTHETIC_ONLY": 400,
@@ -266,6 +267,13 @@ def create_app(*, origins, static_dir=None, codex_mock_enabled=False, codex_advi
         with workspace_transaction(readonly=True) as db:
             return WorkspaceStore(db).versions(actor["user"]["id"], block_id)
 
+    @app.get(API + "/blocks/{block_id}/submissions")
+    def submission_list(block_id: ID, offset: Annotated[int, Query(ge=0)] = 0,
+                        limit: Annotated[int, Query(ge=1,le=100)] = 25, actor=Depends(authenticated)):
+        from oa.sanity_workspace_sources import submissions
+        with workspace_transaction(readonly=True) as db:
+            return submissions(db,actor['user']['id'],block_id,offset=offset,limit=limit)
+
     @app.get(API + "/blocks/{block_id}/history")
     def history(block_id: ID, actor=Depends(authenticated)):
         with workspace_transaction(readonly=True) as db:
@@ -283,15 +291,15 @@ def create_app(*, origins, static_dir=None, codex_mock_enabled=False, codex_advi
                 family: Annotated[str | None, Query(pattern=r"^(GCA|VCLP|SPYGLASS)$")] = None,
                 status: Annotated[str | None, Query(pattern=r"^(PASS|FAIL|UNKNOWN|MISSING)$")] = None,
                 search: Annotated[str, Query(max_length=100)] = "", offset: Annotated[int, Query(ge=0)] = 0,
-                limit: Annotated[int, Query(ge=1, le=100)] = 25, actor=Depends(authenticated)):
+                limit: Annotated[int, Query(ge=1, le=100)] = 25, include_history: bool = False, actor=Depends(authenticated)):
         with workspace_transaction(readonly=True) as db:
             return WorkspaceStore(db).reports(actor["user"]["id"], block_id, version_id, eco=eco,
-                item_id=item_id, family=family, status=status, search=search, offset=offset, limit=limit)
+                item_id=item_id, family=family, status=status, search=search, offset=offset, limit=limit,include_history=include_history)
 
     @app.get(API + "/blocks/{block_id}/versions/{version_id}/reports/{report_id}")
     def report(block_id: ID, version_id: ID, report_id: ID, actor=Depends(authenticated)):
         with workspace_transaction(readonly=True) as db:
-            return WorkspaceStore(db).report(actor["user"]["id"], block_id, version_id, report_id)
+            return WorkspaceStore(db).report(actor["user"]["id"], block_id, version_id, report_id,hydrate_source=False)
 
     @app.get(API + "/blocks/{block_id}/versions/{version_id}/reports/{report_id}/review")
     def review_detail(block_id: ID, version_id: ID, report_id: ID, actor=Depends(authenticated)):
@@ -420,7 +428,8 @@ def create_app(*, origins, static_dir=None, codex_mock_enabled=False, codex_advi
     @app.get(API + "/blocks/{block_id}/versions/{version_id}/reports/{report_id}/source")
     def report_source(block_id: ID, version_id: ID, report_id: ID, actor=Depends(authenticated)):
         with workspace_transaction(readonly=True) as db:
-            report = WorkspaceStore(db).report(actor["user"]["id"], block_id, version_id, report_id)
+            report = WorkspaceStore(db).report(actor["user"]["id"], block_id, version_id, report_id,hydrate_source=False)
+            check(report.get('source_storage')!='PARTS_V2','SOURCE_FILE_ON_VWP','Original report bytes are retained on VWP')
             return Response(report.get("raw_report") or "", media_type="text/plain",
                 headers={"Content-Disposition": f'attachment; filename="{report_id}.rpt"'})
 

@@ -125,7 +125,16 @@ class WorkspaceStore:
                 or version["workspace_block_ref"] != block["record_id"]
                 or version["payload"]["block_id"] != block_id):
             raise ReviewError("NOT_FOUND", "Version is outside this block")
-        return version
+        return {**version, "payload": self.version_ecos(version)}
+
+    def version_ecos(self, row):
+        """New ECOs are received facts; the original version row stays immutable."""
+        value = row['payload']
+        if value.get('source_namespace') is None:
+            return value
+        ecos = self.db.execute("SELECT DISTINCT payload->>'eco' AS eco FROM {oa} WHERE record_type='WS_REPORT' "
+                              "AND workspace_version_ref=%s ORDER BY 1",(row['record_id'],)).fetchall()
+        return {**value,'ecos':[r['eco'] for r in ecos] if value['layout']=='POST' else [None]}
 
     def por(self, block_id):
         row = self.get("WS_POR", block_id)
@@ -140,6 +149,7 @@ class WorkspaceStore:
                 "assigned_by": state.get("assigned_by"), "assigned_at": state.get("assigned_at")}
 
     def overview(self, user_id):
+        from oa.sanity_workspace_sources import CURRENT_SOURCES_SQL
         user = self.user(user_id)
         people = {row["workspace_key"]: self.public_user(row) for row in self.rows("WS_USER")}
         projects = []
@@ -161,7 +171,7 @@ class WorkspaceStore:
                     report_version = received["payload"] if received else None
                 reports = self.db.execute("SELECT payload->>'check_status' AS check_status,count(*) AS count FROM {oa} "
                     "WHERE record_type='WS_REPORT' AND workspace_block_ref=%s AND workspace_version_ref=%s "
-                    "GROUP BY payload->>'check_status'", (block["record_id"], record_id("WS_VERSION", report_version["id"]) if report_version else None)).fetchall()
+                    "AND " + CURRENT_SOURCES_SQL + " GROUP BY payload->>'check_status'", (block["record_id"], record_id("WS_VERSION", report_version["id"]) if report_version else None)).fetchall()
                 counts = {row["check_status"]: row["count"] for row in reports}
                 blocks.append({**value, "owners": [people[uid] for uid in value["owners"]],
                                "can_assign_por": user_id in value["owners"], "por": por, "report_version": report_version,
@@ -174,14 +184,17 @@ class WorkspaceStore:
         block, _ = self.access(user_id, block_id)
         rows = self.db.execute("SELECT * FROM {oa} WHERE record_type='WS_VERSION' AND workspace_block_ref=%s "
                                "ORDER BY payload->>'net_ver' DESC,payload->>'layout' DESC", (block["record_id"],)).fetchall()
-        return {"items": [row["payload"] for row in rows], "por": self.por(block_id),
+        return {"items": [self.version_ecos(row) for row in rows], "por": self.por(block_id),
                 "can_assign_por": user_id in block["payload"]["owners"]}
 
-    def reports(self, user_id, block_id, version_id, *, eco=None, item_id=None, family=None, status=None, search="", offset=0, limit=25):
+    def reports(self, user_id, block_id, version_id, *, eco=None, item_id=None, family=None, status=None, search="", offset=0, limit=25, include_history=False):
         version = self.version(user_id, block_id, version_id)
         if eco not in version["payload"]["ecos"]:
             raise ReviewError("INVALID_ECO", "Select an ECO from this version")
         predicates, parameters = ["record_type='WS_REPORT'", "workspace_version_ref=%s", "payload->>'eco' IS NOT DISTINCT FROM %s"], [version["record_id"], eco]
+        if not include_history:
+            from oa.sanity_workspace_sources import CURRENT_SOURCES_SQL
+            predicates.append(CURRENT_SOURCES_SQL)
         base = " AND ".join(predicates)
         counts = self.db.execute("SELECT payload->>'check_status' AS status,count(*) AS count FROM {oa} WHERE " + base +
                                  " GROUP BY payload->>'check_status'", parameters).fetchall()
@@ -216,13 +229,16 @@ class WorkspaceStore:
         reviews = review_summaries(self.db, [row["item"]["id"] for row in rows])
         pipelines = pipeline_summaries(self.db, [row["item"]["id"] for row in rows], compact=True)
         for row in rows:
+            if row['item'].get('source_storage') == 'PARTS_V2':
+                from oa.sanity_workspace_sources import delivery_status
+                row['item'].update(delivery_status(self.db,row['item']))
             row["item"]["human_review"] = reviews.get(row["item"]["id"])
             row["item"]["group_review_summary"] = pipelines.get(row["item"]["id"])
         return {"items": [row["item"] for row in rows], "total": total, "offset": offset, "limit": limit,
                 "counts": {row["status"]: row["count"] for row in counts}, "groups": list(groups.values()),
                 "version": version["payload"]}
 
-    def report(self, user_id, block_id, version_id, report_id):
+    def report(self, user_id, block_id, version_id, report_id, *, hydrate_source=True):
         version = self.version(user_id, block_id, version_id)
         report = self.db.execute("SELECT workspace_version_ref,workspace_block_ref,"
             "CASE WHEN octet_length(payload::text)<=%s THEN payload END AS payload "
@@ -234,7 +250,13 @@ class WorkspaceStore:
             raise ReviewError("NOT_FOUND", "Report is outside this version")
         if report["payload"] is None:
             raise ReviewError("REPORT_LIMIT", "Report exceeds the explicit server byte budget; no partial source accepted")
-        return report["payload"]
+        value = report['payload']
+        if value.get('source_storage') == 'PARTS_V2':
+            from oa.sanity_workspace_sources import delivery_status, hydrate
+            value = {**value,**delivery_status(self.db,value)}
+            if hydrate_source:
+                value = hydrate(self.db,value)
+        return value
 
     def history(self, user_id, block_id):
         block, _ = self.access(user_id, block_id)

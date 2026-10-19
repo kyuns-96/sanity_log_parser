@@ -7,7 +7,7 @@ export type WorkspaceProject = { id: string; name: string; description: string; 
 export type WorkspaceOverview = { user: WorkspaceUser; projects: WorkspaceProject[]; data_origin: string }
 export type WorkspaceVersions = { items: WorkspaceVersion[]; por: WorkspacePor; can_assign_por: boolean }
 export type WorkspaceRecord = { id: string; fields: Record<string, unknown>; check_status: string; raw: string; raw_display_truncated?: boolean; line_start: number; line_end: number; reasons: string[] }
-export type WorkspaceReport = { id: string; item_id?: string; project_id: string; block_id: string; version_id: string; eco: string | null; family: string; rule: string; check_status: string; parse_status: string; parser: string; raw_report?: string | null; record_count: number; records?: WorkspaceRecord[]; blockers: string[]; analysis_ready: boolean; human_review?: { conclusion: string; actor: WorkspaceUser; at: string; revision: number; reusable: boolean } | null; group_review_summary?: PipelineSummary | null }
+export type WorkspaceReport = { id: string; item_id?: string; project_id: string; block_id: string; version_id: string; eco: string | null; family: string; rule: string; check_status: string; parse_status: string; parser: string; raw_report?: string | null; record_count: number; records?: WorkspaceRecord[]; blockers: string[]; analysis_ready: boolean; source_storage?: 'PARTS_V2'; delivery_ready?: boolean; delivery_blockers?: string[]; human_review?: { conclusion: string; actor: WorkspaceUser; at: string; revision: number; reusable: boolean } | null; group_review_summary?: PipelineSummary | null }
 export type WorkspaceItemGroup = { item_id: string; total: number; counts: Record<string, number>; parse_counts: Record<string, number>; families: string[] }
 export type WorkspaceReports = { items: WorkspaceReport[]; total: number; offset: number; limit: number; counts: Record<string, number>; groups: WorkspaceItemGroup[]; version: WorkspaceVersion }
 export type WorkspaceEvent = { id: string; previous_version_id: string | null; version: WorkspaceVersion; actor: WorkspaceUser; reason: string; at: string; revision: number }
@@ -50,6 +50,8 @@ const messages: Record<string, string> = {
   DATABASE_ERROR: '저장 결과를 확인하지 못했습니다. 같은 요청을 다시 확인할 수 있습니다.',
   INVALID_CRITERIA: '재사용할 기준과 원본에서 확인한 적용 조건을 함께 지정해 주세요.',
   REVIEW_BLOCKED: '검사 근거가 미수신 또는 미완료입니다. 먼저 근거를 확인하거나 보류로 기록해 주세요.',
+  SOURCE_CONTEXT_LIMIT: '보고서가 현재 검토 입력 한도를 초과했습니다. 전체 로그를 유지한 상태로 처리 범위 확장이 필요합니다.',
+  SOURCE_FILE_ON_VWP: '원본 report 파일은 VWP에 보관됩니다. 로그는 검토 화면에서 확인할 수 있습니다.',
   PROPOSAL_STALE: '판정 또는 참조 기준이 변경되었습니다. 최신 기준으로 제안을 다시 받아 주세요.',
   AI_NOT_CONFIGURED: '사내 AI 검토가 아직 연결되지 않았습니다.',
   AI_BUSY: '다른 AI 분류 요청이 진행 중입니다. 완료 후 다시 요청해 주세요.',

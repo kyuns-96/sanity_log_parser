@@ -8,6 +8,8 @@ Docker 이미지 빌드·비공개 설정·CA/분석 입력 마운트와 worker 
 OA에 전달할 압축 번들은 `sanity_vwp_to_oa`에 등록합니다.
 SQLite·OA 파일 복사·직접 통신은 사용하지 않습니다.
 
+새 `sanity submit`의 입력은 VWP 내부 인증·ACL 폴더에서 접수해 bridge 전용 영속 원본/DB에 저장합니다. 제공한 별도 `python -m vwp_bridge.submission_worker`가 접수·V2 분할 전달·OA 응답/receipt를 처리합니다. 설치/설정·회사 신원/승인 어댑터는 [제출 실행 안내](../vwp/SUBMISSION.md)를 따릅니다. 실제 mount/ACL·SDK·운영 DB는 미연결이며 기존 `work`는 이 작업자를 대신하지 않습니다.
+
 설치·DB 구성·공통 모듈 배포는 [루트 안내](../README.md)를 따릅니다.
 VWP 서버의 비공개 `.env`에 `SANITY_DB_HOST/PORT/NAME/USER_NAME/PASSWORD`와 `SANITY_DB_SCHEMA`,
 TLS 설정을 입력합니다. 사용자/비밀번호는 VWP의 제한된 계정이며 OA 계정은 필요하지 않습니다.

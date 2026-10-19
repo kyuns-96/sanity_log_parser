@@ -1,5 +1,7 @@
 # PostgreSQL 4개 테이블 신청 원본·변경 안내
 
+사용자 제출의 추가 저장 계약은 [제출 실행 안내](../vwp/SUBMISSION.md)와 [DB 인계 7절](CONNECTION_HANDOFF.md#7-사용자-제출의-저장-경로)을 따른다. CLI·분할 송수신/원자 반영·receipt와 [008_submissions.sql](008_submissions.sql)을 제공했다. VWP 내부 파일 인계→bridge 영속 원본/private DB→공유 큐→OA staging/private DB→역방향 응답이며 네 테이블/제한 로그인은 유지한다. **실제 회사 SDK·인프라·운영 DB 적용은 미완료**다. 증분 SQL은 007 이후 사용자/DBA 검토 절차로 적용한다.
+
 **기존 `db/form/`으로 테이블 신청을 완료한 상태**다. 신청 원본 4개와 `002`·`003`은 그대로 보존한다.
 이후 기능 추가는 별도 증분 변경 SQL로 적용한다. 테이블을 재신청·재생성하거나 기존 데이터를 삭제하지 않는다.
 모든 테이블은 같은 PostgreSQL DB에 있어야 한다. PostgreSQL 16 이상, UTF-8을 전제로 한다.
@@ -27,6 +29,7 @@ OA 브라우저의 로컬 API 접속은 브리지 간 통신과 별개다.
 | [005_workspace.sql](005_workspace.sql) | OA 관리 레코드·PoR·세션, scope/FK/인덱스 확장 | `004` 적용 후 workspace를 도입할 때 owner/DBA가 한 번 실행 |
 | [006_workspace_reviews.sql](006_workspace_reviews.sql) | OA 사용자 판정 head·불변 사례/제안, 원본/버전/사례 참조 FK | `005` 적용 후 사용자 판정 기능 도입 시 owner/DBA가 한 번 실행 |
 | [007_workspace_pipeline.sql](007_workspace_pipeline.sql) | OA 분류 개정·그룹 판정/제안, 확정 분류 event 참조 FK | `006` 적용 후 두 단계 그룹 검토를 도입할 때 owner/DBA가 한 번 실행 |
+| [008_submissions.sql](008_submissions.sql) | V2 SUBMISSION/SOURCE_RUN/OUTBOX·OA staging, SOURCE 큐 종류·중복/실행 순서·범위 제약 | `007` 적용 후 새 제출 경로 도입 시 owner/DBA가 검토해 한 번 실행. 앱 자동 적용 없음 |
 
 전체 준비 순서는 **신청한 `form`으로 생성 → `002` → 역할 준비 → `003` → `004`**다.
 이미 완료한 단계는 반복하지 않는다. 생성·`002`·`003`까지 완료했다면 **`004`만 실행**한다.
