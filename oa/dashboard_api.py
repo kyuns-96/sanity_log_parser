@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Loopback-only OA dashboard API. No bridge-to-bridge HTTP or automatic writes."""
+"""OA dashboard API with local defaults and explicit SSO container hosts."""
 from __future__ import annotations
 
 import importlib.util
@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from oa.sanity_auth import Actor, AuthRequest, AuthenticationService, AuthMode, SSOIdentityProvider, UserDirectory, require_business_access
+from oa.sanity_hosts import allowed_hosts as validate_hosts
 from common.sanity_common import ReviewError, coverage
 from common.sanity_config import access_mode, load_environment
 from common.sanity_db import Database, Queue
@@ -137,12 +138,13 @@ def summary_only(value):
 def create_app(*, auth_mode: AuthMode | None = None,
                identity_provider: SSOIdentityProvider | None = None,
                user_directory: UserDirectory | None = None,
-               auth_router: APIRouter | None = None):
+               auth_router: APIRouter | None = None,
+               allowed_hosts: str | None = None):
     app = FastAPI(title="OA Sanity Dashboard", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.authentication = AuthenticationService(mode=auth_mode, identity_provider=identity_provider,
                                                      user_directory=user_directory)
     app.add_middleware(RequestBoundary)
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]"])
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=validate_hosts(allowed_hosts), www_redirect=False)
 
     @app.exception_handler(ReviewError)
     async def review_error(request, exc):

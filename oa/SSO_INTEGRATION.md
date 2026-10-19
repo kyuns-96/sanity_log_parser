@@ -97,13 +97,14 @@ app = create_app(
     auth_mode="sso",
     identity_provider=CorporateIdentityProvider(),
     user_directory=CorporateUserDirectory(),
+    allowed_hosts=os.environ.get("OA_ALLOWED_HOSTS"),  # 기존 os import·배포 설정 유지
     auth_router=router,  # router의 /login → 실제 /auth/login
 )
 ```
 
 `company_sso.login_routes`는 사내에서 추가할 모듈 이름 예시이며 현재 파일이 아니다. 로그인 시작·콜백 검증·세션 생성/폐기와 해당 SSO에 필요한 state/nonce/PKCE 또는 SAML 검증은 여기서 구현한다. callback을 `SSOIdentityProvider.authenticate` 안에서 매번 처리하지 않는다. 쿠키 인증은 안전한 쿠키 설정과 상태 변경 요청의 CSRF 검증을 포함해야 한다. 공통 API/UI 변경이 필요한 부분은 요구 계약을 Codex에게 전달하며, 연결되기 전 업무 API 차단을 유지한다.
 
-현재 API는 loopback 및 고정 Host 허용 목록을 유지한다. 사내 AI는 회사 배포용 proxy·Host·TLS 계약을 확인하고 실제 경계 변경은 사용자/Codex에게 요청한다. 무조건적인 forwarded header 신뢰나 모든 Host 허용으로 대체하지 않는다.
+직접 실행하는 `python -m oa.sso_app`은 loopback 8000을 유지한다. 사용자가 요청한 사내 Nginx 뒤의 컨테이너 실행은 [루트 Docker 구성](../docker/README.md)이 담당하며, uvicorn 한 개를 컨테이너의 8080에 실행한다. `sso_app.py`는 `OA_ALLOWED_HOSTS`의 정확한 도메인/IP를 적용하고 미지정 시 기존 localhost 목록만 허용한다. 회사 어댑터 주입 시 이 배포 설정을 보존한다. 사내 AI는 실제 proxy·TLS·SSO callback 계약을 확인하되 공통 bind·Host 검증을 변경하지 않는다. 무조건적인 forwarded header 신뢰나 모든 Host 허용으로 대체하지 않는다.
 
 ## 5. 세션 응답과 오류 계약
 

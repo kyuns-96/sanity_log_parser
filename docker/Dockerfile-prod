@@ -1,0 +1,24 @@
+# One company image containing Python 3.10+, Node 20.18 and npm.
+ARG OA_BASE_IMAGE=sanity-oa-base:local
+FROM ${OA_BASE_IMAGE}
+
+USER 0
+WORKDIR /opt/work
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+
+COPY oa/requirements.txt ./oa/requirements.txt
+RUN python3 -m pip install --no-cache-dir -r oa/requirements.txt
+
+COPY oa/dashboard/ ./oa/dashboard/
+RUN npm --prefix oa/dashboard ci --include=dev --engine-strict --no-audit --no-fund
+RUN npm --prefix oa/dashboard run build
+
+COPY common/ ./common/
+COPY oa/*.py ./oa/
+COPY oa/integration/ ./oa/integration/
+
+USER 10001:10001
+EXPOSE 8080
+HEALTHCHECK NONE
+ENTRYPOINT []
+CMD ["python3", "-m", "uvicorn", "oa.sso_app:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log", "--no-proxy-headers", "--log-level", "critical"]
