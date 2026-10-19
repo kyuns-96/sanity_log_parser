@@ -23,9 +23,13 @@ sanity item의 보고서 행에서 **검토 시작**을 누르면 **1. 로그 �
 판정은 **PASS / FAIL / 보류**와 **판정 근거**를 기록합니다. 보류 그룹이 남으면 완료로 표시하지 않습니다.
 첫 방문·완료 동선과 모바일/읽기 전용 검증은 합성 QA 서버에서 `npx playwright test --config playwright.guidance.config.ts`로 실행합니다. 외부 모델은 호출하지 않습니다.
 
+빌드 기준은 **Node 20.18.0**이다. Vite 6.4.4와 React 플러그인 4.7.0을 고정하고,
+lockfile로 하위 의존성도 고정한다. Node 버전 관리 도구를 쓰면 이 디렉터리의 `.nvmrc`를 적용한다.
+회사 Docker 구성은 [Docker 실행 안내](../docker/README.md)를 따른다.
+
 ```sh
 cd oa/dashboard
-npm ci
+npm ci --engine-strict
 npm run build
 ```
 
