@@ -7,6 +7,8 @@ VWP private 테이블과 파일에는 접근하지 않습니다. Jira 조회·�
 React·shadcn UI가 검토 화면이고 AI 호출은 VWP 작업자만 수행합니다. 실제 사내 AI/DB 검증은 대기 중입니다.
 공통 설치·배포와 DB 신청은 [루트 안내](../README.md)를 따릅니다.
 
+[사용자 report 제출](../vwp/SUBMISSION.md)은 VWP 터미널에서 시작하고 OA에는 DB로 수신합니다. 별도 `python -m oa.submission_receiver`가 V2 staging·전체 검증·원자 반영/응답을 수행하며 기존 검토 화면에 로그를 페이지로 제공합니다. VWP 제출/원본 폴더를 OA에 마운트하지 않습니다. 공통 구현과 실제 회사 계정/담당·SSO·운영 DB 연결 완료를 구분합니다.
+
 ## 사내 SSO 연동 경계
 
 사내 AI의 수정 허용 범위와 디버깅 중단 규칙은 [INTERNAL_AI_GUIDE.md](../INTERNAL_AI_GUIDE.md)를 먼저 따릅니다.

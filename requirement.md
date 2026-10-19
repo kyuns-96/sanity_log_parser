@@ -2,7 +2,11 @@
 
 ## 1. 현재 기준과 범위
 
-이 문서는 2026-10-15 기준 요구사항과 prototype의 경계를 정리한다. 사용자 결정에 따라 **Jira 조회·후보 연결·게시·시뮬레이터를 폐지**하고, oa/dashboard의 React·shadcn UI를 검토와 제어 화면으로 사용한다. 과거 Jira 맥락이 들어간 보고서의 렌더러 호환은 기존 기록 검증용이며 새 실행의 조회·게시 기능이 아니다.
+이 문서는 2026-10-16까지의 요구사항과 prototype의 경계를 정리한다. 사용자 결정에 따라 **Jira 조회·후보 연결·게시·시뮬레이터를 폐지**하고, oa/dashboard의 React·shadcn UI를 검토와 제어 화면으로 사용한다. 과거 Jira 맥락이 들어간 보고서의 렌더러 호환은 기존 기록 검증용이며 새 실행의 조회·게시 기능이 아니다.
+
+사내 Q1 문의를 반영한 분산 수집·PRE/POST 원천 분리·예상 범위 승인·중복 처리는 [19절](#source-collection-design)과 [세부 설계](vwp/SOURCE_COLLECTION_DESIGN.md)를 따른다. 별도 V2 공통 경로를 구현했으며 기존 schema 1과 실제 회사 SDK/인프라 미연결 상태를 구분한다.
+
+사용자 터미널의 제출 명령·설치·파일/DB 저장·접수 상태 확인은 [20절](#user-report-submission)과 [사용자 제출 설계](vwp/SUBMISSION_DESIGN.md)를 따른다. `bin/sanity`와 양쪽 source 작업자·증분 SQL을 제공한다. 실제 회사 어댑터·인프라 준비와 실행은 [SUBMISSION.md](vwp/SUBMISSION.md)를 따른다.
 
 2026-10-13 논의한 VWP AI 기반 clustering, 최초 report부터의 사람 검토 루프, 대량 처리와 evidence 추가는 [14절 확장 명세](#ai-clustering)에 정리한다. 1~13절의 현재 구현과 14절의 목표 동작을 구분한다. 추가로 확인한 AI 접속 방식·OA 원문 조회 범위·정보 제공 일정은 [14.13절](#integration-decisions)을 따른다. 요구사항 확정과 코드 구현·실환경 검증 완료를 구분한다.
 
@@ -194,7 +198,7 @@ VWP OpenAI 호환 API/선택 CLI 어댑터와 DB 작업자를 구현했다. 기�
 
 DB 없는 순수 테스트와 실제 제한된 계정의 PostgreSQL 통합 결과를 구분한다. 테스트는 별도 sanity_test_* DB의 자신이 만든 임시 스키마만 정리하며 운영 DB를 초기화하지 않는다. run_tests.py --require-db는 DB 검증 조건이 없으면 실패한다. 테스트 수와 결과는 실제 실행 후 REVIEW.md에 기록하며 문서 설계만으로 통과를 주장하지 않는다.
 
-10,000~100,000줄 입력에 반복/고유 그룹 분포, 입력 바이트, 최대 행 길이, 시간·메모리·DB 용량을 함께 측정한다. summary JSON 16MiB, 전송 압축 전후 각각 64MiB, 원문 한 건 64MiB 제한이 있다. 분류 결과는 분할 전송하지만 최초 분석 번들의 고유 그룹 전체 목록·초대형 행의 엄격한 메모리 상한, 보존/삭제 작업자는 미구현이다.
+10,000~100,000줄 입력에 반복/고유 그룹 분포, 입력 바이트, 최대 행 길이, 시간·메모리·DB 용량을 함께 측정한다. legacy summary JSON 16MiB, 전송 압축 전후 각각 64MiB, 원문 한 건 64MiB 제한이 있다. legacy 최초 분석 번들의 고유 그룹 전체 목록·초대형 행의 엄격한 메모리 상한, 보존/삭제 작업자는 별도 과제다. 새 V2 제출은 envelope 포함 압축 전/후 각 4MiB·최대 1,000건씩 분할하고 전체 수신을 검증한다. 전체 검토 context의 1,000,000건/256MiB 예산 초과는 명시적으로 차단하며 잘라 완료로 표시하지 않는다.
 
 실데이터 성능 목표, 정식 DB 연결·운영 인증·사내 report 어댑터·기준 목록 자동 수집·운영 AI는 현장 정보와 별도 검증이 필요하다. 실제 사내 DB 연결은 사용자가 사내에 코드를 배포한 뒤 확인한다. 개발 측에서는 별도 로컬 PostgreSQL mock DB와 합성 데이터/모의 AI로 테스트한다. mock DB는 새 임시 인스턴스와 제한된 VWP/OA 계정을 사용하며 운영 `.env`·사내 endpoint·실제 AI를 사용하지 않는다. 계정 권한·SQL 제약·트랜잭션·큐 전달·분류/검토 상태 전이를 검증하되 실제 네트워크/TLS·모델 품질 검증과 구분한다. 과거 SQLite/16테이블 데이터 자동 이전은 제공하지 않는다.
 
@@ -653,7 +657,7 @@ Timing ECO·Function ECO는 외부 변경의 성격이며 대시보드가 각각
 
 ### 15.9. 결과 수신과 버전 연결 — 운영 구현안
 
-VWP 결과에는 기존 실행·item·report 정보와 함께 프로젝트·블록 식별자, NET_VER, 전체 REVISION, layout 단계, POST의 ECO, PRE/POST 원본 연결에 필요한 메타데이터가 있어야 한다. 실제 필드명·계약 버전은 송신·수신 측을 함께 수정할 때 [PROTOCOL.md](PROTOCOL.md)에 정의한다. 기존 `project/design/stage` 필드만으로 새로운 버전 계약이 구현된 것으로 보지 않는다.
+VWP 결과에는 기존 실행·item·report 정보와 함께 프로젝트·블록 식별자, NET_VER, 전체 REVISION, layout 단계, POST의 ECO, PRE/POST 원본 연결에 필요한 메타데이터가 있어야 한다. Q1 이후 논리 필드 배치와 ID 정책은 [19절](#source-collection-design)에 정의한다. 실행 가능한 wire schema/계약 버전은 송신·수신 측을 함께 구현할 때 [PROTOCOL.md](PROTOCOL.md)에 반영한다. 기존 `project/design/stage` 또는 임의 condition 필드만으로 새로운 버전 계약이 구현된 것으로 보지 않는다.
 
 - VWP 결과는 등록된 프로젝트·블록으로 연결한다. 알 수 없는 범위나 필수 버전 정보가 없으면 연결 대기·오류로 표시하고 다른 블록에 자동 배정하지 않는다.
 - 결과 수신으로 새 버전·ECO를 목록에 추가할 수 있지만 담당자·권한·PoR을 자동으로 만들거나 변경하지 않는다.
@@ -1095,3 +1099,83 @@ drag & drop은 기존처럼 구성 초안을 저장하고 영향받은 근거의
 - 보고서 목록의 시작 동작은 행의 **검토 시작**으로 통일한다. 상세 열과 재사용 조건·출처·이력은 필요할 때 조회한다. 실제 모델 호출은 사용자가 **AI로 그룹 만들기**를 눌렀을 때만 실행하며 기존 그룹의 재실행은 ‘설정과 이전 기록’에서 수행한다.
 
 초록색 테마·현재 DB와 API·불변 근거·역할/범위·순차 확정·전체 배정/페이지 검증은 유지한다. 이 절은 내부 AI에게 공통 UI나 저장 계약을 수정할 권한을 추가하지 않는다. 검증에는 데스크톱 세 작업 영역의 동시 표시, 두 단계 실제 저장/보류/정정/완료, 모바일 미저장 보호·가로 넘침, 읽기 전용 및 기존 이동 동작을 포함한다.
+
+<a id="source-collection-design"></a>
+
+## 19. 분산 수집과 PRE/POST 인계 — 2026-10-16 Q1 설계 검토
+
+### 19.1. 변경의 이유와 현재 상태
+
+실제 운영은 N명의 사용자가 각 PC에서 자기 REVISION의 plan/export/collect를 준비해 VWP-bridge에 전달하는 형태다. 하나의 제출에는 PRE 대응 단위와 POST 슬롯×mode×item이 포함될 수 있다. 기존 단일 run 필드와 bundle 단위 중복만으로 이 자료를 workspace 버전에 정확히 연결했다고 볼 수 없다.
+
+[분산 수집 세부 설계](vwp/SOURCE_COLLECTION_DESIGN.md)를 기준으로 별도 V2 validator·봉인/분할 전달·원자 import·사용자 제출 연결을 구현했다. 기존 `CollectionPlan`/collector/bridge의 schema 1·검증·봉인·네 테이블은 유지한다. COMMON-02A~E의 공통 코드 제공과 실제 회사 원천/신원·승인 SDK·운영 DB/마운트 연결 완료를 구분한다. 내부 AI는 허용된 회사 메서드만 구현한다.
+
+### 19.2. 수집·원천 소속·필드
+
+1. 제출 묶음과 원천 버전/실행을 분리한다. 같은 PRE가 여러 POST 제출에 포함되어도 PRE 버전의 한 원본을 참조하며 POST 결과로 복제하지 않는다.
+2. 원천 root가 달라도 VWP 회사 launcher에서 별도 report 입력 root에 byte 동일 사본을 준비할 수 있다. `get_plan()`은 plan만 반환한다. 원본 완료·복사 전후 해시·경로 안전성·누락/예상 밖 report 보존을 검사하고 기존 collector를 사용한다.
+3. GCA 수집 프로필의 공통 업무 stage는 `sanity`, design은 확인된 설계/블록 식별자다. NET_VER를 design으로, mode/REVISION을 stage로 대신 쓰지 않는다. 이 stage는 회사의 물리 실행 단계가 확인됐다는 뜻이 아니다.
+4. 목표 V2의 `collection`은 제출 범위, `units[].source`는 report 자신의 NET_VER·전체 REVISION·PRE/POST·ECO·mode·실제 실행 ID·tool/version을 가진다. PRE의 ECO는 null이다. 해당 슬롯/실행의 source stage도 별도로 보존한다.
+5. 현재 schema 1의 한 tool/version으로 표현하지 못하는 묶음은 한 값으로 위장하지 않는다. V2 필드를 condition이나 검증되지 않은 sidecar에 넣어 운영 연결로 취급하지 않는다.
+6. 원천 소유 범위와 AI 사례의 재사용 조건은 분리한다. condition에서 REVISION을 분리해도 다른 버전의 호환성·project/block/item/parser/규칙·실행 조건 검사를 생략하지 않는다.
+
+### 19.3. 중앙 예상 목록이 없을 때
+
+디렉터리 스캔은 슬롯 후보를 발견하는 용도다. 실제 report가 있는 항목만으로 예상 단위를 정하지 않는다. 선언된 버전·PRE 관계·전체 POST 슬롯·mode·item·프로필로 예상 집합을 만들고, report가 없는 단위도 유지한다.
+
+승인된 실행/기준 목록 외에 **담당자가 명시적으로 승인한 예상 범위 선언서**를 원천으로 사용할 수 있도록 설계한다. 승인에는 정확한 예상 집합 digest·프로필 개정·범위, 검증된 승인 주체와 해당 블록 권한·시각·참조를 결합한다. PC 사용자명이나 REVISION 안의 이름으로 권한을 추정하지 않는다. ECO 추가·PRE 관계·mode/item/프로필 변경 시 기존 승인을 자동 승계하지 않는다.
+
+현재 승인 근거가 없으면 `inventory.confirmed=false`와 `INVENTORY_UNCONFIRMED`를 유지하며 기존 OA 판정 저장/완료 차단을 해제하지 않는다. 범위 승인과 수집·파싱·평가 기준·적용 제외 승인·사람 판정은 서로 다르다. scope를 승인해도 누락·실패·미지원·잘림·임계값 불명 상태는 성공이 아니다. 회사 승인 원천의 사실 대응과 새 V2 승인 검증/영속 연결을 구분한다.
+
+### 19.4. ID·재전달·재검사
+
+버전은 `source namespace + project + block + NET_VER + 전체 REVISION + PRE/POST`로 구분한다. 검사 단위에는 ECO 또는 null·item·mode, 실행에는 확인된 원천 실행 ID, 원문에는 raw bytes hash를 추가해 각각 구분한다. parser/규칙/evaluation 계약 변경의 분석 개정, 전체 제출 내용의 식별, 요청 UUID는 다른 계층이다. 정확한 canonical digest 식과 충돌 정책은 세부 설계를 따른다.
+
+- 같은 snapshot의 다른 PC 재전달과 다른 POST 제출에 포함된 같은 PRE는 같은 원본을 참조한다. 제출/전달 감사는 남기되 발생/사례 수를 중복 계산하지 않는다.
+- 같은 단위·실행 ID에 다른 원문이 오면 불변성 충돌로 보류한다. 기존 원문·판정을 덮어쓰지 않는다.
+- 같은 버전에서 실제 재검사를 하면 새 원천 실행 ID로 별도 보존한다. 원문이 같아도 다른 실행이며 이전 판정을 자동 승계하지 않는다.
+- 동일 원문의 parser/규칙 변경은 별도 분석 개정이다. report 내용 해시만으로 원천 실행을 결정하지 않는다.
+- 원천 실행 ID/순서 정책이 없으면 내용까지 같은 재검사와 재전달을 구별할 수 있다고 추정하지 않는다. 해당 사실을 `FACTS_REQUIRED`로 인계한다.
+
+### 19.5. 역할·검증 기준
+
+VWP AI는 허용된 회사 launcher의 로컬 입력 준비/합성 시험, 회사 프로필·범위 선언·원천 ID/완료/버전 대응을 맡는다. VWP-bridge AI는 확인된 형식의 parser/등록·SDK 구현, OA AI는 검증된 신원/담당/범위 승인 권한의 원천 자료를 맡는다. 공통 V2 타입/validator(02A), 승인/권한 연결(02B), 봉인/DB/원자 import와 중복/충돌(02C), workspace 개정/감사/UI 연결(02D), 사용자 CLI/접수·보관·상태 응답(02E)은 Codex 작업이다.
+
+후속 수용 기준에는 최소한 예상 9개 중 실제 8개의 누락 유지, 승인 후 ECO 추가의 승인 무효화, 서로 다른 root의 byte 동일 export·원본 변경 거부, 블록 간 동명 버전 분리, 여러 POST의 같은 PRE 참조, 다른 PC 재전달, 동일 실행 원문 충돌, 같은 바이트 재검사, parser 변경 개정, 서로 다른 PRE/POST tool version, 원천 실행 ID 미확정, 사용자명으로 권한 부여 금지를 포함한다. 실제 사내 원문/SDK/운영 DB 검증은 사내에서 수행하며 Codex에는 합성 재현만 전달한다.
+
+<a id="user-report-submission"></a>
+
+## 20. 사용자 report 제출 명령·저장·상태 확인
+
+### 20.1. 사용자 진입점
+
+사용자는 report를 읽을 수 있는 자기 VWP 터미널에서 `sanity submit --project PROJECT_A --block CPU --net-ver NET_01 --revision preA_postB-BE --layout post --eco eco02`를 실행한다. `bin/sanity`를 제공했으며 회사 SDK와 인증된 제출 파일시스템을 먼저 준비해야 한다. 배포 담당자가 `/opt/sanity/current/bin/sanity`를 PATH에 설치하며 일반 사용자가 Git 루트·Python 모듈·plan/export 경로를 조립하지 않게 한다.
+
+회사 입력 어댑터가 원천 경로·예상 목록을 준비하고, 명령이 실제 제출 범위·연결 PRE·예상/발견/누락·프로필/승인 상태를 보여준 뒤 명시적 확인을 받는다. 제출 확인은 범위 승인이나 PASS가 아니다. `--eco`는 이번 추가/검토 대상이며 한 REVISION의 전체 선언된 예상 목록을 해당 ECO의 존재 파일만으로 축소하지 않는다. PRE 단독 제출에는 ECO를 받지 않는다.
+
+### 20.2. 서버와 DB 저장 경로
+
+| 단계 | 기본 저장 위치 | 의미 |
+|---|---|---|
+| 사용자 로컬 준비 | XDG state 또는 `$HOME/.local/state/sanity/submissions/<submission-id>/` | 계획/승인 참조·export·snapshot. 사용자 DB 계정 없음 |
+| VWP 내부 인계 | `/srv/sanity/vwp-submit/inbox/<principal-key>/<submission-id>.ready/` | 동일 부모의 `.partial` 완성 후 atomic rename. VWP 사용자/bridge 전용 인증·ACL 파일시스템 |
+| bridge 원본 보관 | `/var/lib/sanity/vwp-bridge/submissions/<submission-id>/` | service가 복사·해시 검증한 영속 원본. OA에는 마운트/복사하지 않음 |
+| VWP 업무 저장 | `sanity_vwp_data` | 접수/원천·분석 참조·전체 개별 근거/진행 상태 |
+| VWP→OA 전달 | `sanity_vwp_to_oa` | V2 원천/분석 manifest·전체 정규화 record 조각·최종 확정 |
+| OA 수신/검토 저장 | `sanity_oa_data` | 접수/조각 staging, 검증 후 version/ECO/report·로그 페이지·분류/판정 이력 |
+| OA→VWP 결과 응답 | `sanity_oa_to_vwp` | 제출 UUID/내용 digest에 결합한 저장 완료/거부 결과 |
+| 사용자 상태 조회 | `/srv/sanity/vwp-submit/receipts/<principal-key>/<submission-id>.json` | service 작성·본인 읽기. DB 상태/검증된 응답에서 재생성 |
+
+사용자 VWP와 bridge 사이의 제출 파일시스템을 배포 선행 조건으로 정한다. 실제 인증·ACL·마운트·영속 volume은 사내에서 확인하며, 없으면 설정 오류로 중단한다. VWP↔OA는 기존 DB 네 테이블만 사용하고 HTTP/SCP·공유 폴더나 개인 DB 계정으로 우회하지 않는다. 경로는 기본 배포 결정이며 실제 회사 주소·계정이 아니다.
+
+### 20.3. 완료 의미와 복구
+
+`submit` 성공은 `LOCAL_QUEUED`이며 OA 반영 전이다. 사용자는 `sanity status <submission-id>` 또는 `--wait`로 확인한다. delivery는 `LOCAL_QUEUED → VWP_ACCEPTED → PARSING → DB_QUEUED → OA_STORED`와 명시적 `REJECTED`로 구분한다. `OA_STORED`도 별도의 `review_readiness=BLOCKED`일 수 있으며 누락·미승인·미지원 사유를 유지한다. AI/사람 확정·PoR을 자동 변경하지 않는다.
+
+`sanity retry <submission-id>`는 동일 UUID·봉인 내용의 재개다. 같은 UUID의 다른 내용은 충돌, 새 원문/실행은 새 제출로 구분한다. 파일 보관과 DB commit 사이 중단도 복구하며, 같은 PRE/과거 ECO의 중복 수신으로 원본·판정·사례 수를 늘리지 않는다.
+
+전체 정규화 로그는 최대 4MiB/1,000 records의 조각으로 전달·저장·페이지 조회한다. 100,000건을 건수 상한으로 삼지 않는다. staging 전체의 scope·건수·해시·조각을 검증한 뒤 최종 참조·공개 상태와 OA 응답을 원자적으로 확정한다. 누락 조각이나 한도 초과 record를 절단해 완료 처리하지 않는다. 원본 보관본/DB 근거는 기본 자동 삭제 없이 보존하며 인계 사본 정리는 검증된 영속 보관/DB 접수 후에만 허용한다.
+
+### 20.4. 구현과 검증 경계
+
+COMMON-02A~E의 공통 제출 CLI/spool·영속 원본·분할 DB 전달/수신·receipt/상태 복구와 기존 두 단계 검토 연결을 제공했다. `008_submissions.sql`은 DBA 검토·적용용이며 운영 DB에는 실행하지 않았다. 세 사내 AI는 [SUBMISSION.md](vwp/SUBMISSION.md)의 허용된 원천/신원·승인·계정 매핑 어댑터와 현장 검증 자료를 제공한다. 실제 mount/ACL·SSO 업무 연결·회사 모델·운영 배포는 미완료다. 합성 10,000/100,000건 및 독립 PostgreSQL 결과는 [REVIEW.md](REVIEW.md)에 기록하며 운영 검증으로 대체하지 않는다.

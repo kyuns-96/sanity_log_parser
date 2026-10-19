@@ -15,6 +15,7 @@ OA API·화면은 `oa/`, 회사 구현은 `oa/integration/`에 있다. Git 저�
 | 수정 위치 | 허용하는 작업 |
 |---|---|
 | `oa/integration/corporate_sso.py` | `CorporateIdentityProvider.authenticate`, `CorporateUserDirectory.resolve` 본문·필요 import·승인된 회사 client 주입용 생성자 |
+| `oa/integration/corporate_submission.py` | `CorporateSourceIdentity.resolve` 본문·필요 import·승인된 계정 조회 client 주입 생성자. SSO와 같은 영속 매핑 사용 |
 | `oa/sso_app.py` | 승인된 회사 모듈 import와 `identity_provider`, `user_directory`, 필요 `auth_router` 주입 |
 | `oa/integration/company_sso/` | 위 어댑터용 SDK wrapper·인증 router·전용 모의 테스트, 사용자/담당 원천 대응표 |
 | 해당 서버의 비공개 root `.env`/실행 환경 | 사용자가 허용한 OA 측 기존 설정 키와 실제 값 |
@@ -30,8 +31,13 @@ OA API·화면은 `oa/`, 회사 구현은 `oa/integration/`에 있다. Git 저�
 4. 회사 방식에서 필요한 경우에만 `company_sso/`에 로그인·콜백·로그아웃 router를 작성하고 기존 `sso_app.py` 주입 지점을 사용한다. 실제 쿠키·CSRF·redirect·TLS 조건을 확인한다. API/보안 middleware·Host·proxy 정책을 자체 변경하지 않는다.
 5. 관리자·TOP·블록 담당 배정의 권위 있는 출처, 안정 사용자/프로젝트/블록 ID, 부여·해제·비활성 반영 시점의 대응표를 준비한다. 이는 **공통 RBAC 구현을 위한 사실 자료**다. 역할을 자동 부여하거나 PoR·기존 검토를 직접 저장하지 않는다.
 6. OA DB 설정과 현장 점검 결과를 준비하고 COMMON-01·02의 SSO→workspace/원천 연결 검토 자료를 Codex에게 인계한다. 기존 `sso_app.py`의 `/api/session`과 합성 workspace의 `/workspace/api/session`은 별도다.
+7. source importer의 `resolve(actor)`는 신뢰한 VWP assertion의 `(issuer, subject)`를 SSO와 같은 안정 `user_id`로 조회한다. 입력 user_id만 신뢰하거나 사용자/담당을 자동 생성하지 않는다. importer가 OA의 최신 활성/블록 담당을 다시 대조하므로 실제 관리 데이터 준비를 사용자/Codex에게 인계한다.
 
 `AUTHORIZATION_NOT_IMPLEMENTED`, `authorization_ready`·`writable` 검사를 유지한다. 회사 SDK 구현 완료로 현 테스트 계정이 회사 사용자로 전환되거나 업무 권한 연결이 완료되지 않는다. 인증 실패를 로컬 토큰/데모 사용자로 대체하지 않는다.
+
+Q1의 [분산 수집 설계](../vwp/SOURCE_COLLECTION_DESIGN.md)에 필요한 예상 범위 승인 주체/블록 권한의 원천도 확인한다. launcher의 PC 사용자명·REVISION 안의 이름·입력 `approved_by`는 인증 근거가 아니다. 선언 승인 API/저장과 workspace 논리 중복·PRE 참조 처리는 COMMON-01·02의 Codex 구현이며 SSO 어댑터에서 대신 구현하지 않는다.
+
+[제출 실행 안내](../vwp/SUBMISSION.md)에 따라 사용자는 VWP 터미널에서 제출하고 OA는 DB를 통해서만 수신한다. OA에는 VWP 제출/원본 보관 폴더를 마운트하지 않는다. `oa.submission_receiver`가 전체 조각 검증 후 `sanity_oa_data` 반영과 `sanity_oa_to_vwp` 접수 응답을 원자적으로 확정한다. 공통 구현은 제공했으며 실제 계정 매핑/담당·운영 DB/SSO는 미연결이다. 업로드 API·수신/응답 worker·VWP DB 계정·공통 SQL을 추가하지 않는다.
 
 ## 4. DB 연결
 
@@ -67,4 +73,4 @@ OA API·화면은 `oa/`, 회사 구현은 `oa/integration/`에 있다. Git 저�
 
 ## 7. 그대로 전달할 시작 명령
 
-> 너는 OA SSO·사용자 연결 담당이다. AGENTS.md와 INTERNAL_AI_GUIDE.md를 전체 읽고 oa/INTERNAL_AI_TASK.md를 수행하라. INT-01의 corporate_sso.py 두 메서드, sso_app.py의 허용된 주입, company_sso/ wrapper/router/테스트만 작성하고 INT-06의 사용자·TOP/블록 담당 원천 대응을 준비하라. DB는 sanity_oa_app 역할의 별도 OA 로그인으로 설정 자료를 준비하고 실제 점검은 사용자에게 인계하라. VWP 자격증명/모델은 사용하지 않는다. 공통 API/store·SQL·UI·기존 테스트와 AUTHORIZATION_NOT_IMPLEMENTED를 수정하지 말라. 예상 밖 오류는 수정/재시도를 멈춰 WAITING_FOR_CODEX로 문의하고 SSO 검증·COMMON 권한 연결·운영 배포를 나눠 보고하라.
+> 너는 OA SSO·사용자 연결 담당이다. AGENTS.md와 INTERNAL_AI_GUIDE.md를 전체 읽고 oa/INTERNAL_AI_TASK.md와 vwp/SUBMISSION.md를 수행하라. corporate_sso.py 두 메서드, corporate_submission.py/CorporateSourceIdentity.resolve, sso_app.py의 허용된 주입, company_sso/ wrapper/router/테스트만 작성하라. source 계정은 SSO와 같은 영속 매핑을 사용하고 INT-06의 사용자·TOP/블록 담당 원천 대응을 준비하라. DB는 sanity_oa_app 역할의 별도 OA 로그인으로 설정 자료를 준비하고 실제 점검은 사용자에게 인계하라. VWP 자격증명/모델은 사용하지 않는다. 공통 importer/API/store·SQL·UI·기존 테스트와 AUTHORIZATION_NOT_IMPLEMENTED를 수정하지 말라. 예상 밖 오류는 수정/재시도를 멈춰 WAITING_FOR_CODEX로 문의하고 SDK 검증·COMMON 권한 연결·운영 배포를 나눠 보고하라.

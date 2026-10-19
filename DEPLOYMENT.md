@@ -56,6 +56,8 @@ VWP-bridge/OA는 같은 논리 DB·스키마를 서로 다른 제한 로그인�
 
 이미 완료된 report를 수집한다. sanity 실행·report 수정·DB 연결은 이 단계의 역할이 아니다.
 
+사용자별 REVISION 제출에 PRE/POST의 여러 물리 루트가 포함될 때는 [분산 수집 설계](vwp/SOURCE_COLLECTION_DESIGN.md)를 따른다. 회사 launcher의 원본 불변 export는 VWP 내부 입력 준비이며, OA로 파일을 전달하지 않는다. 예상 범위 선언·원천 버전/실행의 V2 운영 연결은 현재 schema 1과 구분한다.
+
 ### VWP-bridge
 
 [담당 AI 지시문](vwp_bridge/INTERNAL_AI_TASK.md)을 읽는다. 회사 parser 등록은 `vwp_bridge/integration/corporate_parsers.py`, 분류/판정 모델은 같은 폴더의 `corporate_clustering.py`, `corporate_review.py`에 구현한다.
@@ -88,3 +90,28 @@ UI 소스와 빌드 출력은 `oa/dashboard/`, `oa/dashboard/dist/`다. 빌드 �
 각 AI에게 루트 [AGENTS.md](AGENTS.md), [작업 가이드](INTERNAL_AI_GUIDE.md), [통합 인계](INTERNAL_AI_HANDOFF.md)와 **자기 역할의 `AGENTS.md`·`INTERNAL_AI_TASK.md`**를 전달한다. 세 역할의 회사 어댑터가 물리적으로 분리되어도 수정 허용 범위는 기존 가이드 그대로다. 공통 코드·SQL·UI·기존 테스트 변경과 디버깅은 설계 담당 Codex가 맡는다.
 
 소스 정리는 회사 SDK·운영 DB·SSO/RBAC·신규 workspace job의 연동 완료를 뜻하지 않는다. 실제 원문과 접속 사실은 사내에서 검증하며, 예상 밖 오류는 비식별 문의와 `WAITING_FOR_CODEX` 상태로 인계한다.
+
+## 5. 사용자 제출 명령과 데이터 배치
+
+공통 `bin/sanity`·제출 작업자·V2 DB 수신을 제공했다. **실제 회사 SDK/신원·프로필·제출 마운트·운영 DB 적용은 사내 준비가 필요**하다. 3절의 legacy collector/analyze/worker가 새 흐름을 대신하지 않는다. 설정 예제·UID/ACL/영속 volume·실행은 [사용자 제출 안내](vwp/SUBMISSION.md)를 따른다.
+
+| 배포 환경 | 설치/데이터 위치 | 필요한 준비 |
+|---|---|---|
+| 사용자 VWP 작업 환경 | `/opt/sanity/releases/<release-id>/`, `/opt/sanity/current/bin/sanity` | 검토된 release·회사 입력 어댑터 명시적 주입, PATH에 bin 등록. 사용자는 Git 루트 밖에서 호출 |
+| 사용자 VWP 설정 | `/etc/sanity/vwp-submit.json` | 제공된 엄격한 JSON 설정. 프로필·spool/storage ID·service UID. DB 비밀 없음. 실제 SDK는 허용 회사 파일에 연결 |
+| VWP 내부 제출 저장소 | `/srv/sanity/vwp-submit/inbox/<principal-key>/`와 `receipts/<principal-key>/` | 사용자/bridge에 동일 파일시스템 제공, 인증 신원·개별 ACL·완료 rename/내구성·용량 검증. OA에는 제공하지 않음 |
+| VWP-bridge 설정/원본 | `/etc/sanity/vwp-bridge-submit.json`, `/var/lib/sanity/vwp-bridge/submissions/<submission-id>/` | 제공된 source worker의 설정·영속 volume/백업. bridge가 검증한 사본 보관. 실제 mount/ACL은 현장 준비 |
+| VWP-bridge DB | 기존 VWP 제한 로그인·`sanity_vwp_data`, 송신 `sanity_vwp_to_oa` | 제공된 `008_submissions.sql`을 007 이후 DBA 검토·적용. 기존 4개 테이블/최소 권한 유지 |
+| OA DB/화면 | 기존 OA 제한 로그인·`sanity_oa_data`, 응답 `sanity_oa_to_vwp` | 새 수신 staging/전체 로그 페이지·권한 재검사·최종 반영/응답. report 파일/제출 저장소는 마운트하지 않음 |
+
+사내 연결·배포 후 사용자 호출 예시:
+
+```bash
+sanity submit --project PROJECT_A --block CPU --net-ver NET_01 --revision preA_postB-BE --layout post --eco eco02
+sanity status 11111111-1111-4111-8111-111111111111
+sanity retry 11111111-1111-4111-8111-111111111111
+```
+
+인계는 `.partial` 작성→같은 부모의 `<submission-id>.ready/` 공개→bridge 검증·영속 보관/DB 접수 순이다. `submit` 성공은 `LOCAL_QUEUED`이며, OA 최종 저장 응답을 확인한 `OA_STORED`와 다르다. 승인/누락/파싱 상태가 유효하지 않으면 OA 저장 후에도 검토가 차단된다. 제출 저장소를 제공할 수 없으면 설정 오류로 중단하며 HTTP/SCP·사용자 DB 로그인·OA 공유 파일로 우회하지 않는다.
+
+회사 실제 마운트·주소·계정은 비공개 배포 기록으로 대응한다. 문서의 기본 경로가 존재한다고 추정하거나 이 변경만으로 디렉터리 생성·PATH/service 배포·운영 SQL을 실행하지 않는다. 008 적용 후 VWP-bridge는 `python -m vwp_bridge.submission_worker`, OA는 `python -m oa.submission_receiver`를 별도로 실행한다. 기존 분류 worker와 구분하며 사용자/배포 담당자·DBA가 승인된 인프라와 실행을 관리한다.

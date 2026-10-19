@@ -108,8 +108,9 @@ DBA는 각 로그인에 자기 역할 하나만 연결한다. 두 앱 모두 own
 | `005_workspace.sql` | workspace 관리 레코드/PoR/세션 |
 | `006_workspace_reviews.sql` | 사용자 판정/사례/제안 |
 | `007_workspace_pipeline.sql` | 두 단계 분류/그룹 판정과 불변 event 연결 |
+| `008_submissions.sql` | V2 제출/실행/outbox·OA staging과 SOURCE 메시지·원천 순서/중복 제약 |
 
-사내 실제 적용 상태는 **미확인**이다. 합성 테스트 DB의 `007` 적용 기록으로 대체하지 않는다. 앱은 DDL/자동 migration을 하지 않는다. 비공개 스키마를 쓰면 SQL 대상과 `SANITY_DB_SCHEMA`가 일치해야 한다. 불일치는 DBA/Codex 검토로 해결하며 내부 AI가 SQL을 수정/적용하지 않는다.
+사내 실제 적용 상태는 **미확인**이다. 합성 테스트 DB의 `008` 적용 기록으로 대체하지 않는다. 앱은 DDL/자동 migration을 하지 않는다. 비공개 스키마를 쓰면 SQL 대상과 `SANITY_DB_SCHEMA`가 일치해야 한다. 불일치는 DBA/Codex 검토로 해결하며 내부 AI가 SQL을 수정/적용하지 않는다.
 
 ## 6. 사내에 남길 접속 인계 기록
 
@@ -125,10 +126,28 @@ DB host / port / name / schema: [사내에만 기입]
 비밀 주입 경로 / 회전 담당자: [사내 참조, 비밀번호 자체 제외]
 TLS 정책 / 신뢰 CA의 사내 배포 경로:
 side DSN 사용 여부 / 필드 방식 전환 여부:
-설치 확인: form·002·003·004·005·006·007 각각 적용/미적용/미확인
+설치 확인: form·002·003·004·005·006·007·008 각각 적용/미적용/미확인
 읽기 전용 check: 미실행/성공/실패, side·일시·종료 코드·비식별 오류 코드
 실제 쓰기/송수신 시험: 미실시 또는 별도 승인/실행 기록의 사내 참조
 남은 의존성 / 다음 담당자 / WAITING_FOR_CODEX 문의 ID:
 ```
 
 외부 Codex에 전달할 때는 실제 서버/주소/DB/로그인/경로/비밀 참조를 제거하고 `담당·기준 commit·설정 키 존재 여부·역할 일치 여부·설치 단계·check 성공/오류 코드·미확정 사항`만 남긴다. 모델 URL/token은 VWP 측 별도 비밀이며 DB 계정/SSO 자격증명과 공유하지 않는다.
+
+## 7. 사용자 제출의 저장 경로
+
+[제출 실행 안내](../vwp/SUBMISSION.md)의 CLI·양쪽 source 작업자와 `008_submissions.sql`을 제공한다. **실제 회사 SDK·mount/ACL·운영 DB/배포는 미연결**이며 사용자/DBA가 준비·검토한다. 사용자 CLI의 root 소유 JSON 설정은 DB 자격증명이 없는 별도 계약이다.
+
+| 단계 | 쓰기 주체 / 위치 |
+|---|---|
+| `sanity submit` 인계 | 사용자 VWP → `/srv/sanity/vwp-submit/inbox/<principal-key>/<submission-id>.ready/`. 사용자 DB 계정 없음 |
+| 검증된 원본 보관 | bridge service → `/var/lib/sanity/vwp-bridge/submissions/<submission-id>/`. OA에는 제공하지 않음 |
+| 접수·전체 근거 | VWP 제한 로그인 → `sanity_vwp_data`. 기존 분석/근거와 구분되는 제출/원천 참조 필요 |
+| 범위/분석 전달 | VWP 제한 로그인 → `sanity_vwp_to_oa`. SOURCE_MANIFEST/PART/COMMIT; envelope 포함 압축 전/후 각 4MiB, data part당 1,000건 이하 |
+| staging/최종 업무 반영 | OA 제한 로그인 → `sanity_oa_data`. 전체 scope/해시/조각 검증 전 일반 검토 노출 없음 |
+| OA 저장/거부 결과 | OA 제한 로그인 → `sanity_oa_to_vwp`. SOURCE_RECEIPT. OA 반영/응답 등록을 같은 트랜잭션으로 확정 |
+| 사용자 상태 | bridge service → `/srv/sanity/vwp-submit/receipts/<principal-key>/<submission-id>.json`. 검증한 DB 상태/응답만 반영 |
+
+`008_submissions.sql`이 같은 네 테이블 안에서 신규 종류·scope·불변성/중복·실행 순서를 추가한다. 기존 legacy run 필수/제약과 최소 권한을 유지하며 별도 로그인·새 테이블·광범위 GRANT가 필요하지 않다. 앱은 008 미적용 시 실패하고 fake run/bundle ID·기존 PING/ANALYSIS_BUNDLE로 우회하지 않는다. 원본 byte 동일 파일은 VWP 영속 volume, 개별 raw 근거는 VWP private DB에 유지하며 OA는 상대 private 테이블을 읽지 않는다.
+
+사내 비공개 인계에는 기존 DB 접속 기록과 함께 제출 마운트의 신원/ACL·실제 위치·용량/rename 검증, bridge 영속 volume/백업, 신원→블록 배정 검증 경로, release/설정 대응과 원본/DB 보존 정책의 담당자를 남긴다. 실제 인프라가 미구비면 접수를 차단하며 새 HTTP/SCP·별도 DB로 대체하지 않는다.

@@ -9,6 +9,7 @@ import re
 from common.sanity_clustering import FIELDS, assignment, check, validate_rules
 from common.sanity_clustering_advice import ClusteringAdvisor, MAX_RECORDS, MAX_GROUPS, evidence, partition, identity_fields_valid, signature, validate_clustering_advice
 from common.sanity_common import digest
+from common.sanity_submission import source_digest
 from common.sanity_db import json_value, lock_key, uuid_value
 from oa.sanity_workspace import WorkspaceStore, record_id, utcnow
 from oa.sanity_workspace_review import WorkspaceReviewStore
@@ -151,8 +152,10 @@ class WorkspaceClusteringStore:
             "AND (e.payload->>'version_id'=%s OR e.payload->>'compatible_versions'='true') ")
         parameters = (record_id("WS_BLOCK", context["report"]["block_id"]), json_value(context["scope"]),
                       context["report"]["id"], context["report"]["version_id"])
-        budget = self.db.execute("SELECT count(*) AS cases,COALESCE(sum(jsonb_array_length(s.payload->'records')),0) AS records,"
+        budget = self.db.execute("SELECT count(*) AS cases,COALESCE(sum(COALESCE(jsonb_array_length(s.payload->'records'),"
+                                 "(s.payload->>'record_count')::bigint)),0) AS records,"
                                  "COALESCE(sum(octet_length(s.payload::text)+octet_length(e.payload::text)"
+                                 "+COALESCE((s.payload->>'source_bytes')::bigint,0)"
                                  "+COALESCE((e.payload->>'rationale_bytes')::bigint,0)),0) AS bytes "
                                  + source, parameters).fetchone()
         check(budget["cases"] <= MAX_CASES and budget["records"] <= MAX_CASE_RECORDS and budget["bytes"] <= MAX_CASE_BYTES, "CASE_LIMIT")
@@ -170,7 +173,10 @@ class WorkspaceClusteringStore:
             source_row = self.reviews.row("WS_REPORT", event["report_id"])
             check(source_row and source_row["record_id"] == row["report_ref"], "STATE_CORRUPT")
             source = source_row["payload"]
-            check(event["source_sha256"] == digest(source), "STATE_CORRUPT")
+            check(event["source_sha256"] == source_digest(source), "STATE_CORRUPT")
+            if source.get('source_storage') == 'PARTS_V2':
+                from oa.sanity_workspace_sources import hydrate
+                source = hydrate(self.db,source)
             records = evidence({"report": source})
             partition(event["groups"], records)
             records_total += len(records)
@@ -201,7 +207,7 @@ class WorkspaceClusteringStore:
             if ai_job_active(head) or head["state"].get("task", {}).get("status") in ("PENDING", "RUNNING", "FAILED", "STALE"):
                 return False
             source = self.reviews.row("WS_REPORT", reference["report_id"])
-            check(source and digest(source["payload"]) == current["source_sha256"], "STATE_CORRUPT")
+            check(source and source_digest(source["payload"]) == current["source_sha256"], "STATE_CORRUPT")
             pending.extend(current["references"])
         return True
 

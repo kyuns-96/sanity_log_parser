@@ -13,6 +13,10 @@
 
 코드는 [서버별 소스·실행 안내](DEPLOYMENT.md)의 `vwp/`, `vwp_bridge/`, `oa/`, `common/`, `devtools/`로 분리한다. 각 서버는 Git checkout의 저장소 루트에서 자기 역할 모듈을 실행한다. 공통 소스는 한 곳에서 관리하며 회사 SDK 때문에 복사하거나 의존성을 임의 추가하지 않는다. 디렉터리 분리가 내부 AI의 수정 허용 범위를 넓히지 않는다.
 
+2026-10-16 사용자 요청으로 Q1의 [분산 수집·PRE/POST 설계](vwp/SOURCE_COLLECTION_DESIGN.md)를 반영하고 별도 V2 공통 제출 경로를 구현했다. `get_plan()`의 파일 쓰기 금지·기존 schema 1·미승인 목록 차단은 유지한다. V2 원천/버전 검증·논리 중복·분할 수신과 workspace 연결은 제공했으며, 실제 회사 원천·신원/승인 SDK는 아래 회사 지점에서 연결한다.
+
+같은 날 [제출 명령·저장 경로](vwp/SUBMISSION_DESIGN.md)의 `sanity submit/status/retry`, VWP 내부 spool/bridge 영속 보관·DB 접수, OA 원자 반영·응답/receipt를 구현했다. 실행·설정·SDK 계약은 [SUBMISSION.md](vwp/SUBMISSION.md)를 따른다. **사내 파일시스템/ACL·실제 SDK·운영 DB는 미연결**이다. 사내 AI는 아래 회사 메서드와 현장 자료만 맡으며 CLI·작업자·전송·설정 계약·SQL/API를 재구현하지 않는다. VWP↔OA DB-only와 사용자 DB 계정 없음은 유지한다.
+
 - 아래 허용 목록에 없는 파일은 기본적으로 읽기 전용이다. 미구현 기능이 있다는 사실은 수정 허가가 아니다.
 - 사내에서만 확인 가능한 사실·SDK 호출·실제 형식 대응은 내부 AI가 준비한다. 공통 알고리즘·저장 계약·권한 정책은 Codex가 설계·구현·검토한다.
 - 처음 구현한 어댑터를 포함해 **예상하지 못한 오류나 테스트 실패가 발생하면 수정 시도를 멈춘다.** 자료 수집 후 6절 형식으로 문의한다.
@@ -28,7 +32,7 @@
 | SSO 인증 검증 어댑터 | OA, SSO 운영에 필수 | `CorporateIdentityProvider.authenticate`에서 승인된 SDK로 검증 후 `VerifiedIdentity` 반환 | 성공·위조·만료·잘못된 발급자/대상·서비스 장애를 검증. JWT decode/헤더 읽기만으로 성공시키지 않음 |
 | 영속 사용자 연결 조회 | OA, SSO 운영에 필수 | `CorporateUserDirectory.resolve`에서 승인된 저장소의 `(issuer, subject) → user_id`와 활성 상태 조회 | 동명이인/이름 변경/미연결/비활성/장애 구분. 승인된 영속 매핑 저장소가 없으면 저장 설계를 Codex에게 문의 |
 | 회사 SDK 클라이언트·인증 경로 | OA, 실제 SSO 방식에 따라 필요 | 클라이언트 초기화, 필요 시 `/auth` 로그인·콜백·로그아웃 router, 어댑터 주입 | 실제 회사 문서에 근거. 쿠키/콜백 검증 필요 조건 포함. 기존 업무 API·UI·보안 middleware 변경은 Codex 담당 |
-| 실제 sanity 예상 목록 연결 | VWP 원천 담당, 실제 report 처리에 필수 | `SanityPlanProvider.get_plan`을 구현해 실행 설정/기준 목록을 기존 `plan.json` 계약으로 반환 | [PLAN_INTEGRATION.md](vwp/PLAN_INTEGRATION.md)를 따름. 생성된 파일로 예상 목록을 역추정하지 않음. 누락·실패·적용 제외와 출처/버전 보존. 목록 승인 사실은 담당자 확인 필요 |
+| 실제 sanity 예상 목록 연결 | VWP 원천 담당, 실제 report 처리에 필수 | 실행 설정/기준 목록 또는 승인된 범위 선언 입력을 기존 `plan.json`으로 반환 | [PLAN_INTEGRATION.md](vwp/PLAN_INTEGRATION.md)와 Q1 설계를 따름. 스캔은 후보 발견이며 자동 승인 아님. 누락·실패·적용 제외·출처/개정과 실제 승인 근거 보존 |
 | item별 report 추출 어댑터·정답 사례 | VWP-bridge 담당, 실제 parser 지원에 필수 | VWP 담당자에게 형식/의미/정답을 받아 `ReportParser.parse` 구현, 명시적 registry 등록, 전용 테스트와 사내 비공개 기대값 검증 | [PARSER_INTEGRATION.md](vwp_bridge/PARSER_INTEGRATION.md)의 고정 계약 안에서만 구현. 임계값·단위·동일성 규칙 추정 금지. 공통 엔진/판정/등록 인터페이스는 Codex 담당. 실제 원문은 외부에 전달하지 않음 |
 | 프로젝트·블록·버전/담당 필드 대응 | VWP 원천/OA 담당, 운영 버전 화면에 필요 | VWP는 실행·버전·report, OA는 사용자·담당 배정의 원천 대응표와 안정 ID 근거 | 현재 전송 계약에 없는 필드는 설계 자료로 제출. payload/DB에 임의 추가하거나 기존 ID를 재해석하지 않음 |
 | DB·VWP AI 접속 설정 확인 | VWP-bridge/OA 담당, 설정 작업 | 자기 서버의 승인된 env 값, 버전/지원 API/제한과 정해진 확인 절차 결과 | DB 드라이버와 legacy AI 접속 어댑터는 제공됨. 새 SDK 주입/운영 job 연결과 구분. 오류 시 재작성하지 않음. 실제 사내 DB 연결 확인은 사용자가 수행 |
@@ -42,20 +46,24 @@ OA의 낮은 성능 AI에 운영 clustering을 맡기지 않는다. 운영 분�
 
 | 담당 | 자기 수정 위치/책임 | 개별 지시문 |
 |---|---|---|
-| VWP | `vwp/integration/corporate_plan.py`, `vwp/integration/company_plan/`; 실행·예상 목록·버전/report 원천 자료. DB 계정 없음 | [VWP 작업 지시문](vwp/INTERNAL_AI_TASK.md) |
-| VWP-bridge | `vwp_bridge/integration/corporate_parsers.py`, `company_parsers/`, `corporate_clustering.py`, `corporate_review.py`, 각 `company_clustering/`·`company_review/`; 자기 VWP 접속 설정 | [VWP-bridge 작업 지시문](vwp_bridge/INTERNAL_AI_TASK.md) |
-| OA | `oa/integration/corporate_sso.py`, `oa/sso_app.py`, `oa/integration/company_sso/`; 사용자/담당 원천 자료·자기 OA 접속 설정 | [OA 작업 지시문](oa/INTERNAL_AI_TASK.md) |
+| VWP | `vwp/integration/corporate_plan.py`, `corporate_submission.py`, `company_plan/`; 실행·예상 목록·버전/report·제출자/승인 SDK. DB 계정 없음 | [VWP 작업 지시문](vwp/INTERNAL_AI_TASK.md) |
+| VWP-bridge | `vwp_bridge/integration/`의 회사 parser·clustering·review·submission과 각 허용 `company_*/`; 인증된 마운트 신원·자기 VWP 접속 설정 | [VWP-bridge 작업 지시문](vwp_bridge/INTERNAL_AI_TASK.md) |
+| OA | `oa/integration/corporate_sso.py`, `corporate_submission.py`, `oa/sso_app.py`, `company_sso/`; 사용자/담당 조회·동일 계정 매핑·자기 OA 접속 설정 | [OA 작업 지시문](oa/INTERNAL_AI_TASK.md) |
 
 회사 구현은 **자기 서버의 `integration/`** 아래다. VWP는 `vwp/integration/`, VWP-bridge는 `vwp_bridge/integration/`, OA는 `oa/integration/`만 사용한다. 원천 대응표·신규 보조 자료도 자기 `company_*/`에 추가한다. 비공개 진단은 `artifacts/internal-handoff/vwp/`, `vwp_bridge/`, `oa/` 또는 승인된 사내 폴더에 남긴다. 다른 담당 파일과 공통 코드·SQL·UI를 수정하지 않는다.
 
 | 위치 | 허용하는 변경 | 허용하지 않는 변경 |
 |---|---|---|
 | `oa/integration/corporate_sso.py` | 두 기존 메서드 본문, 필요한 import, SDK/조회 클라이언트 주입용 생성자 | 메서드 서명·반환 모델·오류 코드 변경, 인증 생략, 사용자 자동 등록/권한 자동 부여 |
+| `oa/integration/corporate_submission.py` | `CorporateSourceIdentity.resolve` 본문, 필요한 import·승인된 조회 client 주입 생성자. OA SSO와 같은 영속 `(issuer, subject) → user_id` 매핑 사용 | 임의 actor 문자열 신뢰, 사용자 자동 등록, importer/SSO 보호 코드 수정·해제 |
 | `oa/sso_app.py` | 승인된 회사 모듈 import와 `identity_provider`, `user_directory`, `auth_router` 주입 | `auth_mode="sso"` 제거, 외부 bind, proxy/Host/로그 설정 완화, 기존 API 교체 |
-| `oa/integration/company_sso/` — 신규 작업용 위치 | 위 어댑터를 지원하는 SDK wrapper·인증 router·모의 SDK 테스트만 추가 | 업무 데이터 조회/수정 API, 프로젝트 권한 엔진, DB migration, 공통 모듈 monkey patch |
+| `oa/integration/company_sso/` — 신규 작업용 위치 | SSO/source 동일 계정 조회를 지원하는 SDK wrapper·인증 router·모의 SDK 테스트만 추가 | 업무 데이터 조회/수정 API, 프로젝트 권한 엔진, DB migration, 공통 모듈 monkey patch |
 | `vwp/integration/corporate_plan.py` | `CorporatePlanProvider.get_plan` 본문, 필요한 import, 승인된 실행/예상 목록 조회 client 주입용 생성자 | 추상 서명/plan schema 변경, 목록 승인 자동 부여, report/설계 변경·sanity 실행·DB 쓰기·공통 CLI 수정 |
-| `vwp/integration/company_plan/` — 신규 작업용 위치 | 원천 SDK wrapper·기존 plan 입력 작성용 별도 launcher·합성/모의 전용 테스트 | 파일 목록으로 예상 unit 누락 은폐, 새 전송/DB 계약·worker 연결, 원본 report/설계 파일 변경 |
+| `vwp/integration/corporate_submission.py` | `CorporateSubmissionInput.prepare`, `CorporateSubmissionAuthority.current/inbox_owner/authorize/approval_valid` 본문, 필요한 import·승인 SDK 주입 생성자, `create_submission_adapters`의 명시적 주입 | 서명/모델·V2 schema 변경, 파일/DB 쓰기·실행, 자동 승인, 사용자명만으로 인증, CLI/상태/권한 우회 |
+| `vwp/integration/company_plan/` — 신규 작업용 위치 | schema 1/V2 입력·원천/제출 신원/담당·승인 SDK wrapper, 기존 plan 작성·VWP 내부 byte 동일 export/collector 호출용 별도 launcher·전용 합성/모의 테스트 | 파일 목록으로 예상 unit 누락 은폐·자동 승인, 새 전송/DB 계약·worker 연결, 원본 report/설계 파일 변경 |
 | `vwp_bridge/integration/corporate_parsers.py` | `CorporateReportParser.parse` 본문, 필요한 import, `create_parser_registry`의 명시적 회사 파서 등록 | 메서드/함수 서명·반환 계약 변경, 자동 import/발견, 내장 파서 교체, 공통 판정 우회 |
+| `vwp_bridge/integration/corporate_submission.py` | `CorporateSubmissionAuthority.current/inbox_owner/authorize/approval_valid` 본문, 필요한 import·승인 SDK 주입 생성자 | 디렉터리명/파일 actor만으로 인증, 자동 승인, 공통 archive/spool/DB·worker 변경 |
+| `vwp_bridge/integration/company_submission/` — 신규 작업용 위치 | 위 bridge 신원·배정·승인 어댑터의 승인 SDK wrapper·합성/모의 SDK 전용 테스트 | 독자 접수/전송 worker, DB 직접 쓰기, 권한/실패 우회, 실제 사내 자료 하드코딩 |
 | `vwp_bridge/integration/company_parsers/` — 신규 작업용 위치 | 확인된 형식의 `ReportParser` 하위 클래스·전용 테스트 추가 | DB/AI/네트워크/shell 호출, 다른 report 읽기, 공통 모듈 monkey patch, 원문/객체명/비밀값 하드코딩 |
 | `vwp_bridge/integration/corporate_review.py` | `CorporateReviewAdvisor.propose` 본문, 필요한 import, 승인된 VWP AI SDK 주입용 생성자 | 메서드/출력 계약 변경, OA 모델 호출, DB/전송/worker 연결 변경, 판정/재사용 기준 자동 확정 |
 | `vwp_bridge/integration/company_review/` — 신규 작업용 위치 | 위 어댑터를 지원하는 SDK wrapper·합성/모의 SDK 전용 테스트 | 공통 AI/저장 모듈 대체, DB·파일·다른 report 조회, shell 실행, 운영 재시도/상태 우회 |
@@ -67,6 +75,7 @@ OA의 낮은 성능 AI에 운영 clustering을 맡기지 않는다. 운영 분�
 
 신규 작업용 위치는 자동 발견되는 plugin 경로가 아니다. 회사 파서는 `create_parser_registry`에서 명시적으로 등록하고 기존 `vwp_bridge/corporate_analyze.py`로 주입한다. 이 연결과 공통 검증은 이미 제공되어 있으므로 내부 AI가 공통 파일을 수정하지 않는다.
 plan provider도 자동 수집/주입되지 않는다. 허용된 회사 wrapper에서 명시적으로 호출하고 기존 `vwp/main.py:validate_plan`으로 검사한 plan만 기존 collector에 전달한다. 구조 검사 통과는 예상 목록 승인이나 실제 report 완료를 뜻하지 않는다. plan 계약·실제 원천 버전 필드 대응은 [PLAN_INTEGRATION.md](vwp/PLAN_INTEGRATION.md)를 따른다.
+PRE/POST의 여러 원천 루트 export는 같은 VWP 영역의 입력 준비만 허용한다. 복사 전후 원본/사본 hash와 완료·경로를 검사하고 누락 unit·예상 밖 report를 보존한다. `get_plan()` 안에서 복사하지 않으며 OA로 파일을 전달하지 않는다. V2의 `prepare()`도 읽기만 하며 원본 Path 대응을 반환하고 공통 CLI가 byte 동일 snapshot을 만든다. 중앙 목록이 없을 때의 승인된 범위 선언서와 스캔 후보를 구분하고, 승인 권한·원천 실행 ID/순서·평가 기준이 확인되지 않으면 `FACTS_REQUIRED`로 인계한다. 제공된 V2 필드·메시지·DB/validator는 내부 AI가 변경하지 않는다.
 `common/sanity_parsers.py`, `vwp_bridge/corporate_analyze.py`, `vwp_bridge/integration/parser_example.py`, `vwp_bridge/integration/__init__.py`는 읽기 전용이다. 같은 `integration/` 아래라는 이유로 이 고정 scaffold를 수정하지 않는다. 회사 파서 구현 완료와 사용자/Codex 검토·운영 적용 완료는 구분한다.
 공개 형식 참고용 `vwp_bridge/integration/public_parsers.py`와 [PUBLIC_REPORT_FORMATS.md](vwp_bridge/integration/PUBLIC_REPORT_FORMATS.md)도 고정 예제로 읽는다.
 사용자 판정 참고 AI 어댑터는 [REVIEW_INTEGRATION.md](vwp_bridge/REVIEW_INTEGRATION.md)를 따른다. 현재는 SDK/모델 미연결 scaffold이며 공통 workspace 제안 엔진은 정확한 조건 적용이다. SDK 구현과 VWP DB 전달/운영 연결은 구분한다. 내부 AI는 후자의 공통 코드를 수정하지 않는다.
@@ -85,6 +94,7 @@ plan provider도 자동 수집/주입되지 않는다. 허용된 회사 wrapper�
 | 원본·판정·coverage·ID·무결성 | `common/sanity_common.py`, `vwp_bridge/sanity_evidence.py`, `common/sanity_parsers.py`, `vwp/main.py`, `vwp_bridge/main.py`, `vwp_bridge/corporate_analyze.py` | 누락/UNKNOWN/FAIL 처리, Decimal 판정, parser 입력/출력 검사·등록 계약, scope·해시·전체 건수, 원문 위치·봉인 |
 | DB 연결·스키마·권한·큐 | `common/sanity_db.py`, `common/sanity_postgres.py`, `db/` 전체 | 4개 고정 테이블, 제한된 로그인, SQL 제약/인덱스, 트랜잭션·잠금·lease·중복 방지 |
 | 전송·추가 근거·비밀정보 | `common/sanity_exchange.py`, `vwp_bridge/sanity_exchange.py`, `oa/sanity_exchange.py`, `common/sanity_privacy.py` | DB만 사용하는 통신, 근거 범위·TTL·해시·마스킹, 불변 응답 |
+| V2 제출·원본 보관·source 수신 | `bin/sanity`, `common/sanity_submission*.py`, `vwp/submission_cli.py`, `vwp_bridge/submission_*.py`, `oa/submission_receiver.py`, `oa/sanity_workspace_sources.py`, 제출 JSON 예제 | 엄격한 설정·V2 schema·신원/범위·원본 hash·원자 인계·분할 staging/공개·receipt·중복/충돌·실행 순서 |
 | AI 호출·분류·규칙·작업자 | `vwp_bridge/sanity_ai.py`, `common/sanity_clustering.py`, `vwp_bridge/sanity_cluster_worker.py`, `oa/sanity_cluster_store.py`, `common/sanity_workers.py`, `vwp_bridge/worker.py`, `oa/worker.py` | strict JSON·근거 검증, scope, 전체 적용, 중단 복구, 불확실 호출 재시도 금지, 사람 확정 |
 | 검토·보고서·인증·업무 API | `oa/sanity_oa_store.py`, `oa/sanity_auth.py`, `oa/main.py`, `oa/dashboard_api.py` | 검토 개정·불변 이력·서버 검토자, 신원/권한 검사, API 계약 |
 | 대시보드 전체 | `oa/dashboard/` | 로그인·권한·사용자 범위, 데모와 실데이터 분리, 분류/검토/PoR의 의미 |

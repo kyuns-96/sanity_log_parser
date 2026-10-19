@@ -5,6 +5,8 @@
 PoR, 사용자 판정·사례·기준과 제안 이력은 서버에 저장되며 새로고침·로그아웃·다른 계정 로그인·서버 재시작 후에도 유지된다.
 실제 회사 계정/SSO·사내 report·운영 DB·사내 AI는 연결하지 않았다. 별도 합성 mock 시험에는 Codex 모델을 실제 호출하며 아래 범위를 따른다.
 
+report 입력은 [제출 실행 안내](../vwp/SUBMISSION.md)를 따른다. 구현된 `sanity submit` → VWP 내부 제출 폴더 → bridge 영속 원본/DB → OA 분할 수신·원자 반영 경로를 사용한다. `sanity status`가 OA 저장과 검토 가능/차단 사유를 반환한다. 실제 회사 SDK·계정/담당·mount/운영 DB는 미연결이다. 기존 합성 workspace를 운영 수신 증거로 사용하지 않으며 원본 파일 업로드 API는 제공하지 않는다.
+
 사내 구현의 진입 문서는 [INTERNAL_AI_HANDOFF.md](../INTERNAL_AI_HANDOFF.md)다. SSO·예상 목록/원천 대응·parser·1단계/2단계 SDK의 허용 구현 지점과 공통 운영 연결의 남은 작업을 구분한다. 새 타입/합성 packet은 회사 어댑터의 모의 검증용이며 이 테스트 서버나 UI를 운영 모드로 전환하지 않는다.
 
 ## 사용 흐름
@@ -62,6 +64,7 @@ PoR은 블록의 NET_VER·REVISION·PRE/POST 버전을 참조하며 ECO나 검�
 - [sanity_workspace_review.py](sanity_workspace_review.py), [sanity_review_advice.py](../common/sanity_review_advice.py): 사례 저장·개정/참조 검사와 확정 조건 적용.
 - [WorkspaceReview.tsx](dashboard/src/WorkspaceReview.tsx): 사용자 판정·조건 확정·제안/사례/이력 화면.
 - [007_workspace_pipeline.sql](../db/007_workspace_pipeline.sql): 분류 개정과 그룹 판정을 원본/버전/확정 분류 event에 연결.
+- [008_submissions.sql](../db/008_submissions.sql), [submission_receiver.py](submission_receiver.py), [sanity_workspace_sources.py](sanity_workspace_sources.py): V2 source staging/전체 검증·PRE 참조/재검사·최신/이력·전체 로그 페이지와 접수 응답. 원본 파일은 VWP에 보관한다.
 - [sanity_workspace_clustering.py](sanity_workspace_clustering.py), [sanity_workspace_group_review.py](sanity_workspace_group_review.py): 두 단계의 저장·참조·재검토 검사.
 - [WorkspacePipeline.tsx](dashboard/src/WorkspacePipeline.tsx): 분리·병합·분류 확정과 그룹 판정 화면.
 - [WorkspaceWorkbench.tsx](dashboard/src/WorkspaceWorkbench.tsx), [sanity_workspace_pipeline.py](sanity_workspace_pipeline.py): 순차 작업 화면·페이지 조회·서버 편집·재개 가능한 분류 작업.

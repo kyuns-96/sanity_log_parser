@@ -115,8 +115,10 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
                 "counts": counts, "complete": bool(valid and total > 0 and reviewed == total)}
 
     def view_paged(self, user_id, block_id, version_id, report_id):
-        context = self.context(user_id, block_id, version_id, report_id)
+        context = self.reviews.context(user_id, block_id, version_id, report_id,hydrate_source=False)
         current, revision = self.current(report_id)
+        if current or context['report'].get('source_storage')!='PARTS_V2':
+            context = self.context(user_id, block_id, version_id, report_id)
         if current:
             check(current["source_sha256"] == context["source_sha256"], "STATE_CORRUPT")
             partition(current["groups"], evidence(context))
@@ -131,12 +133,12 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
             brief["rationale_counts"] = rationale.counts(current, case_ids)
         return {"report": {key: value for key, value in report.items() if key not in ("records", "raw_report")},
                 "version": context["version"], "source_sha256": context["source_sha256"],
-                "raw_line_count": len((report.get("raw_report") or "").splitlines()),
+                "raw_line_count": report.get('raw_line_count',len((report.get("raw_report") or "").splitlines())),
                 "current": brief, "revision": revision, "ready": context["ready"],
                 "can_edit": context["can_review"], "stale": bool(current and self.stale(current, context)),
                 "task": task_brief(task) if task else None, "summary": self.summary(context, current, decisions, case_ids),
                 "case_count": len(cases), "reusable_count": sum(case["reusable"] for case in cases),
-                "corporate_ai_connected": False, "record_count": len(evidence(context)),
+                "corporate_ai_connected": False, "record_count": report['record_count'],
                 "removed_count": len(set(decisions) - {group["id"] for group in current["groups"]}) if current else 0}
 
     def selected_event(self, context, expected_revision, event_id=None):
@@ -183,6 +185,22 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
 
     def records_page(self, user_id, block_id, version_id, report_id, *, expected_revision, offset=0, limit=50,
                      search="", group_id=None, event_id=None):
+        header = self.ws.report(user_id,block_id,version_id,report_id,hydrate_source=False)
+        if header.get('source_storage') == 'PARTS_V2':
+            from common.sanity_submission import source_digest
+            from oa.sanity_workspace_sources import records_page
+            context = {'report':header,'source_sha256':source_digest(header)}
+            event = self.selected_event(context,expected_revision,event_id)
+            group = next((g for g in event['groups'] if g['id']==group_id),None) if event and group_id else None
+            check(not group_id or group is not None,'NOT_FOUND')
+            ids = set(group['record_ids']) if group else None
+            result = records_page(self.db,header,offset=offset,limit=limit,search=search,member_ids=ids)
+            counts = result.pop('counts')
+            if group and search:
+                counts = records_page(self.db,header,offset=0,limit=1,member_ids=ids)['counts']
+            status = 'FAIL' if counts['FAIL'] else 'UNKNOWN' if counts['UNKNOWN'] else 'PASS'
+            return {**result,'group':{'id':group['id'],'label':group['label'],'record_count':len(group['record_ids']),
+                       'check_status':status} if group else None,'cluster_revision':event['revision'] if event else 0}
         context = self.context(user_id, block_id, version_id, report_id)
         event = self.selected_event(context, expected_revision, event_id)
         group = next((group for group in event["groups"] if group["id"] == group_id), None) if event and group_id else None

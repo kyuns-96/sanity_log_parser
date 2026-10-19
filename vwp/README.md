@@ -2,6 +2,10 @@
 
 VWP 원천 수집 코드는 이 디렉터리, 회사 입력 어댑터는 `integration/`에 있습니다. [VWP 지시문](INTERNAL_AI_TASK.md)과 [서버별 소스·실행 안내](../DEPLOYMENT.md)를 따릅니다. 저장소 루트에서 `python -m vwp.main`으로 실행합니다.
 
+분산 운영의 PRE/POST·예상 범위 승인·버전/실행·중복 기준은 [Q1 반영 설계](SOURCE_COLLECTION_DESIGN.md)에 정리했습니다. 기존 schema 1과 별도 V2 제출/분할 전달·workspace import를 제공하며 실제 회사 SDK/인프라는 미연결입니다.
+
+사용자용 `bin/sanity`의 `submit/status/retry`, bridge 접수·OA 수신 작업자와 증분 SQL을 구현했습니다. PATH 설치·엄격한 설정·인증된 mount/ACL·세 회사 어댑터와 실행 순서는 [제출 실행 안내](SUBMISSION.md)를 따릅니다. 아래 schema 1 `collect`는 snapshot 준비용 개발자 명령이며 새 작업자를 대신하지 않습니다.
+
 Python 3.10 이상과 표준 라이브러리만 사용하며 공통 계약은 `common/`에 있습니다. 실제 sanity 실행기와 내부 AI 연결은 아직 없으며,
 이미 종료된 실행의 설정과 report를 수집합니다.
 

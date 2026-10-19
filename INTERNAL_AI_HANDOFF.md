@@ -4,6 +4,10 @@
 
 소스와 사내 구현 위치는 [서버별 소스·실행 안내](DEPLOYMENT.md)에 따른다. 각 서버는 Git 저장소 루트에서 자기 모듈만 실행한다. VWP=`vwp/`, VWP-bridge=`vwp_bridge/`, OA=`oa/`, 공통=`common/`, 합성 시험=`devtools/`다. 회사 어댑터도 각 서버의 `integration/`에 분리되어 있다.
 
+Q1 이후의 수집·버전 연결은 [분산 수집·PRE/POST 설계](vwp/SOURCE_COLLECTION_DESIGN.md)를 따른다. 사용자별 한 REVISION 제출에 여러 원천 버전/실행이 포함될 수 있으며 예상 범위의 발견/승인과 원본·분석·전송 중복을 구분한다. 기존 schema 1과 별도 V2 공통 구현을 제공하며 실제 회사 SDK/인프라 연결은 남아 있다.
+
+사용자 명령과 데이터 경로는 [제출 실행 안내](vwp/SUBMISSION.md)를 따른다. 구현한 `sanity submit/status/retry` → 인증된 VWP 내부 제출 폴더 → bridge 영속 원본/DB → OA 수신·검토 → DB 응답/사용자 receipt 흐름이다. 실제 원천/신원·승인 SDK·mount/ACL·운영 DB와 SSO 연결 완료를 뜻하지 않는다. 사내 AI는 아래 허용된 회사 메서드만 연결한다.
+
 ## 1. 목표와 현재 상태
 
 1. VWP에서 실제 report를 수집·파싱한다. 예상 sanity 목록에 있는 누락·실패 항목도 유지한다.
@@ -17,11 +21,11 @@
 | 영역 | 제공된 추상화/실제 구현 | 사내 AI 작업 | 현재 연결 상태 |
 |---|---|---|---|
 | SSO 검증·계정 연결 | `SSOIdentityProvider`, `UserDirectory`, 고정 모델/검증 | 승인 SDK·영속 `(issuer, subject) → user_id` 조회 | 회사 어댑터 미구현. legacy `/api/session` 주입 지점 제공 |
-| 예상 sanity 목록 | `SanityPlanProvider.get_plan`, `CollectionPlan`, 기존 `validate_plan` | 실행 메타데이터/승인된 목록을 기존 `plan.json`에 대응 | 새 기본 어댑터는 `PLAN_NOT_CONFIGURED`; collector 자동 연결 없음 |
+| 예상 sanity 목록·제출 | schema 1 provider와 별도 V2 `SubmissionInputProvider`·`SubmissionAuthority`, CLI/분할 수신 | 승인된 원천/선언 입력, 신원·최신 담당·승인 SDK와 실행 ID/순서 대응 | 공통 구현 제공. 회사 `corporate_submission.py`는 기본 차단 |
 | item별 report parser | `ReportParser.parse`, 이벤트/원문 span/registry/공통 검증 | 실제 도구·형식 버전별 추출과 명시적 등록 | 회사 registry는 기본 비어 있음 |
 | 1단계 AI 분류 | `ClusteringAdvisor.propose`, V2 출력/전체 배정·그룹별 근거 검증 | VWP 사내 SDK와 모델 입력·출력 대응 | `CORPORATE` 미연결. SDK stub은 `AI_NOT_CONFIGURED` |
 | 2단계 AI 판정 | `ReviewAdvisor.propose`, 판정/참조 검증 | 선택 그룹의 원문·확정 분류 근거·사람 사례로 제안 | `CORPORATE` 미연결. 현재 화면은 조건 적용 참고 엔진 |
-| 실제 프로젝트·블록·버전/담당 | workspace 범위 검사·PoR·불변 판정 저장 | 실제 원천 필드/안정 ID/담당 범위의 대응 자료 | 원천 수신→workspace 운영 연결과 SSO 연결은 공통 후속 작업 |
+| 실제 프로젝트·블록·버전/담당 | source import·workspace 범위 검사·PoR·불변 판정 저장 | 실제 원천 필드/안정 ID·동일 계정 매핑·담당 범위 대응 | source 공통 import 제공. 실제 관리 데이터/SDK·SSO 업무 연결은 미완료 |
 | DB·TLS·운영 실행 | 직접 PostgreSQL·네 테이블·기존 전송/작업자 | 회사 환경의 확인된 접속/SDK 제약 자료 | 실제 DB 확인·DDL/배포는 사용자/DBA 관리 |
 
 타입 선언은 [sanity_integration_contracts.py](common/sanity_integration_contracts.py)에 있다. 기존 dict/JSON 키, 메서드 인자 순서와 저장 계약은 유지했다. 타입 힌트는 런타임 검증·권한 검사·회사 연결을 대신하지 않는다. 작은 합성 입력/출력은 [sanity_integration_examples.py](common/sanity_integration_examples.py), 실행 가능한 계약 검증은 [test_integration_contracts.py](tests/test_integration_contracts.py)에 있다.
@@ -52,9 +56,9 @@ OA에서 사내 AI SDK를 실행하지 않는다. VWP와 OA는 기존 DB 경계�
 
 | 개발 담당 | 맡는 작업 | 소유하는 회사 코드 | 직접 전달할 문서 |
 |---|---|---|---|
-| VWP | INT-02, INT-06 실행·예상 목록·버전/report 원천; item 형식/정답 자료 준비 | `vwp/integration/corporate_plan.py`, `company_plan/` | [VWP 지시문](vwp/INTERNAL_AI_TASK.md) |
-| VWP-bridge | INT-03 parser, INT-04·05 VWP 모델 SDK, INT-06 VWP 접속/한도 | `vwp_bridge/integration/`의 회사 parser·clustering·review와 각 전용 `company_*/` | [VWP-bridge 지시문](vwp_bridge/INTERNAL_AI_TASK.md) |
-| OA | INT-01 SSO·계정 조회, INT-06 사용자·담당 원천/OA 접속 | `oa/integration/corporate_sso.py`, `sso_app.py`의 주입, `company_sso/` | [OA 지시문](oa/INTERNAL_AI_TASK.md) |
+| VWP | INT-02, INT-06 실행·예상 목록·버전/report·제출자/승인 SDK; item 형식/정답 | `vwp/integration/corporate_plan.py`, `corporate_submission.py`, `company_plan/` | [VWP 지시문](vwp/INTERNAL_AI_TASK.md) |
+| VWP-bridge | INT-03 parser, INT-04·05 VWP 모델 SDK, INT-06 VWP 접속/한도와 인증된 mount 신원/담당/승인 | `vwp_bridge/integration/`의 회사 parser·clustering·review·submission과 각 허용 `company_*/` | [VWP-bridge 지시문](vwp_bridge/INTERNAL_AI_TASK.md) |
+| OA | INT-01 SSO·계정 조회, INT-06 사용자·담당 원천·source 동일 계정/OA 접속 | `oa/integration/corporate_sso.py`, `corporate_submission.py`, `sso_app.py`의 주입, `company_sso/` | [OA 지시문](oa/INTERNAL_AI_TASK.md) |
 
 VWP가 형식/판정 의미·정답을 준비하고 VWP-bridge가 parser를 구현한다. VWP-bridge는 고정 SDK 계약을 확인하며 VWP 자료 준비와 독립적으로 모의 wrapper를 검증할 수 있다. OA는 SSO/사용자 연결을 독립적으로 준비한다. 결과는 각 지시문의 인계 형식으로 사용자/Codex 검토에 제출하며, 서로의 파일을 대신 고치거나 자동 연락 채널을 만들지 않는다.
 
@@ -66,12 +70,12 @@ VWP가 형식/판정 의미·정답을 준비하고 VWP-bridge가 parser를 구�
 
 | 작업 ID | 수정 가능한 회사 지점 | 필수 세부 계약 |
 |---|---|---|
-| INT-01 | `oa/integration/corporate_sso.py`: `authenticate`, `resolve`; 허용된 생성자/import, `company_sso/`, `sso_app.py`의 주입 | [SSO_INTEGRATION](oa/SSO_INTEGRATION.md) |
-| INT-02 | `vwp/integration/corporate_plan.py`: `get_plan`; 허용된 생성자/import, `company_plan/`의 입력 wrapper/테스트 | [PLAN_INTEGRATION](vwp/PLAN_INTEGRATION.md) |
+| INT-01 | `oa/integration/corporate_sso.py`: `authenticate`, `resolve`; `corporate_submission.py`: `CorporateSourceIdentity.resolve`; 허용된 생성자/import, `company_sso/`, `sso_app.py`의 주입 | [SSO_INTEGRATION](oa/SSO_INTEGRATION.md), [제출 SDK](vwp/SUBMISSION.md#3-세-사내-ai가-연결할-메서드) |
+| INT-02 | `vwp/integration/corporate_plan.py`: `get_plan`; `corporate_submission.py`: 입력 `prepare`, authority의 네 메서드/명시적 factory; 허용 생성자/import, `company_plan/` | [PLAN_INTEGRATION](vwp/PLAN_INTEGRATION.md), [제출 SDK](vwp/SUBMISSION.md#3-세-사내-ai가-연결할-메서드) |
 | INT-03 | `vwp_bridge/integration/corporate_parsers.py`: `parse`, 명시적 registry 등록; `company_parsers/` | [PARSER_INTEGRATION](vwp_bridge/PARSER_INTEGRATION.md) |
 | INT-04 | `vwp_bridge/integration/corporate_clustering.py`: `propose`; 허용된 생성자/import, `company_clustering/` | [CLUSTERING_INTEGRATION](vwp_bridge/CLUSTERING_INTEGRATION.md) |
 | INT-05 | `vwp_bridge/integration/corporate_review.py`: `propose`; 허용된 생성자/import, `company_review/` | [REVIEW_INTEGRATION](vwp_bridge/REVIEW_INTEGRATION.md) |
-| INT-06 | 자기 `company_*/`의 비식별 원천 대응표·역할별 비공개 진단 기록 | 위 역할별 지시문, 4절의 INT-06, [DB 연결 인계](db/CONNECTION_HANDOFF.md) |
+| INT-06 | bridge `corporate_submission.py` authority의 네 메서드·허용 import/생성자와 `company_submission/`; 자기 `company_*/`의 원천 대응표·비공개 진단 | 위 역할별 지시문, [제출 SDK](vwp/SUBMISSION.md#3-세-사내-ai가-연결할-메서드), [DB 연결 인계](db/CONNECTION_HANDOFF.md) |
 
 표의 `company_*/`는 사내 AI가 추가할 수 있는 위치다. 자동 plugin 탐색·운영 등록 경로가 아니다. `common/sanity_integration_contracts.py`, `common/sanity_integration_examples.py`와 기존 공통 코드/SQL/UI/테스트는 사내 AI에게 읽기 전용이다. 새 의존성·env 키·서명/반환 변경이 필요하면 먼저 Codex에게 문의한다.
 
@@ -89,11 +93,13 @@ VWP가 형식/판정 의미·정답을 준비하고 VWP-bridge가 parser를 구�
 
 ### INT-02. 예상 sanity 목록과 실행 정보
 
-**먼저 확인:** 생성된 파일 목록과 별개인 권위 있는 예상 목록·버전·승인 사실, 실제 실행 결과의 `COMPLETED/FAILED/UNKNOWN/NOT_RUN`, 적용 제외의 승인 근거.
+**먼저 확인:** report 존재 목록과 별개인 확인된 예상 목록 또는 담당자가 승인한 범위 선언서·개정·승인 근거, 실제 실행 결과의 `COMPLETED/FAILED/UNKNOWN/NOT_RUN`, 적용 제외의 승인 근거. 스캔 후보만 있으면 자동 승인하지 않는다.
 
-**산출물:** `get_plan(run_reference) → CollectionPlan`과 실행 출처/필드 대응표. `run_reference`는 사내 실행 조회 키이며 shell 명령이 아니다. provider는 plan만 반환하고 보고서 수집·실행·DB 쓰기를 하지 않는다.
+**산출물:** 새 제출의 `prepare(target) → SubmissionInput(plan, reports)`와 검증된 caller/inbox 신원·현재 블록 담당·scope 승인 SDK. 원본은 읽고 경로를 대응하며 공통 CLI가 snapshot을 만든다. 기존 `get_plan(run_reference) → CollectionPlan`을 유지할 경우 schema 1이며 `run_reference`는 사내 조회 키다. 두 provider 모두 파일/DB 쓰기·sanity 실행을 하지 않는다.
 
-**수용 기준:** 누락된 report의 예상 unit을 제거하지 않는다. 실행 성공을 예상 목록 승인으로 해석하지 않는다. `validate_plan`의 통과는 구조 검증이며 목록 승인·분석 완료를 뜻하지 않는다. 반환은 기존 schema 1이며 workspace 전용 필드를 임의로 붙이지 않는다.
+VWP 내부의 여러 물리 루트는 허용된 회사 launcher에서 byte 동일 export한 뒤 기존 collector에 전달한다. 원본 완료·복사 전후 hash·누락/예상 밖 파일 보존 조건을 지킨다. `get_plan()`은 export하지 않는다. 세부 규칙은 [Q1 설계](vwp/SOURCE_COLLECTION_DESIGN.md)를 따른다.
+
+**수용 기준:** 누락된 report의 예상 unit을 제거하지 않는다. 실행 성공/사용자 제출 확인을 예상 목록 승인으로 해석하지 않는다. 구조 검증 통과는 승인·분석 완료가 아니다. V2는 고정 source 계약을 따르고 schema 1에 workspace 필드를 붙이지 않는다. 상세 신원/승인·원천 ID/순서 시험은 [SUBMISSION.md](vwp/SUBMISSION.md)를 따른다.
 
 ### INT-03. item별 parser
 
@@ -135,21 +141,35 @@ VWP가 형식/판정 의미·정답을 준비하고 VWP-bridge가 parser를 구�
 
 현 legacy run/bundle과 workspace의 block/version/report ID는 같은 계약이 아니다. 대응표를 제출하고 공통 수신 연결을 검토받는다. 기존 payload에 필드를 추가하거나 REVISION/파일명/표시 이름에서 ID·권한을 추정해 직접 저장하지 않는다.
 
-## 5. Codex에 남는 공통 연결 작업
+Q1 인계에는 제출 대상 REVISION과 각 PRE/POST report의 실제 소속, 예상 슬롯×mode×item과 범위 승인 근거, 원천 실행 ID/순서·다른 PC 재전달 보존 방식, 실제 tool/version을 추가한다. 같은 PRE가 여러 POST 제출에 포함될 때 한 원본을 참조해야 한다. `.done`·REVISION/ECO 문법·임계값/제외 근거의 현장 확인 여부를 구분한다.
+
+## 5. Codex 공통 연결의 상태와 남은 작업
 
 아래는 **사내 AI에게 위임한 구현 작업이 아니다.** 사내 AI는 필요한 회사 사실과 검증 결과를 전달하고 보호 파일 수정이 필요한 단계에서 인계한다.
 
 | ID | 공통 후속 작업 | 사내에서 먼저 제공할 자료 |
 |---|---|---|
 | COMMON-01 | SSO 신원→workspace 사용자/담당 범위 연결, legacy 업무 API 범위 제한, UI 로그인/로그아웃·CSRF | SSO·계정/권한 출처·세션/폐기 계약 |
-| COMMON-02 | 수신 run/bundle→project/block/version/report/item의 검증된 import·개정·감사 연결 | 실제 원천 필드 대응과 누락/충돌 사례 |
+| COMMON-02 | 공통 V2 제출·분할 source import·workspace/receipt 구현 제공. 아래 02A~E이며 회사 SDK/인프라 검증은 남음 | Q1 원천 대응·예상 범위 승인·실행 ID/순서, 인증된 mount/ACL·계정/담당과 운영 DB 준비 |
 | COMMON-03 | 새 workspace 분류/판정의 VWP job·기존 DB 요청/결과 전달·worker/상태·UI 연결 | 회사 SDK 입출력·실패·취소·조회·처리 한도 |
 | COMMON-04 | 최초 AI 판정의 직접 원본 근거 계약, 확정 사례 기본 활용과 선택형 재사용 필드의 관계 정리 | 사례 없는 판정의 사내 기준/정답·반례, 기존 승인 범위 정책 |
 | COMMON-05 | 대용량 회사 AI의 입력 분할·조각 간 그룹 정합성·완전성·개정/중복 호출 제어 | 10,000/100,000+건의 크기/토큰 분포와 SDK 한도·현장 성능 목표 |
 
+COMMON-02의 구현 순서와 경계:
+
+| 하위 작업 | Codex 구현 / 수용 기준 |
+|---|---|
+| COMMON-02A | 계획 V2 타입/validator·collection과 개별 원천 메타데이터·schema 1 호환/미지원 거부. NET_VER를 design에, REVISION을 condition에 숨기지 않음 |
+| COMMON-02B | 예상 범위 선언/승인을 정확한 집합 digest·프로필 개정·검증된 블록 권한에 결합. 스캔 자동 승인 금지, 누락/평가 기준 차단과 분리 |
+| COMMON-02C | VWP 봉인/DB 전달·OA 원자 import. project/block 포함 버전/단위/실행/원본/분석 키, 같은 PRE 참조·재전달 중복 방지·같은 실행 원문 충돌 보류 |
+| COMMON-02D | workspace 원천/분석 개정·누락/감사와 현재 두 단계 UI 연결. 새 수신으로 PoR·사람 판정 자동 변경 없음 |
+| COMMON-02E | 사용자 `sanity submit/status/retry`·PATH/설치·별도 배포 설정, VWP 내부 spool 공개/접수·원본 보관·DB/파일 중단 복구·OA 응답/receipt·상태 조회. [제출 설계](vwp/SUBMISSION_DESIGN.md) 기준 |
+
+위 02A~E는 **공통 코드·증분 SQL 제공, 합성 검증** 상태다. 실제 회사 어댑터는 기본 차단이며 mount/ACL·원천/실행 ID·승인/계정·운영 DB는 현장 준비/검증이 필요하다. source 실행 ID 정책이 없으면 같은 바이트의 재검사와 재전달을 구별할 수 없으므로 운영 완료를 선언하지 않는다. 상세 ID는 [수집 설계](vwp/SOURCE_COLLECTION_DESIGN.md), 설치/저장/실행은 [SUBMISSION.md](vwp/SUBMISSION.md)를 따른다. 내부 AI에게 공통 코드 수정 권한을 주지 않는다. COMMON-01·03~05는 여전히 남아 있다.
+
 COMMON-03의 요청/결과 envelope에는 원본 snapshot·project/block/item/버전 scope·분류/판정 개정·선택 group/소속·사례 목록의 불변 참조와 요청 UUID/입력 hash가 필요하다. **현재 신규 운영 메시지 schema가 제공된 것은 아니다.** 내부 AI가 임의 envelope·queue record type을 추가하지 않는다. 기존 legacy clustering 규칙 JSON과 새 workspace V2를 서로 대신 보내지 않는다.
 
-`source_sha256`는 입력 context의 값을 그대로 보존한다. 현재 workspace에서는 정규화한 report snapshot의 digest이며 원본 파일 bytes hash/부분 로그 hash와 바꾸어 쓸 수 없다. 파일의 hash는 collector의 별도 `files[].sha256` 계약을 따른다. 그룹/사례/개정 검증은 SDK의 자체 판단에 맡기지 않는다.
+`source_sha256`는 입력 context의 값을 그대로 보존한다. workspace 입력 digest이며 PARTS_V2는 불변 header/전체 parts hash에 결합한다. 원본 파일 bytes hash/부분 로그 hash와 바꾸어 쓸 수 없다. 파일 hash는 collector의 `files[].sha256`/source의 `raw_sha256`다. 그룹/사례/개정 검증은 SDK 자체 판단에 맡기지 않는다.
 
 ## 6. 작업 순서·검증 명령
 

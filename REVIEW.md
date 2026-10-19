@@ -1,5 +1,40 @@
 # 프로토타입 구현 검토 기록
 
+## 2026-10-19 PR #8 Docker 구성과 제출 기능 통합 검증
+
+- [PR #8](https://github.com/kyuns-96/sanity_log_parser/pull/8)의 고정 head `7c112387b2e1fcd8be076e6594c1f1b0dd616460`을 검토했다. VWP-bridge의 Docker/Compose·설정 예제·문서 8개 파일이며 기존 업무 코드/SQL/권한을 변경하지 않는다. 별도 worktree에 기존 제출 기능과 문서 53개를 함께 반영해 검증했다.
+- DB 설정·parser·연동 계약·서버 분리·mock runner·SQL 불변성 **65개**, 별도 PostgreSQL의 제출 계약/통합 **30개**, 총 **95개 통과, 실패/오류/skip 0**이다. DB 시험은 새 socket/SCRAM fixture만 사용했고 종료했다.
+- 결합한 소스로 Docker 이미지를 실제 빌드했다. Python 3.10.22와 VWP 전용 고정 의존성에서 기존 CLI·회사 parser CLI·새 `submission_worker`의 세 진입점이 로딩됐다. 네트워크를 차단한 합성 컨테이너에서 UID/GID 10001·읽기 전용 root/CA/snapshot·capability 제거·no-new-privileges·특수문자 환경변수 보존·receipt 출력 마운트를 확인했다. Compose의 CA/분석/worker 조합 8개를 검사했고 테스트 컨테이너는 정리했다.
+- Compose 기본 worker는 기존 legacy 처리용이다. 새 제출 spool/영속 보관 worker의 배포는 [제출 안내](vwp/SUBMISSION.md)의 설정·인증된 mount/ACL을 따른다. Docker 기본 실행은 사용법만 표시하고 SSO/CORPORATE 보호를 유지한다. 실제 회사 베이스·SDK·DB/TLS·모델 및 운영 배포를 검증한 결과가 아니다.
+- 결과는 로컬 `artifacts/pr8-compose-validation.json`, `artifacts/pr8-submission-validation.json`, `artifacts/pr8-integration-validation.json`에 남긴다. OA Docker PR #7의 작업 파일과 내부 Q1 원문·비공개 설정·로컬 산출물은 이번 통합 커밋에 포함하지 않는다.
+
+## 2026-10-16 사용자 제출 CLI·V2 source 전달·OA 검토 연결 구현
+
+- 사용자 요청으로 `bin/sanity submit/status/retry`를 구현했다. 어느 작업 폴더에서든 release 실행기를 고정하며 검증된 계정·프로필/개정·연결 PRE·전체 예상/발견/누락/실행 미완료·승인 참조를 보여주고 명시적으로 제출 확인을 받는다. 사용자에게 DB 계정은 없고, 원본 bytes를 바꾸지 않는 로컬 snapshot과 인증된 VWP 내부 `.partial`→`.ready` 인계를 사용한다.
+- `vwp_bridge.submission_worker`가 private 영속 원본·SUBMISSION/SOURCE_RUN/불변 outbox를 관리한다. source별 실제 tool/version으로 기존 checked parser를 호출해 전체 EVIDENCE를 보존하며 파싱을 AI 초기 그룹으로 확정하지 않는다. UUID/내용·실행/raw 충돌·권위 있는 실행 순서·PRE 재전달과 새 ECO/재검사를 구분한다. 원본 보관 직후/DB 접수 직후/부분 발행/DB 응답 직후의 중단과 공유 `.ready` 삭제 뒤에도 archive/DB에서 재개·receipt 재작성이 가능하다. 예상 밖 회사 parser 오류는 고정 코드로 거부하고 자동 재호출하지 않는다.
+- SOURCE_MANIFEST/PART/COMMIT는 envelope 포함 압축 전/후 각각 4MiB·data part당 1,000건 이하로 전달한다. `oa.submission_receiver`가 현재 신원/담당·원천 ID·전체 조각/순서/건수/hash를 검증한 뒤 버전/report 공개와 역방향 SOURCE_RECEIPT를 같은 트랜잭션으로 확정한다. 원본 파일은 VWP에 남고 OA는 불변 header/전체 parts와 로그 페이지를 사용한다. 기존 두 단계 분류·그룹별 근거/판정·다음 사례 연결을 검증하며 PoR·기존 사람 판정을 수신으로 변경하지 않는다.
+- `008_submissions.sql`은 기존 네 테이블·제한 로그인·legacy run/부모/scope 제약을 유지한 증분이다. 007까지 적용한 독립 PostgreSQL에서 적용·기존 데이터 보존·재적용 rollback을 검사했다. 기존 form/002/003은 변경하지 않았으며 운영 DDL/DB·서비스 재시작·기존 workspace 초기화는 수행하지 않았다.
+- 기존 공통/DB/API/대규모 검토를 포함한 전체 회귀 **385개 통과, 실패/오류/skip 0**, legacy 정상/누락/잘림/미지원 시나리오와 10,000건 규모 probe도 통과했다. 이후 접수 복구·최종 미리보기/마운트 신원·parser 자동 재시도 금지 변경은 별도 최종 제출 회귀 **30개(계약 14·DB 통합 16), 실패/오류/skip 0**으로 재검증했다. 결과/로그 경로는 `artifacts/submission-regression-verification.json`, `artifacts/submission-targeted-verification.json`에 기록한다.
+- 합성 POST report 10,000건(+PRE 4건)은 11 parts/총 5,262,556 bytes, POST 100,000건(+PRE 4건)은 101 parts/총 **102,742,988 bytes**, 가장 큰 메시지 **1,027,376 bytes**로 OA 저장/전체 근거·마지막 로그·PoR 보존을 통과했다. 각각 `artifacts/submission-demo-10000.json`, `artifacts/submission-demo-100000.json`이다. 100,000건 시험은 약 205초의 공유 개발 환경 관찰이며 운영 SLA가 아니다. 새 source 10만 건의 모델 추론·전체 그룹 판정/운영 메모리 상한을 검증했다고 주장하지 않는다. 모든 DB는 별도 socket/SCRAM 인스턴스였고 종료했다.
+- 합성 도구의 설정 파일 경로도 credential-free snapshot으로 고정했다. dotenv 파일 읽기 자체를 거부하는 guard 아래 최종 10,000건 통과를 확인했다. TypeScript/production 빌드를 통과했으며 작은 source 상세 분기에서 전체 로그 페이지/검토 열기와 VWP 원본 보관을 안내한다. 기존 테마/검토 작업 영역은 유지했다. 새 branch의 실제 브라우저 시험은 수행하지 않았다.
+- 실행·설정·회사 SDK 메서드/소유권은 [SUBMISSION.md](vwp/SUBMISSION.md)에 정리하고 명세·가이드·세 담당 지시문·DB/배포 인계를 갱신했다. VWP 입력/신원·승인, bridge 마운트/현재 담당·승인, OA의 SSO와 같은 영속 계정 매핑만 회사 파일에서 구현한다. 실제 회사 SDK·인프라/운영 DB·SSO 업무 연결·CORPORATE 모델 job은 미완료이며 기존 보호 상태를 유지한다. 실제 사내 report·회사 DB/모델은 사용하지 않았다.
+
+## 2026-10-16 사용자 제출 명령·서버/DB 저장 경로 설계
+
+- 사용자 요청으로 [제출 명령·저장 설계](vwp/SUBMISSION_DESIGN.md)와 요구사항 20절을 추가했다. `sanity submit/status/retry`의 VWP 터미널 호출·PATH/release 설치, 전체 예상 범위 미리보기/확인과 접수 번호·상태 의미를 정했다. 현재 이 명령과 접수 service는 미구현이라고 명시했다.
+- VWP 사용자/bridge 사이의 인증·ACL 제출 파일시스템, `.partial`→`.ready` 인계, bridge 전용 영속 원본 보관소, 네 DB 테이블의 저장/반환 방향과 사용자별 receipt 경로를 정했다. 실제 회사 마운트·신원·계정이 확보됐다고 가정하지 않으며 사용자 DB 계정이나 OA 파일 복사로 우회하지 않는다.
+- 파일 보관/DB commit 사이 중단 복구, 같은 UUID/내용 검증, OA의 4MiB/1,000건 이하 전체 로그 분할 staging/최종 반영/응답, 전달 완료와 검토 가능·검토 완료·PASS의 구분을 명시했다. 기존 PRE/ECO/실행·검토/PoR 정책을 유지하고 기본 업무 원본 자동 삭제는 두지 않았다.
+- COMMON-02E에 설치/CLI·VWP 내부 접수/보관/receipt를 추가하고 protocol·배포·DB 인계·세 역할 지시문·README/workspace를 연결했다. 내부 AI의 회사 입력/parser/SDK/SSO 허용 범위를 넓히지 않았다.
+- 문서 링크/anchor·코드 fence·공백·필수 계약과 Markdown만 변경한 범위를 검사했다. 결과는 `artifacts/submission-design-validation.json`이다. 이 변경에는 실행 코드·SQL·설정 예제·기존 테스트·UI 수정, 운영 DB/실제 report/모델 접근이나 배포가 없다. 후속 수용 기준은 시험 명세이며 실행 통과 결과가 아니다.
+
+## 2026-10-16 사내 VWP Q1 기반 수집·버전 인계 설계 업데이트
+
+- 사용자 요청으로 [분산 수집·PRE/POST 설계](vwp/SOURCE_COLLECTION_DESIGN.md)를 작성하고 요구사항 19절·protocol의 계획 V2·plan 인계·공통 가이드/작업 지도·세 역할 지시문을 맞췄다. 원천 정보는 비식별 Q1만 사용했다.
+- 제출 collection과 report별 원천 버전/실행을 분리했다. VWP 내부 byte 동일 export·원본/사본 검증, 누락/예상 밖 파일 보존, GCA 수집 stage/design, 별도 source 메타데이터, 중앙 목록이 없는 경우의 승인된 예상 범위 선언을 정의했다. 스캔 자동 승인·REVISION 사용자명에 의한 권한 부여·임계값/제외 승인 추정은 금지했다.
+- 버전/단위/실행/원문/분석/전송 요청의 식별 계층과 여러 POST가 공유하는 같은 PRE 참조, 다른 PC 재전달, 동일 실행의 원문 충돌, 같은 바이트 재검사, 대용량 collection 분할/부분 수신의 기준을 명시했다. 원천 실행 ID·순서 등 현장 미확정 사실과 COMMON-02A~D 공통 구현을 분리했다.
+- 사내 AI에게 전달할 답변은 `question_from_internal/vwp-dev/A1.md`에 작성했다. 질문 Q1은 수정하지 않았다. 현재 schema 1·CollectionPlan·SQL·API/UI·테스트 코드와 SSO/CORPORATE/미승인 목록의 보호 동작은 변경하지 않았다. V2와 수용 시나리오는 목표 설계이며 구현/실환경 검증 완료로 보고하지 않는다.
+- 문서의 로컬 파일/anchor·코드 fence·공백 및 diff를 검사했다. 결과는 `artifacts/q1-design-review-validation.json`이다. 문서 변경이므로 전체 DB/모델 회귀를 재실행하지 않았고 실제 사내 자료·DB·모델은 사용하지 않았다.
+
 ## 2026-10-16 불필요한 로컬 폴더 정리와 Git 인계
 
 - 사용자 요청으로 빈 `examples/`, 이전 `demo-output*/`, 폐기한 서버 전달용 ZIP 생성물, 중복 프런트엔드 빌드, 임시 소스 백업 등 18개 디렉터리와 캐시 11곳을 정리했다. 현재 workspace·별도 QA 설정의 정적 파일, 비공개 설정·DB·검증 기록은 보존했다.

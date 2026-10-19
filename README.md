@@ -14,6 +14,10 @@ Jira 조회·게시와 시뮬레이터는 폐지했습니다. VWP AI 어댑터�
 | 공통 | [common/](common/README.md) — 계약·DB·설정·검증 | 사내 AI 읽기 전용 |
 | 개발 시험 | [devtools/](devtools/README.md), `tools/`, `tests/` | 합성 자료·mock·회귀 |
 
+사내 Q1 검토의 [분산 수집·PRE/POST 인계 설계](vwp/SOURCE_COLLECTION_DESIGN.md)에 사용자별 REVISION 제출, 여러 원천 루트, 예상 범위 승인, 버전/실행/원문 중복 기준을 정리했습니다. 기존 schema 1 collector와 별도 V2 제출 경로를 제공합니다.
+
+[사용자 제출 실행 안내](vwp/SUBMISSION.md)의 `bin/sanity submit/status/retry`, VWP 내부 제출/영속 원본 보관, DB 분할 송수신·OA 페이지/접수 응답을 구현했습니다. **회사 입력·신원/승인 SDK와 실제 마운트/운영 DB는 미연결**입니다. schema 1의 `collect`는 유지하며 사용자 DB 계정이나 OA report 파일 복사로 대체하지 않습니다. 신규 DB 계약은 `db/008_submissions.sql`, 설계 근거는 [제출 명세](vwp/SUBMISSION_DESIGN.md)입니다.
+
 VWP AI와 사람이 함께 만드는 분류 루프, 대량 report 처리, 그룹별 evidence 추가의 **확장 설계**는
 [요구사항 14절](requirement.md#ai-clustering)에 정리했습니다. 알려진 두 report 형식에 대해 AI 규칙 제안·전체 시험·사람 확정 루프를 구현했습니다.
 실제 사내 AI/DB 연결과 새 report 형식·의미 기반 후보 검색은 아직 검증/확장 대상입니다.

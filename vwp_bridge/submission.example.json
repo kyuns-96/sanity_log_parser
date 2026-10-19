@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "spool_root": "/srv/sanity/vwp-submit",
+  "storage_id": "SET_BY_DEPLOYMENT",
+  "service_uid": null,
+  "default_profile": "SET_BY_COMPANY_PROFILE",
+  "archive_root": "/var/lib/sanity/vwp-bridge/submissions",
+  "node_id": "SET_BY_DEPLOYMENT"
+}

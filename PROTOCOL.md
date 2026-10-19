@@ -12,7 +12,7 @@ VWP AI의 API·CLI 호출 가능 여부는 사용자에게 확인했다. AI clus
 실제 사내 API/DB 호환성과 report 사례는 사용자 제공 후 검증한다.
 
 프로젝트·사용자 배정·블록별 버전·PoR의 목표 요구사항은 [15절 명세](requirement.md#dashboard-domain-spec)를 따른다.
-OA 관리 API·DB 레코드는 아래 워크스페이스 계약으로 추가했다. 실제 VWP의 NET_VER/REVISION/ECO 전송 필드는 아직 확정·연결하지 않았다.
+OA 관리 API·DB 레코드와 VWP의 NET_VER/REVISION/ECO를 받는 별도 V2 source 전송·workspace import를 제공한다. 실제 회사 원천/신원·승인 SDK·운영 DB는 미연결이다. [분산 수집 V2 설계](vwp/SOURCE_COLLECTION_DESIGN.md), 실행 가능한 타입/validator와 설정은 [제출 실행 안내](vwp/SUBMISSION.md)를 따른다.
 
 ## OA 워크스페이스 관리 계약
 
@@ -29,7 +29,7 @@ PoR은 블록의 버전 참조이고 ECO/특정 검사 실행을 포함하지 �
 현재 실행 진입점은 **독립 합성 workspace**를 명시적으로 초기화한 `devtools/workspace_app.py`다.
 검증된 공개 parser 스냅샷을 해당 테스트 버전에 연결하며 실제 회사 SSO/자료/운영 DB를 쓰지 않는다.
 회사 인증 실패 시 이 계정을 선택하거나 기존 `AUTHORIZATION_NOT_IMPLEMENTED`를 해제하지 않는다.
-이 계약은 실제 VWP 버전 메타데이터 수신 구현이나 회사 SSO 완성을 뜻하지 않는다.
+별도 V2 importer가 실제 source 메타데이터를 받을 수 있지만 회사 SDK/인프라와 SSO 완성을 뜻하지 않는다.
 필드·실행·인계는 [WORKSPACE.md](oa/WORKSPACE.md)를 따른다.
 
 검사 조회는 같은 버전·ECO 안에서 `item_id`로 구분한다. reports API의 `groups`는 필터·페이지 적용 전의 항목별 집계이며,
@@ -174,6 +174,39 @@ The common UTF-8 reader limits physical lines to 1MiB, raw spans to 64MiB and JS
 Pointer documents to 16MiB. See [parser handoff](vwp_bridge/PARSER_INTEGRATION.md)
 for field requirements, source coverage and company-only validation. Real reports
 stay inside the company; external Codex debugging uses synthetic inputs only.
+
+## V2 수집·원천 인계
+
+사용자별 하나의 REVISION 제출은 PRE 대응 원본과 여러 POST 슬롯의 report를 담는 **collection**이다. source 버전/실행은 report별로 유지하며, 제출 대상 POST에 PRE report를 재귀속하지 않는다. 상세 필드 배치·ID·수용 기준은 [SOURCE_COLLECTION_DESIGN.md](vwp/SOURCE_COLLECTION_DESIGN.md)가 기준이다.
+
+| 설계 경계 | 목표 규칙 |
+|---|---|
+| 로컬 준비 | VWP 내부의 여러 원천 루트를 byte 동일 export하고 기존 collector에 전달. source/계획/보조 자료 분리·누락과 예상 밖 report 보존 |
+| 메타데이터 | `collection`은 제출 범위, `units[].source`는 NET_VER/전체 REVISION/layout/ECO/mode/실제 실행·tool/version. 현재 condition에 임의 추가하지 않음 |
+| 예상 목록 | 승인된 원천 또는 정확한 집합·프로필·블록 권한에 결합한 범위 선언. 스캔은 후보 발견이며 자동 승인 아님 |
+| 식별 | project/block 포함 버전 키 → 검사 단위 → 실행 → 원본 snapshot → 분석 계약. 수신 요청 UUID와 분리 |
+| 재수신 | 같은 실행/원문은 하나의 occurrence로 연결. 같은 PRE를 여러 POST가 참조해도 중복 발생 생성 없음 |
+| 충돌/재검사 | 같은 실행·다른 원문은 충돌 보류. 새 원천 실행 ID는 별도 실행, parser/규칙 변경은 별도 분석 개정 |
+
+**기존 `schema_version=1`, `CollectionPlan`·parser 입력·bundle/queue 계약은 그대로다.** 별도 V2 타입/validator는 `common/sanity_submission.py`에 있다. `sanity submit`과 새 source 작업자가 V2 봉인/분할 DB 전달·scope 승인 검증·workspace import를 수행한다. 회사 원천/신원·승인 SDK는 기본 차단 상태이며 허용된 `corporate_submission.py`에서만 연결한다. sidecar나 우연히 통과하는 추가 키를 전송 계약으로 간주하거나 사내 AI가 schema/메시지/테이블을 변경하지 않는다.
+
+`inventory.confirmed=false`는 현재 `INVENTORY_UNCONFIRMED`와 기존 OA 판정 저장/완료 차단을 유지한다. 선언 승인도 누락/실패·잘림·미지원 parser·평가 기준 불명 차단을 해제하지 않는다. UI·SSO/CORPORATE·PoR 보호 상태는 이 설계 문서로 바뀌지 않는다.
+
+### 사용자 제출·파일/DB 인계
+
+[SUBMISSION_DESIGN.md](vwp/SUBMISSION_DESIGN.md)의 `sanity submit/status/retry`와 저장 경로를 구현했다. 설치·실행·설정·회사 SDK 지점은 [SUBMISSION.md](vwp/SUBMISSION.md)를 따른다. 기존 `collect --plan`은 schema 1 snapshot 준비만 수행하므로 새 제출 폴더/DB 작업자를 대신하지 않는다.
+
+| 목표 경계 | 결정 |
+|---|---|
+| 사용자 호출 | VWP 터미널의 PATH 명령. 사용자는 DB 계정·plan JSON을 작성하지 않음 |
+| VWP 내부 인계 | `/srv/sanity/vwp-submit/inbox/<principal-key>/.<submission-id>.partial`을 완성 후 같은 부모의 `.ready`로 공개. 인증·ACL 파일시스템은 VWP 사용자/bridge만 사용 |
+| 신뢰할 원본 | bridge가 `/var/lib/sanity/vwp-bridge/submissions/<submission-id>/`에 직접 복사·해시 검증한 영속 보관본과 VWP DB 접수 |
+| DB 흐름 | `sanity_vwp_data` → `sanity_vwp_to_oa` → OA staging/검증 → `sanity_oa_data`. OA 최종 반영 응답은 `sanity_oa_to_vwp` |
+| 상태 확인 | bridge가 자기 DB/검증한 OA 응답에서 사용자 receipt를 작성. 로컬 인계와 `OA_STORED`, 검토 가능/완료/PASS는 별도 |
+| 대용량 | SOURCE_PART envelope 포함 압축 전/후 각각 4MiB·최대 1,000 records. 전체 자료를 분할/검증하며 초과 한 건은 명시적으로 거부 |
+| 중단/중복 | 동일 제출 UUID·내용 digest로 재개. 같은 원천 occurrence는 참조, 같은 실행/다른 원문은 충돌. 파일 보관과 DB commit 사이 복구 필요 |
+
+`db/008_submissions.sql`은 기존 네 테이블 안에 VWP private `SUBMISSION`·`SOURCE_RUN`·`SOURCE_OUTBOX`, OA private `WS_SUBMISSION`·`WS_SOURCE_PART`, 공유 `SOURCE_MANIFEST/PART/COMMIT/RECEIPT`를 추가한다. 007까지 적용된 DB에 DBA가 검토·적용하며 기존 run 필수/불변성/종류별 scope 제약을 유지한다. schema 2 envelope는 `protocol=source-collection-v2`, submission UUID/content hash, collection ID, 검증된 actor, collection scope와 body를 결합한다. OA는 모든 조각/manifest/commit의 전체 건수·순서·hash·현재 담당 권한을 대조한 뒤 report와 최종 receipt를 원자적으로 공개한다. source header는 불변 parts의 hash에 결합되며 원본 파일은 VWP에 남긴다. legacy 메시지로 위장하거나 수신 상태를 수동 변경하지 않는다. 내부 AI 수정 허용 범위는 유지한다.
 
 ## vwp-bridge payload
 
