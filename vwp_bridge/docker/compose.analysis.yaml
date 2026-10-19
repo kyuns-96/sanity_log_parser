@@ -1,0 +1,16 @@
+# Optional: mount completed VWP snapshots for explicitly invoked analyze commands.
+# Keep these directories in the VWP environment; never mount them on OA.
+services:
+  vwp-bridge:
+    volumes:
+      - type: bind
+        source: ${VWP_BRIDGE_SNAPSHOT_DIR:?Set an absolute path to completed VWP snapshots}
+        target: /data/snapshots
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${VWP_BRIDGE_RECEIPT_DIR:?Set an absolute path to the receipt output directory}
+        target: /data/receipts
+        bind:
+          create_host_path: false

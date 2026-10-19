@@ -1,0 +1,30 @@
+# Build from the repository root:
+# docker build -f vwp_bridge/docker/Dockerfile-prod -t sanity-vwp-bridge:local .
+# Use the approved company Python image (a Node/Python image is also supported).
+ARG VWP_BRIDGE_BASE_IMAGE=python:3.10-slim-bookworm
+
+FROM ${VWP_BRIDGE_BASE_IMAGE} AS python-dependencies
+USER 0
+WORKDIR /build
+COPY vwp_bridge/requirements.txt ./requirements.txt
+RUN python3 -m venv /opt/venv
+# Optional private package settings stay in a BuildKit secret, not an image layer.
+RUN --mount=type=secret,id=pip_config,target=/etc/pip.conf \
+    /opt/venv/bin/python -m pip install --no-cache-dir -r requirements.txt
+
+FROM ${VWP_BRIDGE_BASE_IMAGE} AS runtime
+USER 0
+WORKDIR /opt/work
+ENV PATH="/opt/venv/bin:${PATH}" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+COPY --from=python-dependencies /opt/venv/ /opt/venv/
+COPY common/ ./common/
+COPY vwp_bridge/*.py ./vwp_bridge/
+COPY vwp_bridge/integration/ ./vwp_bridge/integration/
+USER 10001:10001
+# This is a CLI/DB worker; discard HTTP checks/entrypoints inherited from a base.
+HEALTHCHECK NONE
+ENTRYPOINT []
+# Starting the image alone displays usage without accessing the DB or model.
+CMD ["python", "-m", "vwp_bridge.main", "--help"]
