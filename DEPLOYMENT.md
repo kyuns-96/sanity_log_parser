@@ -71,6 +71,8 @@ VWP-bridge/OA는 같은 논리 DB·스키마를 서로 다른 제한 로그인�
 
 ### OA
 
+사내 Nginx 뒤에서 실행하는 간단한 CI/CD 구성은 [루트 Docker 안내](docker/README.md)를 따른다. 사내 OA Git에는 `docker/`, `oa/`, `common/`을 같은 루트에 두고 **`docker/Dockerfile-prod`**를 빌드한다. 컨테이너는 8080의 OA 앱 한 개만 실행한다. 아래 loopback 명령은 컨테이너 밖의 직접 실행용이다.
+
 [담당 AI 지시문](oa/INTERNAL_AI_TASK.md)을 읽는다. 회사 인증/사용자 조회는 `oa/integration/corporate_sso.py`와 `company_sso/`에 구현하고, 기존 `oa/sso_app.py` 주입 지점을 사용한다.
 
 ```bash

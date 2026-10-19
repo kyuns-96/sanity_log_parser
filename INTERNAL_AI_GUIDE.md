@@ -115,6 +115,7 @@ PRE/POST의 여러 원천 루트 export는 같은 VWP 영역의 입력 준비만
 프로젝트·블록 RBAC, 영속 관리 레코드/PoR 저장, 새 버전 전송 계약, 공통 parser/판정/등록 엔진 확장, UI SSO 연결은 **내부 AI의 수정 허용 영역이 아니다**. 구현·변경·디버깅은 Codex가 담당한다. 회사 파서 등록은 위 허용 파일의 고정 인터페이스 사용만 허용한다.
 2026-10-15 Codex가 별도 테스트 workspace의 서버 범위 검사와 PoR 영속 저장을 추가했다.
 `oa/sanity_workspace.py`, `oa/workspace_api.py`, `devtools/workspace_app.py`, `db/005_workspace.sql`, `tools/run_workspace.py`도 보호 공통 코드다.
+사내 공통 Nginx 뒤의 간단한 컨테이너 실행은 `docker/Dockerfile-prod`와 `oa/sanity_hosts.py`의 정확한 Host 검증을 사용한다. 이 Docker 구성·Host 검증·`dashboard_api.create_app`의 배포 인자도 Codex 관리 공통 코드다. 내부 AI는 승인된 실제 `OA_ALLOWED_HOSTS` 값과 회사 어댑터만 설정하며 bind/헤더 신뢰/인증 보호를 변경하지 않는다.
 사용자 판정의 `oa/sanity_workspace_review.py`, `common/sanity_review_advice.py`, `db/006_workspace_reviews.sql`과 화면/기존 테스트도 보호 대상이다. 회사 review SDK는 위 어댑터 본문에서만 구현한다.
 두 단계의 `oa/sanity_workspace_clustering.py`, `oa/sanity_workspace_group_review.py`, `db/007_workspace_pipeline.sql`과 UI/API·기존 테스트·QA helper도 보호 대상이다. 내부 AI가 분류/판정 개정이나 오래된 참조 검사를 완화하지 않는다.
 `devtools/sanity_codex_mock.py`, `tools/run_codex_mock.py`, `tools/seed_codex_mock.py`와 관련 테스트는 사용자 요청으로 Codex가 추가한 **외부 모델·합성 자료 전용 시험**이며 보호 대상이다. 내부 AI는 이를 회사 report/사례/SDK에 연결하거나 합성 입력 검사를 완화하지 않는다. 회사 VWP용 어댑터의 허용 범위와 `CORPORATE` 미연결 상태는 유지한다.

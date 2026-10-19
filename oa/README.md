@@ -7,6 +7,8 @@ VWP private 테이블과 파일에는 접근하지 않습니다. Jira 조회·�
 React·shadcn UI가 검토 화면이고 AI 호출은 VWP 작업자만 수행합니다. 실제 사내 AI/DB 검증은 대기 중입니다.
 공통 설치·배포와 DB 신청은 [루트 안내](../README.md)를 따릅니다.
 
+사내 Nginx 뒤에서 사용하는 CI/CD는 [간단한 Docker 구성](../docker/README.md)을 사용합니다. `docker/`, `oa/`, `common/`을 같은 Git 루트에 두고 `docker/Dockerfile-prod`를 빌드합니다. 컨테이너는 OA 앱 한 개만 8080에서 실행하며 `OA_ALLOWED_HOSTS`로 서비스 도메인을 지정합니다. 아래 loopback 설명은 직접 실행하는 로컬 prototype에 해당합니다.
+
 [사용자 report 제출](../vwp/SUBMISSION.md)은 VWP 터미널에서 시작하고 OA에는 DB로 수신합니다. 별도 `python -m oa.submission_receiver`가 V2 staging·전체 검증·원자 반영/응답을 수행하며 기존 검토 화면에 로그를 페이지로 제공합니다. VWP 제출/원본 폴더를 OA에 마운트하지 않습니다. 공통 구현과 실제 회사 계정/담당·SSO·운영 DB 연결 완료를 구분합니다.
 
 ## 사내 SSO 연동 경계
@@ -44,7 +46,7 @@ cd ../..
 
 http://127.0.0.1:8000 에서 dist와 API가 같은 origin으로 제공됩니다.
 단일 사용자 로컬 prototype이므로 외부 bind를 금지합니다. SSO/RBAC·TLS proxy·운영 인증은 미구현입니다.
-FastAPI 엔드포인트를 별도 공개 서비스로 노출하는 구성은 지원 범위가 아닙니다.
+위 local_token prototype을 별도 공개 서비스로 노출하는 구성은 지원 범위가 아닙니다. 사내 Nginx 뒤의 명시적 SSO 컨테이너 진입점은 [루트 Docker 안내](../docker/README.md)를 따릅니다.
 프런트엔드 개발은 API를 실행한 상태에서 별도 터미널의 dashboard 폴더에서 npm run dev를 실행합니다.
 개발 서버는 127.0.0.1:5173이며 /api를 8000으로 proxy합니다.
 
