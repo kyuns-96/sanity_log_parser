@@ -103,7 +103,7 @@ test('stale classification can be deferred and exclusions are visible without en
 })
 
 async function demo(page: Page) {
-  await page.goto('/?demo=1')
+  await page.goto('/?demo=1&flow=legacy')
   await expect(page.getByRole('heading', { name: 'sanity-20261012-042' })).toBeVisible()
   await expect(page.getByText('CHECK-101', { exact: true })).toBeVisible()
 }
@@ -113,8 +113,8 @@ test('explicit login, explicit demo, and memory-only token', async ({ page }) =>
   await expect(page.getByRole('heading', { name: '검토 공간에 연결' })).toBeVisible()
   await expect(page.getByText('Atlas', { exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: '데모 둘러보기' }).click()
-  await expect(page.getByRole('heading', { name: 'sanity-20261012-042' })).toBeVisible()
-  await expect(page.getByText('데모 모드', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Atlas 프로젝트', exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '워크스페이스 데모 안내' })).toContainText('데모 모드')
   expect(await page.evaluate(() => [localStorage.length, sessionStorage.length])).toEqual([0, 0])
   await page.getByRole('button', { name: '데모 종료', exact: true }).click()
   await expect(page.getByLabel('접근 토큰')).toHaveValue('')

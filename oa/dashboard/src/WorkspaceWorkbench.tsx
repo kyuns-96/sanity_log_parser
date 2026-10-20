@@ -22,6 +22,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
   reportId: string; blockId: string; versionId: string; session: WorkspaceSession; onBack: () => void; onExpired: () => void; onChanged: (value: WorkbenchView) => void
 }) {
   const base = `/blocks/${blockId}/versions/${versionId}/reports/${reportId}`
+  const demo = session.environment === 'MEMORY_DEMO'
   const inputId = useId()
   const [data, setData] = useState<WorkbenchView | null>(null)
   const [step, setStep] = useState<1 | 2>(1)
@@ -98,6 +99,15 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
     const value = await request<WorkbenchView>(`${base}/workbench`)
     if (alive.current) initialize(value)
     return value
+  }
+  async function downloadDemoSource() {
+    try {
+      const report = await request<{ raw_report: string | null }>(base)
+      if (!report.raw_report) return
+      const url = URL.createObjectURL(new Blob([report.raw_report], { type: 'text/plain;charset=utf-8' }))
+      const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${reportId}.rpt`; anchor.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (value) { fail(value) }
   }
   function beginJudgment() { setGroupSearch(''); setGroupOffset(0); setFilter(''); setStep(2) }
   useEffect(() => {
@@ -306,7 +316,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
   return <section ref={panel} className={`ws-panel ws-workbench${drag.drag ? ' ws-dragging-logs' : ''}`} aria-label="Sanity item 순차 검토">
     <header className="ws-workbench-header">
       <div className="ws-workbench-title"><Button variant="ghost" onClick={onBack}><ArrowLeft size={17} />보고서 목록</Button><div><span className="ws-caption">{data.report.family} · {data.version.net_ver} · {data.version.layout}</span><h1>로그 검토</h1><p>{data.report.id}</p></div></div>
-      <a className="ws-source-download" href={`/workspace/api${base}/source`}><Download size={16} />원본 내려받기</a>
+      {demo ? <Button variant="ghost" className="ws-source-download" disabled={!data.record_count} onClick={downloadDemoSource}><Download size={16} />예시 원문 내려받기</Button> : <a className="ws-source-download" href={`/workspace/api${base}/source`}><Download size={16} />원본 내려받기</a>}
     </header>
     <div className="ws-workbench-toolbar">
       <nav className="ws-pipeline-steps" aria-label="순차 검토 단계">

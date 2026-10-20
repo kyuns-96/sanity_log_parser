@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 
 test('desktop rail keeps navigation named, keyboard operable and reversible', async ({ page }) => {
-  await page.goto('/?demo=1')
+  await page.goto('/?demo=1&flow=legacy')
   await expect(page.getByText('CHECK-101', { exact: true })).toBeVisible()
   const main = page.getByRole('main')
   const expandedWidth = (await main.boundingBox())!.width
@@ -27,7 +27,7 @@ test('desktop rail keeps navigation named, keyboard operable and reversible', as
 
 test('mobile drawer traps focus, hides closed navigation and returns focus on dismissal', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/?demo=1')
+  await page.goto('/?demo=1&flow=legacy')
   await expect(page.getByText('CHECK-101', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '활동 이력', exact: true })).toHaveCount(0)
   const trigger = page.getByRole('button', { name: '메뉴 열기', exact: true })
