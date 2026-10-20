@@ -73,6 +73,12 @@ export class WorkspaceError extends Error {
 }
 
 export async function workspaceRequest<T>(path: string, options: { body?: unknown; csrf?: string; signal?: AbortSignal } = {}): Promise<T> {
+  // Explicit opt-in only. Server/authentication failures never select the demo.
+  if (new URLSearchParams(location.search).get('demo') === '1') {
+    const { workspaceDemoRequest } = await import('./workspaceDemo')
+    options.signal?.throwIfAborted()
+    return workspaceDemoRequest<T>(path, options)
+  }
   let response: Response
   try {
     response = await fetch(`/workspace/api${path}`, {

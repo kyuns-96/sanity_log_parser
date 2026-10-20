@@ -5,7 +5,7 @@ import { workspaceRequest as request, workspaceTime as time } from './workspaceA
 import type { RationaleContent, RationaleDetail } from './workspaceApi'
 
 export const rationaleLabels = { MISSING: '근거 누락', DRAFT: '검토 전', CONFIRMED: '검토 완료', STALE: '재검토' }
-const sources: Record<string, string> = { AI: 'AI 제안', HUMAN: '사용자 작성', REFERENCE_ENGINE: '참고 엔진 제안' }
+const sources: Record<string, string> = { AI: 'AI 제안', HUMAN: '사용자 작성', REFERENCE_ENGINE: '참고 엔진 제안', MEMORY_DEMO: '합성 데모 초안 · AI 호출 없음' }
 
 export default function GroupRationale({ base, groupId, revision, eventId, editable, busy, selected,
   onSave, onDirty, onError }: { base: string; groupId: string; revision: number; eventId: string | null;

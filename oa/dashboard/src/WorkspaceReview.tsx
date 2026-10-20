@@ -12,6 +12,7 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
   compact?: boolean
 }) {
   const base = `/blocks/${report.block_id}/versions/${report.version_id}/reports/${report.id}${group ? `/groups/${group.id}` : ''}`
+  const demo = session.environment === 'MEMORY_DEMO'
   const query = compact ? '?compact=true' : ''
   const inputId = useId()
   const [data, setData] = useState<ReportReview | null>(null)
@@ -99,7 +100,7 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
     {error && <p className="ws-error" role="alert">{error}</p>}
     {notice && <p className="ws-notice" role="status"><Check size={15} />{notice}</p>}
     <div className="ws-judgment-summary"><div><span>도구 판정</span><strong className={`ws-status ws-status-${report.check_status.toLowerCase()}`}>{labels[report.check_status]}</strong></div><div><span>사용자 판정</span><strong>{data.current_stale ? `재검토 · 이전 ${labels[data.current!.conclusion]}` : data.current ? labels[data.current.conclusion] : '미판정'}</strong></div></div>
-    <section className="ws-review-advice" aria-label="AI review와 누적 기준 제안"><header><div><h3><Sparkles size={16} />AI review</h3><p>사내 AI 미연결 · 확정 사례를 참고하는 엔진입니다.</p></div><Button variant="outline" onClick={propose} disabled={!!busy || !data.can_review}><RefreshCw size={14} />{busy === 'proposal' ? '기준 확인 중…' : '판정 제안 받기'}</Button></header>
+    <section className="ws-review-advice" aria-label="AI review와 누적 기준 제안"><header><div><h3><Sparkles size={16} />AI review</h3><p>{demo ? '합성 데모 · AI를 호출하지 않습니다. 원문을 확인하고 직접 판정하세요.' : '사내 AI 미연결 · 확정 사례를 참고하는 엔진입니다.'}</p></div><Button variant="outline" onClick={propose} disabled={demo || !!busy || !data.can_review}><RefreshCw size={14} />{busy === 'proposal' ? '기준 확인 중…' : '판정 제안 받기'}</Button></header>
       {proposal ? <div className="ws-review-proposal"><div><strong>제안 {labels[proposal.conclusion]}</strong><span>확정 기준 적용 · {time(proposal.at)}</span></div><p>{proposal.reason}</p>{data.current?.proposal_id === proposal.id ? <p className="ws-muted">이 제안에 대한 사용자 판정을 {labels[data.current.conclusion]}로 저장했습니다. 수정 내역은 아래 이력에서 확인할 수 있습니다.</p> : proposal.stale && <p className="ws-error">판정 또는 참고 기준이 변경되었습니다. 제안을 다시 받아 주세요.</p>}
         {proposal.references.length > 0 && <details><summary>참고한 확정 기준 {proposal.references.length}건</summary>{proposal.references.map(reference => <CaseEvidence key={reference.id} value={reference} />)}</details>}
         {data.can_review && <Button variant="outline" disabled={!!busy || !!proposal.stale} onClick={() => { edit(); setConclusion(proposal.conclusion); setReason(proposal.reason); setProposalId(proposal.id); setReusable(false); setCompatible(false) }}>제안 적용</Button>}
