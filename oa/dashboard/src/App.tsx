@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Activity, ArrowDownToLine, ArrowRight, ArrowUpRight, Box, Check, CheckCheck, ChevronLeft, ChevronRight, CircleHelp, ClipboardCheck, Clock3, FileCheck2, FileSearch, Files, Fingerprint, Inbox, Layers3, LoaderCircle, LockKeyhole, LogOut, Menu, MessageSquareMore, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, ShieldCheck, Sparkles, X } from 'lucide-react'
+import { Activity, ArrowDownToLine, ArrowUpRight, Box, Check, CheckCheck, ChevronLeft, ChevronRight, CircleHelp, ClipboardCheck, Clock3, FileCheck2, FileSearch, Files, Fingerprint, Inbox, Layers3, LoaderCircle, LockKeyhole, LogOut, Menu, MessageSquareMore, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, ShieldCheck, Sparkles, X } from 'lucide-react'
 import { Button } from './components/ui/button'
 import { Badge } from './components/ui/badge'
 import { Card, CardContent } from './components/ui/card'
@@ -18,6 +18,8 @@ import { ClusterPanel } from './ClusterPanel'
 import { RawEvidence } from './RawEvidence'
 import { WorkspaceBrand } from './components/WorkspaceBrand'
 import { useWorkspaceNavigation } from './useWorkspaceNavigation'
+import { useDashboardAuth } from './useDashboardAuth'
+import { DashboardLogin } from './DashboardLogin'
 import type { Bundle, Detail, Evidence, EvidenceRequest, Group, Page, Session, Unit } from './types'
 
 type Api = <T>(path: string, body?: Record<string, unknown>, text?: boolean) => Promise<T>
@@ -35,12 +37,15 @@ export default function App() {
   const [demoDataset] = useState(() => new URLSearchParams(location.search).get('dataset'))
   const gcaDemo = demo && demoDataset === 'gca'
   const demoApi = useRef<ReturnType<typeof makeDemo> | null>(null)
-  const [token, setToken] = useState('')
-  const [tokenInput, setTokenInput] = useState('')
-  const [session, setSession] = useState<Session | null>(null)
-  const [error, setError] = useState('')
+  const auth = useDashboardAuth(!demo)
+  const [demoSession, setDemoSession] = useState<Session | null>(null)
+  const session = demo ? demoSession : auth.session
+  const canRead = !!session && (session.auth_method !== 'sso' || session.authorization_ready === true)
+  const [commandError, setError] = useState('')
+  const error = commandError || auth.error
   const [notice, setNotice] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [commandBusy, setBusy] = useState(false)
+  const busy = commandBusy || auth.signingOut
   const [mobile, setMobile] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const closeMobile = useCallback(() => setMobile(false), [])
@@ -70,16 +75,9 @@ export default function App() {
       demoApi.current ??= demoDataset === 'gca' ? makeGcaDemo() : makeDemo()
       return await demoApi.current(path, body) as T
     }
-    if (!token) throw new Error('인증 토큰이 필요합니다.')
-    const response = await fetch(path, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}), cache: 'no-store' })
-    if (!response.ok) {
-      let code = `HTTP_${response.status}`
-      try { code = (await response.json()).code || code } catch { /* Non-JSON proxy errors remain explicit. */ }
-      throw Object.assign(new Error(code === 'REVISION_CONFLICT' ? `다른 검토자가 내용을 변경했습니다. 새로고침 후 검토 창을 다시 열어 주세요. (${code})` : response.status === 401 ? '인증이 만료되었거나 토큰이 올바르지 않습니다. 연결을 종료하고 다시 로그인해 주세요.' : `요청을 처리하지 못했습니다. (${String(code).slice(0, 100)})`), { status: response.status })
-    }
-    return plain ? await response.text() as T : await response.json() as T
-  }, [demo, token, demoDataset])
-  const fail = (e: unknown) => setError(e instanceof Error ? e.message : '요청에 실패했습니다. 연결 상태를 확인해 주세요.')
+    return auth.request<T>(path, body, plain)
+  }, [demo, auth.request, demoDataset])
+  const fail = (e: unknown) => { if (!(e instanceof DOMException && e.name === 'AbortError')) setError(e instanceof Error ? e.message : '요청에 실패했습니다. 연결 상태를 확인해 주세요.') }
   const refresh = () => { setError(''); setTick(v => v + 1) }
   function selectBundle(id: string) {
     if (id === selected) return
@@ -88,39 +86,50 @@ export default function App() {
     setRequests({ items: [], total: 0, offset: 0, limit: 20 }); setTab('ledger')
   }
   useEffect(() => {
-    if (!demo && !token) return
+    if (!demo) return
     let active = true
-    api<Session>('/api/session').then(value => { if (active) { setSession(value); setError('') } }).catch(e => { if (active) { fail(e); setSession(null); setToken('') } })
+    api<Session>('/api/session').then(value => { if (active) { setDemoSession(value); setError('') } }).catch(e => { if (active) { fail(e); setDemoSession(null) } })
     return () => { active = false }
-  }, [api, demo, token])
+  }, [api, demo])
   useEffect(() => {
-    if (!session) return
+    if (!session || !canRead) return
     let active = true
     api<Page<Bundle>>(`/api/bundles?offset=${bundleOffset}&limit=20`).then(value => { if (active) { setBundles(value); setSelected(old => old || value.items[0]?.bundle_id || '') } }).catch(e => { if (active) fail(e) })
     return () => { active = false }
-  }, [api, session, bundleOffset, tick])
+  }, [api, session, canRead, bundleOffset, tick])
   useEffect(() => {
-    if (!session || !selected) return
+    if (!session || !canRead || !selected) return
     let active = true; setLoading(true)
     api<Detail>(`/api/bundles/${encodeURIComponent(selected)}?unit_offset=${unitOffset}&unit_limit=50`).then(value => { if (active) { setDetail(value); setUnitId(old => value.units.some(u => u.review_unit_id === old) ? old : value.units[0]?.review_unit_id || '') } }).catch(e => { if (active) fail(e) }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [api, session, selected, unitOffset, tick])
+  }, [api, session, canRead, selected, unitOffset, tick])
   useEffect(() => {
-    if (!session || !selected || !unitId) return
+    if (!session || !canRead || !selected || !unitId) return
     let active = true; setGroups({ items: [], total: 0, offset: groupOffset, limit: 20 })
     api<Page<Group>>(`/api/bundles/${encodeURIComponent(selected)}/units/${encodeURIComponent(unitId)}/groups?offset=${groupOffset}&limit=20`).then(value => { if (active) setGroups(value) }).catch(e => { if (active) fail(e) })
     return () => { active = false }
-  }, [api, session, selected, unitId, groupOffset, tick])
+  }, [api, session, canRead, selected, unitId, groupOffset, tick])
   useEffect(() => {
-    if (!session || !selected) return
+    if (!session || !canRead || !selected) return
     let active = true
     setRequests({ items: [], total: 0, offset: requestOffset, limit: 20 })
     api<Page<EvidenceRequest>>(`/api/bundles/${encodeURIComponent(selected)}/requests?offset=${requestOffset}&limit=20`).then(value => { if (active) setRequests(value) }).catch(e => { if (active) fail(e) })
     return () => { active = false }
-  }, [api, session, selected, requestOffset, tick])
+  }, [api, session, canRead, selected, requestOffset, tick])
 
-  function logout() {
-    setToken(''); setTokenInput(''); setSession(null); setDemo(false); demoApi.current = null
+  useEffect(() => {
+    if (session) return
+    setSelected(''); setDetail(null); setUnitId(''); setForm(null); setEvidence(null)
+    setBundles({ items: [], total: 0, offset: 0, limit: 20 }); setBundleOffset(0); setUnitOffset(0)
+    setGroups({ items: [], total: 0, offset: 0, limit: 20 }); setGroupOffset(0)
+    setRequests({ items: [], total: 0, offset: 0, limit: 20 }); setRequestOffset(0)
+    setMobile(false); setLoading(false)
+  }, [session])
+
+  async function logout() {
+    setError('')
+    if (!demo && !await auth.logout()) return
+    setDemoSession(null); setDemo(false); demoApi.current = null
     setSelected(''); setDetail(null); setUnitId(''); setError(''); setNotice(''); setForm(null); setEvidence(null)
     setBundles({ items: [], total: 0, offset: 0, limit: 20 }); setBundleOffset(0); setUnitOffset(0)
     const url = new URL(location.href); url.searchParams.delete('demo'); history.replaceState(null, '', url)
@@ -158,7 +167,7 @@ export default function App() {
     setNotice('검토 보고서를 다운로드했습니다.')
   })
 
-  if (!session) return <div className="login-page"><a className="skip-link" href="#workspace-main">본문으로 건너뛰기</a><div className="login-decoration"><WorkspaceBrand /><div><div className="eyebrow">FROM SIGNAL TO DECISION</div><h1>모든 검토에,<br />분명한 근거를.</h1><p>실행 결과부터 최종 판단까지.<br />Sanity 검토의 전체 흐름을 한곳에서 확인하세요.</p><ol className="login-process" aria-label="검토 흐름"><li><span>01</span><div><strong>실행 결과</strong><small>전체 점검 항목과 수신 상태 확인</small></div><Inbox /></li><li><span>02</span><div><strong>원본 근거</strong><small>판정 기준과 검사 기록 대조</small></div><FileSearch /></li><li><span>03</span><div><strong>사람의 검토</strong><small>판단 사유와 변경 이력 보존</small></div><ClipboardCheck /></li></ol></div><span>INTERNAL REVIEW WORKSPACE</span></div><main className="login-main" id="workspace-main" tabIndex={-1}><div className="login-box"><div className="login-mark"><LockKeyhole size={24} /></div><div className="eyebrow">OA WORKSPACE</div><h2>검토 공간에 연결</h2><p>발급받은 접근 토큰으로 로그인하세요.</p>{error && <div role="alert" className="error-banner">{error}</div>}<form onSubmit={e => { e.preventDefault(); setError(''); setToken(tokenInput.trim()); setTokenInput('') }}><label htmlFor="access-token">접근 토큰</label><Input id="access-token" type="password" autoComplete="off" value={tokenInput} onChange={e => setTokenInput(e.target.value)} placeholder="접근 토큰 입력" required /><Button className="w-full" type="submit" disabled={!tokenInput.trim() || !!token}>{token ? <LoaderCircle className="spin" /> : <ArrowRight />}워크스페이스 연결</Button></form><p className="security-note"><ShieldCheck size={15} />토큰은 현재 탭의 메모리에만 보관됩니다.</p><div className="login-divider"><span>먼저 둘러보고 싶다면</span></div><Button variant="outline" className="w-full" onClick={() => { setError(''); setDemo(true) }}><Sparkles />데모 둘러보기</Button><p className="tiny">데모는 예시 데이터를 사용하며 실제 검사 결과에 영향을 주지 않습니다.</p></div><span className="login-foot">SANITY / REVIEW CONSOLE <span>v0.2 · OA</span></span></main></div>
+  if (!session || !canRead) return <DashboardLogin config={auth.config} session={session} checking={auth.checking} signingOut={auth.signingOut} error={error} accountProblem={auth.accountProblem} onToken={value => { setError(''); auth.loginWithToken(value) }} onRetry={() => { setError(''); auth.retry() }} onLogout={logout} />
 
   const c = detail?.coverage
   const progress = c && c.expected ? Math.round((c.reviewed + c.approved_na) / c.expected * 100) : 0
@@ -168,7 +177,7 @@ export default function App() {
   const visibleUnits = detail?.units.filter(u => (filter === 'all' || (filter === 'pending' ? !u.decision && u.applicable : u.check_status === filter)) && `${u.item_id} ${u.review_unit_id}`.toLowerCase().includes(search.toLowerCase())) || []
   return <div className={`shell ${collapsed && !isMobile ? 'sidebar-is-collapsed' : ''}`}><a className="skip-link" href="#workspace-main">본문으로 건너뛰기</a>
     {mobile && <button className="sidebar-backdrop" aria-label="메뉴 닫기" onClick={closeMobile} tabIndex={-1} />}
-    <aside id="workspace-menu" ref={sidebarRef} className={`sidebar ${mobile ? 'sidebar-open' : ''}`} aria-label="워크스페이스 메뉴" role={isMobile && mobile ? 'dialog' : undefined} aria-modal={isMobile && mobile ? true : undefined} inert={isMobile && !mobile} aria-hidden={isMobile && !mobile}><WorkspaceBrand /><button className="sidebar-close" aria-label="메뉴 닫기" onClick={closeMobile}><X size={18} /></button><div className="workspace-picker"><span className="workspace-icon">OA</span><div><strong>검토 워크스페이스</strong><small>INTERNAL · {demo ? 'DEMO' : 'CONNECTED'}</small></div><span className="online-dot" /></div><div className="nav-label">WORKSPACE</div><nav>{[{ id: 'ledger', icon: ClipboardCheck, title: '검토 대장' }, { id: 'evidence', icon: FileSearch, title: '추가 근거 요청' }, { id: 'history', icon: Activity, title: '활동 이력' }].map(({ id, icon: Icon, title }) => <button key={id} aria-label={title} aria-current={tab === id ? 'page' : undefined} className={tab === id ? 'nav-active' : ''} onClick={() => { setTab(id); closeMobile() }}><Icon size={18} /><span className="nav-text">{title}</span>{id === 'evidence' && requests.total > 0 && <span className="nav-count">{requests.total}</span>}</button>)}</nav><div className="sidebar-info"><Layers3 size={21} /><strong>검토 범위를 놓치지 않도록</strong><p>누락·미지원 항목도 전체 검토 대상에 포함됩니다.</p><div><span className="online-dot" />{demo ? '데모 세션' : 'OA 로컬 서버'}</div></div><button className="sidebar-toggle" onClick={() => setCollapsed(value => !value)} aria-expanded={!collapsed} aria-label={collapsed ? '메뉴 펼치기' : '메뉴 접기'}>{collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}<span>메뉴 접기</span></button><div className="sidebar-footer"><div className="avatar">{session.reviewer.slice(0, 1)}</div><div><strong>{session.reviewer}</strong><small>{session.writable ? '검토자' : '읽기 전용'}</small></div><button aria-label="연결 종료" onClick={logout}><LogOut size={17} /></button></div></aside>
+    <aside id="workspace-menu" ref={sidebarRef} className={`sidebar ${mobile ? 'sidebar-open' : ''}`} aria-label="워크스페이스 메뉴" role={isMobile && mobile ? 'dialog' : undefined} aria-modal={isMobile && mobile ? true : undefined} inert={isMobile && !mobile} aria-hidden={isMobile && !mobile}><WorkspaceBrand /><button className="sidebar-close" aria-label="메뉴 닫기" onClick={closeMobile}><X size={18} /></button><div className="workspace-picker"><span className="workspace-icon">OA</span><div><strong>검토 워크스페이스</strong><small>INTERNAL · {demo ? 'DEMO' : 'CONNECTED'}</small></div><span className="online-dot" /></div><div className="nav-label">WORKSPACE</div><nav>{[{ id: 'ledger', icon: ClipboardCheck, title: '검토 대장' }, { id: 'evidence', icon: FileSearch, title: '추가 근거 요청' }, { id: 'history', icon: Activity, title: '활동 이력' }].map(({ id, icon: Icon, title }) => <button key={id} aria-label={title} aria-current={tab === id ? 'page' : undefined} className={tab === id ? 'nav-active' : ''} onClick={() => { setTab(id); closeMobile() }}><Icon size={18} /><span className="nav-text">{title}</span>{id === 'evidence' && requests.total > 0 && <span className="nav-count">{requests.total}</span>}</button>)}</nav><div className="sidebar-info"><Layers3 size={21} /><strong>검토 범위를 놓치지 않도록</strong><p>누락·미지원 항목도 전체 검토 대상에 포함됩니다.</p><div><span className="online-dot" />{demo ? '데모 세션' : 'OA 로컬 서버'}</div></div><button className="sidebar-toggle" onClick={() => setCollapsed(value => !value)} aria-expanded={!collapsed} aria-label={collapsed ? '메뉴 펼치기' : '메뉴 접기'}>{collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}<span>메뉴 접기</span></button><div className="sidebar-footer"><div className="avatar">{session.reviewer.slice(0, 1)}</div><div><strong>{session.reviewer}</strong><small>{session.writable ? '검토자' : '읽기 전용'}</small></div><button aria-label="연결 종료" disabled={busy} onClick={logout}><LogOut size={17} /></button></div></aside>
     <div className="main-shell" inert={isMobile && mobile} aria-hidden={isMobile && mobile}><header className="topbar"><div className="breadcrumb"><button ref={triggerRef} className="mobile-menu" aria-label="메뉴 열기" aria-expanded={mobile} aria-controls="workspace-menu" onClick={() => setMobile(true)}><Menu /></button><span>워크스페이스</span><ChevronRight size={13} /><strong>Sanity 검토</strong></div><div className="topbar-right"><span className="connection"><span className="online-dot" />{demo ? '데모 환경' : '연결됨'}</span><Separator orientation="vertical" /><span className="avatar avatar-small">{session.reviewer.slice(0, 1)}</span></div></header>
     <main className="workspace" id="workspace-main" tabIndex={-1}>
       {demo && <div className="demo-banner"><Sparkles size={15} /><span><strong>데모 모드</strong> · 예시 검사 결과를 보여줍니다. 변경은 현재 세션에만 적용됩니다.</span><nav className="demo-navigation" aria-label="데모 화면"><a className="demo-switch" href={gcaDemo ? "/?demo=1" : "/?demo=1&dataset=gca"}>{gcaDemo ? "기본 예시" : "GCA 예시 보기"}</a><a className="demo-switch" href="/?demo=1&flow=access">프로젝트·담당자 데모</a><a className="demo-switch" href="/?demo=1&flow=versions">버전·ECO·PoR 데모</a></nav><button onClick={logout}>데모 종료 <ArrowUpRight size={13} /></button></div>}

@@ -41,7 +41,8 @@ export function makeDemo() {
       commandBodies.set(key, signature)
     }
     const page = <T,>(items: T[]) => { const offset = Number(url.searchParams.get('offset') || 0); const limit = Number(url.searchParams.get('limit') || 20); return { items: items.slice(offset, offset + limit), total: items.length, offset, limit } }
-    if (p === '/api/session') return { reviewer: '김민서', access_mode: 'demo', writable: true, notice: '데모 데이터 · 변경은 현재 화면 메모리에만 저장됩니다.' }
+    if (p === '/api/auth-config') return { mode: 'local_token', login_url: null, logout_url: null, logout_method: null }
+    if (p === '/api/session') return { user_id: 'local-reviewer', auth_method: 'local_token', authorization_ready: true, reviewer: '김민서', access_mode: 'demo', writable: true, notice: '데모 데이터 · 변경은 현재 화면 메모리에만 저장됩니다.' }
     if (p === '/api/bundles') return structuredClone(page(bundles()))
     if (p === '/api/receive') return { status: 'NO_NEW_BUNDLES' }
     if (p.endsWith('/reviews') && body) {

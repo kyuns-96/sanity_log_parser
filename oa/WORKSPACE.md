@@ -342,7 +342,7 @@ metadata 응답 6,704 bytes, 그룹 25개·원문 50건 렌더와 마지막 원�
 [사람의 판정 기준 축적](../requirement.md#human-judgment-learning)의 첫 단계를 실제 workspace API/DB에 연결했다.
 검사 대장은 **규칙 판정 / 사용자 판정**을 별도 열로 표시한다. 원본 FAIL에도 사용자 PASS를 사유와 함께 저장할 수 있다.
 파싱 미완료·원문 미수신은 보류만 기록한다. 사용자 판정은 원본/근거/규칙 결과나 PoR을 변경하지 않는다.
-담당자만 저장/제안을 요청하고 TOP은 같은 판정·이력을 읽는다. 구형 `?demo=1`의 승인 API와 이 별도 판정 API는 다르다.
+담당자만 저장/제안을 요청하고 TOP은 같은 판정·이력을 읽는다. 구형 `?demo=1&flow=legacy`의 승인 API와 이 별도 판정 API는 다르다.
 
 - `WS_REVIEW`는 현재 사례를 참조하는 개정 head다. `WS_REVIEW_EVENT`는 판정·사유·조건·버전 snapshot·원본 SHA-256·판정자·이전 개정을 보존한다.
 - `WS_REVIEW_PROPOSAL`은 제안·참조 사례 개정·입력 해시·엔진·호출 여부를 보존한다. 제안과 사용자의 최종 판정/수정 여부를 연결한다.
@@ -383,7 +383,9 @@ cd ../..
 
 주소는 `http://127.0.0.1:8001/workspace`다. `setup`의 `--origin`은 정확한 주소를 명시하며 필요한 경우 반복한다.
 TLS proxy를 사용할 때는 그 HTTPS origin도 명시한다. 서버는 loopback에만 bind하고 CORS를 허용하지 않는다.
-`/`는 워크스페이스로 이동하며, 명시적인 `?demo=1`의 이전 화면도 유지한다.
+`/`는 워크스페이스로 이동한다. 명시적인 `/?demo=1`과 `/workspace?demo=1`은 같은 최신 UI의 합성 메모리 데모를 연다.
+데모는 서버 API·DB·AI를 호출하지 않으며 계정 전환으로 공유하는 변경도 새로고침하면 초기화된다.
+이전 번들 검토 대장은 `/?demo=1&flow=legacy`에서 유지한다. 상세 사용법은 [대시보드 안내](dashboard/README.md)를 따른다.
 이 별도 테스트 배포의 `/api/*`는 기존 업무 API를 활성화하지 않고 `AUTHORIZATION_NOT_IMPLEMENTED`를 반환한다.
 
 `setup`은 매번 신규 로컬 소켓/SCRAM PostgreSQL과 제한된 OA 계정을 만든다. TCP DB 수신이나 회사 접속 설정 상속은 없다.

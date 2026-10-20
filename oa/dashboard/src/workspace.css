@@ -1,4 +1,32 @@
 .ws-app { --ws-sidebar-width: 236px; min-height: 100dvh; color: var(--ink); background: var(--canvas); }
+.ws-demo-banner { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 18px 24px; padding: 18px 20px; margin-bottom: 26px; border: 1px solid var(--accent-line); border-radius: 8px; background: var(--accent-soft); color: var(--accent); }
+.ws-demo-description { display: flex; align-items: center; gap: 13px; flex: 1 1 330px; min-width: 0; }
+.ws-demo-mark { display: grid; place-items: center; width: 38px; height: 38px; flex-shrink: 0; border: 1px solid var(--accent-line); border-radius: 8px; }
+.ws-demo-description strong { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; }
+.ws-demo-description strong span { font-size: 10px; font-weight: 400; color: var(--text-secondary); }
+.ws-demo-description p { margin: 6px 0 0; max-width: 58ch; color: var(--text-secondary); font-size: 11px; line-height: 1.8; text-wrap: pretty; }
+.ws-demo-controls { display: flex; align-items: flex-end; gap: 16px; }
+.ws-demo-controls > label { display: grid; gap: 6px; color: var(--text-secondary); font-size: 10px; }
+.ws-demo-controls select { max-width: 240px; width: 100%; min-height: 40px; padding: 8px 30px 8px 11px; border: 1px solid var(--accent-line); border-radius: 5px; background: var(--surface); color: var(--accent); font: 12px var(--font-sans); }
+.ws-demo-links { position: relative; flex-shrink: 0; }
+.ws-demo-links > summary { display: flex; align-items: center; gap: 6px; list-style: none; cursor: pointer; min-height: 40px; font-size: 11px; }
+.ws-demo-links > summary::-webkit-details-marker { display: none; }
+.ws-demo-links nav { position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; display: grid; min-width: 190px; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.ws-demo-links a { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 44px; padding: 9px 10px; color: var(--text-secondary); font-size: 12px; text-decoration: none; border-radius: 3px; }
+.ws-demo-links a:hover { background: var(--accent-soft); color: var(--accent); }
+.ws-demo-error { flex-basis: 100%; margin: 0; color: var(--danger); font-size: 12px; }
+.ws-login-demo { width: 100%; margin-top: 18px; }
+.ws-overview-blocks { display: none; }
+@media (max-width: 720px) {
+  .ws-demo-banner { padding: 15px; gap: 14px; margin-bottom: 22px; }
+  .ws-demo-description { flex-basis: 100%; align-items: flex-start; gap: 10px; }
+  .ws-demo-mark { width: 32px; height: 32px; }
+  .ws-demo-controls { flex: 1; min-width: 0; gap: 12px; justify-content: space-between; }
+  .ws-demo-controls > label { flex: 1; min-width: 0; }
+  .ws-demo-controls select { max-width: none; min-width: 0; }
+  .ws-overview-blocks { display: flex; flex-wrap: wrap; gap: 8px; margin: -8px 0 20px; }
+  .ws-overview-blocks > button { flex: 1; min-height: 44px; }
+}
 .ws-app button, .ws-login button { font-weight: 500; }
 .ws-sidebar { position: fixed; inset: 0 auto 0 0; z-index: 30; width: var(--ws-sidebar-width); padding: 28px 18px 18px; display: flex; flex-direction: column; background: var(--sidebar-surface); border-right: 1px solid var(--line); }
 .ws-sidebar > .console-brand { margin: 0 8px; }

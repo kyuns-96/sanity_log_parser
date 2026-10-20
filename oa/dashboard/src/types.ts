@@ -9,5 +9,6 @@ export type Group = { finding_group_id: string; review_unit_id: string; message_
 export type EvidenceRequest = { request_id: string; review_unit_id: string; record_ids: string[]; reason: string; status: string; created_at: string; expires_at: string; response_status: string | null; result: string | null }
 export type Evidence = { result: string; records: { record_id: string; raw: string; raw_truncated: boolean }[]; record_count: number }
 export type Page<T> = { items: T[]; total: number; offset: number; limit: number }
+export type AuthConfig = { mode: 'local_token' | 'sso'; login_url: '/auth/login' | null; logout_url: '/auth/logout' | null; logout_method: 'POST' | null }
 // Identity fields are optional only for existing browser-demo fixtures.
 export type Session = { user_id?: string; reviewer: string; auth_method?: 'local_token' | 'sso'; authorization_ready?: boolean; access_mode: string; writable: boolean; notice: string }

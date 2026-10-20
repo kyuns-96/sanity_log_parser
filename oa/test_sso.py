@@ -99,7 +99,7 @@ class SSOApiTests(unittest.TestCase):
         ids = {"bundle_id": "b-" + "a" * 64, "unit_id": "u-1", "jid": "job-1",
                "request_id": "00000000-0000-0000-0000-000000000001", "record_id": "r-1"}
         routes = [route for route in self.app.routes if getattr(route, "path", "").startswith("/api/")
-                  and route.path not in {"/api/session", "/api/health", "/api/{path:path}"}]
+                  and route.path not in {"/api/session", "/api/health", "/api/auth-config", "/api/{path:path}"}]
         self.assertGreaterEqual(len(routes), 15)
         with patch.object(api, "Database") as db, patch.object(api.commands, "receive") as receive, \
                 patch.object(api, "request_evidence") as evidence, patch.object(api, "receive_evidence") as receive_evidence:

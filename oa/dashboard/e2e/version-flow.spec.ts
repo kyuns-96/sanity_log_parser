@@ -112,6 +112,7 @@ test('mobile ownership, long revisions, designation and reset remain usable', as
   await expect(page.getByLabel('데모 사용자')).toHaveValue('u-lee')
   await expect(page.getByTestId('block-CPU')).toContainText('EVT0_ML4_DEV00')
   await expect(page.getByLabel('현재 검사 대상')).toContainText('eco03')
+  await page.route('**/api/auth-config', route => route.fulfill({ json: { mode: 'local_token', login_url: null, logout_url: null, logout_method: null } }))
   await page.goto('/?flow=versions')
   await expect(page.getByLabel('접근 토큰')).toBeVisible()
 })

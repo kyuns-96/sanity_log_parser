@@ -171,6 +171,18 @@ def create_app(*, auth_mode: AuthMode | None = None,
     def health():
         return {"status": "OK", "interface": "OA_DASHBOARD", "scope": "LOCAL_PROTOTYPE"}
 
+    @app.get("/api/auth-config")
+    def auth_config():
+        # Public presentation metadata only: no SDK/DB call, identity or secret.
+        mode = app.state.authentication.effective_mode(load_environment())
+        routes = {(route.path, method) for route in auth_router.routes
+                  for method in (getattr(route, "methods", None) or ())} if auth_router is not None else set()
+        login = mode == "sso" and ("/login", "GET") in routes
+        logout = mode == "sso" and ("/logout", "POST") in routes
+        return {"mode": mode, "login_url": "/auth/login" if login else None,
+                "logout_url": "/auth/logout" if logout else None,
+                "logout_method": "POST" if logout else None}
+
     @app.get("/api/session")
     def session(actor=Depends(authenticated)):
         mode = access_mode(load_environment())

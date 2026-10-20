@@ -744,9 +744,10 @@ GCA는 이 프로젝트에서 PrimeTime 제약조건 검사를 다루는 **Galax
 - `AuthenticationService`: 로컬 토큰/SSO 모드 분리, 검증 결과 형식·미연결·비활성 확인, 고정 오류 코드 처리. SSO 실패 시 다른 인증으로 우회하지 않음.
 - `create_app` 주입과 `sso_app.py`: 사내 어댑터 두 개를 연결하고 필요 시 `/auth`의 로그인·콜백·로그아웃 router 등록.
 - `/api/session`: 내부 `user_id`·표시 이름·인증 방식 반환. 원본 토큰·쿠키·SSO claims는 반환하지 않음.
+- 2026-10-20 `/api/auth-config`와 쿠키 SSO 인증 UI를 연결했다. 서버가 로그인 방식을 선택하고, SSO는 토큰 없이 세션을 확인하며 `POST /auth/logout`의 성공 응답 후 종료한다. 401·계정 연결/비활성 403·설정/장애 503을 구분하고, SSO의 업무 권한 준비 전에는 연결 확인 화면에서 업무 요청을 막는다. `/workspace`의 회사 SSO/RBAC 연결 완료를 뜻하지 않는다.
 
 사내 AI는 `oa/integration/corporate_sso.py`의 두 메서드와 허용된 회사 SDK/인증 router 연결만 구현한다.
-승인된 영속 사용자 매핑 저장소가 없으면 Codex에게 저장 설계를 문의한다. 프런트엔드 연결·프로젝트/블록 RBAC·
+승인된 영속 사용자 매핑 저장소가 없으면 Codex에게 저장 설계를 문의한다. 프런트엔드 공통 코드·프로젝트/블록 RBAC·
 DB 증분 저장과 감사 계약은 Codex 담당이며 내부 AI가 임의 수정하지 않는다. 현재의 미구현 메서드는 명시적인 오류를 반환한다.
 기존 로컬 토큰 인증은 유지한다. SSO 사용자의 업무 API는 전체 번들 노출을 막기 위해
 `AUTHORIZATION_NOT_IMPLEMENTED`로 차단하며, 목록·건수·상세·다운로드·AI 요청의 권한 필터가 준비된 뒤 교체한다.

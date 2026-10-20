@@ -123,6 +123,7 @@ test('mobile creation and assignment dialogs fit and keyboard controls work', as
 })
 
 test('the workflow is opt-in and never replaces production login', async ({ page }) => {
+  await page.route('**/api/auth-config', route => route.fulfill({ json: { mode: 'local_token', login_url: null, logout_url: null, logout_method: null } }))
   await page.goto('/?flow=access')
   await expect(page.getByLabel('접근 토큰')).toBeVisible()
   await expect(page.getByRole('region', { name: '데모 체험 도구' })).toHaveCount(0)

@@ -149,7 +149,7 @@ Q1 인계에는 제출 대상 REVISION과 각 PRE/POST report의 실제 소속, 
 
 | ID | 공통 후속 작업 | 사내에서 먼저 제공할 자료 |
 |---|---|---|
-| COMMON-01 | SSO 신원→workspace 사용자/담당 범위 연결, legacy 업무 API 범위 제한, UI 로그인/로그아웃·CSRF | SSO·계정/권한 출처·세션/폐기 계약 |
+| COMMON-01 | 인증 설정 API·쿠키 SSO 로그인/POST 로그아웃 UI 제공. SSO 신원→workspace 사용자/담당 범위, legacy 업무 API 범위 제한·감사는 남음 | SSO·계정/권한 출처·회사 router의 CSRF/세션 폐기와 실제 IdP 검증 |
 | COMMON-02 | 공통 V2 제출·분할 source import·workspace/receipt 구현 제공. 아래 02A~E이며 회사 SDK/인프라 검증은 남음 | Q1 원천 대응·예상 범위 승인·실행 ID/순서, 인증된 mount/ACL·계정/담당과 운영 DB 준비 |
 | COMMON-03 | 새 workspace 분류/판정의 VWP job·기존 DB 요청/결과 전달·worker/상태·UI 연결 | 회사 SDK 입출력·실패·취소·조회·처리 한도 |
 | COMMON-04 | 최초 AI 판정의 직접 원본 근거 계약, 확정 사례 기본 활용과 선택형 재사용 필드의 관계 정리 | 사례 없는 판정의 사내 기준/정답·반례, 기존 승인 범위 정책 |

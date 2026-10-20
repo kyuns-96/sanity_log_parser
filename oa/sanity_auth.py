@@ -128,12 +128,17 @@ class AuthenticationService:
         self.identity_provider = identity_provider
         self.user_directory = user_directory
 
-    def authenticate(self, request: AuthRequest, settings: Mapping[str, str | None]) -> Actor:
+    def effective_mode(self, settings: Mapping[str, str | None]) -> AuthMode:
+        """Resolve the same server-selected mode for authentication and login UI."""
         mode = self.mode if self.mode is not None else settings.get("SANITY_AUTH_MODE", "local_token")
+        if mode not in ("local_token", "sso"):
+            raise AuthError("AUTH_CONFIG")
+        return mode
+
+    def authenticate(self, request: AuthRequest, settings: Mapping[str, str | None]) -> Actor:
+        mode = self.effective_mode(settings)
         if mode == "local_token":
             return self._local(request, settings)
-        if mode != "sso":
-            raise AuthError("AUTH_CONFIG")
         if self.identity_provider is None:
             raise AuthError("AUTH_SSO_NOT_CONFIGURED")
         if self.user_directory is None:

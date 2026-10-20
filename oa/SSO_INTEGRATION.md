@@ -10,6 +10,8 @@ SSO 공급자 SDK와 사내 계정 DB만 연결하면 `/api/session`에서 검�
 
 이 문서의 `/api/*`와 `sso_app.py`는 기존 단일 사용자용 dashboard API다. 별도 합성 `/workspace`에는 사용자/프로젝트·블록 범위·PoR 저장이 구현되어 있지만 회사 SSO와 연결되지 않았다. `/api/session`과 `/workspace/api/session`은 서로 다른 진입점이다. SSO 연동 완료와 업무 권한/워크스페이스 연결 완료를 분리하며, 공통 연결 전 SSO 사용자의 legacy 업무 API는 `503 AUTHORIZATION_NOT_IMPLEMENTED`를 유지한다. 기존 로컬 토큰 모드는 종전처럼 동작한다. 통합 인계는 [INTERNAL_AI_HANDOFF.md](../INTERNAL_AI_HANDOFF.md)를 따른다.
 
+2026-10-20 Codex가 서버 인증 방식 조회와 쿠키 SSO용 로그인·세션 확인·POST 로그아웃 UI를 연결했다. SSO 인증이 성공해도 업무 권한이 준비되지 않았으면 연결 확인 화면을 보여주며 업무 API를 호출하지 않는다. 회사 어댑터·실제 IdP 검증과 workspace 운영 권한 연결은 별도다.
+
 ## 1. 파일과 구현 책임
 
 | 파일 | 현재 제공한 내용 | 사내에서 구현할 부분 |
@@ -17,8 +19,8 @@ SSO 공급자 SDK와 사내 계정 DB만 연결하면 `/api/session`에서 검�
 | [sanity_auth.py](sanity_auth.py) | 추상 인터페이스, 입력·출력 모델, 모드 선택, 계정 연결·활성 상태 검사, 오류 표준화 | 내부 AI 수정 금지. 운영 범위 검사 확장은 Codex 담당 |
 | [corporate_sso.py](integration/corporate_sso.py) | `CorporateIdentityProvider`, `CorporateUserDirectory`의 명시적인 미구현 응답 | SSO 검증과 영속 사용자 ID 조회 |
 | [sso_app.py](sso_app.py) | 두 어댑터를 API에 주입하는 사내 실행 진입점 | 회사 모듈 import와 어댑터/router 주입만 허용. 인증 모드·bind·proxy 설정 변경 금지 |
-| [dashboard_api.py](dashboard_api.py) | `create_app` 주입 지점, `authenticated`, `authorized_actor`, 정규화된 `/api/session` | 내부 AI 수정 금지. 운영 권한 필터·감사 ID·배포 경계는 Codex 담당 |
-| [App.tsx](dashboard/src/App.tsx) | 기존 메모리 Bearer 토큰 로그인·API 호출 | 내부 AI 수정 금지. 실제 SSO 화면 연결은 Codex 담당 |
+| [dashboard_api.py](dashboard_api.py) | `create_app` 주입 지점, `authenticated`, `authorized_actor`, `/api/auth-config`, 정규화된 `/api/session` | 내부 AI 수정 금지. 운영 권한 필터·감사 ID·배포 경계는 Codex 담당 |
+| [App.tsx](dashboard/src/App.tsx), [DashboardLogin.tsx](dashboard/src/DashboardLogin.tsx), [useDashboardAuth.ts](dashboard/src/useDashboardAuth.ts) | 서버 설정에 따른 토큰/쿠키 SSO 로그인, 자동 세션 확인, POST 로그아웃, 권한 미연결 안내 | 내부 AI 수정 금지. 회사 router와 세션 SDK만 허용된 위치에서 연결 |
 | [test_auth.py](../tests/test_auth.py), [test_sso.py](test_sso.py) | 사내망 없이 실행하는 인증·계정 연결·API 계약 테스트 | 기존 테스트 변경 금지. 회사 어댑터 전용 테스트는 `oa/integration/company_sso/`에 새로 추가 |
 
 ## 2. 고정 인터페이스
@@ -108,6 +110,27 @@ app = create_app(
 
 ## 5. 세션 응답과 오류 계약
 
+로그인 전 `GET /api/auth-config`로 서버가 선택한 인증 방식을 조회한다. 세션의 `auth_method`나 빌드 플래그로 미인증 사용자의 로그인 방식을 추측하지 않는다.
+
+```json
+{
+  "mode": "sso",
+  "login_url": "/auth/login",
+  "logout_url": "/auth/logout",
+  "logout_method": "POST"
+}
+```
+
+이 응답은 사용자·쿠키·토큰·내부 주소 없이 표시용 설정만 반환하고 인증 SDK나 업무 DB를 호출하지 않는다. 실제 인증과 같은 `effective_mode`를 사용하며, 잘못된 모드는 `503 AUTH_CONFIG`다. 로컬 토큰 모드의 세 경로 필드는 모두 null이다. SSO 모드는 주입한 router에 `GET /login`, `POST /logout`이 있을 때 해당 고정 경로를 제공하고 없으면 null로 표시한다. GET 로그아웃만 있는 기존 router는 POST 계약으로 광고하지 않는다. 설정·세션 응답에는 `Cache-Control: no-store`를 적용한다.
+
+UI 동작은 다음 계약을 따른다.
+
+- SSO: 토큰 입력 없이 same-origin 쿠키로 `/api/session`을 조회한다. Authorization 헤더를 만들지 않는다. 미인증 401이면 SSO 버튼을, 계정 미연결/비활성 403이면 원인 안내와 앱 로그아웃을, 설정/서비스 503이면 명시적인 오류를 보여준다. 오류를 로컬 토큰·데모로 대체하지 않는다.
+- 로그인: `GET /auth/login`으로 페이지를 이동한다. 회사 router가 IdP 이동·콜백 검증·쿠키 발급을 담당한다. 콜백 후 앱으로 돌아오면 `/api/session`을 다시 조회하며, 콜백 성공만으로 내부 계정 연결을 가정하지 않는다.
+- 로그아웃: same-origin 쿠키로 `POST /auth/logout`을 보내고 `200 {"status":"LOGGED_OUT"}`를 확인한 뒤 탭의 세션과 업무 표시를 지운다. 실패하면 종료됐다고 표시하지 않으며 자동 재시도하지 않는다. Origin/Referer 검증과 서버 세션 폐기·쿠키 삭제는 회사 router의 책임이다. IdP 전체 로그아웃은 회사 정책에 따라 별도 연결한다.
+- SSO의 `authorization_ready`가 true가 아니면 인증 확인·업무 권한 연결 대기 화면을 보여주고 번들·근거·분류 등 업무 요청을 시작하지 않는다. 서버의 기존 업무 API 차단도 유지한다.
+- 로컬 토큰: 기존 메모리 Bearer 토큰 로그인을 유지한다. 공통 인증 UI는 `/workspace`의 합성 계정 로그인과 별도이며, 명시적인 데모 진입은 예시 데이터만 사용한다.
+
 검증된 SSO 계정이 연결되면 DB의 업무 데이터에 접근하지 않고 세션을 확인할 수 있다.
 
 ```json
@@ -147,7 +170,7 @@ app = create_app(
 4. bundle/unit/report/download, 근거 request/response/record, AI 작업·구성원·수신·변경 API까지 대상 ID의 실제 프로젝트·블록을 조회해 검사한다. `/api/receive`는 전역 큐 처리이므로 별도의 운영 권한·작업자 책임을 결정한다. URL의 ID나 사용자 입력 범위를 그대로 신뢰하지 않는다.
 5. 감사·검토·PoR 저장에 `actor.user_id`를 추가한다. 현재 review/clustering 저장 함수의 `reviewer` 문자열은 이름이다. 이름만 저장하면 동명이인·이름 변경 이력을 구분할 수 없다. 기존 불변 이력은 덮어쓰지 않고 새 계약으로 확장한다.
 6. 그다음 `/api/session`의 `authorization_ready`와 `writable`을 실제 권한에 맞춰 계산한다. 미배정 사용자는 정상 인증된 상태로 업무 데이터가 없는 안내를 보여준다. 계정 미연결과 업무 미배정을 구분한다.
-7. `App.tsx`의 로그인 form, `api` 호출, 최초 세션 확인 effect, `logout`을 사내 방식에 맞게 연결한다. 현재는 토큰 입력 전 API를 호출하지 않고 모든 호출에 Bearer를 넣으므로 쿠키 SSO를 자동 지원하지 않는다. 쿠키 방식이면 로그인 후 세션 조회·서버 로그아웃·CSRF를 연결하고, 토큰 방식이면 사내 SDK의 토큰 수명 관리를 연결한다. 데모 사용자 선택은 인증 수단으로 사용하지 않는다.
+7. **인증 UI 공통 연결은 제공했다.** `DashboardLogin.tsx`와 `useDashboardAuth.ts`는 5절의 쿠키 SSO 계약을 사용하고 `App.tsx`는 권한 준비 전 업무 조회를 막는다. 회사 router·CSRF/세션 폐기·실제 IdP 리다이렉트는 사내에서 검증한다. 이 UI 연결은 2~6번의 RBAC·workspace·감사 구현을 완료한 것이 아니다. 데모 사용자 선택은 인증 수단으로 사용하지 않는다.
 
 ## 7. 검증과 완료 기준
 
@@ -156,6 +179,7 @@ app = create_app(
 ```bash
 .venv/bin/python -m unittest discover -s tests -p test_auth.py -v
 .venv/bin/python -m unittest discover -s oa -p test_sso.py -v
+.venv/bin/python -m unittest discover -s oa -p test_auth_config.py -v
 .venv/bin/python -m unittest discover -s oa -p test_dashboard.py -v
 ```
 
@@ -172,3 +196,13 @@ app = create_app(
 ## 8. 사내 AI에게 전달할 작업 요청문
 
 > 먼저 루트 `AGENTS.md`, `INTERNAL_AI_GUIDE.md`와 이 SSO 문서를 읽어라. 너의 수정 범위는 `corporate_sso.py`의 회사 검증·영속 계정 조회 어댑터, `sso_app.py`의 허용된 주입 부분, 새 `company_sso/` 지원 모듈과 테스트다. 회사 문서로 확인된 SDK와 승인된 계정 연결 저장소만 사용하라. 저장소가 없거나 새 의존성/핵심 코드 변경이 필요하면 Codex에게 문의하라. `oa/sanity_auth.py`, `dashboard_api.py`, DB SQL, 기존 테스트와 UI는 수정하지 말라. 특히 `AUTHORIZATION_NOT_IMPLEMENTED`를 해제하지 말라. 어댑터 테스트가 예상과 다르게 실패하면 수정/재시도를 멈추고 비식별 `[Codex 디버깅 요청]`을 작성하라. 직접 연결 수단이 없으면 사용자가 현재 Codex 대화로 전달하도록 요청하고 답변 전에는 `WAITING_FOR_CODEX`로 대기하라. 인증 성공과 업무 권한/운영 배포 완료를 구분하라.
+
+## 9. 인증 UI 공통 수정본의 사내 반영
+
+회사 어댑터와 `sso_app.py`의 기존 SDK/router 주입을 유지하면서 사용자가 Codex의 공통 수정본을 반영한다. 이 목록은 내부 AI에게 공통 설계 변경 권한을 추가하지 않는다.
+
+- 서버: `oa/sanity_auth.py`, `oa/dashboard_api.py`.
+- 화면: `oa/dashboard/src/App.tsx`, `DashboardLogin.tsx`, `useDashboardAuth.ts`, `types.ts`, `demo.ts`. Node 20.18에서 프런트엔드를 다시 빌드한다.
+- 검증: `oa/test_auth_config.py`, `oa/test_sso.py`, `oa/dashboard/e2e/sso-login.spec.ts`, `dashboard.spec.ts`. 기존 업무 API의 SSO 차단 검증은 유지한다.
+
+새 환경변수나 DB SQL은 필요하지 않다. 프록시는 기존 `/api/*`, `/auth/*`를 같은 OA 서비스로 전달한다. 설정 조회 → SSO 로그인 이동 → 콜백 후 세션 조회 → POST 로그아웃을 실제 HTTPS 진입 주소에서 사내 검증한다. 실제 SAML 검증·회사 저장소·SP 등록은 합성 검증의 범위에 포함되지 않는다. 인계에는 고정 오류 코드와 합성/실환경 검증 결과만 기록하며 실제 사내 코드·diff·세션 쿠키·SAML 원문을 외부에 전달하지 않는다.

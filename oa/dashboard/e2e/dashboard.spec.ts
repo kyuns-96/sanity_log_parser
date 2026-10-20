@@ -3,6 +3,10 @@ import type { Page } from '@playwright/test'
 import { makeDemo } from '../src/demo'
 import type { Bundle, Detail, Page as ApiPage } from '../src/types'
 
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/auth-config', route => route.fulfill({ json: { mode: 'local_token', login_url: null, logout_url: null, logout_method: null } }))
+})
+
 test('classification proposal remains separate from apply, confirmation and sanity verdict', async ({ page }) => {
   const fallback = makeDemo()
   const sent: Record<string, unknown>[] = []
@@ -103,7 +107,7 @@ test('stale classification can be deferred and exclusions are visible without en
 })
 
 async function demo(page: Page) {
-  await page.goto('/?demo=1')
+  await page.goto('/?demo=1&flow=legacy')
   await expect(page.getByRole('heading', { name: 'sanity-20261012-042' })).toBeVisible()
   await expect(page.getByText('CHECK-101', { exact: true })).toBeVisible()
 }
@@ -113,8 +117,8 @@ test('explicit login, explicit demo, and memory-only token', async ({ page }) =>
   await expect(page.getByRole('heading', { name: '검토 공간에 연결' })).toBeVisible()
   await expect(page.getByText('Atlas', { exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: '데모 둘러보기' }).click()
-  await expect(page.getByRole('heading', { name: 'sanity-20261012-042' })).toBeVisible()
-  await expect(page.getByText('데모 모드', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Atlas 프로젝트', exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '워크스페이스 데모 안내' })).toContainText('데모 모드')
   expect(await page.evaluate(() => [localStorage.length, sessionStorage.length])).toEqual([0, 0])
   await page.getByRole('button', { name: '데모 종료', exact: true }).click()
   await expect(page.getByLabel('접근 토큰')).toHaveValue('')
@@ -163,8 +167,9 @@ test('evidence request, response receive, bounded evidence and report download',
 
 test('API failure never becomes demo and token is not stored', async ({ page }) => {
   await page.route('**/api/**', route => {
+    if (route.request().url().endsWith('/auth-config')) return route.fulfill({ json: { mode: 'local_token', login_url: null, logout_url: null, logout_method: null } })
     expect(route.request().headers().authorization).toBe('Bearer test-token-not-real')
-    if (route.request().url().endsWith('/session')) return route.fulfill({ json: { reviewer: '실제 검토자', writable: true, access_mode: 'direct', notice: 'DB 연결 성공을 의미하지 않습니다.' } })
+    if (route.request().url().endsWith('/session')) return route.fulfill({ json: { auth_method: 'local_token', reviewer: '실제 검토자', writable: true, access_mode: 'direct', notice: 'DB 연결 성공을 의미하지 않습니다.' } })
     return route.fulfill({ status: 503, json: { code: 'DATABASE_UNAVAILABLE' } })
   })
   await page.goto('/')
@@ -213,7 +218,7 @@ test('read-only session disables all writes', async ({ page }) => {
   const api = makeDemo()
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url())
-    if (url.pathname.endsWith('/session')) return route.fulfill({ json: { reviewer: '관찰자', writable: false, access_mode: 'readonly', notice: '읽기 전용 연결입니다.' } })
+    if (url.pathname.endsWith('/session')) return route.fulfill({ json: { auth_method: 'local_token', reviewer: '관찰자', writable: false, access_mode: 'readonly', notice: '읽기 전용 연결입니다.' } })
     return route.fulfill({ json: await api(url.pathname + url.search) })
   })
   await page.goto('/')
