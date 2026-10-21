@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Create a fresh, socket-only PostgreSQL fixture and test a credential-free code snapshot.
 
-Never accepts an external DB endpoint. Requires local PostgreSQL 16+ binaries and
+Never accepts an external DB endpoint. Requires local PostgreSQL 12.1+ binaries and
 the project's Python requirements. Runtime artifacts are retained after shutdown.
 """
 import argparse
@@ -63,7 +63,7 @@ def pg_binaries(explicit):
         elif shutil.which("pg_config"):
             directory = Path(subprocess.check_output(["pg_config", "--bindir"], text=True).strip())
         else:
-            raise MockError("Install PostgreSQL 16+ or pass --pg-bin /path/to/postgresql/bin")
+            raise MockError("Install PostgreSQL 12.1+ or pass --pg-bin /path/to/postgresql/bin")
     if not all((directory / name).is_file() and os.access(directory / name, os.X_OK)
                for name in ("initdb", "pg_ctl", "postgres")):
         raise MockError("PostgreSQL server binaries are missing; check --pg-bin")
@@ -120,8 +120,9 @@ class MockDatabase:
         connection = psycopg2.connect(**self.parameters("admin", "postgres"))
         connection.autocommit = True
         try:
-            if connection.server_version < 160000:
-                raise MockError("PostgreSQL 16+ is required")
+            self.server_version_num = connection.server_version
+            if self.server_version_num < 120001:
+                raise MockError("PostgreSQL 12.1+ is required")
             with connection.cursor() as cursor:
                 for side in ("vwp", "oa"):
                     cursor.execute(sql.SQL("CREATE ROLE {} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS")
@@ -137,6 +138,10 @@ class MockDatabase:
         connection.autocommit = True
         try:
             with connection.cursor() as cursor:
+                # PG12 grants schema CREATE to PUBLIC in a new database. This
+                # disposable fixture must enforce the same no-DDL application
+                # contract as newer clusters; never change an external DB here.
+                cursor.execute('REVOKE CREATE ON SCHEMA public FROM PUBLIC')
                 for table in ("sanity_vwp_data", "sanity_oa_data", "sanity_vwp_to_oa", "sanity_oa_to_vwp"):
                     columns = (staged / "db/form" / (table + ".columns.sql")).read_text(encoding="utf-8")
                     cursor.execute(sql.SQL("CREATE TABLE public.{} (").format(sql.Identifier(table)) + sql.SQL(columns + ")"))
@@ -195,6 +200,7 @@ def main(argv=None):
         print("phase=initdb auth=SCRAM transport=UNIX_SOCKET", flush=True)
         database.start()
         database.setup(staged)
+        summary['server_version_num'] = database.server_version_num
         environment = database.test_environment()
         print("phase=schema_and_permissions_passed", flush=True)
         for side in ("vwp", "oa"):

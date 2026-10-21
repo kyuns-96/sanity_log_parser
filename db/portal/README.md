@@ -9,18 +9,36 @@
 | 파일 | 역할 |
 |---|---|
 | `runbook.py` | Python 표준 라이브러리만 사용하는 오프라인 도구. 조회 SQL 생성·catalog 비교·실행본 생성·결과 검증만 수행. DB 연결·DDL 실행·자동 재시도 없음 |
-| `plan.json` | 원본 form·`002/004/005/006/007/008`을 격리 PostgreSQL에서 실행해 얻은 구조 변경 계획. 원본 SHA-256과 기존 제약을 보존 |
+| `plan.json` | 원본 form·`002/004/005/006/007/008`을 격리 PostgreSQL에서 실행해 얻은 구조 변경 계획. PG12.1과 PG16.15의 54단계/55개 구조가 같음을 검증해 공통 사용. 원본 SHA-256과 기존 제약을 보존 |
 | `build_reference.py` | Codex/개발자 전용 기준 계획 생성기. 새 로컬 소켓 전용 합성 DB에서만 실행. 사내 운영 연결 인자를 받지 않음 |
 
 사내 AI는 승인된 읽기 전용 접속으로 확인한 catalog를 비공개 파일로 준비하고 `runbook.py`를 실행할 수 있다. 원본 SQL·도구·계획 JSON·기존 테스트를 수정하지 않는다. 실제 DDL 포털 적용과 DBA 권한 변경은 사용자/승인된 운영 담당자가 수행한다. 실패하거나 예상한 기준 상태와 다르면 `WAITING_FOR_CODEX`로 문의한다.
 
 ## 2. 실행 전 확인
 
-- PostgreSQL 16+와 UTF-8, 같은 DB/실제 스키마에 있는 기존 네 테이블을 사용한다. 최초 form의 CHECK·UNIQUE도 확인한다. 예를 들어 VWP의 `(analysis_id, record_id)` UNIQUE가 없으면 FK의 선행 조건도 없으므로 도구는 중단한다.
+- PostgreSQL 12.1 이상과 UTF-8, 같은 DB/실제 스키마에 있는 기존 네 테이블을 사용한다. 실검증 버전은 12.1과 16.15다. 최초 form의 CHECK·UNIQUE도 확인한다. 예를 들어 VWP의 `(analysis_id, record_id)` UNIQUE가 없으면 FK의 선행 조건도 없으므로 도구는 중단한다.
 - 포털이 **한 ALTER TABLE의 복수 절**을 허용해야 한다. CHECK의 삭제와 추가는 같은 ALTER 문장에 포함된다. 별도 요청으로 쪼개거나 CHECK/FK를 생략하지 않는다.
 - 원본의 전체 파일 트랜잭션과 명시적 LOCK은 포털 실행본에 없다. 각 DDL 문장의 원자성만 보장된다. 작업 전체가 끝날 때까지 앱/작업자 쓰기를 재개하지 않는다.
 - 원본의 `SET LOCAL lock_timeout='5s'`도 문장 안에 넣지 않는다. 포털 DDL 세션의 잠금/문장 timeout과 취소 방법을 플랫폼 담당자에게 확인한다. 별도 읽기 연결에서 조회한 timeout을 포털 세션 값으로 간주하지 않는다.
 - 현재 임시 접속 계정의 네 테이블 읽기/쓰기 권한은 운영 앱 권한의 대체물이 아니다. 두 앱의 별도 로그인·자기 역할·테이블/컬럼 권한은 `003_grants.sql`과 [DB 연결 인계](../CONNECTION_HANDOFF.md)를 따른다.
+
+### PG12 조회 오류가 있었던 경우
+
+이전 도구의 `column i.indnullsnotdistinct does not exist`는 PG15부터 생긴 catalog 컬럼을 PG12에서 직접 조회한 오류다. 수정본은 catalog 행을 JSON으로 읽어 없는 필드에 PG12의 NULL-distinct 의미(`false`)를 사용하고, PG15 이상에서는 실제 값을 보존한다. snapshot의 버전 값은 바꾸지 않는다. PG12.1 미만·잘못된 버전 값·UTF-8이 아닌 DB는 계속 거부한다.
+
+수정본으로 **조회 SQL부터 새로 생성**한다. 이전 SQL·snapshot·bundle을 덮어쓰거나 그 안의 버전/hash를 편집하지 않는다.
+
+```bash
+python3 db/portal/runbook.py inspect --schema SCHEMA_NAME --out /private/inspect-pg12.sql
+```
+
+새 SQL을 기존 읽기 전용 연결에서 실행하고 JSON 객체를 `/private/before-pg12.json`으로 저장한 뒤 준비한다.
+
+```bash
+python3 db/portal/runbook.py prepare --snapshot /private/before-pg12.json --out /private/portal-bundle-pg12
+```
+
+이후에는 새 bundle과 새 snapshot으로 아래 전후 검증을 수행한다. 이전 버전에서 만든 PG16 bundle도 조회 SQL이 바뀌었으므로 현재 snapshot으로 새 폴더에 다시 준비한다. DDL을 이미 실행했다면 완료 단계를 반복하지 않으며, 확인된 중간 상태에서의 재개는 5절을 따른다. 실제 포털 적용·DBA 권한 작업의 책임과 실패 시 중단 규칙은 같다.
 
 ## 3. 읽기 전용 사전 조회
 
@@ -83,6 +101,12 @@ python3 db/portal/runbook.py verify --bundle /private/portal-bundle --snapshot /
 ## 7. 합성 검증과 기준 계획 갱신
 
 개발 환경에서는 기존 소켓 전용 mock runner가 원본 SQL과 포털 실행본의 구조 동등성, GUI CHECK 이름, 중간 재개, 원자적 실패, FK 옵션, 최소 권한과 원본 smoke 검증을 수행한다. 실제 회사 포털의 문법 검사·timeout·계정/DB 검증을 대신하지 않는다.
+
+PG12.1과 PG16.15에서 각각 원본 SQL의 모든 중간 구조를 `plan.json`과 정확히 비교하고, 포털의 54개 DDL도 별도 스키마에서 한 문장씩 실행해 전후 구조를 확인한다. `plan.json.initial.server_version_num=160015`는 최초 생성 환경의 기록이다. PG12에서 검증을 생략하거나 PG16으로 위장하는 조건이 아니다. CHECK/FK/UNIQUE·인덱스 순서·전체 컬럼 비교는 동일하게 유지한다.
+
+PG15의 NULLS NOT DISTINCT 플래그는 [PG12 catalog](https://www.postgresql.org/docs/12/catalog-pg-index.html)와 [PG15 catalog](https://www.postgresql.org/docs/15/catalog-pg-index.html)의 차이를 반영한다. 새 버전에서 이 플래그가 true인 인덱스/제약을 false로 덮어 정규화하지 않으며, 예상과 다른 정의는 계속 거부한다.
+
+검증에는 10만 건 보고서/10만 그룹 사례가 포함되므로 여러 PostgreSQL 버전은 **순차 실행**한다. 메모리 부족으로 DB 프로세스가 종료되면 검증 실패로 중단한다. 테스트 건수·한도를 낮추거나 검사를 생략해 통과시키지 않는다.
 
 ```bash
 .venv/bin/python db/tests/run_mock.py --pg-bin /path/to/postgresql/bin

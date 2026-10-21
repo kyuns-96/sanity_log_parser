@@ -38,7 +38,12 @@ def literal(value):
 
 
 def inspection_sql(schema):
-    """One read-only SELECT; run through the existing approved read connection."""
+    """One read-only SELECT, including on PG12 where the PG15 flag is absent.
+
+    Read the optional catalog field from the row JSON rather than naming a
+    nonexistent column. Before PG15, unique indexes always treat nulls as
+    distinct; newer servers must retain their actual flag in the snapshot.
+    """
     tables = []
     for table in TABLES:
         rel = literal(identifier(schema) + '.' + identifier(table)) + '::regclass'
@@ -53,7 +58,7 @@ def inspection_sql(schema):
    WHERE a.attrelid={rel} AND a.attnum>0 AND NOT a.attisdropped),
  'constraints', COALESCE((SELECT jsonb_agg(jsonb_build_object(
    'name',c.conname,'type',c.contype,'validated',c.convalidated,'no_inherit',c.connoinherit,
-   'index_nulls_not_distinct',(SELECT i.indnullsnotdistinct FROM pg_index i
+   'index_nulls_not_distinct',(SELECT COALESCE((to_jsonb(i)->>'indnullsnotdistinct')::boolean,false) FROM pg_index i
        WHERE i.indexrelid=c.conindid AND c.contype IN ('p','u')),
    'deferrable',c.condeferrable,'deferred',c.condeferred,
    'definition',CASE WHEN c.contype='c' THEN pg_get_expr(c.conbin,c.conrelid,false) END,
@@ -69,7 +74,7 @@ def inspection_sql(schema):
  'indexes', COALESCE((SELECT jsonb_agg(jsonb_build_object(
    'name',ic.relname,'method',am.amname,'unique',i.indisunique,'valid',i.indisvalid,
    'ready',i.indisready,'live',i.indislive,'immediate',i.indimmediate,
-   'nulls_not_distinct',i.indnullsnotdistinct,'include_count',i.indnatts-i.indnkeyatts,
+   'nulls_not_distinct',COALESCE((to_jsonb(i)->>'indnullsnotdistinct')::boolean,false),'include_count',i.indnatts-i.indnkeyatts,
    'options',to_jsonb(i.indoption::smallint[]),
    'opclasses',(SELECT jsonb_agg(jsonb_build_array(n.nspname,op.opcname) ORDER BY k.pos)
        FROM unnest(i.indclass) WITH ORDINALITY k(id,pos) JOIN pg_opclass op ON op.oid=k.id
@@ -108,7 +113,9 @@ def signature(item):
 
 
 def normalized(snapshot):
-    if snapshot.get('format') != 1 or snapshot.get('server_version_num', 0) < 160000 or snapshot.get('encoding') != 'UTF8':
+    version = snapshot.get('server_version_num')
+    if (snapshot.get('format') != 1 or type(version) is not int or version < 120001
+            or snapshot.get('encoding') != 'UTF8'):
         raise PortalError('PORTAL_UNSUPPORTED_SNAPSHOT')
     identifier(snapshot['schema'])
     tables = deepcopy(snapshot['tables'])

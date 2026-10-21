@@ -54,7 +54,8 @@ SQLite, 브리지 간 직접 HTTP/RPC·파일 전달, 로컬 DB fallback은 없�
 
 ## 1. 설치와 DB 준비
 
-Python 3.10 이상, PostgreSQL 16 이상·UTF-8을 전제로 합니다. 프런트엔드 의존성은
+Python 3.10 이상, PostgreSQL 12.1 이상·UTF-8을 전제로 합니다. DB 실검증 버전은 12.1과 16.15이며,
+포털 적용·검증 방법은 [DB 안내](db/README.md)를 따릅니다. 프런트엔드 의존성은
 oa/dashboard/package-lock.json에 고정되어 있습니다. 현재 Vite의 Node.js 조건은
 20.19 이상인 20.x 또는 22.12 이상입니다.
 
@@ -244,7 +245,7 @@ AI 표본 수와 전체 적용 건수는 별도입니다. 새 파서 자동 생�
 ## 7. 합성 demo와 검증
 
 사내 DB 없이 **새 로컬 mock DB를 생성하고 전체 테스트**하려면 다음을 실행합니다.
-Linux/Unix와 PostgreSQL 16 이상 서버 바이너리(`initdb`, `pg_ctl`, `postgres`), Python 의존성이 필요합니다.
+Linux/Unix와 PostgreSQL 12.1 이상 서버 바이너리(`initdb`, `pg_ctl`, `postgres`), Python 의존성이 필요합니다.
 바이너리 경로가 PATH에 없으면 `--pg-bin /path/to/postgresql/bin`을 추가합니다. 자동 다운로드/설치는 하지 않습니다.
 
 ```bash

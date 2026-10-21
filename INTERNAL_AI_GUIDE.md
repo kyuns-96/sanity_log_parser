@@ -96,6 +96,8 @@ PRE/POST의 여러 원천 루트 export는 같은 VWP 영역의 입력 준비만
 
 사용자가 단일 문장 DDL과 FK의 포털 설정 가능 여부를 확인했다. [포털 초기 설치 안내](db/portal/README.md)에 따라 네 테이블 0행·쓰기 중지 상태에서 승인된 읽기 전용 catalog를 비공개 파일로 정리하고 `db/portal/runbook.py`로 실행본 준비·전후 검증을 할 수 있다. 도구는 DB 접속/DDL 실행을 하지 않으며 실제 포털 적용은 사용자/승인 운영 담당자가 수행한다. 실제 스키마·catalog·생성 SQL은 사내에만 남긴다.
 
+PG12.1 호환 수정본은 PG15 전용 catalog 컬럼을 직접 참조하지 않는다. 이 오류로 대기한 경우 수정본으로 새 조회 SQL을 생성해 읽기 전용 확인·실행본 준비를 재개할 수 있다. [PG12 재개 절차](db/portal/README.md#pg12-조회-오류가-있었던-경우)에 따라 새 비공개 경로를 사용하며, snapshot의 버전·계획 hash를 바꾸거나 검증 조건을 제거하지 않는다. 기준 계획은 PG12.1/PG16.15의 54단계 구조가 정확히 같음을 검증해 공통 사용한다. 다른 실패에는 기존 중단·문의 규칙을 유지한다.
+
 `db/form/`, 원본 `002`~`008`, `db/portal/`의 소스·계획 JSON과 기존 테스트는 내부 AI에게 읽기 전용이다. `003` 역할·권한은 별도 DBA 경로이며, 운영 앱의 네 테이블 전체 읽기/쓰기나 DDL 권한으로 대체하지 않는다. `005`는 필수이며 `009 SSO_IDENTITY`/JIT·사용자 자동 등록·SSO 업무 권한 확장 승인은 포함하지 않는다. 예상 밖 실패·응답 유실 후 DDL 재시도/다음 실행은 중단하고 읽기 전용 현황과 비식별 오류만 `WAITING_FOR_CODEX`로 문의한다.
 
 ## 4. 내부 AI가 절대 수정하지 않는 부분
@@ -158,7 +160,7 @@ DBA의 승인된 설치 SQL 실행과 실제 운영 배포는 사용자가 관�
 git diff --check
 ```
 
-마지막 DB 명령은 개발 머신에 PostgreSQL 16+ 서버 바이너리가 준비된 경우의 별도 mock 검증이다. 사내 실제 DB에 실행하는 명령이 아니다.
+마지막 DB 명령은 개발 머신에 PostgreSQL 12.1+ 서버 바이너리가 준비된 경우의 별도 mock 검증이다. 사내 실제 DB에 실행하는 명령이 아니다.
 회사 테스트는 자기 서버의 `integration/company_*/`에 작성하고 해당 디렉터리를 별도로 테스트한다. 예: `.venv/bin/python -m unittest discover -s vwp_bridge/integration/company_parsers -p 'test_*.py' -v`. 기존 전체 runner/mock은 회사 구현·비공개 fixture를 자동 수집하지 않는다.
 SSO 어댑터 성공은 업무 API 공개 조건이 아니다. 현재 SSO 업무 API의 `503 AUTHORIZATION_NOT_IMPLEMENTED`는 의도된 보호 상태다.
 미구현 상태의 `AUTH_SSO_NOT_CONFIGURED`도 숨기지 않는다. 구현 후 예상하지 못한 같은 오류가 계속되면 문의한다.

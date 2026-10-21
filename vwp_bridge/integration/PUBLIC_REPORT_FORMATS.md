@@ -72,7 +72,7 @@ TOP 3명은 각자의 프로젝트를, 나머지 7명은 배정 블록을 조회
 | 수집·분석·전송 묶음 | 프로젝트·블록·도구별 27개 |
 | DB에서 읽어 내보낸 evidence | 1,000건 |
 
-실제 PostgreSQL 16+ 서버 바이너리와 Python 의존성이 필요하다. 저장소 루트에서:
+실제 PostgreSQL 12.1+ 서버 바이너리와 Python 의존성이 필요하다. 저장소 루트에서:
 
 ```bash
 .venv/bin/python tools/build_public_preview.py --pg-bin /path/to/postgresql/bin --count 1000

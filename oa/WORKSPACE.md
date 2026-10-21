@@ -368,7 +368,7 @@ API 경로는 `/workspace/api/blocks/{block}/versions/{version}/reports/{report}
 
 ## 독립 환경 생성과 실행
 
-먼저 Python/Node 의존성과 PostgreSQL 16+ 서버 바이너리를 준비하고 공개 parser 스냅샷을 생성한다.
+먼저 Python/Node 의존성과 PostgreSQL 12.1+ 서버 바이너리를 준비하고 공개 parser 스냅샷을 생성한다.
 
 ```bash
 .venv/bin/python tools/build_public_preview.py --pg-bin /path/to/postgresql/bin --count 1000

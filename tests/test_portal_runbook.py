@@ -101,6 +101,19 @@ class PortalRunbookTests(unittest.TestCase):
         index['options'][1] = 0
         with self.assertRaises(PortalError): prepare(changed, self.root / 'bad-order')
 
+    def test_pg12_snapshots_are_accepted_but_older_or_malformed_versions_are_not(self):
+        state = deepcopy(self.plan['initial'])
+        state['server_version_num'] = 120001
+        manifest = prepare(state, self.root / 'pg12')
+        verify(state, self.root / 'pg12', manifest['steps'][0]['number'], 'before')
+        for version in (119999, 120000, None, True, '160015'):
+            state['server_version_num'] = version
+            with self.subTest(version=version), self.assertRaises(PortalError):
+                prepare(state, self.root / 'unsupported')
+        state['server_version_num'] = 120001
+        state['encoding'] = 'LATIN1'
+        with self.assertRaises(PortalError): prepare(state, self.root / 'wrong-encoding')
+
 
 class PortalDatabaseTests(PgTestCase):
     def setUp(self):
@@ -160,6 +173,29 @@ class PortalDatabaseTests(PgTestCase):
         unique = next(c for c in table['constraints'] if c['type'] == 'u' and c['columns'] == ['analysis_id', 'record_id'])
         self.admin.execute('ALTER TABLE ' + identifier(self.portal_schema) + '.sanity_vwp_data DROP CONSTRAINT ' + identifier(unique['name']))
         with self.assertRaises(PortalError): prepare(self.inspect(), self.bundle)
+
+    def test_optional_pg15_nulls_flag_is_read_on_new_servers_and_false_on_pg12(self):
+        state = self.inspect()
+        unique_constraints = [c for t in state['tables'] for c in t['constraints'] if c['type'] in ('p', 'u')]
+        self.assertTrue(unique_constraints)
+        self.assertTrue(all(c['index_nulls_not_distinct'] is False for c in unique_constraints))
+        if state['server_version_num'] < 150000:
+            # The catalog column does not exist; the complete real SELECT must
+            # still succeed and emit the pre-PG15 NULL-distinct semantics.
+            self.assertLess(state['server_version_num'], 150000)
+            return
+        table = identifier(self.portal_schema) + '.sanity_oa_data'
+        self.admin.execute('CREATE UNIQUE INDEX portal_nulls_idx ON ' + table
+                           + ' (request_id) NULLS NOT DISTINCT')
+        self.admin.execute('ALTER TABLE ' + table
+                           + ' ADD CONSTRAINT portal_nulls_unique UNIQUE NULLS NOT DISTINCT (review_revision)')
+        changed = self.inspect()
+        oa = next(t for t in changed['tables'] if t['name'] == 'sanity_oa_data')
+        index = next(i for i in oa['indexes'] if i['name'] == 'portal_nulls_idx')
+        constraint = next(c for c in oa['constraints'] if c['name'] == 'portal_nulls_unique')
+        self.assertIs(index['nulls_not_distinct'], True)
+        self.assertIs(constraint['index_nulls_not_distinct'], True)
+        with self.assertRaises(PortalError): prepare(changed, self.bundle)
 
     def test_fk_to_a_same_named_table_in_another_schema_is_rejected(self):
         other = 'sanity_other_' + uuid.uuid4().hex
