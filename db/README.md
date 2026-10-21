@@ -40,6 +40,7 @@ OA에 `WS_REVIEW`, `WS_REVIEW_EVENT`, `WS_REVIEW_PROPOSAL`을 추가하며, 사�
 기존 payload UPDATE 권한은 없으며 신규 head의 state/version만 갱신한다. 새 테이블/역할/광범위 GRANT는 없다.
 owner/DBA가 점검 시간에 파일 전체를 한 트랜잭션으로 실행한다. 잠금 시간 초과나 사전 제약 불일치 시 rollback한다.
 앱은 자동 migration을 실행하지 않으며 성공한 SQL의 재실행은 실패한다. 합성 로컬 fixture 전용 upgrade는 [WORKSPACE](../oa/WORKSPACE.md)를 따른다.
+2026-10-21 사용자 확인으로 단일 문장 DDL·FK를 지원하는 회사 포털용 [별도 초기 설치 실행 안내](portal/README.md)를 추가했다. 네 테이블 0행·쓰기 중지 조건에서 원본 `002/004/005/006/007/008`과 동등한 실행본을 오프라인 생성·검증한다. `003` 역할·권한은 별도 DBA 경로다. 기존 SQL을 분해 편집하거나 트랜잭션/DO만 삭제해 실행하지 않는다. 포털 경로는 문장별 커밋이며 전체 파일 원자성은 제공하지 않는다. 실제 포털 적용은 사용자/승인 운영 담당자 책임이며 `009 SSO_IDENTITY`/JIT를 포함하지 않는다.
 `tests/`는 개발자용 로컬 검증 도구이며 DB 신청이나 운영 설치 시 실행할 파일이 아니다.
 사내 DB 없이 새 합성 DB를 만드는 명령은 `.venv/bin/python db/tests/run_mock.py`다.
 PostgreSQL 16+ 서버 바이너리가 필요하며, 별도 로컬 소켓 DB 생성·권한/회귀 테스트·종료를 수행한다.

@@ -58,6 +58,7 @@ OA의 낮은 성능 AI에 운영 clustering을 맡기지 않는다. 운영 분�
 | `oa/integration/corporate_submission.py` | `CorporateSourceIdentity.resolve` 본문, 필요한 import·승인된 조회 client 주입 생성자. OA SSO와 같은 영속 `(issuer, subject) → user_id` 매핑 사용 | 임의 actor 문자열 신뢰, 사용자 자동 등록, importer/SSO 보호 코드 수정·해제 |
 | `oa/sso_app.py` | 승인된 회사 모듈 import와 `identity_provider`, `user_directory`, `auth_router` 주입 | `auth_mode="sso"` 제거, 외부 bind, proxy/Host/로그 설정 완화, 기존 API 교체 |
 | `oa/integration/company_sso/` — 신규 작업용 위치 | SSO/source 동일 계정 조회를 지원하는 SDK wrapper·인증 router·모의 SDK 테스트만 추가 | 업무 데이터 조회/수정 API, 프로젝트 권한 엔진, DB migration, 공통 모듈 monkey patch |
+| `oa/requirements.txt` — 3.1절의 승인된 SSO 의존성만 | OA 담당이 `signxml==5.2.0`, `lxml==6.1.3`, `cryptography==50.0.2`를 없을 때 추가 | 다른 의존성 추가·삭제·버전 변경, 루트/VWP/VWP-bridge 의존성·lockfile·Docker 수정 |
 | `vwp/integration/corporate_plan.py` | `CorporatePlanProvider.get_plan` 본문, 필요한 import, 승인된 실행/예상 목록 조회 client 주입용 생성자 | 추상 서명/plan schema 변경, 목록 승인 자동 부여, report/설계 변경·sanity 실행·DB 쓰기·공통 CLI 수정 |
 | `vwp/integration/corporate_submission.py` | `CorporateSubmissionInput.prepare`, `CorporateSubmissionAuthority.current/inbox_owner/authorize/approval_valid` 본문, 필요한 import·승인 SDK 주입 생성자, `create_submission_adapters`의 명시적 주입 | 서명/모델·V2 schema 변경, 파일/DB 쓰기·실행, 자동 승인, 사용자명만으로 인증, CLI/상태/권한 우회 |
 | `vwp/integration/company_plan/` — 신규 작업용 위치 | schema 1/V2 입력·원천/제출 신원/담당·승인 SDK wrapper, 기존 plan 작성·VWP 내부 byte 동일 export/collector 호출용 별도 launcher·전용 합성/모의 테스트 | 파일 목록으로 예상 unit 누락 은폐·자동 승인, 새 전송/DB 계약·worker 연결, 원본 report/설계 파일 변경 |
@@ -81,9 +82,21 @@ PRE/POST의 여러 원천 루트 export는 같은 VWP 영역의 입력 준비만
 사용자 판정 참고 AI 어댑터는 [REVIEW_INTEGRATION.md](vwp_bridge/REVIEW_INTEGRATION.md)를 따른다. 현재는 SDK/모델 미연결 scaffold이며 공통 workspace 제안 엔진은 정확한 조건 적용이다. SDK 구현과 VWP DB 전달/운영 연결은 구분한다. 내부 AI는 후자의 공통 코드를 수정하지 않는다.
 1단계 분류 SDK는 [CLUSTERING_INTEGRATION.md](vwp_bridge/CLUSTERING_INTEGRATION.md), 2단계 그룹 판정 SDK는 위 review 계약을 따른다. 두 어댑터는 사내 VWP용이며 workspace의 `CORPORATE` 경로는 아직 미연결이다. 기존 legacy AI 어댑터의 접속 설정 완료와 새 workspace 운영 연결 완료를 혼동하지 않는다.
 샘플 registry/완료 표식은 운영 계약이 아니다. 참고 패턴은 허용된 회사 구현 위치에서 실제 버전·종료/건수 계약에 맞춰 구현한다.
-새 SDK 의존성·환경변수 키가 필요하면 이름/용도/버전을 먼저 문의한다. `requirements.txt`, lockfile, `common/sanity_config.py`를 임의 수정하지 않는다.
+새 SDK 의존성·환경변수 키가 필요하면 이름/용도/버전을 먼저 문의한다. 아래 3.1절의 고정 승인 범위 외에는 `requirements.txt`, lockfile, `common/sanity_config.py`를 임의 수정하지 않는다.
 기존 사내 SDK로 충분한 경우에도 확인된 문서에 근거해 구현하며 인증·CSRF·TLS 조건을 추정하지 않는다.
 자격증명·실제 사내 사례는 이 공개 저장소에 넣지 않는다. 문서/fixture는 공개 가능 여부를 별도로 확인한다.
+
+### 3.1. OA SSO 고정 의존성 추가 승인 — 2026-10-20
+
+사용자 요청과 설계 담당 Codex 검토로 **OA의 SAML/XML 서명 검증용 세 패키지 추가만** 승인했다. OA 담당 내부 AI는 사내 checkout의 `oa/requirements.txt`에 `signxml==5.2.0`, `lxml==6.1.3`, `cryptography==50.0.2`가 없으면 정확히 추가할 수 있다. 이미 같은 pin이 있으면 중복 추가하지 않는다. 기존에 다른 pin이 있거나 설치 충돌이 나면 버전을 바꾸지 않고 `WAITING_FOR_CODEX`로 문의한다.
+
+이것은 파일 전체의 보호 해제가 아니다. 나머지 의존성·환경변수·설정·Docker·공통 코드·기존 테스트 보호와 `AUTHORIZATION_NOT_IMPLEMENTED`는 유지한다. 개발용 루트 `requirements.txt`의 동일 pin 반영은 Codex가 제공하며, VWP와 VWP-bridge의 의존성은 변경하지 않는다. 설치·검증·사내 반영은 [SSO 인계 10절](oa/SSO_INTEGRATION.md#10-승인된-sso-의존성)을 따른다. 패키지 추가 승인은 실제 IdP/SP 검증이나 업무 권한 연결 완료를 뜻하지 않는다.
+
+### 3.2. 빈 초기 DB의 포털 실행본 준비 — 2026-10-21
+
+사용자가 단일 문장 DDL과 FK의 포털 설정 가능 여부를 확인했다. [포털 초기 설치 안내](db/portal/README.md)에 따라 네 테이블 0행·쓰기 중지 상태에서 승인된 읽기 전용 catalog를 비공개 파일로 정리하고 `db/portal/runbook.py`로 실행본 준비·전후 검증을 할 수 있다. 도구는 DB 접속/DDL 실행을 하지 않으며 실제 포털 적용은 사용자/승인 운영 담당자가 수행한다. 실제 스키마·catalog·생성 SQL은 사내에만 남긴다.
+
+`db/form/`, 원본 `002`~`008`, `db/portal/`의 소스·계획 JSON과 기존 테스트는 내부 AI에게 읽기 전용이다. `003` 역할·권한은 별도 DBA 경로이며, 운영 앱의 네 테이블 전체 읽기/쓰기나 DDL 권한으로 대체하지 않는다. `005`는 필수이며 `009 SSO_IDENTITY`/JIT·사용자 자동 등록·SSO 업무 권한 확장 승인은 포함하지 않는다. 예상 밖 실패·응답 유실 후 DDL 재시도/다음 실행은 중단하고 읽기 전용 현황과 비식별 오류만 `WAITING_FOR_CODEX`로 문의한다.
 
 ## 4. 내부 AI가 절대 수정하지 않는 부분
 

@@ -206,3 +206,28 @@ UI 동작은 다음 계약을 따른다.
 - 검증: `oa/test_auth_config.py`, `oa/test_sso.py`, `oa/dashboard/e2e/sso-login.spec.ts`, `dashboard.spec.ts`. 기존 업무 API의 SSO 차단 검증은 유지한다.
 
 새 환경변수나 DB SQL은 필요하지 않다. 프록시는 기존 `/api/*`, `/auth/*`를 같은 OA 서비스로 전달한다. 설정 조회 → SSO 로그인 이동 → 콜백 후 세션 조회 → POST 로그아웃을 실제 HTTPS 진입 주소에서 사내 검증한다. 실제 SAML 검증·회사 저장소·SP 등록은 합성 검증의 범위에 포함되지 않는다. 인계에는 고정 오류 코드와 합성/실환경 검증 결과만 기록하며 실제 사내 코드·diff·세션 쿠키·SAML 원문을 외부에 전달하지 않는다.
+
+## 10. 승인된 SSO 의존성
+
+2026-10-20 사용자 요청과 Codex 검토로 OA의 SAML/XML 서명 검증에 다음 고정 버전을 추가했다. [OA 런타임 requirements](requirements.txt)와 [전체 개발용 requirements](../requirements.txt)에 같은 pin을 사용한다. VWP·VWP-bridge에는 추가하지 않는다.
+
+| 패키지 | 고정 버전 | 용도 / 공식 배포 정보 |
+|---|---|---|
+| `signxml` | `5.2.0` | XML 서명 검증. [PyPI 메타데이터](https://pypi.org/pypi/signxml/5.2.0/json) |
+| `lxml` | `6.1.3` | XML 처리. [PyPI](https://pypi.org/project/lxml/6.1.3/) |
+| `cryptography` | `50.0.2` | 암호·인증서 처리. [PyPI](https://pypi.org/project/cryptography/50.0.2/) |
+
+이 조합은 `signxml`의 `cryptography>=45`, `lxml>=5.2.1,<7` 조건과 프로젝트의 Python 3.10+ 조건을 만족한다. 실제 사내 베이스 이미지·패키지 미러에서 설치와 import를 확인한다. 패키지는 앱이 사용하는 Python에 설치해야 하며, `/opt/venv`를 사용하는 OA Docker 구성은 해당 venv의 Python으로 확인한다. 두 기존 OA Dockerfile은 이미 `oa/requirements.txt`를 설치하므로 이 의존성 추가를 위해 Dockerfile을 수정할 필요는 없다.
+
+저장소 루트의 활성 OA 환경에서 승인된 사내 pip 저장소·CA 설정을 사용한다. 아래 `.venv/bin/python`은 개발 환경 예시이며, 컨테이너에서는 실제 앱 Python 경로를 사용한다.
+
+```bash
+.venv/bin/python -m pip install -r oa/requirements.txt
+.venv/bin/python -m pip check
+.venv/bin/python -c "from importlib.metadata import version; import signxml, lxml.etree, cryptography; print({name: version(name) for name in ('signxml', 'lxml', 'cryptography')})"
+.venv/bin/python -m unittest tests.test_auth oa.test_sso oa.test_auth_config -v
+```
+
+회사 어댑터 전용 시험은 작성된 `oa/integration/company_sso/`에서 별도로 실행한다. 설치·import와 합성 서명 검증은 실제 SAML 검증·회사 IdP/SP 등록·세션/CSRF·업무 권한 연결을 대신하지 않는다. 사내에서는 기존 정상/위조/만료/재전송/폐기 검증을 유지한다.
+
+**보호 범위의 예외는 [가이드 3.1절](../INTERNAL_AI_GUIDE.md#31-oa-sso-고정-의존성-추가-승인--2026-10-20)뿐이다.** OA 담당 내부 AI는 사내 `oa/requirements.txt`에 없는 위 세 pin만 추가할 수 있다. 이미 같은 pin이 있으면 그대로 두며, 다른 pin이 있거나 설치·기존 시험이 예상 밖으로 실패하면 버전 조정·공통 코드/테스트 수정 없이 `WAITING_FOR_CODEX`로 문의한다. 인증 보호 해제·TLS 검증 생략·SSO 실패 fallback은 허용하지 않는다.

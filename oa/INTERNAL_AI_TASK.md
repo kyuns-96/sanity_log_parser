@@ -18,10 +18,13 @@ OA API·화면은 `oa/`, 회사 구현은 `oa/integration/`에 있다. Git 저�
 | `oa/integration/corporate_submission.py` | `CorporateSourceIdentity.resolve` 본문·필요 import·승인된 계정 조회 client 주입 생성자. SSO와 같은 영속 매핑 사용 |
 | `oa/sso_app.py` | 승인된 회사 모듈 import와 `identity_provider`, `user_directory`, 필요 `auth_router` 주입 |
 | `oa/integration/company_sso/` | 위 어댑터용 SDK wrapper·인증 router·전용 모의 테스트, 사용자/담당 원천 대응표 |
+| `oa/requirements.txt` | [가이드 3.1절](../INTERNAL_AI_GUIDE.md#31-oa-sso-고정-의존성-추가-승인--2026-10-20)에 승인된 `signxml==5.2.0`, `lxml==6.1.3`, `cryptography==50.0.2`만 없을 때 추가. 기존 다른 pin·설치 충돌은 변경하지 않고 문의 |
 | 해당 서버의 비공개 root `.env`/실행 환경 | 사용자가 허용한 OA 측 기존 설정 키와 실제 값 |
 | 비공개 `artifacts/internal-handoff/oa/` 또는 승인된 사내 폴더 | SSO/사용자/접속 확인 기록 |
 
 위 목록은 [공통 허용 목록](../INTERNAL_AI_GUIDE.md)의 부분집합이다. VWP의 plan/parser/모델 SDK 파일을 수정하지 않는다. `oa/sanity_auth.py`, workspace/업무 API·UI·DB SQL·기존 테스트·지침은 읽기 전용이다. OA 담당이라는 이유로 공통 API/store 전체를 변경할 수 없다.
+
+2026-10-20 승인된 세 SSO 의존성은 공개 공통 수정본에 포함됐다. 사내에 누락된 pin만 위 범위로 추가할 수 있으며 파일 전체의 보호 해제는 아니다. 설치·`pip check`·합성/실환경 검증은 [SSO 인계 10절](SSO_INTEGRATION.md#10-승인된-sso-의존성)을 따른다. 루트 개발용 requirements와 다른 서버의 의존성은 수정하지 않는다.
 
 ## 3. 실행 순서
 
@@ -73,4 +76,4 @@ Q1의 [분산 수집 설계](../vwp/SOURCE_COLLECTION_DESIGN.md)에 필요한 �
 
 ## 7. 그대로 전달할 시작 명령
 
-> 너는 OA SSO·사용자 연결 담당이다. AGENTS.md와 INTERNAL_AI_GUIDE.md를 전체 읽고 oa/INTERNAL_AI_TASK.md와 vwp/SUBMISSION.md를 수행하라. corporate_sso.py 두 메서드, corporate_submission.py/CorporateSourceIdentity.resolve, sso_app.py의 허용된 주입, company_sso/ wrapper/router/테스트만 작성하라. source 계정은 SSO와 같은 영속 매핑을 사용하고 INT-06의 사용자·TOP/블록 담당 원천 대응을 준비하라. DB는 sanity_oa_app 역할의 별도 OA 로그인으로 설정 자료를 준비하고 실제 점검은 사용자에게 인계하라. VWP 자격증명/모델은 사용하지 않는다. 공통 importer/API/store·SQL·UI·기존 테스트와 AUTHORIZATION_NOT_IMPLEMENTED를 수정하지 말라. 예상 밖 오류는 수정/재시도를 멈춰 WAITING_FOR_CODEX로 문의하고 SDK 검증·COMMON 권한 연결·운영 배포를 나눠 보고하라.
+> 너는 OA SSO·사용자 연결 담당이다. AGENTS.md와 INTERNAL_AI_GUIDE.md를 전체 읽고 oa/INTERNAL_AI_TASK.md와 vwp/SUBMISSION.md를 수행하라. corporate_sso.py 두 메서드, corporate_submission.py/CorporateSourceIdentity.resolve, sso_app.py의 허용된 주입, company_sso/ wrapper/router/테스트만 작성하라. 의존성은 가이드 3.1절의 oa/requirements.txt 세 고정 pin 추가만 허용하며 다른 버전과 충돌하면 문의하라. source 계정은 SSO와 같은 영속 매핑을 사용하고 INT-06의 사용자·TOP/블록 담당 원천 대응을 준비하라. DB는 sanity_oa_app 역할의 별도 OA 로그인으로 설정 자료를 준비하고 실제 점검은 사용자에게 인계하라. VWP 자격증명/모델은 사용하지 않는다. 공통 importer/API/store·SQL·UI·기존 테스트와 AUTHORIZATION_NOT_IMPLEMENTED를 수정하지 말라. 예상 밖 오류는 수정/재시도를 멈춰 WAITING_FOR_CODEX로 문의하고 SDK 검증·COMMON 권한 연결·운영 배포를 나눠 보고하라.
