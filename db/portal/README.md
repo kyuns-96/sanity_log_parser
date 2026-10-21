@@ -100,16 +100,18 @@ python3 db/portal/runbook.py verify --bundle /private/portal-bundle --snapshot /
 
 ## 7. 합성 검증과 기준 계획 갱신
 
-개발 환경에서는 기존 소켓 전용 mock runner가 원본 SQL과 포털 실행본의 구조 동등성, GUI CHECK 이름, 중간 재개, 원자적 실패, FK 옵션, 최소 권한과 원본 smoke 검증을 수행한다. 실제 회사 포털의 문법 검사·timeout·계정/DB 검증을 대신하지 않는다.
+개발 환경에서는 소켓 전용 mock runner의 `full` 프로필이 원본 SQL과 포털 실행본의 구조 동등성, GUI CHECK 이름, 중간 재개, 원자적 실패, FK 옵션, 최소 권한과 원본 smoke 검증을 수행한다. 기본 `quick`은 핵심 회귀와 catalog 조회 호환성만 확인하며 포털 54단계를 전수 반복하지 않는다. 실제 회사 포털의 문법 검사·timeout·계정/DB 검증을 대신하지 않는다.
 
 PG12.1과 PG16.15에서 각각 원본 SQL의 모든 중간 구조를 `plan.json`과 정확히 비교하고, 포털의 54개 DDL도 별도 스키마에서 한 문장씩 실행해 전후 구조를 확인한다. `plan.json.initial.server_version_num=160015`는 최초 생성 환경의 기록이다. PG12에서 검증을 생략하거나 PG16으로 위장하는 조건이 아니다. CHECK/FK/UNIQUE·인덱스 순서·전체 컬럼 비교는 동일하게 유지한다.
 
 PG15의 NULLS NOT DISTINCT 플래그는 [PG12 catalog](https://www.postgresql.org/docs/12/catalog-pg-index.html)와 [PG15 catalog](https://www.postgresql.org/docs/15/catalog-pg-index.html)의 차이를 반영한다. 새 버전에서 이 플래그가 true인 인덱스/제약을 false로 덮어 정규화하지 않으며, 예상과 다른 정의는 계속 거부한다.
 
-검증에는 10만 건 보고서/10만 그룹 사례가 포함되므로 여러 PostgreSQL 버전은 **순차 실행**한다. 메모리 부족으로 DB 프로세스가 종료되면 검증 실패로 중단한다. 테스트 건수·한도를 낮추거나 검사를 생략해 통과시키지 않는다.
+전수 `full` 검증에는 10만 건 보고서/10만 그룹 사례가 포함되므로 여러 PostgreSQL 버전은 **순차 실행**한다. 메모리 부족으로 DB 프로세스가 종료되면 검증 실패로 중단한다. `quick`/`full`은 사용자가 정한 실행 범위이며 기존 대용량 입력·기대값은 유지한다. `quick` 성공을 전수 통과로 표시하거나 실패한 검사를 생략해 통과시키지 않는다.
 
 ```bash
 .venv/bin/python db/tests/run_mock.py --pg-bin /path/to/postgresql/bin
+# 포털 기준 변경·전체 회귀·대용량 검증이 필요할 때
+.venv/bin/python db/tests/run_mock.py --profile full --pg-bin /path/to/postgresql/bin
 ```
 
 원본 증분을 바꿔야 할 때의 `build_reference.py`/`plan.json` 갱신은 Codex 담당이다. 사내 AI가 계획 hash나 비교 조건을 바꿔 불일치를 통과시키지 않는다.

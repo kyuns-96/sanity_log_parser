@@ -244,21 +244,28 @@ AI 표본 수와 전체 적용 건수는 별도입니다. 새 파서 자동 생�
 
 ## 7. 합성 demo와 검증
 
-사내 DB 없이 **새 로컬 mock DB를 생성하고 전체 테스트**하려면 다음을 실행합니다.
+사내 DB 없이 **새 로컬 mock DB를 생성하고 빠른 기본 검사**를 하려면 다음을 실행합니다.
 Linux/Unix와 PostgreSQL 12.1 이상 서버 바이너리(`initdb`, `pg_ctl`, `postgres`), Python 의존성이 필요합니다.
 바이너리 경로가 PATH에 없으면 `--pg-bin /path/to/postgresql/bin`을 추가합니다. 자동 다운로드/설치는 하지 않습니다.
 
 ```bash
 .venv/bin/python db/tests/run_mock.py
+# 전체 회귀·포털 54단계·10만 건 검사는 필요할 때 별도로 실행
+.venv/bin/python db/tests/run_mock.py --profile full
 ```
 
 이 mock은 SQLite/가짜 SQL 응답이 아니라 **실제 PostgreSQL 엔진 + 합성 report + 모의 AI 응답**입니다.
 매번 별도 `/tmp/sanity-mock-pg-*`에 새 DB를 만들고, TCP 수신 없이 전용 로컬 소켓·SCRAM 인증을 사용합니다.
 VWP/OA 로그인은 서로 다르며 임시 비밀번호를 자동 생성합니다. root 실행 시 PostgreSQL만 `nobody`로 실행합니다.
 코드/SQL만 임시 폴더에 복사하고 접속 관련 환경변수를 제거하므로 원래 `.env`·사내 접속 문서·실제 report는 사용하지 않습니다.
-기존 form → `002`·`003`·`004` → SQL smoke → 양쪽 접속/권한 검사 → 전체 Python 테스트(skip 불허) →
-4종 CLI demo → 10,000건/100그룹 파싱·저장 규모 검사를 실행합니다. 규모는 `--rows`, `--groups`로 조정합니다.
-모의 AI는 분류 회귀 테스트에서만 사용합니다. 10,000건 규모 검사는 AI 품질이나 전체 분류 처리량 검증이 아닙니다.
+기존 form → `002`~`008` → SQL smoke → 양쪽 접속/권한 검사는 모든 프로필에서 수행합니다.
+기본 `quick`은 인증·파서·권한·핵심 분류/판정 회귀, complete CLI demo 하나,
+100건/10그룹 파싱·저장 검사를 실행합니다. `full`은 기존 전체 테스트와 포털 54단계 반복 검증,
+10,000/100,000건 보고서·그룹 사례, 4종 CLI demo, 10,000건/100그룹 규모 검사를 포함합니다.
+선택한 프로필과 실제 실행 건수를 stdout·`tests.json`·`summary.json`에 기록합니다.
+`quick` 성공은 선택한 기본 검사의 성공이며 전체 검증 성공을 뜻하지 않습니다.
+`--rows`, `--groups`는 마지막 파싱·저장 검사 규모만 조정하며 기존 대용량 테스트의 입력·기대값은 바꾸지 않습니다.
+모의 AI는 분류 회귀 테스트에서만 사용합니다. 파싱·저장 규모 검사는 AI 품질 검증이 아닙니다.
 정상 완료와 일반 오류 시 DB 프로세스를 종료하고 결과 경로를 출력합니다. `summary.json`, `tests.json`,
 `tests.log`, `scale.json`, demo별 보고서와 정지된 DB는 조사할 수 있도록 남기며 자동 삭제하지 않습니다.
 강제 종료/전원 차단 시에는 자동 정지를 보장하지 않습니다. 이 도구는 운영 DB 접속 실패 시의 자동 대체 경로가 아닙니다.
@@ -271,6 +278,9 @@ CLI demo는 준비된 별도 테스트 DB와 양쪽 제한된 앱 DSN이 필요�
 .venv/bin/python run_tests.py
 # 별도 sanity_test_* DB의 admin/VWP/OA DSN과 postgresql 모드를 설정한 뒤
 .venv/bin/python run_tests.py --require-db
+# 전체 검사 또는 실행 대상 확인(목록만 출력)
+.venv/bin/python run_tests.py --profile full --require-db
+.venv/bin/python run_tests.py --profile full --list
 ```
 
 CLI demo는 complete/missing/malformed/unsupported를 지원합니다.

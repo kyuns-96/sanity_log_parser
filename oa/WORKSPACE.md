@@ -413,6 +413,8 @@ DB 파일은 기본 `/var/lib/sanity-review-workspace/` 아래, 비공개 실행
 
 ```bash
 .venv/bin/python db/tests/run_mock.py --pg-bin /path/to/postgresql/bin
+# 전수 회귀·포털 54단계·10만 건 검증은 필요할 때 별도로 실행
+.venv/bin/python db/tests/run_mock.py --profile full --pg-bin /path/to/postgresql/bin
 cd oa/dashboard
 SANITY_DASHBOARD_TEST_PORT=5188 npm run test:e2e
 ```

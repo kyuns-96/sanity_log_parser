@@ -183,13 +183,18 @@ def execute(staged, environment, log, script, *args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pg-bin", help="directory containing initdb, pg_ctl and postgres")
-    parser.add_argument("--rows", type=int, default=10000, help="synthetic parser/storage scale probe size")
-    parser.add_argument("--groups", type=int, default=100)
+    parser.add_argument("--profile", choices=("quick", "full"), default="quick",
+                        help="quick: core tests + 100-row probe; full: all tests + 10,000-row probe")
+    parser.add_argument("--rows", type=int, help="override parser/storage probe rows; does not change test fixtures")
+    parser.add_argument("--groups", type=int, help="override parser/storage probe groups")
     args = parser.parse_args(argv)
+    args.rows = args.rows if args.rows is not None else (100 if args.profile == "quick" else 10000)
+    args.groups = args.groups if args.groups is not None else min(args.rows, 10 if args.profile == "quick" else 100)
     if not 1 <= args.groups <= args.rows <= 100000:
         parser.error("Require 1 <= groups <= rows <= 100000")
     database = None
-    summary = {"status": "FAILED", "db_stopped": False}
+    summary = {"status": "FAILED", "db_stopped": False, "profile": args.profile,
+               "full_suite": args.profile == "full"}
     started = time.monotonic()
     try:
         import psycopg2
@@ -205,15 +210,18 @@ def main(argv=None):
         print("phase=schema_and_permissions_passed", flush=True)
         for side in ("vwp", "oa"):
             execute(staged, environment, database.root / f"check-{side}.log", "common.sanity_db", "check", "--side", side)
-        print("phase=regression_tests", flush=True)
+        print(f"phase=regression_tests profile={args.profile}", flush=True)
         execute(staged, environment, database.root / "tests.log", "run_tests.py", "--require-db",
-                "--report-json", database.root / "tests.json")
+                "--profile", args.profile, "--report-json", database.root / "tests.json")
         summary["tests"] = json.loads((database.root / "tests.json").read_text(encoding="utf-8"))
+        if summary["tests"].get("profile") != args.profile:
+            raise MockError("Test report profile does not match the requested scope")
         if summary["tests"]["skipped"]:
             raise MockError("Mock DB validation must not skip tests")
         print(f"phase=tests_passed count={summary['tests']['tests_run']}", flush=True)
         scenarios = {}
-        for scenario in ("complete", "missing", "malformed", "unsupported"):
+        selected_scenarios = ("complete",) if args.profile == "quick" else ("complete", "missing", "malformed", "unsupported")
+        for scenario in selected_scenarios:
             output = database.root / ("demo-" + scenario)
             execute(staged, environment, database.root / ("demo-" + scenario + ".log"), "devtools/demo.py",
                     "--scenario", scenario, "--out", output)
@@ -243,7 +251,7 @@ def main(argv=None):
             with (database.root / "summary.json").open("x", encoding="utf-8") as stream:
                 json.dump(summary, stream, ensure_ascii=False, indent=2)
                 stream.write("\n")
-            print(f"status={summary['status']} db_stopped={summary['db_stopped']} report={database.root / 'summary.json'}", flush=True)
+            print(f"status={summary['status']} profile={args.profile} db_stopped={summary['db_stopped']} report={database.root / 'summary.json'}", flush=True)
     return 0 if summary["status"] == "PASSED" else 1
 
 

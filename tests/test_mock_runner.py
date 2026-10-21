@@ -15,6 +15,42 @@ spec.loader.exec_module(runner)
 
 
 class MockRunnerTests(unittest.TestCase):
+    def test_profiles_forward_scope_and_keep_large_probes_explicit(self):
+        for profile, arguments, rows, groups, scenario_count in (
+            ("quick", [], 100, 10, 1), ("full", ["--profile", "full"], 10000, 100, 4),
+        ):
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                database = Mock(root=root, server_version_num=120001)
+                calls = []
+
+                def execute(staged, environment, log, script, *args):
+                    calls.append((script, args))
+                    if script == "run_tests.py":
+                        (root / "tests.json").write_text(json.dumps({
+                            "profile": profile, "tests_run": 1, "skipped": 0, "successful": True}))
+                    elif script == "devtools/demo.py":
+                        output = Path(args[args.index("--out") + 1])
+                        output.mkdir()
+                        (output / "receipt.json").write_text('{"coverage": {}}')
+                    elif script == "tests/benchmark_postgresql.py":
+                        log.write_text(json.dumps({"rows": args[1], "groups": args[3]}))
+
+                with patch.object(runner, "pg_binaries", return_value=Path("/synthetic/bin")), \
+                        patch.object(runner, "MockDatabase", return_value=database), \
+                        patch.object(runner, "stage_source"), patch.object(runner, "execute", side_effect=execute), \
+                        redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    self.assertEqual(0, runner.main(arguments))
+                database.stop.assert_called_once()
+                result = json.loads((root / "summary.json").read_text())
+                self.assertEqual(profile, result["profile"])
+                self.assertEqual(profile == "full", result["full_suite"])
+                self.assertEqual({"rows": rows, "groups": groups}, result["scale"])
+                self.assertEqual(scenario_count, len(result["scenarios"]))
+                test_call = next(args for script, args in calls if script == "run_tests.py")
+                self.assertEqual(profile, test_call[test_call.index("--profile") + 1])
+                self.assertIn("--require-db", test_call)
+
     def test_failed_start_still_stops_and_records_failure(self):
         with tempfile.TemporaryDirectory() as temp:
             database = Mock(root=Path(temp))
