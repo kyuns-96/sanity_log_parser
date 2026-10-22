@@ -148,7 +148,9 @@ export function makeWorkspaceDemo() {
       const id = `${version.id}-${config.family.toLowerCase()}-${String(index + 1).padStart(3, '0')}`
       if (!reports.has(id)) {
         const missing = index === config.count - 1, partial = index === 2
-        const status = missing || partial ? 'UNKNOWN' : index % 4 === 3 ? 'PASS' : 'FAIL'
+        let status = 'FAIL'
+        if (missing || partial) status = 'UNKNOWN'
+        else if (index % 4 === 3) status = 'PASS'
         const rule = config.rules[index % config.rules.length]
         const records: WorkspaceRecord[] = missing ? [] : Array.from({ length: 18 + index % 5 * 3 }, (_, number) => {
           const group = number % 3, object = `top/${block.name.toLowerCase()}/${['core', 'io', 'test'][group]}`, mode = group === 2 ? 'TEST' : 'FUNCTIONAL'

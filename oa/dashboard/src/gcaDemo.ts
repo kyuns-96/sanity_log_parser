@@ -38,6 +38,9 @@ function createRun(seed: Seed) {
       || rule.id === 'io_window' && !seed.older && seed.block !== 'DDR'
       || rule.id === 'case_conflict' && seed.block === 'GPU')
     const count = missing ? 0 : rule.count + (seed.older ? 1 : 0)
+    let checkStatus: Unit['check_status'] = 'FAIL'
+    if (missing) checkStatus = 'UNKNOWN'
+    else if (pass) checkStatus = 'PASS'
     const report = `demo/gca/${seed.project}/${seed.block}/${seed.id}/${rule.id}.rpt`
     const header = [
       '# GCA example report / 데모용 예시 보고서',
@@ -51,7 +54,7 @@ function createRun(seed: Seed) {
       const recordId = `r-${seed.id}-${rule.id}-${n + 1}`
       const object = `${path}/${rule.object.replace(/\//, `_${n}/`)}`
       const context = pass ? `demo_check=clear scenario=${seed.scenario}` : `${rule.fields} scenario=${seed.scenario}`
-      const raw = `${pass ? 'PASS' : 'FAIL'} | ${recordId} | ${object} | ${context}`
+      const raw = `${checkStatus} | ${recordId} | ${object} | ${context}`
       const example = { record_id: recordId, file_id: report, line_start: header.length + n + 1, line_end: header.length + n + 1, raw }
       examples.push(example); records.set(recordId, example)
     }
@@ -63,7 +66,7 @@ function createRun(seed: Seed) {
     }])
     return {
       review_unit_id: uid, item_id: rule.label, report,
-      check_status: missing ? 'UNKNOWN' : pass ? 'PASS' : 'FAIL',
+      check_status: checkStatus,
       parse_status: missing ? 'MISSING' : 'COMPLETE', execution_status: missing ? 'NOT_RUN' : 'COMPLETED',
       applicable: true, analysis_ready: !missing, blockers: missing ? ['SOURCE_REPORT_MISSING'] : [],
       record_count: count, evaluated_count: count, rule_version: 'demo-1',
@@ -71,7 +74,7 @@ function createRun(seed: Seed) {
       evaluation: { rule: rule.code, 기준: '데모에서 지정한 개별 결과 · 실제 도구 판정 아님' },
       identity_fields: ['project', 'block', 'scenario', 'rule'], decision: null,
       demo_report: { summary: rule.summary, sources, text: missing ? null : [...header, ...examples.map(e => e.raw),
-        `# checked=${count} findings=${pass ? 0 : count} status=${pass ? 'PASS' : 'FAIL'}`].join('\n') },
+        `# checked=${count} findings=${pass ? 0 : count} status=${checkStatus}`].join('\n') },
     }
   })
   return { seed, bundleId, units, groups, records, revision: 0,

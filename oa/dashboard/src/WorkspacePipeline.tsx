@@ -109,7 +109,12 @@ export default function WorkspacePipeline({ report, session, onChanged, onExpire
   const chosen = current?.groups.find(group => group.id === groupId)
   const removed = data.summary?.removed.find(group => group.id === groupId)
   const members = chosen ? records.filter(record => chosen.record_ids.includes(record.id)) : []
-  const sourceStatus = members.some(record => record.check_status === 'FAIL') ? 'FAIL' : members.length && members.every(record => record.check_status === 'PASS') ? 'PASS' : 'UNKNOWN'
+  let sourceStatus = 'UNKNOWN'
+  if (members.some(record => record.check_status === 'FAIL')) {
+    sourceStatus = 'FAIL'
+  } else if (members.length > 0 && members.every(record => record.check_status === 'PASS')) {
+    sourceStatus = 'PASS'
+  }
   const canWrite = data.can_edit && !busy
   const confirmed = current?.confirmed && !data.stale
 

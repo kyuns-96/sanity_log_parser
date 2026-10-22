@@ -27,6 +27,8 @@ sanity item의 보고서 행에서 **검토 시작**을 누르면 **1. 로그 �
 lockfile로 하위 의존성도 고정한다. Node 버전 관리 도구를 쓰면 이 디렉터리의 `.nvmrc`를 적용한다.
 회사 Docker 구성은 [Docker 실행 안내](../docker/README.md)를 따른다.
 
+CI가 판정 코드를 민감정보로 탐지할 때는 [민감정보 탐지 대응 기준](CI_TROUBLESHOOTING.md)을 따른다. 판정 문자열과 API·DB 계약은 유지하고 상태 선택 분기를 명확한 조건문으로 작성한다. 검사 억제나 실제 비밀값을 감추는 변경은 하지 않는다.
+
 ```sh
 cd oa/dashboard
 npm ci --engine-strict

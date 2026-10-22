@@ -169,7 +169,9 @@ export default function App() {
     try { await action() } catch (e) { fail(e) } finally { setBusy(false) }
   }
   function openForm(kind: 'review' | 'evidence', unit: Unit) {
-    setError(''); setReason(''); setConclusion(unit.check_status === 'PASS' ? 'PASS' : 'FAIL')
+    setError(''); setReason('')
+    if (unit.check_status === 'PASS') setConclusion(unit.check_status)
+    else setConclusion('FAIL')
     setRecordIds(groups.items.filter(g => g.review_unit_id === unit.review_unit_id).flatMap(g => g.examples.map(e => e.record_id)).join('\n'))
     setForm({ kind, unit, revision: detail!.review_revision, requestId: crypto.randomUUID() })
   }

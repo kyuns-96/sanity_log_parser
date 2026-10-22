@@ -40,7 +40,12 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
   function initialize(value: ReportReview) {
     setData(value)
     const current = value.current_stale ? null : value.current
-    setConclusion(current?.conclusion || (value.ready ? report.check_status === 'PASS' ? 'PASS' : 'FAIL' : 'DEFER'))
+    let initialConclusion: Judgment = 'DEFER'
+    if (value.ready) {
+      initialConclusion = 'FAIL'
+      if (report.check_status === 'PASS') initialConclusion = report.check_status
+    }
+    setConclusion(current?.conclusion || initialConclusion)
     setReason(current?.reason || '')
     setCriteria(current?.criteria || '')
     setReusable(current?.reusable || false)
