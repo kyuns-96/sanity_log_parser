@@ -16,6 +16,8 @@ QUICK_TESTS = (
     "tests.test_auth", "tests.test_db_config", "tests.test_common", "tests.test_parsers",
     "tests.test_schema", "tests.test_submission_contracts", "tests.test_integration_contracts",
     "tests.test_mock_runner", "tests.test_test_runner", "oa.test_auth_config", "oa.test_sso",
+    "tests.test_sso_identity_migration.SSOIdentityMigrationTests.test_008_checkpoint_runs_one_portal_statement_with_the_exact_original_009_catalog",
+    "tests.test_sso_identity_migration.SSOIdentityMigrationTests.test_conflicting_insert_preserves_original_issuer_disabled_state_and_role_permissions",
     "tests.test_database.DatabaseTests.test_missing_configuration_and_admin_login_fail_closed",
     "tests.test_database.DatabaseTests.test_excess_column_rights_are_detected",
     "tests.test_database.DatabaseTests.test_private_payload_and_sender_ack_cannot_be_modified",

@@ -32,16 +32,42 @@ class PortalRunbookTests(unittest.TestCase):
         self.assertNotIn('CREATE ', sql)
         self.assertNotIn('synthetic_private', result.stdout)
 
-    def test_all_six_ddl_phases_include_workspace_and_exclude_grants_and_sso_jit(self):
-        self.assertEqual({'002', '004', '005', '006', '007', '008'}, {s['phase'] for s in self.plan['steps']})
+    def test_all_seven_ddl_phases_include_identity_storage_and_exclude_grants_and_runtime_provisioning(self):
+        self.assertEqual({'002', '004', '005', '006', '007', '008', '009'}, {s['phase'] for s in self.plan['steps']})
         manifest = prepare(self.plan['initial'], self.root / 'bundle')
         self.assertFalse(manifest['operational_ready'])
+        self.assertEqual(55, len(manifest['steps']))
+        self.assertEqual(['009'], [s['phase'] for s in manifest['steps'][54:]])
         for step in manifest['steps']:
             sql = (self.root / 'bundle' / step['file']).read_text()
             self.assertRegex(sql, r'^(ALTER TABLE|CREATE (UNIQUE )?INDEX) ')
             self.assertEqual(1, sql.count(';'))
-            for forbidden in ('DO $', 'BEGIN;', 'COMMIT;', 'LOCK TABLE', 'GRANT ', 'CREATE ROLE', 'SSO_IDENTITY'):
+            for forbidden in ('DO $', 'BEGIN;', 'COMMIT;', 'LOCK TABLE', 'GRANT ', 'CREATE ROLE'):
                 self.assertNotIn(forbidden, sql)
+            self.assertNotRegex(sql, r'(?m)^(INSERT|UPDATE|DELETE)\s')
+            if step['phase'] == '009':
+                self.assertIn('SSO_IDENTITY', sql)
+            else:
+                self.assertNotIn('SSO_IDENTITY', sql)
+
+    def test_008_complete_checkpoint_prepares_only_the_single_009_alter(self):
+        states = list(checkpoints(self.plan))
+        bundle = self.root / 'only-009'
+        manifest = prepare(states[54], bundle)
+        self.assertEqual(54, manifest['start_checkpoint'])
+        self.assertEqual(55, manifest['total_steps'])
+        self.assertEqual(1, len(manifest['steps']))
+        step = manifest['steps'][0]
+        self.assertEqual((55, '009'), (step['number'], step['phase']))
+        sql = (bundle / step['file']).read_text()
+        self.assertTrue(sql.startswith('ALTER TABLE '))
+        self.assertEqual(1, sql.count(';'))
+        self.assertIn('DROP CONSTRAINT "sanity_oa_kind_v6"', sql)
+        self.assertIn('ADD CONSTRAINT "sanity_oa_sso_identity_v7"', sql)
+        verify(states[54], bundle, 55, 'before')
+        verify(states[55], bundle, 55, 'after')
+        complete = prepare(states[55], self.root / 'complete')
+        self.assertEqual([], complete['steps'])
 
     def test_prepare_resumes_at_verified_checkpoints_and_complete_state_is_not_operational_ready(self):
         states = list(checkpoints(self.plan))

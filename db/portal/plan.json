@@ -11,6 +11,7 @@
     "db/006_workspace_reviews.sql": "c6fdc6428a92a48c3947ca94b345c228afe1bb86609af723ad135d3431fa1dac",
     "db/007_workspace_pipeline.sql": "450bb83088dc7a2d2fb758b2d368731bd0f37a6f6806d34e9fa9a5eef1c5ca42",
     "db/008_submissions.sql": "4216889d3f8e42e9c7857442fac125e8b7b4c4d39bf086feb81049a3b2044a20",
+    "db/009_sso_identity.sql": "6869aee5e0a7440fb8aeb42b7f0d9d121f4bd8b1f31362f28ce89292ddfd670d",
     "db/003_grants.sql": "b225cec979648c3a9f3dbb28941e1e017126f1833f15cfabd23283a83129c1d1"
   },
   "initial": {
@@ -5914,6 +5915,155 @@
         "sanity_vwp_message_kind_v3": "message_type IN ('PING','ANALYSIS_BUNDLE','EVIDENCE_RESPONSE','CLUSTER_PART','CLUSTER_RESULT','SOURCE_MANIFEST','SOURCE_PART','SOURCE_COMMIT')",
         "sanity_vwp_message_scope_v3": "(message_type NOT IN ('SOURCE_MANIFEST','SOURCE_PART','SOURCE_COMMIT') AND (((((message_type)::text = 'PING'::text) AND (bundle_id IS NULL) AND (correlation_id IS NULL) AND (payload_gzip IS NULL)) OR (((message_type)::text = 'ANALYSIS_BUNDLE'::text) AND (bundle_id IS NOT NULL) AND (correlation_id IS NULL) AND (payload_gzip IS NOT NULL)) OR (((message_type)::text = 'EVIDENCE_RESPONSE'::text) AND (bundle_id IS NOT NULL) AND (correlation_id IS NOT NULL) AND COALESCE(((payload ->> 'result'::text) = ANY (ARRAY['FULFILLED'::text, 'REJECTED'::text, 'EXPIRED'::text])), false) AND (((payload ->> 'result'::text) = 'FULFILLED'::text) = (payload_gzip IS NOT NULL))) OR (((message_type)::text = 'CLUSTER_PART'::text) AND (bundle_id IS NOT NULL) AND (correlation_id IS NOT NULL) AND (payload_gzip IS NOT NULL)) OR (((message_type)::text = 'CLUSTER_RESULT'::text) AND (bundle_id IS NOT NULL) AND (correlation_id IS NOT NULL) AND (payload_gzip IS NULL))))) OR (message_type IN ('SOURCE_MANIFEST','SOURCE_PART','SOURCE_COMMIT') AND (run_id IS NULL AND bundle_id IS NULL AND correlation_id IS NOT NULL AND payload_gzip IS NOT NULL))",
         "sanity_vwp_source_legacy_run_v3": "\n        message_type IN ('SOURCE_MANIFEST','SOURCE_PART','SOURCE_COMMIT') OR run_id IS NOT NULL"
+      },
+      "generation_sql": {}
+    },
+    {
+      "phase": "009",
+      "table": "sanity_oa_data",
+      "kind": "alter",
+      "add_columns": [],
+      "change_columns": [],
+      "drop_constraints": [
+        {
+          "name": "sanity_oa_kind_v6",
+          "type": "c",
+          "match": " ",
+          "columns": [
+            "record_type"
+          ],
+          "deferred": false,
+          "on_delete": " ",
+          "on_update": " ",
+          "ref_table": null,
+          "validated": true,
+          "deferrable": false,
+          "definition": "((record_type)::text = ANY ((ARRAY['RECEIVED_BUNDLE'::character varying, 'REVIEW_UNIT'::character varying, 'REVIEW_EVENT'::character varying, 'REPORT'::character varying, 'CLUSTER_STATE'::character varying, 'CLUSTER_JOB'::character varying, 'CLUSTER_PART'::character varying, 'CLUSTER_MEMBER'::character varying, 'CLUSTER_EVENT'::character varying, 'CLUSTER_RULE'::character varying, 'WS_CONFIG'::character varying, 'WS_USER'::character varying, 'WS_SESSION'::character varying, 'WS_PROJECT'::character varying, 'WS_BLOCK'::character varying, 'WS_VERSION'::character varying, 'WS_POR'::character varying, 'WS_POR_EVENT'::character varying, 'WS_REPORT'::character varying, 'WS_REVIEW'::character varying, 'WS_REVIEW_EVENT'::character varying, 'WS_REVIEW_PROPOSAL'::character varying, 'WS_CLUSTER'::character varying, 'WS_CLUSTER_EVENT'::character varying, 'WS_GROUP_REVIEW'::character varying, 'WS_GROUP_REVIEW_EVENT'::character varying, 'WS_GROUP_REVIEW_PROPOSAL'::character varying, 'WS_SUBMISSION'::character varying, 'WS_SOURCE_PART'::character varying])::text[]))",
+          "no_inherit": false,
+          "ref_schema": null,
+          "ref_columns": [],
+          "index_nulls_not_distinct": null
+        },
+        {
+          "name": "sanity_oa_workspace_scope_v6",
+          "type": "c",
+          "match": " ",
+          "columns": [
+            "record_type",
+            "project",
+            "run_id",
+            "bundle_id",
+            "workspace_key",
+            "workspace_project_ref",
+            "workspace_block_ref",
+            "workspace_version_ref",
+            "review_unit_id",
+            "review_revision",
+            "request_id",
+            "entity_key",
+            "classification_revision",
+            "payload_bytes"
+          ],
+          "deferred": false,
+          "on_delete": " ",
+          "on_update": " ",
+          "ref_table": null,
+          "validated": true,
+          "deferrable": false,
+          "definition": "((((record_type)::text <> ALL ((ARRAY['WS_SUBMISSION'::character varying, 'WS_SOURCE_PART'::character varying])::text[])) AND ((((record_type)::text <> ALL (ARRAY[('WS_CLUSTER'::character varying)::text, ('WS_CLUSTER_EVENT'::character varying)::text, ('WS_GROUP_REVIEW'::character varying)::text, ('WS_GROUP_REVIEW_EVENT'::character varying)::text, ('WS_GROUP_REVIEW_PROPOSAL'::character varying)::text])) AND ((((record_type)::text <> ALL (ARRAY[('WS_REVIEW'::character varying)::text, ('WS_REVIEW_EVENT'::character varying)::text, ('WS_REVIEW_PROPOSAL'::character varying)::text])) AND ((((record_type)::text <> ALL (ARRAY[('WS_CONFIG'::character varying)::text, ('WS_USER'::character varying)::text, ('WS_SESSION'::character varying)::text, ('WS_PROJECT'::character varying)::text, ('WS_BLOCK'::character varying)::text, ('WS_VERSION'::character varying)::text, ('WS_POR'::character varying)::text, ('WS_POR_EVENT'::character varying)::text, ('WS_REPORT'::character varying)::text])) AND (project IS NOT NULL) AND (run_id IS NOT NULL) AND (bundle_id IS NOT NULL) AND (workspace_key IS NULL) AND (workspace_project_ref IS NULL) AND (workspace_block_ref IS NULL) AND (workspace_version_ref IS NULL)) OR (((record_type)::text = ANY (ARRAY[('WS_CONFIG'::character varying)::text, ('WS_USER'::character varying)::text, ('WS_SESSION'::character varying)::text, ('WS_PROJECT'::character varying)::text, ('WS_BLOCK'::character varying)::text, ('WS_VERSION'::character varying)::text, ('WS_POR'::character varying)::text, ('WS_POR_EVENT'::character varying)::text, ('WS_REPORT'::character varying)::text])) AND (workspace_key IS NOT NULL) AND ((workspace_key)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'::text) AND (run_id IS NULL) AND (bundle_id IS NULL) AND (review_unit_id IS NULL) AND (review_revision IS NULL) AND (request_id IS NULL) AND (entity_key IS NULL) AND (classification_revision IS NULL) AND (payload_bytes IS NULL) AND ((((record_type)::text = ANY (ARRAY[('WS_CONFIG'::character varying)::text, ('WS_USER'::character varying)::text, ('WS_SESSION'::character varying)::text])) AND (project IS NULL)) OR (((record_type)::text <> ALL (ARRAY[('WS_CONFIG'::character varying)::text, ('WS_USER'::character varying)::text, ('WS_SESSION'::character varying)::text])) AND (project IS NOT NULL))) AND (((record_type)::text = ANY (ARRAY[('WS_BLOCK'::character varying)::text, ('WS_VERSION'::character varying)::text, ('WS_POR'::character varying)::text, ('WS_POR_EVENT'::character varying)::text, ('WS_REPORT'::character varying)::text])) = (workspace_project_ref IS NOT NULL)) AND (((record_type)::text = ANY (ARRAY[('WS_VERSION'::character varying)::text, ('WS_POR'::character varying)::text, ('WS_POR_EVENT'::character varying)::text, ('WS_REPORT'::character varying)::text])) = (workspace_block_ref IS NOT NULL)) AND (((record_type)::text <> ALL (ARRAY[('WS_REPORT'::character varying)::text, ('WS_POR_EVENT'::character varying)::text])) OR (workspace_version_ref IS NOT NULL))))) OR (((record_type)::text = ANY (ARRAY[('WS_REVIEW'::character varying)::text, ('WS_REVIEW_EVENT'::character varying)::text, ('WS_REVIEW_PROPOSAL'::character varying)::text])) AND (workspace_key IS NOT NULL) AND ((workspace_key)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'::text) AND (project IS NOT NULL) AND (workspace_project_ref IS NOT NULL) AND (workspace_block_ref IS NOT NULL) AND (run_id IS NULL) AND (bundle_id IS NULL) AND (review_unit_id IS NULL) AND (review_revision IS NULL) AND (request_id IS NULL) AND (entity_key IS NULL) AND (classification_revision IS NULL) AND (payload_bytes IS NULL) AND (workspace_version_ref IS NULL)))) OR (((record_type)::text = ANY (ARRAY[('WS_CLUSTER'::character varying)::text, ('WS_CLUSTER_EVENT'::character varying)::text, ('WS_GROUP_REVIEW'::character varying)::text, ('WS_GROUP_REVIEW_EVENT'::character varying)::text, ('WS_GROUP_REVIEW_PROPOSAL'::character varying)::text])) AND (workspace_key IS NOT NULL) AND ((workspace_key)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'::text) AND (project IS NOT NULL) AND (workspace_project_ref IS NOT NULL) AND (workspace_block_ref IS NOT NULL) AND (run_id IS NULL) AND (bundle_id IS NULL) AND (review_unit_id IS NULL) AND (review_revision IS NULL) AND (request_id IS NULL) AND (entity_key IS NULL) AND (classification_revision IS NULL) AND (payload_bytes IS NULL) AND (workspace_version_ref IS NULL)))) OR (((record_type)::text = ANY ((ARRAY['WS_SUBMISSION'::character varying, 'WS_SOURCE_PART'::character varying])::text[])) AND ((workspace_key IS NOT NULL) AND ((workspace_key)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'::text) AND (project IS NOT NULL) AND (workspace_project_ref IS NOT NULL) AND (workspace_block_ref IS NOT NULL) AND (run_id IS NULL) AND (bundle_id IS NULL) AND (review_unit_id IS NULL) AND (review_revision IS NULL) AND (request_id IS NULL) AND (entity_key IS NULL) AND (classification_revision IS NULL) AND (payload_bytes IS NULL) AND (workspace_version_ref IS NULL))))",
+          "no_inherit": false,
+          "ref_schema": null,
+          "ref_columns": [],
+          "index_nulls_not_distinct": null
+        }
+      ],
+      "add_constraints": [
+        {
+          "name": "sanity_oa_kind_v7",
+          "type": "c",
+          "match": " ",
+          "columns": [
+            "record_type"
+          ],
+          "deferred": false,
+          "on_delete": " ",
+          "on_update": " ",
+          "ref_table": null,
+          "validated": true,
+          "deferrable": false,
+          "definition": "((record_type)::text = ANY ((ARRAY['RECEIVED_BUNDLE'::character varying, 'REVIEW_UNIT'::character varying, 'REVIEW_EVENT'::character varying, 'REPORT'::character varying, 'CLUSTER_STATE'::character varying, 'CLUSTER_JOB'::character varying, 'CLUSTER_PART'::character varying, 'CLUSTER_MEMBER'::character varying, 'CLUSTER_EVENT'::character varying, 'CLUSTER_RULE'::character varying, 'WS_CONFIG'::character varying, 'WS_USER'::character varying, 'WS_SESSION'::character varying, 'WS_PROJECT'::character varying, 'WS_BLOCK'::character varying, 'WS_VERSION'::character varying, 'WS_POR'::character varying, 'WS_POR_EVENT'::character varying, 'WS_REPORT'::character varying, 'WS_REVIEW'::character varying, 'WS_REVIEW_EVENT'::character varying, 'WS_REVIEW_PROPOSAL'::character varying, 'WS_CLUSTER'::character varying, 'WS_CLUSTER_EVENT'::character varying, 'WS_GROUP_REVIEW'::character varying, 'WS_GROUP_REVIEW_EVENT'::character varying, 'WS_GROUP_REVIEW_PROPOSAL'::character varying, 'WS_SUBMISSION'::character varying, 'WS_SOURCE_PART'::character varying, 'SSO_IDENTITY'::character varying])::text[]))",
+          "no_inherit": false,
+          "ref_schema": null,
+          "ref_columns": [],
+          "index_nulls_not_distinct": null
+        },
+        {
+          "name": "sanity_oa_sso_identity_v7",
+          "type": "c",
+          "match": " ",
+          "columns": [
+            "record_type",
+            "payload",
+            "workspace_key",
+            "state"
+          ],
+          "deferred": false,
+          "on_delete": " ",
+          "on_update": " ",
+          "ref_table": null,
+          "validated": true,
+          "deferrable": false,
+          "definition": "\nCASE\n    WHEN ((record_type)::text = 'SSO_IDENTITY'::text) THEN COALESCE(((payload ?& ARRAY['issuer'::text, 'subject'::text, 'display_name'::text, 'first_seen_at'::text]) AND ((payload - ARRAY['issuer'::text, 'subject'::text, 'display_name'::text, 'first_seen_at'::text]) = '{}'::jsonb) AND (jsonb_typeof((payload -> 'issuer'::text)) = 'string'::text) AND ((length((payload ->> 'issuer'::text)) >= 1) AND (length((payload ->> 'issuer'::text)) <= 512)) AND ((payload ->> 'issuer'::text) = btrim((payload ->> 'issuer'::text))) AND ((payload ->> 'issuer'::text) !~ '[[:cntrl:]]'::text) AND (jsonb_typeof((payload -> 'subject'::text)) = 'string'::text) AND ((payload ->> 'subject'::text) = (workspace_key)::text) AND (jsonb_typeof((payload -> 'display_name'::text)) = 'string'::text) AND ((length((payload ->> 'display_name'::text)) >= 1) AND (length((payload ->> 'display_name'::text)) <= 100)) AND ((payload ->> 'display_name'::text) = btrim((payload ->> 'display_name'::text))) AND ((payload ->> 'display_name'::text) !~ '[[:cntrl:]]'::text) AND (jsonb_typeof((payload -> 'first_seen_at'::text)) = 'string'::text) AND ((payload ->> 'first_seen_at'::text) ~ '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9][.][0-9]{6}Z$'::text) AND (state ?& ARRAY['enabled'::text, 'last_seen_at'::text]) AND ((state - ARRAY['enabled'::text, 'last_seen_at'::text]) = '{}'::jsonb) AND (jsonb_typeof((state -> 'enabled'::text)) = 'boolean'::text) AND (jsonb_typeof((state -> 'last_seen_at'::text)) = 'string'::text) AND ((state ->> 'last_seen_at'::text) ~ '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9][.][0-9]{6}Z$'::text) AND (((state ->> 'last_seen_at'::text))::timestamp with time zone >= ((payload ->> 'first_seen_at'::text))::timestamp with time zone)), false)\n    ELSE true\nEND",
+          "no_inherit": false,
+          "ref_schema": null,
+          "ref_columns": [],
+          "index_nulls_not_distinct": null
+        },
+        {
+          "name": "sanity_oa_workspace_scope_v7",
+          "type": "c",
+          "match": " ",
+          "columns": [
+            "record_type",
+            "project",
+            "run_id",
+            "bundle_id",
+            "workspace_key",
+            "workspace_project_ref",
+            "workspace_block_ref",
+            "workspace_version_ref",
+            "review_unit_id",
+            "review_revision",
+            "request_id",
+            "entity_key",
+            "classification_revision",
+            "payload_bytes",
+            "payload_sha256",
+            "workspace_review_report_ref",
+            "workspace_review_version_ref",
+            "workspace_review_event_ref",
+            "workspace_pipeline_report_ref",
+            "workspace_pipeline_version_ref",
+            "workspace_pipeline_event_ref",
+            "workspace_pipeline_cluster_ref"
+          ],
+          "deferred": false,
+          "on_delete": " ",
+          "on_update": " ",
+          "ref_table": null,
+          "validated": true,
+          "deferrable": false,
+          "definition": "((((record_type)::text <> 'SSO_IDENTITY'::text) AND ((((record_type)::text <> ALL (ARRAY[('WS_SUBMISSION'::character varying)::text, ('WS_SOURCE_PART'::character varying)::text])) AND ((((record_type)::text <> ALL (ARRAY[('WS_CLUSTER'::character varying)::text, ('WS_CLUSTER_EVENT'::character varying)::text, ('WS_GROUP_REVIEW'::character varying)::text, ('WS_GROUP_REVIEW_EVENT'::character varying)::text, ('WS_GROUP_REVIEW_PROPOSAL'::character varying)::text])) AND ((((record_type)::text <> ALL (ARRAY[('WS_REVIEW'::character varying)::text, ('WS_REVIEW_EVENT'::character varying)::text, ('WS_REVIEW_PROPOSAL'::character varying)::text])) AND ((((record_type)::text <> ALL (ARRAY[('WS_CONFIG'::character varying)::text, ('WS_USER'::character varying)::text, ('WS_SESSION'::character varying)::text, ('WS_PROJECT'::character varying)::text, ('WS_BLOCK'::character varying)::text, ('WS_VERSION'::character varying)::text, ('WS_POR'::character varying)::text, ('WS_POR_EVENT'::character varying)::text, ('WS_REPORT'::character varying)::text])) AND (project IS NOT NULL) AND (run_id IS NOT NULL) AND (bundle_id IS NOT NULL) AND (workspace_key IS NULL) AND (workspace_project_ref IS NULL) AND (workspace_block_ref IS NULL) AND (workspace_version_ref IS NULL)) OR (((record_type)::text = ANY (ARRAY[('WS_CONFIG'::character varying)::text, ('WS_USER'::character varying)::text, ('WS_SESSION'::character varying)::text, ('WS_PROJECT'::character varying)::text, ('WS_BLOCK'::character varying)::text, ('WS_VERSION'::character varying)::text, ('WS_POR'::character varying)::text, ('WS_POR_EVENT'::character varying)::text, ('WS_REPORT'::character varying)::text])) AND (workspace_key IS NOT NULL) AND ((workspace_key)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'::text) AND (run_id IS NULL) AND (bundle_id IS NULL) AND (review_unit_id IS NULL) AND (review_revision IS NULL) AND (request_id IS NULL) AND (entity_key IS NULL) AND (classification_revision IS NULL) AND (payload_bytes IS NULL) AND ((((record_type)::text = ANY (ARRAY[('WS_CONFIG'::character varying)::text, ('WS_USER'::character varying)::text, ('WS_SESSION'::character varying)::text])) AND (project IS NULL)) OR (((record_type)::text <> ALL (ARRAY[('WS_CONFIG'::character varying)::text, ('WS_USER'::character varying)::text, ('WS_SESSION'::character varying)::text])) AND (project IS NOT NULL))) AND (((record_type)::text = ANY (ARRAY[('WS_BLOCK'::character varying)::text, ('WS_VERSION'::character varying)::text, ('WS_POR'::character varying)::text, ('WS_POR_EVENT'::character varying)::text, ('WS_REPORT'::character varying)::text])) = (workspace_project_ref IS NOT NULL)) AND (((record_type)::text = ANY (ARRAY[('WS_VERSION'::character varying)::text, ('WS_POR'::character varying)::text, ('WS_POR_EVENT'::character varying)::text, ('WS_REPORT'::character varying)::text])) = (workspace_block_ref IS NOT NULL)) AND (((record_type)::text <> ALL (ARRAY[('WS_REPORT'::character varying)::text, ('WS_POR_EVENT'::character varying)::text])) OR (workspace_version_ref IS NOT NULL))))) OR (((record_type)::text = ANY (ARRAY[('WS_REVIEW'::character varying)::text, ('WS_REVIEW_EVENT'::character varying)::text, ('WS_REVIEW_PROPOSAL'::character varying)::text])) AND (workspace_key IS NOT NULL) AND ((workspace_key)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'::text) AND (project IS NOT NULL) AND (workspace_project_ref IS NOT NULL) AND (workspace_block_ref IS NOT NULL) AND (run_id IS NULL) AND (bundle_id IS NULL) AND (review_unit_id IS NULL) AND (review_revision IS NULL) AND (request_id IS NULL) AND (entity_key IS NULL) AND (classification_revision IS NULL) AND (payload_bytes IS NULL) AND (workspace_version_ref IS NULL)))) OR (((record_type)::text = ANY (ARRAY[('WS_CLUSTER'::character varying)::text, ('WS_CLUSTER_EVENT'::character varying)::text, ('WS_GROUP_REVIEW'::character varying)::text, ('WS_GROUP_REVIEW_EVENT'::character varying)::text, ('WS_GROUP_REVIEW_PROPOSAL'::character varying)::text])) AND (workspace_key IS NOT NULL) AND ((workspace_key)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'::text) AND (project IS NOT NULL) AND (workspace_project_ref IS NOT NULL) AND (workspace_block_ref IS NOT NULL) AND (run_id IS NULL) AND (bundle_id IS NULL) AND (review_unit_id IS NULL) AND (review_revision IS NULL) AND (request_id IS NULL) AND (entity_key IS NULL) AND (classification_revision IS NULL) AND (payload_bytes IS NULL) AND (workspace_version_ref IS NULL)))) OR (((record_type)::text = ANY (ARRAY[('WS_SUBMISSION'::character varying)::text, ('WS_SOURCE_PART'::character varying)::text])) AND ((workspace_key IS NOT NULL) AND ((workspace_key)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'::text) AND (project IS NOT NULL) AND (workspace_project_ref IS NOT NULL) AND (workspace_block_ref IS NOT NULL) AND (run_id IS NULL) AND (bundle_id IS NULL) AND (review_unit_id IS NULL) AND (review_revision IS NULL) AND (request_id IS NULL) AND (entity_key IS NULL) AND (classification_revision IS NULL) AND (payload_bytes IS NULL) AND (workspace_version_ref IS NULL))))) OR (((record_type)::text = 'SSO_IDENTITY'::text) AND (workspace_key IS NOT NULL) AND ((workspace_key)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'::text) AND (project IS NULL) AND (run_id IS NULL) AND (bundle_id IS NULL) AND (review_unit_id IS NULL) AND (review_revision IS NULL) AND (request_id IS NULL) AND (entity_key IS NULL) AND (classification_revision IS NULL) AND (payload_bytes IS NULL) AND (payload_sha256 IS NULL) AND (workspace_project_ref IS NULL) AND (workspace_block_ref IS NULL) AND (workspace_version_ref IS NULL) AND (workspace_review_report_ref IS NULL) AND (workspace_review_version_ref IS NULL) AND (workspace_review_event_ref IS NULL) AND (workspace_pipeline_report_ref IS NULL) AND (workspace_pipeline_version_ref IS NULL) AND (workspace_pipeline_event_ref IS NULL) AND (workspace_pipeline_cluster_ref IS NULL)))",
+          "no_inherit": false,
+          "ref_schema": null,
+          "ref_columns": [],
+          "index_nulls_not_distinct": null
+        }
+      ],
+      "check_sql": {
+        "sanity_oa_kind_v7": "record_type IN (\n                'RECEIVED_BUNDLE','REVIEW_UNIT','REVIEW_EVENT','REPORT',\n                'CLUSTER_STATE','CLUSTER_JOB','CLUSTER_PART','CLUSTER_MEMBER','CLUSTER_EVENT','CLUSTER_RULE',\n                'WS_CONFIG','WS_USER','WS_SESSION','WS_PROJECT','WS_BLOCK','WS_VERSION','WS_POR','WS_POR_EVENT','WS_REPORT',\n                'WS_REVIEW','WS_REVIEW_EVENT','WS_REVIEW_PROPOSAL',\n                'WS_CLUSTER','WS_CLUSTER_EVENT','WS_GROUP_REVIEW','WS_GROUP_REVIEW_EVENT','WS_GROUP_REVIEW_PROPOSAL',\n                'WS_SUBMISSION','WS_SOURCE_PART','SSO_IDENTITY')",
+        "sanity_oa_sso_identity_v7": "\n    CASE WHEN record_type = 'SSO_IDENTITY' THEN COALESCE(\n        payload ?& ARRAY['issuer','subject','display_name','first_seen_at']\n        AND payload - ARRAY['issuer','subject','display_name','first_seen_at'] = '{}'::jsonb\n        AND jsonb_typeof(payload->'issuer') = 'string'\n        AND length(payload->>'issuer') BETWEEN 1 AND 512\n        AND payload->>'issuer' = btrim(payload->>'issuer')\n        AND payload->>'issuer' !~ '[[:cntrl:]]'\n        AND jsonb_typeof(payload->'subject') = 'string'\n        AND payload->>'subject' = workspace_key\n        AND jsonb_typeof(payload->'display_name') = 'string'\n        AND length(payload->>'display_name') BETWEEN 1 AND 100\n        AND payload->>'display_name' = btrim(payload->>'display_name')\n        AND payload->>'display_name' !~ '[[:cntrl:]]'\n        AND jsonb_typeof(payload->'first_seen_at') = 'string'\n        AND payload->>'first_seen_at' ~ '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9][.][0-9]{6}Z$'\n        AND state ?& ARRAY['enabled','last_seen_at']\n        AND state - ARRAY['enabled','last_seen_at'] = '{}'::jsonb\n        AND jsonb_typeof(state->'enabled') = 'boolean'\n        AND jsonb_typeof(state->'last_seen_at') = 'string'\n        AND state->>'last_seen_at' ~ '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9][.][0-9]{6}Z$'\n        AND (state->>'last_seen_at')::timestamptz >= (payload->>'first_seen_at')::timestamptz,\n        false) ELSE true END",
+        "sanity_oa_workspace_scope_v7": "\n                (record_type <> 'SSO_IDENTITY' AND (((((record_type)::text <> ALL ((ARRAY['WS_SUBMISSION'::character varying, 'WS_SOURCE_PART'::character varying])::text[])) AND ((((record_type)::text <> ALL (ARRAY[('WS_CLUSTER'::character varying)::text, ('WS_CLUSTER_EVENT'::character varying)::text, ('WS_GROUP_REVIEW'::character varying)::text, ('WS_GROUP_REVIEW_EVENT'::character varying)::text, ('WS_GROUP_REVIEW_PROPOSAL'::character varying)::text])) AND ((((record_type)::text <> ALL (ARRAY[('WS_REVIEW'::character varying)::text, ('WS_REVIEW_EVENT'::character varying)::text, ('WS_REVIEW_PROPOSAL'::character varying)::text])) AND ((((record_type)::text <> ALL (ARRAY[('WS_CONFIG'::character varying)::text, ('WS_USER'::character varying)::text, ('WS_SESSION'::character varying)::text, ('WS_PROJECT'::character varying)::text, ('WS_BLOCK'::character varying)::text, ('WS_VERSION'::character varying)::text, ('WS_POR'::character varying)::text, ('WS_POR_EVENT'::character varying)::text, ('WS_REPORT'::character varying)::text])) AND (project IS NOT NULL) AND (run_id IS NOT NULL) AND (bundle_id IS NOT NULL) AND (workspace_key IS NULL) AND (workspace_project_ref IS NULL) AND (workspace_block_ref IS NULL) AND (workspace_version_ref IS NULL)) OR (((record_type)::text = ANY (ARRAY[('WS_CONFIG'::character varying)::text, ('WS_USER'::character varying)::text, ('WS_SESSION'::character varying)::text, ('WS_PROJECT'::character varying)::text, ('WS_BLOCK'::character varying)::text, ('WS_VERSION'::character varying)::text, ('WS_POR'::character varying)::text, ('WS_POR_EVENT'::character varying)::text, ('WS_REPORT'::character varying)::text])) AND (workspace_key IS NOT NULL) AND ((workspace_key)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'::text) AND (run_id IS NULL) AND (bundle_id IS NULL) AND (review_unit_id IS NULL) AND (review_revision IS NULL) AND (request_id IS NULL) AND (entity_key IS NULL) AND (classification_revision IS NULL) AND (payload_bytes IS NULL) AND ((((record_type)::text = ANY (ARRAY[('WS_CONFIG'::character varying)::text, ('WS_USER'::character varying)::text, ('WS_SESSION'::character varying)::text])) AND (project IS NULL)) OR (((record_type)::text <> ALL (ARRAY[('WS_CONFIG'::character varying)::text, ('WS_USER'::character varying)::text, ('WS_SESSION'::character varying)::text])) AND (project IS NOT NULL))) AND (((record_type)::text = ANY (ARRAY[('WS_BLOCK'::character varying)::text, ('WS_VERSION'::character varying)::text, ('WS_POR'::character varying)::text, ('WS_POR_EVENT'::character varying)::text, ('WS_REPORT'::character varying)::text])) = (workspace_project_ref IS NOT NULL)) AND (((record_type)::text = ANY (ARRAY[('WS_VERSION'::character varying)::text, ('WS_POR'::character varying)::text, ('WS_POR_EVENT'::character varying)::text, ('WS_REPORT'::character varying)::text])) = (workspace_block_ref IS NOT NULL)) AND (((record_type)::text <> ALL (ARRAY[('WS_REPORT'::character varying)::text, ('WS_POR_EVENT'::character varying)::text])) OR (workspace_version_ref IS NOT NULL))))) OR (((record_type)::text = ANY (ARRAY[('WS_REVIEW'::character varying)::text, ('WS_REVIEW_EVENT'::character varying)::text, ('WS_REVIEW_PROPOSAL'::character varying)::text])) AND (workspace_key IS NOT NULL) AND ((workspace_key)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'::text) AND (project IS NOT NULL) AND (workspace_project_ref IS NOT NULL) AND (workspace_block_ref IS NOT NULL) AND (run_id IS NULL) AND (bundle_id IS NULL) AND (review_unit_id IS NULL) AND (review_revision IS NULL) AND (request_id IS NULL) AND (entity_key IS NULL) AND (classification_revision IS NULL) AND (payload_bytes IS NULL) AND (workspace_version_ref IS NULL)))) OR (((record_type)::text = ANY (ARRAY[('WS_CLUSTER'::character varying)::text, ('WS_CLUSTER_EVENT'::character varying)::text, ('WS_GROUP_REVIEW'::character varying)::text, ('WS_GROUP_REVIEW_EVENT'::character varying)::text, ('WS_GROUP_REVIEW_PROPOSAL'::character varying)::text])) AND (workspace_key IS NOT NULL) AND ((workspace_key)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'::text) AND (project IS NOT NULL) AND (workspace_project_ref IS NOT NULL) AND (workspace_block_ref IS NOT NULL) AND (run_id IS NULL) AND (bundle_id IS NULL) AND (review_unit_id IS NULL) AND (review_revision IS NULL) AND (request_id IS NULL) AND (entity_key IS NULL) AND (classification_revision IS NULL) AND (payload_bytes IS NULL) AND (workspace_version_ref IS NULL)))) OR (((record_type)::text = ANY ((ARRAY['WS_SUBMISSION'::character varying, 'WS_SOURCE_PART'::character varying])::text[])) AND ((workspace_key IS NOT NULL) AND ((workspace_key)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'::text) AND (project IS NOT NULL) AND (workspace_project_ref IS NOT NULL) AND (workspace_block_ref IS NOT NULL) AND (run_id IS NULL) AND (bundle_id IS NULL) AND (review_unit_id IS NULL) AND (review_revision IS NULL) AND (request_id IS NULL) AND (entity_key IS NULL) AND (classification_revision IS NULL) AND (payload_bytes IS NULL) AND (workspace_version_ref IS NULL)))))) OR\n                (record_type = 'SSO_IDENTITY'\n                 AND workspace_key IS NOT NULL AND workspace_key ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'\n                 AND project IS NULL AND run_id IS NULL AND bundle_id IS NULL\n                 AND review_unit_id IS NULL AND review_revision IS NULL AND request_id IS NULL\n                 AND entity_key IS NULL AND classification_revision IS NULL\n                 AND payload_bytes IS NULL AND payload_sha256 IS NULL\n                 AND workspace_project_ref IS NULL AND workspace_block_ref IS NULL AND workspace_version_ref IS NULL\n                 AND workspace_review_report_ref IS NULL AND workspace_review_version_ref IS NULL\n                 AND workspace_review_event_ref IS NULL\n                 AND workspace_pipeline_report_ref IS NULL AND workspace_pipeline_version_ref IS NULL\n                 AND workspace_pipeline_event_ref IS NULL AND workspace_pipeline_cluster_ref IS NULL)"
       },
       "generation_sql": {}
     }

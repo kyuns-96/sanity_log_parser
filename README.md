@@ -250,7 +250,7 @@ Linux/Unix와 PostgreSQL 12.1 이상 서버 바이너리(`initdb`, `pg_ctl`, `po
 
 ```bash
 .venv/bin/python db/tests/run_mock.py
-# 전체 회귀·포털 54단계·10만 건 검사는 필요할 때 별도로 실행
+# 전체 회귀·포털 전체 단계·10만 건 검사는 필요할 때 별도로 실행
 .venv/bin/python db/tests/run_mock.py --profile full
 ```
 
@@ -258,9 +258,9 @@ Linux/Unix와 PostgreSQL 12.1 이상 서버 바이너리(`initdb`, `pg_ctl`, `po
 매번 별도 `/tmp/sanity-mock-pg-*`에 새 DB를 만들고, TCP 수신 없이 전용 로컬 소켓·SCRAM 인증을 사용합니다.
 VWP/OA 로그인은 서로 다르며 임시 비밀번호를 자동 생성합니다. root 실행 시 PostgreSQL만 `nobody`로 실행합니다.
 코드/SQL만 임시 폴더에 복사하고 접속 관련 환경변수를 제거하므로 원래 `.env`·사내 접속 문서·실제 report는 사용하지 않습니다.
-기존 form → `002`~`008` → SQL smoke → 양쪽 접속/권한 검사는 모든 프로필에서 수행합니다.
+기존 form → `002`~`009` → SQL smoke → 양쪽 접속/권한 검사는 모든 프로필에서 수행합니다.
 기본 `quick`은 인증·파서·권한·핵심 분류/판정 회귀, complete CLI demo 하나,
-100건/10그룹 파싱·저장 검사를 실행합니다. `full`은 기존 전체 테스트와 포털 54단계 반복 검증,
+100건/10그룹 파싱·저장 검사를 실행합니다. `full`은 기존 전체 테스트와 포털 전체 단계 반복 검증,
 10,000/100,000건 보고서·그룹 사례, 4종 CLI demo, 10,000건/100그룹 규모 검사를 포함합니다.
 선택한 프로필과 실제 실행 건수를 stdout·`tests.json`·`summary.json`에 기록합니다.
 `quick` 성공은 선택한 기본 검사의 성공이며 전체 검증 성공을 뜻하지 않습니다.

@@ -12,7 +12,8 @@ ROOT = Path(__file__).resolve().parents[2]
 PLAN = Path(__file__).with_name('plan.json')
 TABLES = ('sanity_vwp_data', 'sanity_oa_data', 'sanity_oa_to_vwp', 'sanity_vwp_to_oa')
 PHASES = {'002': '002_indexes.sql', '004': '004_clustering.sql', '005': '005_workspace.sql',
-          '006': '006_workspace_reviews.sql', '007': '007_workspace_pipeline.sql', '008': '008_submissions.sql'}
+          '006': '006_workspace_reviews.sql', '007': '007_workspace_pipeline.sql', '008': '008_submissions.sql',
+          '009': '009_sso_identity.sql'}
 
 
 class PortalError(ValueError):

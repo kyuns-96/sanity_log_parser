@@ -1180,3 +1180,11 @@ VWP AI는 허용된 회사 launcher의 로컬 입력 준비/합성 시험, 회�
 ### 20.4. 구현과 검증 경계
 
 COMMON-02A~E의 공통 제출 CLI/spool·영속 원본·분할 DB 전달/수신·receipt/상태 복구와 기존 두 단계 검토 연결을 제공했다. `008_submissions.sql`은 DBA 검토·적용용이며 운영 DB에는 실행하지 않았다. 세 사내 AI는 [SUBMISSION.md](vwp/SUBMISSION.md)의 허용된 원천/신원·승인·계정 매핑 어댑터와 현장 검증 자료를 제공한다. 실제 mount/ACL·SSO 업무 연결·회사 모델·운영 배포는 미완료다. 합성 10,000/100,000건 및 독립 PostgreSQL 결과는 [REVIEW.md](REVIEW.md)에 기록하며 운영 검증으로 대체하지 않는다.
+
+## 21. SSO 영속 계정 저장 구조 — 009
+
+2026-10-22 전달된 사내 확인은 단일 issuer, LoginId 불변·퇴사 후 비재사용, 검증된 전사 계정 등록이다. [고정 저장 계약](oa/SSO_IDENTITY.md)과 `db/009_sso_identity.sql`로 기존 OA 테이블에 `SSO_IDENTITY`를 허용한다. 외부 식별 `(issuer, subject)`는 유지하고 이 배포의 `workspace_key`와 `user_id`는 LoginId 원문을 사용한다. 저장/설정/검증 issuer 불일치를 거부하며 자동 재매핑하지 않는다. 기존 부분 UNIQUE와 제한 계정을 유지하고 추가 테이블·권한 확대는 없다.
+
+계정 JSON은 issuer/subject/표시 이름/최초 시각과 enabled/최근 로그인 시각으로 제한한다. 활성 상태는 매 요청에서 확인하며 누락·잘못된 자료형을 활성으로 처리하지 않는다. 최근 로그인은 성공한 세션 발급 경로에서 갱신한다. 계정 등록은 프로젝트·블록·TOP 권한 부여와 별개다.
+
+009는 저장 구조와 포털 실행/검증 도구를 제공하는 단계다. 실제 SSO/JIT 저장부·회사 callback 연결·whitelist 이전·업무 권한 연결은 미구현이며 `AUTHORIZATION_NOT_IMPLEMENTED`를 유지한다. 사내 AI의 수정 허용 범위는 확대하지 않는다. 원본 008까지의 54단계와 CHECK/FK/UNIQUE는 보존하고, 0행·쓰기 중지의 008 완료 DB에서 55번 단일 ALTER만 준비한다. 실제 운영 적용/회사 인증 검증은 사내에서 수행한다.

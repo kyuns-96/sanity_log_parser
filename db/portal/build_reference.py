@@ -14,7 +14,8 @@ sys.path.insert(0, str(ROOT))
 from db.portal.runbook import TABLES, advance, fingerprint, identifier, inspection_sql, table_at
 
 MIGRATIONS = ('002_indexes.sql', '004_clustering.sql', '005_workspace.sql',
-              '006_workspace_reviews.sql', '007_workspace_pipeline.sql', '008_submissions.sql')
+              '006_workspace_reviews.sql', '007_workspace_pipeline.sql', '008_submissions.sql',
+              '009_sso_identity.sql')
 
 
 def parenthesized(source, opening):
@@ -36,7 +37,7 @@ def parenthesized(source, opening):
 
 
 def check_sources(source, before, phase):
-    """Compile only these six pinned migrations, not arbitrary SQL or user input.
+    """Compile only these pinned migrations, not arbitrary SQL or user input.
 
     Keep the original parser input: pg_get_expr is a decompiler, and reparsing it
     can change array-coercion trees despite equivalent truth values.
@@ -54,6 +55,9 @@ def check_sources(source, before, phase):
                 old = next(c['definition'] for c in table_at(before, 'sanity_oa_data')['constraints'] if c['name'] == name)
             elif phase == '008' and match[1] == 'sanity_vwp_submission_parent_v3':
                 old = re.search(r'old_expression := \$expr\$(.*?)\$expr\$', source, re.S)[1]
+            elif phase == '009' and match[1] == 'sanity_oa_workspace_scope_v7':
+                old = next(c['definition'] for c in table_at(before, 'sanity_oa_data')['constraints']
+                           if c['name'] == 'sanity_oa_workspace_scope_v6')
             else:
                 raise ValueError('Unrecognized format in pinned CHECK')
             expression = expression.replace('%s', old)

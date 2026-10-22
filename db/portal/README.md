@@ -1,6 +1,6 @@
 # 빈 초기 DB를 위한 포털 DDL 실행 안내
 
-사용자가 2026-10-21 확인한 회사 포털은 한 요청에 한 DDL 문장만 받으며 FK 설정도 지원한다. owner psql 대신 이 포털을 사용하는 **별도 실행본**을 제공한다. 원본 form과 `002`~`008` SQL은 변경하지 않는다. `003` 역할·권한은 별도 DBA 경로로 처리하며 `009 SSO_IDENTITY`·JIT 자동 등록은 이 실행본에 포함하지 않는다.
+사용자가 확인한 회사 포털은 한 요청에 한 DDL 문장만 받으며 FK 설정도 지원한다. owner psql 대신 이 포털을 사용하는 **별도 실행본**을 제공한다. 원본 form과 `002`~`008` SQL은 변경하지 않는다. 2026-10-22 확인된 [SSO 계정 저장 계약](../../oa/SSO_IDENTITY.md)의 `009`를 마지막 한 단계로 추가했다. `003` 역할·권한은 별도 DBA 경로다. 009는 DB 저장 구조이며 JIT 앱 구현·업무 권한 연결은 포함하지 않는다.
 
 대상은 **기존 네 테이블이 모두 비어 있고, 양쪽 bridge·대시보드·수신/제출 작업자의 DB 작업이 중지된 초기 설치**다. 데이터가 생긴 DB의 일반 업그레이드 도구가 아니다. 실제 스키마 이름·catalog·생성된 실행본은 사내 비공개 폴더에 보관한다. 공개 Git이나 외부 Codex 대화에 올리지 않는다.
 
@@ -9,7 +9,7 @@
 | 파일 | 역할 |
 |---|---|
 | `runbook.py` | Python 표준 라이브러리만 사용하는 오프라인 도구. 조회 SQL 생성·catalog 비교·실행본 생성·결과 검증만 수행. DB 연결·DDL 실행·자동 재시도 없음 |
-| `plan.json` | 원본 form·`002/004/005/006/007/008`을 격리 PostgreSQL에서 실행해 얻은 구조 변경 계획. PG12.1과 PG16.15의 54단계/55개 구조가 같음을 검증해 공통 사용. 원본 SHA-256과 기존 제약을 보존 |
+| `plan.json` | 원본 form·`002/004/005/006/007/008/009`의 구조 변경 계획. 기존 54단계/55개 구조를 보존하고 009의 단일 ALTER를 추가한 55단계/56개 구조. 원본 SHA-256과 기존 제약을 보존 |
 | `build_reference.py` | Codex/개발자 전용 기준 계획 생성기. 새 로컬 소켓 전용 합성 DB에서만 실행. 사내 운영 연결 인자를 받지 않음 |
 
 사내 AI는 승인된 읽기 전용 접속으로 확인한 catalog를 비공개 파일로 준비하고 `runbook.py`를 실행할 수 있다. 원본 SQL·도구·계획 JSON·기존 테스트를 수정하지 않는다. 실제 DDL 포털 적용과 DBA 권한 변경은 사용자/승인된 운영 담당자가 수행한다. 실패하거나 예상한 기준 상태와 다르면 `WAITING_FOR_CODEX`로 문의한다.
@@ -58,7 +58,7 @@ python3 db/portal/runbook.py prepare --snapshot /private/before.json --out /priv
 
 ## 4. 한 문장씩 적용·검증
 
-`manifest.json`의 `steps` 순서로 진행한다. 처음부터 시작하면 DDL은 **54문장**이며 `002 → 004 → 005 → 006 → 007 → 008`을 포함한다. 동일 테이블의 CHECK·scope·컬럼 변경은 한 ALTER 문장으로 묶고, 인덱스 생성은 각각 별도 문장이다. FK의 복합 키·참조 대상·DEFERRABLE/INITIALLY DEFERRED 등 원본 옵션을 보존한다.
+`manifest.json`의 `steps` 순서로 진행한다. 처음부터 시작하면 DDL은 **55문장**이며 `002 → 004 → 005 → 006 → 007 → 008 → 009`를 포함한다. 008까지 완료한 경우 아래 절차로 **55번 한 문장만** 생성한다. 동일 테이블의 CHECK·scope·컬럼 변경은 한 ALTER 문장으로 묶고, 인덱스 생성은 각각 별도 문장이다. FK의 복합 키·참조 대상·DEFERRABLE/INITIALLY DEFERRED 등 원본 옵션을 보존한다.
 
 1. bundle의 `inspect.sql`을 읽기 전용 연결에서 실행해 현재 snapshot을 새 비공개 JSON으로 저장한다.
 2. 다음 명령으로 해당 문장의 **적용 전 상태**를 검증한다. `--step`은 manifest의 실제 번호다.
@@ -84,6 +84,28 @@ python3 db/portal/runbook.py prepare --snapshot /private/rechecked.json --out /p
 
 알려진 전후 체크포인트와 일치하지 않으면 자동 복구하지 않는다. 제약을 삭제하거나 버전을 맞추는 임의 수정을 하지 않는다. 테이블 재생성·데이터 삭제·일괄 rollback SQL은 제공하지 않는다. 원본 SQL의 트랜잭션 방식과 포털 실행을 같은 DB에서 섞어 재시도하지 않는다.
 
+### 008까지 적용한 DB에서 009만 준비
+
+기존 008 완료 bundle과 기록은 보존한다. 기존 bundle은 이전 계획 hash에 묶여 있으므로 새 도구로 이전 bundle을 편집하거나 재검증하지 않는다. 아래 새 조회 SQL을 기존 승인된 읽기 전용 연결에서 실행해 JSON 객체를 `/private/before-009.json`으로 저장한다. 네 테이블 0행·쓰기 중지는 그대로 필요하다.
+
+```bash
+python3 db/portal/runbook.py inspect --schema SCHEMA_NAME --out /private/inspect-009.sql
+# 생성 SELECT를 읽기 전용 연결에서 실행하고 새 JSON 파일로 저장한 다음
+python3 db/portal/runbook.py prepare --snapshot /private/before-009.json --out /private/portal-bundle-009
+```
+
+정확한 008 완료 상태이면 `checkpoint=54 remaining=1`이다. manifest의 `total_steps=55`, 유일한 단계는 `number=55`, `phase=009`여야 한다. 다른 결과면 실행하지 않고 문의한다. 009는 기존 v6 kind/scope를 v7로 교체하고 SSO JSON 제약을 추가하는 단일 ALTER다. 기존 54문장·원본 009 파일의 DO/BEGIN/COMMIT을 포털에 다시 제출하지 않는다.
+
+```bash
+python3 db/portal/runbook.py verify --bundle /private/portal-bundle-009 --snapshot /private/before-009.json --step 55 --when before
+# 승인 운영 담당자가 manifest의 유일한 SQL 파일 전체를 포털로 적용
+# 새 조회 결과를 /private/after-009.json으로 저장한 다음
+python3 db/portal/runbook.py verify --bundle /private/portal-bundle-009 --snapshot /private/after-009.json --step 55 --when after
+python3 db/portal/runbook.py verify --bundle /private/portal-bundle-009 --snapshot /private/after-009.json
+```
+
+처음 성공 이후 다시 `prepare`하면 `checkpoint=55 remaining=0`이다. DDL을 재실행하지 않는다. 오류/응답 유실 시 5절의 중단·읽기 전용 진단 절차를 따른다.
+
 ## 6. 완료와 후속 작업
 
 마지막 snapshot으로 전체 구조를 확인한다.
@@ -92,17 +114,17 @@ python3 db/portal/runbook.py prepare --snapshot /private/rechecked.json --out /p
 python3 db/portal/runbook.py verify --bundle /private/portal-bundle --snapshot /private/final.json
 ```
 
-이 성공은 **008까지의 구조 검증**이다. `operational_ready=false`는 의도된 결과이며, 권한·SSO·모델·실제 원천이 연결됐다는 뜻이 아니다.
+새 계획의 최종 성공은 **009까지의 구조 검증**이다. `operational_ready=false`는 의도된 결과이며, 권한·SSO·모델·실제 원천이 연결됐다는 뜻이 아니다. 기존 008 완료 기록도 해당 범위의 성공으로 보존한다.
 
 - DBA가 원본 `003_grants.sql`의 실제 스키마·기존 권한·두 역할/로그인을 검토해 별도 적용한다. 앱 계정에 DDL이나 전체 테이블 UPDATE를 부여하지 않는다.
 - 사용자/DBA가 실제 각 앱 로그인으로 기존 읽기 전용 `common.sanity_db check --side vwp` / `--side oa`를 수행한다. 스키마·유효 권한 검사를 모두 통과해야 운영 연결 검토를 진행한다. 검사 삭제나 광범위 GRANT로 우회하지 않는다.
-- `009 SSO_IDENTITY`, JIT 자동 등록과 SSO→workspace/RBAC는 별도 공통 설계다. 운영용 신규 record type·자동 가입·권한 부여를 자체 구현하지 않으며 `AUTHORIZATION_NOT_IMPLEMENTED`를 유지한다.
+- 009 저장 계약은 [SSO_IDENTITY.md](../../oa/SSO_IDENTITY.md)를 따른다. 실제 JIT 저장/조회·회사 ACS 호출·SSO→workspace/RBAC는 후속 공통 구현이다. 내부 AI가 자체 저장부·자동 가입·권한 부여를 구현하지 않으며 `AUTHORIZATION_NOT_IMPLEMENTED`를 유지한다.
 
 ## 7. 합성 검증과 기준 계획 갱신
 
-개발 환경에서는 소켓 전용 mock runner의 `full` 프로필이 원본 SQL과 포털 실행본의 구조 동등성, GUI CHECK 이름, 중간 재개, 원자적 실패, FK 옵션, 최소 권한과 원본 smoke 검증을 수행한다. 기본 `quick`은 핵심 회귀와 catalog 조회 호환성만 확인하며 포털 54단계를 전수 반복하지 않는다. 실제 회사 포털의 문법 검사·timeout·계정/DB 검증을 대신하지 않는다.
+개발 환경에서는 소켓 전용 mock runner의 `full` 프로필이 원본 SQL과 포털 실행본의 구조 동등성, GUI CHECK 이름, 중간 재개, 원자적 실패, FK 옵션, 최소 권한과 원본 smoke 검증을 수행한다. 기본 `quick`은 핵심 회귀·catalog 조회 호환성과 008→009 한 단계 재개/제한 계정 검사를 포함하며 포털 55단계를 전수 반복하지 않는다. 실제 회사 포털의 문법 검사·timeout·계정/DB 검증을 대신하지 않는다.
 
-PG12.1과 PG16.15에서 각각 원본 SQL의 모든 중간 구조를 `plan.json`과 정확히 비교하고, 포털의 54개 DDL도 별도 스키마에서 한 문장씩 실행해 전후 구조를 확인한다. `plan.json.initial.server_version_num=160015`는 최초 생성 환경의 기록이다. PG12에서 검증을 생략하거나 PG16으로 위장하는 조건이 아니다. CHECK/FK/UNIQUE·인덱스 순서·전체 컬럼 비교는 동일하게 유지한다.
+기준 계획의 합성 검증은 PG12.1과 PG16.15에서 각각 원본 SQL의 모든 중간 구조를 `plan.json`과 비교하고, 포털의 55개 DDL도 별도 스키마에서 한 문장씩 실행해 전후 구조를 확인한다. 기존 008까지의 54문장과 구조 fingerprint는 변경하지 않았다. `plan.json.initial.server_version_num=160015`는 최초 생성 환경의 기록이다. PG12에서 검증을 생략하거나 PG16으로 위장하는 조건이 아니다. CHECK/FK/UNIQUE·UNIQUE NULL 처리·인덱스 순서·전체 컬럼 비교는 동일하게 유지한다.
 
 PG15의 NULLS NOT DISTINCT 플래그는 [PG12 catalog](https://www.postgresql.org/docs/12/catalog-pg-index.html)와 [PG15 catalog](https://www.postgresql.org/docs/15/catalog-pg-index.html)의 차이를 반영한다. 새 버전에서 이 플래그가 true인 인덱스/제약을 false로 덮어 정규화하지 않으며, 예상과 다른 정의는 계속 거부한다.
 

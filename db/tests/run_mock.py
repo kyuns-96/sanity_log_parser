@@ -145,7 +145,7 @@ class MockDatabase:
                 for table in ("sanity_vwp_data", "sanity_oa_data", "sanity_vwp_to_oa", "sanity_oa_to_vwp"):
                     columns = (staged / "db/form" / (table + ".columns.sql")).read_text(encoding="utf-8")
                     cursor.execute(sql.SQL("CREATE TABLE public.{} (").format(sql.Identifier(table)) + sql.SQL(columns + ")"))
-                for script in ("002_indexes.sql", "003_grants.sql", "004_clustering.sql", "005_workspace.sql", "006_workspace_reviews.sql", "007_workspace_pipeline.sql", "008_submissions.sql", "tests/smoke.sql"):
+                for script in ("002_indexes.sql", "003_grants.sql", "004_clustering.sql", "005_workspace.sql", "006_workspace_reviews.sql", "007_workspace_pipeline.sql", "008_submissions.sql", "009_sso_identity.sql", "tests/smoke.sql"):
                     cursor.execute((staged / "db" / script).read_text(encoding="utf-8"))
         finally:
             connection.close()

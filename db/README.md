@@ -30,6 +30,7 @@ OA 브라우저의 로컬 API 접속은 브리지 간 통신과 별개다.
 | [006_workspace_reviews.sql](006_workspace_reviews.sql) | OA 사용자 판정 head·불변 사례/제안, 원본/버전/사례 참조 FK | `005` 적용 후 사용자 판정 기능 도입 시 owner/DBA가 한 번 실행 |
 | [007_workspace_pipeline.sql](007_workspace_pipeline.sql) | OA 분류 개정·그룹 판정/제안, 확정 분류 event 참조 FK | `006` 적용 후 두 단계 그룹 검토를 도입할 때 owner/DBA가 한 번 실행 |
 | [008_submissions.sql](008_submissions.sql) | V2 SUBMISSION/SOURCE_RUN/OUTBOX·OA staging, SOURCE 큐 종류·중복/실행 순서·범위 제약 | `007` 적용 후 새 제출 경로 도입 시 owner/DBA가 검토해 한 번 실행. 앱 자동 적용 없음 |
+| [009_sso_identity.sql](009_sso_identity.sql) | OA `SSO_IDENTITY` kind/scope·엄격한 계정 JSON·기존 UNIQUE 재사용 | `008` 이후 검토·적용. 포털은 생성된 55번 단일 ALTER 사용. 실제 SSO/JIT 앱 구현·업무 권한 연결은 별도 |
 
 전체 준비 순서는 **신청한 `form`으로 생성 → `002` → 역할 준비 → `003` → `004`**다.
 이미 완료한 단계는 반복하지 않는다. 생성·`002`·`003`까지 완료했다면 **`004`만 실행**한다.
@@ -40,10 +41,10 @@ OA에 `WS_REVIEW`, `WS_REVIEW_EVENT`, `WS_REVIEW_PROPOSAL`을 추가하며, 사�
 기존 payload UPDATE 권한은 없으며 신규 head의 state/version만 갱신한다. 새 테이블/역할/광범위 GRANT는 없다.
 owner/DBA가 점검 시간에 파일 전체를 한 트랜잭션으로 실행한다. 잠금 시간 초과나 사전 제약 불일치 시 rollback한다.
 앱은 자동 migration을 실행하지 않으며 성공한 SQL의 재실행은 실패한다. 합성 로컬 fixture 전용 upgrade는 [WORKSPACE](../oa/WORKSPACE.md)를 따른다.
-2026-10-21 사용자 확인으로 단일 문장 DDL·FK를 지원하는 회사 포털용 [별도 초기 설치 실행 안내](portal/README.md)를 추가했다. 네 테이블 0행·쓰기 중지 조건에서 원본 `002/004/005/006/007/008`과 동등한 실행본을 오프라인 생성·검증한다. `003` 역할·권한은 별도 DBA 경로다. 기존 SQL을 분해 편집하거나 트랜잭션/DO만 삭제해 실행하지 않는다. 포털 경로는 문장별 커밋이며 전체 파일 원자성은 제공하지 않는다. 실제 포털 적용은 사용자/승인 운영 담당자 책임이며 `009 SSO_IDENTITY`/JIT를 포함하지 않는다.
+단일 문장 DDL·FK를 지원하는 회사 포털에는 [별도 초기 설치 실행 안내](portal/README.md)를 사용한다. 네 테이블 0행·쓰기 중지 조건에서 원본 `002/004/005/006/007/008/009`와 동등한 실행본을 오프라인 생성·검증한다. 기존 54단계는 보존하며 008 완료 snapshot에서는 009 한 문장만 생성한다. `003` 역할·권한은 별도 DBA 경로다. 기존 SQL을 분해 편집하거나 트랜잭션/DO만 삭제해 실행하지 않는다. 포털 경로는 문장별 커밋이며 전체 파일 원자성은 제공하지 않는다. 실제 포털 적용은 사용자/승인 운영 담당자 책임이다. 009는 [계정 저장 계약](../oa/SSO_IDENTITY.md)이며 JIT 앱 구현을 포함하지 않는다.
 `tests/`는 개발자용 로컬 검증 도구이며 DB 신청이나 운영 설치 시 실행할 파일이 아니다.
 사내 DB 없이 새 합성 DB를 만드는 명령은 `.venv/bin/python db/tests/run_mock.py`다.
-기본은 `quick` 핵심 회귀와 100건/10그룹 검사다. 전수 회귀·포털 54단계·10만 건 검증은 `--profile full`로 별도 실행한다. 두 프로필 모두 실제 DB의 원본 DDL/SQL smoke와 제한 계정 권한 검사를 수행한다. 프로필 선택은 테스트 데이터 범위이며 앱의 처리 한도나 무결성 검사를 변경하지 않는다.
+기본은 `quick` 핵심 회귀와 100건/10그룹 검사다. 전수 회귀·포털 전체 단계·10만 건 검증은 `--profile full`로 별도 실행한다. 두 프로필 모두 실제 DB의 원본 DDL/SQL smoke와 제한 계정 권한 검사를 수행한다. 프로필 선택은 테스트 데이터 범위이며 앱의 처리 한도나 무결성 검사를 변경하지 않는다.
 PostgreSQL 12.1+ 서버 바이너리가 필요하며, 별도 로컬 소켓 DB 생성·권한/회귀 테스트·종료를 수행한다.
 기존 DB와 `.env`는 사용하지 않는다. 자세한 전제와 결과 파일은 [검증 안내](../README.md#7-합성-demo와-검증)를 따른다.
 
@@ -216,7 +217,7 @@ python3 db/tests/check_concurrency.py -h HOST -U OWNER -d sanity_test_example
 
 fixture는 `form`을 감싸 GUI 생성을 모사한 뒤 `002` 인덱스/FK → `003` 권한 적용을 검사한다.
 smoke 테스트 행은 rollback하며, 테스트용 빈 테이블은 보존한다.
-`tests/test_schema.py`는 신청용 컬럼 정의 4개와 기존 설정 SQL 2개·증분 변경 SQL 1개의 구성을 확인한다.
+`tests/test_schema.py`는 신청용 컬럼 정의 4개·기존 설정 SQL의 원본 hash와 승인된 증분 파일 목록을 확인한다.
 `tests/test_migration.py`는 기존 행 보존, GUI 제약 이름 차이, 스키마 불일치 rollback,
 재실행 시 안전한 실패, 기존 무결성·앱 권한 유지를 실제 PostgreSQL에서 검사한다.
 Python DB 회귀 검사도 동일한 `form`으로 생성한 테이블을 사용한다.
