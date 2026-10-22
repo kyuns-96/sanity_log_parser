@@ -173,6 +173,8 @@ def validate_payload(payload) -> None:
     require_id(run.get("run_id"), "run_id")
     _require(all(_text(run.get(key)) for key in
                  ("project", "design", "stage", "tool", "tool_version")), "Incomplete run metadata")
+    from common.sanity_scope import run_scope
+    run_scope(run, code="INVALID_SCHEMA")
     inventory = payload.get("inventory")
     _require(isinstance(inventory, dict), "Missing inventory")
     _require(type(inventory.get("confirmed")) is bool, "Invalid inventory confirmation")

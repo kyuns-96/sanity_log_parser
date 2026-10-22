@@ -14,6 +14,11 @@ export class DashboardRequestError extends Error {
       AUTH_CONFIG: '인증 설정을 확인할 수 없습니다. 운영 담당자에게 문의해 주세요.',
       AUTH_INVALID_RESULT: '서버의 인증 응답을 확인할 수 없습니다. 운영 담당자에게 문의해 주세요.',
       REVISION_CONFLICT: '다른 검토자가 내용을 변경했습니다. 새로고침 후 검토 창을 다시 열어 주세요.',
+      FORBIDDEN: '이 작업에 필요한 권한이 없습니다. 현재 담당 범위를 확인해 주세요.',
+      ACCESS_DENIED: '이 작업에 필요한 권한이 없습니다. 현재 담당 범위를 확인해 주세요.',
+      AUTHORIZATION_FORBIDDEN: '이 작업에 필요한 권한이 없습니다. 현재 담당 범위를 확인해 주세요.',
+      RESOURCE_NOT_FOUND: '현재 권한으로 이 검사 결과를 열 수 없습니다. 담당 범위를 확인해 주세요.',
+      REQUEST_CONFLICT: '이미 처리되었거나 같은 요청 번호의 내용이 다릅니다. 최신 상태를 확인해 주세요.',
     }
     super(`${messages[code] || '요청을 처리하지 못했습니다.'} (${code})`)
   }
@@ -50,6 +55,7 @@ export function useDashboardAuth(enabled: boolean) {
   const [error, setError] = useState('')
   const [accountProblem, setAccountProblem] = useState(false)
   const [retryCount, setRetryCount] = useState(0)
+  const [businessDenied, setBusinessDenied] = useState(0)
   const pending = useRef(new Set<AbortController>())
   const generation = useRef(0)
 
@@ -87,22 +93,45 @@ export function useDashboardAuth(enabled: boolean) {
     try {
       const response = await fetch(path, {
         method: body ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'error',
-        headers: { ...(config.mode === 'local_token' ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        headers: { ...(config.mode === 'local_token' ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { 'Content-Type': 'application/json', ...(config.mode === 'sso' ? { 'X-Sanity-Request': '1' } : {}) } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}), signal: controller.signal,
       })
       const value = await result<T>(response, plain)
       if (version !== generation.current || controller.signal.aborted) throw new DOMException('Request cancelled', 'AbortError')
       return value
     } catch (error) {
-      if (version === generation.current && path !== '/api/session' && error instanceof DashboardRequestError && (error.status === 401 || error.status === 403)) {
+      if (version === generation.current && path !== '/api/session' && error instanceof DashboardRequestError &&
+          (error.status === 401 || error.code === 'ACCOUNT_NOT_LINKED' || error.code === 'ACCOUNT_DISABLED')) {
         abortRequests(); setSession(null); setToken(''); setError(error.message)
         setAccountProblem(error.code === 'ACCOUNT_NOT_LINKED' || error.code === 'ACCOUNT_DISABLED')
+      } else if (version === generation.current && error instanceof DashboardRequestError &&
+          (error.status === 403 || error.code === 'RESOURCE_NOT_FOUND') &&
+          /^\/api\/(bundles(?:\/|\?|$)|evidence\/|receive(?:\?|$))/.test(path)) {
+        // A revoked scope must not be repopulated by another in-flight read.
+        // Keep the verified identity, but invalidate responses already in flight.
+        abortRequests()
+        setBusinessDenied(value => value + 1)
       }
       throw error
     } finally {
       pending.current.delete(controller)
     }
   }, [enabled, config, token, abortRequests])
+
+  const refreshSession = useCallback(async () => {
+    try {
+      const value = await request<Session>('/api/session')
+      if (!config || value.auth_method !== config.mode) throw new DashboardRequestError('AUTH_INVALID_RESULT', 503)
+      setSession(value)
+      return value
+    } catch (error) {
+      if (error instanceof DashboardRequestError && (error.status === 401 || error.code === 'ACCOUNT_NOT_LINKED' || error.code === 'ACCOUNT_DISABLED')) {
+        abortRequests(); setSession(null); setToken(''); setError(error.message)
+        setAccountProblem(error.code === 'ACCOUNT_NOT_LINKED' || error.code === 'ACCOUNT_DISABLED')
+      }
+      throw error
+    }
+  }, [request, config, abortRequests])
 
   useEffect(() => {
     if (!enabled || !config) return
@@ -160,5 +189,5 @@ export function useDashboardAuth(enabled: boolean) {
     abortRequests(); setSession(null); setToken(''); setConfig(null); setError(''); setAccountProblem(false); setRetryCount(value => value + 1)
   }
 
-  return { config, session, checking, signingOut, error, accountProblem, request, loginWithToken, logout, retry }
+  return { config, session, checking, signingOut, error, accountProblem, businessDenied, request, refreshSession, loginWithToken, logout, retry }
 }

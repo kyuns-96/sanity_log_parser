@@ -15,6 +15,7 @@ from common.sanity_common import ReviewError, atomic_json, canonical_json, diges
 from common.sanity_db import Database
 from vwp_bridge.sanity_evidence import PgEvidence, PRODUCER_VERSION
 from common.sanity_parsers import ParseContext, ParserRegistry, checked_records
+from common.sanity_scope import run_scope
 
 HEADER = ["object", "check_point", "mode", "code", "severity", "observed", "unit"]
 JSON_LIMIT = 16 * 1024 * 1024
@@ -41,6 +42,7 @@ def validate_manifest(manifest, root):
     for field in ("run_id", "project", "design", "stage", "tool", "tool_version"):
         require(nonempty(run.get(field)), "BAD_MANIFEST", "Invalid run field " + field)
     require_id(run["run_id"], "run_id")
+    run_scope(run, code="BAD_MANIFEST")
     inventory = manifest.get("inventory")
     require(isinstance(inventory, dict), "BAD_MANIFEST", "Missing inventory")
     require(type(inventory.get("confirmed")) is bool and nonempty(inventory.get("source"))

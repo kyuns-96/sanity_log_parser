@@ -256,16 +256,22 @@ class ClusterStore:
             visited.add(key)
             if len(visited) > 1000:
                 return "REFERENCE_LIMIT"
-            row = self.db.execute("SELECT state FROM {oa} WHERE record_type='CLUSTER_STATE' AND bundle_id=%s AND review_unit_id=%s" +
+            row = self.db.execute("SELECT state,payload FROM {oa} WHERE record_type='CLUSTER_STATE' AND bundle_id=%s AND review_unit_id=%s" +
                                   (" FOR SHARE" if lock else ""),
                                   (group["source_bundle"], group["source_unit"])).fetchone()
             if (row is None or not row["state"]["confirmed"] or row["state"]["confirmed_revision"] != group["group_revision"]
                     or row["state"]["active_job"] != group["source_job"]):
                 return "STALE_REFERENCE"
+            if row["payload"].get("scope_hash") != digest(self.scope):
+                return "REFERENCE_SCOPE_MISMATCH"
             source = self.db.execute("SELECT payload FROM {oa} WHERE record_type='CLUSTER_JOB' AND bundle_id=%s "
                 "AND review_unit_id=%s AND entity_key=%s", (group["source_bundle"], group["source_unit"], group["source_job"])).fetchone()
             if source is None:
                 return "STALE_REFERENCE"
+            # Verify every transitive dependency, not just the catalog's first
+            # page. Old queued jobs must not bridge unrelated report scopes.
+            if source["payload"].get("scope") != self.scope:
+                return "REFERENCE_SCOPE_MISMATCH"
             pending.extend(source["payload"]["known_groups"])
         return None
 

@@ -48,7 +48,8 @@ class SanityPlanProvider(ABC):
 |---|---|---|
 | `schema_version` | 정수 `1` | 새 workspace 필드 때문에 임의 증분하지 않음 |
 | `run.run_id` | 안정 실행 ID, 기존 ID 문법 충족 | 파일명·현재 시각만으로 실제 실행을 재식별하지 않음 |
-| `run.project`, `design`, `stage`, `tool`, `tool_version` | 각 비어 있지 않은 문자열, 확인된 원천 대응 | 표시 이름/임의 버전 기본값을 실제 식별 계약으로 대체하지 않음 |
+| `run.project`, `design`, `stage`, `tool`, `tool_version` | 각 비어 있지 않은 문자열, 확인된 원천 대응 | 자유 project/design 문자열을 등록 프로젝트·블록 ID로 재해석하지 않음 |
+| `run.scope` | 선택형 `{schema_version:1,project_id,block_id}`, 등록 고정 ID·실제 부모 관계 | 운영 SSO에 공개할 legacy 결과에 수집 전 제공. null/추가 키·이름 기반 추정·봉인 후 추가 금지 |
 | `inventory.confirmed` | 확인된 원천 목록 또는 승인된 예상 범위 선언서의 승인 사실을 대응한 `bool` | 스캔/조회/수집 성공으로 승인하지 않음. V2는 별도 digest/참조·회사 authority 검증 필요 |
 | `inventory.source`, `version` | 예상 목록 원천과 개정의 확인 가능한 문자열 | 생성된 파일 목록을 원천으로 쓰지 않음 |
 | `inventory.units` | 예상 전체 단위 배열 | report 누락/도구 실패/미실행도 삭제하지 않음 |
@@ -68,7 +69,9 @@ class SanityPlanProvider(ABC):
 
 ## 4. workspace 원천 대응은 별도 자료
 
-기존 run/bundle에는 workspace의 `project_id`, `block_id`, `version_id`, `NET_VER`, 전체 `REVISION`, `PRE/POST`, ECO, 사용자/담당 배정의 운영 수신 계약이 아직 없다. `run.project/design`을 곧바로 workspace ID로 재해석하거나 plan에 이 필드를 붙이지 않는다.
+2026-10-22 legacy run/bundle의 고정 프로젝트·블록 소속에 선택형 `run.scope` 계약을 제공했다. 회사 `get_plan()` 본문/허용 wrapper에서 등록된 실제 소속을 확인해 기존 plan의 run 안에 반환한다. schema_version 1과 기존 메서드 서명을 유지하며 공통 collector·DB·권한 엔진을 수정하지 않는다. scope는 분석/bundle 해시에 봉인되고 OA는 등록 부모 관계를 검사한다. 자유 `run.project/design`과 ID의 이름 매핑은 하지 않는다. scope 없는 기존 결과는 prototype에서 유지하지만 SSO에서 숨긴다. 자세한 형식·신뢰된 수신 경계는 [ACCESS_MANAGEMENT.md](../oa/ACCESS_MANAGEMENT.md#3-bundle의-고정-프로젝트블록-연결)를 따른다.
+
+`version_id`, `NET_VER`, 전체 `REVISION`, `PRE/POST`, ECO, 사용자/담당 배정은 이 선택형 scope에 넣지 않는다. 별도 V2 source 계약과 운영 SSO 연결은 여전히 구분한다. V2 SourceReceiver에 새 AccessStore를 연결한 것으로 표시하지 않는다.
 
 별도 V2는 `collection`과 `inventory.units[].source`로 제출 대상과 각 report의 원천 버전/실행을 구분한다. 실제 대응표를 확인해 `CorporateSubmissionInput.prepare`에서 반환하며 `condition`으로 대신 운반하지 않는다. GCA 공통 stage는 `sanity`, design은 확인된 블록 식별자다. 단일 schema 1의 tool/version으로 표현할 수 없는 PRE/POST를 한 값으로 숨기지 않는다. 상세 경계는 [V2 필드 배치](SOURCE_COLLECTION_DESIGN.md#5-필드-배치와-계획-v2)를 따른다.
 
@@ -91,6 +94,7 @@ Codex가 이 표로 공통 import·scope·감사 연결을 검토한다. 사내 
 
 - 확인된 목록, 미확인 목록, 정상/실패/미실행, report 누락과 예상 밖 파일.
 - 다른 도구/실행 버전, 중복 unit/경로, 위험한 경로, 필수 원천 필드 누락, 원천 장애.
+- 선택형 scope의 정확한 등록 ID/부모 관계, 다른 블록의 동명 프로젝트 문자열, scope 누락과 null/잘못된 ID/추가 키 구분, 동일 원천에서 고정 ID 보존. scope 변경은 봉인 hash와 분류 재사용 범위를 분리함.
 - 다른 실행을 연속/동시에 조회해도 상태가 섞이지 않음. plan 반환만으로 원천/report·DB·PoR을 변경하지 않음.
 - 같은 원천 실행/개정의 동일한 필드 대응, 실제 실행 또는 기준 목록 개정 시 그 변경을 정확히 보존.
 - 수치 기준·0건/완료·적용 제외의 의미는 parser/업무 담당자의 실제 확인 결과와 비교.

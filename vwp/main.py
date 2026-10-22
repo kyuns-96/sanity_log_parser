@@ -11,6 +11,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.sanity_common import ReviewError, atomic_json, atomic_text, digest, read_json, require_id, safe_path, sha256_file
+from common.sanity_scope import run_scope
 
 
 def _require(condition, message):
@@ -32,6 +33,7 @@ def validate_plan(plan):
     for key in ("run_id", "project", "design", "stage", "tool", "tool_version"):
         _require(_text(run.get(key)), f"missing run.{key}")
     require_id(run["run_id"], "run_id")
+    run_scope(run, code="INVALID_PLAN")
     inventory = plan.get("inventory")
     _require(isinstance(inventory, dict), "inventory must be an object")
     _require(type(inventory.get("confirmed")) is bool, "inventory.confirmed must be boolean")

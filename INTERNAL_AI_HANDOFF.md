@@ -1,6 +1,6 @@
 # 사내 AI 구현 인계 명세
 
-기준: 2026-10-16. 현재 승인된 검토 UI와 두 단계 흐름을 유지한다. 이 문서는 사내 구현을 시작할 때 보는 작업 지도이며, 권한은 [INTERNAL_AI_GUIDE.md](INTERNAL_AI_GUIDE.md)의 허용 목록을 따른다. 내부 AI는 이 문서나 지침을 수정해 자신의 역할을 넓히지 않는다.
+최초 기준: 2026-10-16. 2026-10-22 운영 Welcome·관리·봉인된 legacy 결과 범위는 [ACCESS_MANAGEMENT.md](oa/ACCESS_MANAGEMENT.md)를 우선한다. 현재 승인된 검토 UI와 두 단계 흐름을 유지한다. 이 문서는 사내 구현을 시작할 때 보는 작업 지도이며, 권한은 [INTERNAL_AI_GUIDE.md](INTERNAL_AI_GUIDE.md)의 허용 목록을 따른다. 내부 AI는 이 문서나 지침을 수정해 자신의 역할을 넓히지 않는다.
 
 소스와 사내 구현 위치는 [서버별 소스·실행 안내](DEPLOYMENT.md)에 따른다. 각 서버는 Git 저장소 루트에서 자기 모듈만 실행한다. VWP=`vwp/`, VWP-bridge=`vwp_bridge/`, OA=`oa/`, 공통=`common/`, 합성 시험=`devtools/`다. 회사 어댑터도 각 서버의 `integration/`에 분리되어 있다.
 
@@ -16,7 +16,7 @@ Q1 이후의 수집·버전 연결은 [분산 수집·PRE/POST 설계](vwp/SOURC
 4. 확정 그룹마다 VWP AI가 판정과 판정 근거를 제안하고, 사람이 PASS/FAIL/보류를 검토·저장한다.
 5. 확정 분류와 사용자 판정을 각각 DB 사례로 축적해 다음 AI 입력에서 참고한다. 모델 가중치 재학습 완료를 뜻하지 않는다.
 
-**공통 검토 화면·저장·페이지/개정 검증과 회사 연동 어댑터는 서로 다른 완료 단위다.** 현 `/workspace`는 합성 사용자/DB와 참고 엔진 또는 명시적으로 켠 외부 모델 합성 시험을 사용한다. 회사 report·SSO·사내 SDK로 운영 중인 화면이 아니다. 외부 모델의 합성 시험 경로를 사내 자료에 연결하지 않는다.
+**공통 검토 화면·저장·페이지/개정 검증과 회사 연동 어댑터는 서로 다른 완료 단위다.** 별도 `/workspace`는 합성 사용자/DB와 참고 엔진 또는 명시적으로 켠 외부 모델 합성 시험을 사용하며 운영에는 마운트하지 않는다. 회사 report·SSO·사내 SDK로 운영 중인 화면이 아니다. 외부 모델의 합성 시험 경로를 사내 자료에 연결하지 않는다.
 
 | 영역 | 제공된 추상화/실제 구현 | 사내 AI 작업 | 현재 연결 상태 |
 |---|---|---|---|
@@ -25,7 +25,7 @@ Q1 이후의 수집·버전 연결은 [분산 수집·PRE/POST 설계](vwp/SOURC
 | item별 report parser | `ReportParser.parse`, 이벤트/원문 span/registry/공통 검증 | 실제 도구·형식 버전별 추출과 명시적 등록 | 회사 registry는 기본 비어 있음 |
 | 1단계 AI 분류 | `ClusteringAdvisor.propose`, V2 출력/전체 배정·그룹별 근거 검증 | VWP 사내 SDK와 모델 입력·출력 대응 | `CORPORATE` 미연결. SDK stub은 `AI_NOT_CONFIGURED` |
 | 2단계 AI 판정 | `ReviewAdvisor.propose`, 판정/참조 검증 | 선택 그룹의 원문·확정 분류 근거·사람 사례로 제안 | `CORPORATE` 미연결. 현재 화면은 조건 적용 참고 엔진 |
-| 실제 프로젝트·블록·버전/담당 | source import·workspace 범위 검사·PoR·불변 판정 저장 | 실제 원천 필드/안정 ID·동일 계정 매핑·담당 범위 대응 | source 공통 import 제공. 실제 관리 데이터/SDK·SSO 업무 연결은 미완료 |
+| 실제 프로젝트·블록·버전/담당 | 운영 레지스트리·Welcome 신청/승인·legacy scope 권한, 별도 source import/workspace PoR | 실제 원천의 고정 ID·소속·동일 계정 대응, 사내 검증 | 운영 관리 계약은 [ACCESS_MANAGEMENT](oa/ACCESS_MANAGEMENT.md). V2 source import·PoR의 운영 SSO 연결은 후속 |
 | DB·TLS·운영 실행 | 직접 PostgreSQL·네 테이블·기존 전송/작업자 | 회사 환경의 확인된 접속/SDK 제약 자료 | 실제 DB 확인·DDL/배포는 사용자/DBA 관리 |
 
 타입 선언은 [sanity_integration_contracts.py](common/sanity_integration_contracts.py)에 있다. 기존 dict/JSON 키, 메서드 인자 순서와 저장 계약은 유지했다. 타입 힌트는 런타임 검증·권한 검사·회사 연결을 대신하지 않는다. 작은 합성 입력/출력은 [sanity_integration_examples.py](common/sanity_integration_examples.py), 실행 가능한 계약 검증은 [test_integration_contracts.py](tests/test_integration_contracts.py)에 있다.
@@ -87,9 +87,9 @@ VWP가 형식/판정 의미·정답을 준비하고 VWP-bridge가 parser를 구�
 
 **산출물:** `authenticate(AuthRequest) → VerifiedIdentity`, `resolve(VerifiedIdentity) → LocalUser | None`, 필요한 회사 로그인 router와 전용 SDK 모의 테스트.
 
-**수용 기준:** 위조/만료/잘못된 issuer·audience/서비스 장애를 구분하고, 동명이인·이름 변경·다른 issuer·미연결·비활성·동시 요청을 검증한다. 토큰 decode/신뢰되지 않은 사용자 헤더만으로 성공시키지 않는다. `AUTHORIZATION_NOT_IMPLEMENTED`는 유지한다.
+**수용 기준:** 위조/만료/잘못된 issuer·audience/서비스 장애를 구분하고, 동명이인·이름 변경·다른 issuer·미연결·비활성·동시 요청을 검증한다. 토큰 decode/신뢰되지 않은 사용자 헤더만으로 성공시키지 않는다. 권한 엔진 미설정의 `AUTHORIZATION_NOT_IMPLEMENTED`와 설정 후 대상별 scope 보호를 유지한다.
 
-**연결 경계:** `sso_app.py`는 legacy `/api`용이다. `/workspace/api/session`과 합성 비밀번호 로그인을 회사 SSO로 바꾸는 공통 연결은 아직 제공되지 않았다. 어댑터를 구현해도 현재 테스트 계정이 회사 사용자로 바뀌지 않는다.
+**연결 경계:** `sso_app.py`는 운영 `/`·legacy `/api/*`용이다. Welcome·관리는 같은 SSO 세션을 사용하며 합성 `/workspace`와 그 로그인은 운영에 마운트하지 않는다. 회사 어댑터를 구현해도 테스트 계정을 회사 사용자로 재사용하지 않는다. 관리 env·계정·승인·scope 계약은 [ACCESS_MANAGEMENT](oa/ACCESS_MANAGEMENT.md)을 따른다.
 
 ### INT-02. 예상 sanity 목록과 실행 정보
 
@@ -99,7 +99,7 @@ VWP가 형식/판정 의미·정답을 준비하고 VWP-bridge가 parser를 구�
 
 VWP 내부의 여러 물리 루트는 허용된 회사 launcher에서 byte 동일 export한 뒤 기존 collector에 전달한다. 원본 완료·복사 전후 hash·누락/예상 밖 파일 보존 조건을 지킨다. `get_plan()`은 export하지 않는다. 세부 규칙은 [Q1 설계](vwp/SOURCE_COLLECTION_DESIGN.md)를 따른다.
 
-**수용 기준:** 누락된 report의 예상 unit을 제거하지 않는다. 실행 성공/사용자 제출 확인을 예상 목록 승인으로 해석하지 않는다. 구조 검증 통과는 승인·분석 완료가 아니다. V2는 고정 source 계약을 따르고 schema 1에 workspace 필드를 붙이지 않는다. 상세 신원/승인·원천 ID/순서 시험은 [SUBMISSION.md](vwp/SUBMISSION.md)를 따른다.
+**수용 기준:** 누락된 report의 예상 unit을 제거하지 않는다. 실행 성공/사용자 제출 확인을 예상 목록 승인으로 해석하지 않는다. 구조 검증 통과는 승인·분석 완료가 아니다. V2는 고정 source 계약을 따른다. schema 1의 승인된 선택형 `run.scope`는 고정 프로젝트·블록 ID에 대응하되 NET_VER/REVISION/사용자·배정 등 다른 workspace 필드를 임의로 붙이지 않는다. 상세 신원/승인·원천 ID/순서 시험은 [SUBMISSION.md](vwp/SUBMISSION.md)를 따른다.
 
 ### INT-03. item별 parser
 
@@ -133,13 +133,13 @@ VWP 내부의 여러 물리 루트는 허용된 회사 launcher에서 byte 동�
 
 사내 확인표에는 원천 시스템/필드의 사내 문서 식별자, 대상 필드, 안정 ID 근거·변환 규칙·누락/충돌 처리, 확인자/확인일을 기록한다. 외부 인계에는 합성 예제와 자료형·길이·존재 여부만 포함한다.
 
-- 사용자 `(issuer, subject) → user_id`; 프로젝트 TOP과 블록 담당 배정의 권위 있는 출처/해제·변경 방식.
+- 사용자 `(issuer, subject) → user_id`는 [009](oa/SSO_IDENTITY.md)를 따른다. 운영 TOP/OWNER 배정의 권위는 [Welcome 요청·관리자 승인/회수](oa/ACCESS_MANAGEMENT.md)이며 별도 SDK 담당 목록과 자동 동기화하지 않는다.
 - 프로젝트/블록의 안정 ID와 관계; 블록별 `NET_VER`, 전체 `REVISION`, `PRE/POST`, ECO; 서로 다른 블록의 같은 문자열 구분.
 - 실행 `run_id`·review unit·item·도구/파서/규칙 버전과 실제 report의 연결. 하나의 도구가 여러 item을 만들 때 구분 근거.
 - 실제 운영 DB 역할/DDL 적용 단계·TLS·프로세스 환경·SDK 지원/한도. 공개 문서에 내부 endpoint·DSN·계정을 넣지 않는다.
 - PoR의 현장 정책. 현재 UI의 블록당 PoR 하나를 PRE/POST별 별도 PoR 정책으로 임의 해석하지 않는다.
 
-현 legacy run/bundle과 workspace의 block/version/report ID는 같은 계약이 아니다. 대응표를 제출하고 공통 수신 연결을 검토받는다. 기존 payload에 필드를 추가하거나 REVISION/파일명/표시 이름에서 ID·권한을 추정해 직접 저장하지 않는다.
+legacy의 자유 `run.project`와 registry ID는 같은 계약이 아니다. 승인된 `run.scope={schema_version:1,project_id,block_id}`는 VWP 수집 전 회사 provider가 실제 소속을 확인해 제공한다. 그 밖의 version/report ID는 V2 대응표로 검토받으며 REVISION/파일명/표시 이름에서 ID·권한을 추정하거나 scope를 수신 후 추가하지 않는다. 기존 V2 SourceReceiver의 workspace 권한을 새 AccessStore로 연결하는 작업은 후속이며 제공된 것으로 간주하지 않는다.
 
 Q1 인계에는 제출 대상 REVISION과 각 PRE/POST report의 실제 소속, 예상 슬롯×mode×item과 범위 승인 근거, 원천 실행 ID/순서·다른 PC 재전달 보존 방식, 실제 tool/version을 추가한다. 같은 PRE가 여러 POST 제출에 포함될 때 한 원본을 참조해야 한다. `.done`·REVISION/ECO 문법·임계값/제외 근거의 현장 확인 여부를 구분한다.
 
@@ -149,7 +149,7 @@ Q1 인계에는 제출 대상 REVISION과 각 PRE/POST report의 실제 소속, 
 
 | ID | 공통 후속 작업 | 사내에서 먼저 제공할 자료 |
 |---|---|---|
-| COMMON-01 | 인증 설정 API·쿠키 SSO 로그인/POST 로그아웃 UI 제공. SSO 신원→workspace 사용자/담당 범위, legacy 업무 API 범위 제한·감사는 남음 | SSO·계정/권한 출처·회사 router의 CSRF/세션 폐기와 실제 IdP 검증 |
+| COMMON-01 | 운영 Welcome·관리·legacy 봉인 scope의 TOP/OWNER 범위/감사 계약 제공. `/workspace` 미마운트. V2/PoR의 운영 SSO 연결은 남음 | 회사 SSO/활성 계정·private 관리자 env·실제 report 소속·프록시/CSRF 현장 검증 |
 | COMMON-02 | 공통 V2 제출·분할 source import·workspace/receipt 구현 제공. 아래 02A~E이며 회사 SDK/인프라 검증은 남음 | Q1 원천 대응·예상 범위 승인·실행 ID/순서, 인증된 mount/ACL·계정/담당과 운영 DB 준비 |
 | COMMON-03 | 새 workspace 분류/판정의 VWP job·기존 DB 요청/결과 전달·worker/상태·UI 연결 | 회사 SDK 입출력·실패·취소·조회·처리 한도 |
 | COMMON-04 | 최초 AI 판정의 직접 원본 근거 계약, 확정 사례 기본 활용과 선택형 재사용 필드의 관계 정리 | 사례 없는 판정의 사내 기준/정답·반례, 기존 승인 범위 정책 |
@@ -165,7 +165,9 @@ COMMON-02의 구현 순서와 경계:
 | COMMON-02D | workspace 원천/분석 개정·누락/감사와 현재 두 단계 UI 연결. 새 수신으로 PoR·사람 판정 자동 변경 없음 |
 | COMMON-02E | 사용자 `sanity submit/status/retry`·PATH/설치·별도 배포 설정, VWP 내부 spool 공개/접수·원본 보관·DB/파일 중단 복구·OA 응답/receipt·상태 조회. [제출 설계](vwp/SUBMISSION_DESIGN.md) 기준 |
 
-위 02A~E는 **공통 코드·증분 SQL 제공, 합성 검증** 상태다. 실제 회사 어댑터는 기본 차단이며 mount/ACL·원천/실행 ID·승인/계정·운영 DB는 현장 준비/검증이 필요하다. source 실행 ID 정책이 없으면 같은 바이트의 재검사와 재전달을 구별할 수 없으므로 운영 완료를 선언하지 않는다. 상세 ID는 [수집 설계](vwp/SOURCE_COLLECTION_DESIGN.md), 설치/저장/실행은 [SUBMISSION.md](vwp/SUBMISSION.md)를 따른다. 내부 AI에게 공통 코드 수정 권한을 주지 않는다. COMMON-01·03~05는 여전히 남아 있다.
+위 02A~E는 **공통 코드·증분 SQL 제공, 합성 검증** 상태다. 실제 회사 어댑터는 기본 차단이며 mount/ACL·원천/실행 ID·승인/계정·운영 DB는 현장 준비/검증이 필요하다. source 실행 ID 정책이 없으면 같은 바이트의 재검사와 재전달을 구별할 수 없으므로 운영 완료를 선언하지 않는다. 상세 ID는 [수집 설계](vwp/SOURCE_COLLECTION_DESIGN.md), 설치/저장/실행은 [SUBMISSION.md](vwp/SUBMISSION.md)를 따른다. 내부 AI에게 공통 코드 수정 권한을 주지 않는다. COMMON-01의 V2/PoR 운영 SSO 연결과 COMMON-03~05는 여전히 남아 있다.
+
+운영 관리·권한의 최신 API/저장/반영 순서는 [ACCESS_MANAGEMENT.md](oa/ACCESS_MANAGEMENT.md)를 따른다. 추가 DDL 없이 기존 SSO 행을 보존하며, 계정 JSON이나 synthetic `tops/owners`를 운영 권한 저장소로 바꾸지 않는다. 회사 AI의 공통 수정 권한은 확대하지 않는다.
 
 COMMON-03의 요청/결과 envelope에는 원본 snapshot·project/block/item/버전 scope·분류/판정 개정·선택 group/소속·사례 목록의 불변 참조와 요청 UUID/입력 hash가 필요하다. **현재 신규 운영 메시지 schema가 제공된 것은 아니다.** 내부 AI가 임의 envelope·queue record type을 추가하지 않는다. 기존 legacy clustering 규칙 JSON과 새 workspace V2를 서로 대신 보내지 않는다.
 

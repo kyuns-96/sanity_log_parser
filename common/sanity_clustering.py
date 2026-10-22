@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from common.sanity_common import ReviewError, canonical_json, digest, identity_value_valid, require_id
+from common.sanity_scope import run_scope
 
 SCHEMA = 1
 MAX_RULES = 20
@@ -20,8 +21,13 @@ def check(ok, code="INVALID_CLUSTER", message="Invalid classification contract")
 
 
 def scope_for(run, unit):
-    return {**{k: run[k] for k in SCOPE_KEYS[:5]},
-            **{k: unit.get(k) for k in SCOPE_KEYS[5:]}}
+    value = {**{k: run[k] for k in SCOPE_KEYS[:5]},
+             **{k: unit.get(k) for k in SCOPE_KEYS[5:]}}
+    explicit = run_scope(run)
+    # Omitting this key for older runs preserves existing approved rule hashes.
+    if explicit is not None:
+        value["scope"] = explicit
+    return value
 
 
 def validate_rules(rules, evidence_ids=None):

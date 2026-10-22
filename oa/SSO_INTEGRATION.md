@@ -8,7 +8,7 @@ SSO 공급자 SDK와 사내 계정 DB만 연결하면 `/api/session`에서 검�
 개발 소유자는 [OA 담당 AI](INTERNAL_AI_TASK.md)다. [소스 구조](../DEPLOYMENT.md)의 `oa/`와 [OA 설정 예제](.env.example)와 [DB 연결 인계](../db/CONNECTION_HANDOFF.md)를 사용하며 VWP 자격증명/모델은 OA에서 사용하지 않는다.
 사내 AI는 회사 어댑터와 명시적으로 허용된 주입 부분만 구현한다. 자기 코드에서도 예상 밖 오류가 나면 수정/재시도를 멈추고 Codex에게 문의한다.
 
-이 문서의 `/api/*`와 `sso_app.py`는 기존 단일 사용자용 dashboard API다. 별도 합성 `/workspace`에는 사용자/프로젝트·블록 범위·PoR 저장이 구현되어 있지만 회사 SSO와 연결되지 않았다. `/api/session`과 `/workspace/api/session`은 서로 다른 진입점이다. SSO 연동 완료와 업무 권한/워크스페이스 연결 완료를 분리하며, 공통 연결 전 SSO 사용자의 legacy 업무 API는 `503 AUTHORIZATION_NOT_IMPLEMENTED`를 유지한다. 기존 로컬 토큰 모드는 종전처럼 동작한다. 통합 인계는 [INTERNAL_AI_HANDOFF.md](../INTERNAL_AI_HANDOFF.md)를 따른다.
+운영 화면은 `/`, 업무 API는 기존 `/api/*`, SSO 세션은 `GET /api/session`을 사용한다. 2026-10-22 [운영 권한·Welcome·관리 계약](ACCESS_MANAGEMENT.md)을 추가했다. `SANITY_ADMIN_USER_ID`와 활성 계정·저장 계약이 준비된 경우에만 대상별 SSO 권한을 적용하며 미설정 상태의 `503 AUTHORIZATION_NOT_IMPLEMENTED`는 유지한다. 별도 합성 `/workspace`와 `/workspace/api/*`는 운영에 마운트하지 않는다. 합성 workspace의 PoR·버전 API를 운영 SSO에 연결한 것은 아니다. 기존 로컬 토큰 모드는 종전처럼 동작한다. 통합 인계는 [INTERNAL_AI_HANDOFF.md](../INTERNAL_AI_HANDOFF.md)를 따른다.
 
 2026-10-20 Codex가 서버 인증 방식 조회와 쿠키 SSO용 로그인·세션 확인·POST 로그아웃 UI를 연결했다. SSO 인증이 성공해도 업무 권한이 준비되지 않았으면 연결 확인 화면을 보여주며 업무 API를 호출하지 않는다. 회사 어댑터·실제 IdP 검증과 workspace 운영 권한 연결은 별도다.
 
@@ -19,8 +19,8 @@ SSO 공급자 SDK와 사내 계정 DB만 연결하면 `/api/session`에서 검�
 | [sanity_auth.py](sanity_auth.py) | 추상 인터페이스, 입력·출력 모델, 모드 선택, 계정 연결·활성 상태 검사, 오류 표준화 | 내부 AI 수정 금지. 운영 범위 검사 확장은 Codex 담당 |
 | [corporate_sso.py](integration/corporate_sso.py) | `CorporateIdentityProvider`, `CorporateUserDirectory`의 명시적인 미구현 응답 | SSO 검증과 영속 사용자 ID 조회 |
 | [sso_app.py](sso_app.py) | 두 어댑터를 API에 주입하는 사내 실행 진입점 | 회사 모듈 import와 어댑터/router 주입만 허용. 인증 모드·bind·proxy 설정 변경 금지 |
-| [dashboard_api.py](dashboard_api.py) | `create_app` 주입 지점, `authenticated`, `authorized_actor`, `/api/auth-config`, 정규화된 `/api/session` | 내부 AI 수정 금지. 운영 권한 필터·감사 ID·배포 경계는 Codex 담당 |
-| [App.tsx](dashboard/src/App.tsx), [DashboardLogin.tsx](dashboard/src/DashboardLogin.tsx), [useDashboardAuth.ts](dashboard/src/useDashboardAuth.ts) | 서버 설정에 따른 토큰/쿠키 SSO 로그인, 자동 세션 확인, POST 로그아웃, 권한 미연결 안내 | 내부 AI 수정 금지. 회사 router와 세션 SDK만 허용된 위치에서 연결 |
+| [dashboard_api.py](dashboard_api.py) | `create_app` 주입 지점, `authenticated`, `authorized_actor`, `/api/auth-config`, 정규화된 `/api/session` | 내부 AI 수정 금지. 운영 scope 필터·안정 감사 ID·배포 경계 제공/변경은 Codex 담당 |
+| [App.tsx](dashboard/src/App.tsx), [DashboardLogin.tsx](dashboard/src/DashboardLogin.tsx), [useDashboardAuth.ts](dashboard/src/useDashboardAuth.ts) | 서버 설정에 따른 토큰/쿠키 SSO 로그인, 세션·로그아웃, Welcome·관리·범위별 업무 진입 | 내부 AI 수정 금지. 회사 router와 세션 SDK만 허용된 위치에서 연결 |
 | [test_auth.py](../tests/test_auth.py), [test_sso.py](test_sso.py) | 사내망 없이 실행하는 인증·계정 연결·API 계약 테스트 | 기존 테스트 변경 금지. 회사 어댑터 전용 테스트는 `oa/integration/company_sso/`에 새로 추가 |
 
 ## 2. 고정 인터페이스
@@ -130,10 +130,10 @@ UI 동작은 다음 계약을 따른다.
 - SSO: 토큰 입력 없이 same-origin 쿠키로 `/api/session`을 조회한다. Authorization 헤더를 만들지 않는다. 미인증 401이면 SSO 버튼을, 계정 미연결/비활성 403이면 원인 안내와 앱 로그아웃을, 설정/서비스 503이면 명시적인 오류를 보여준다. 오류를 로컬 토큰·데모로 대체하지 않는다.
 - 로그인: `GET /auth/login`으로 페이지를 이동한다. 회사 router가 IdP 이동·콜백 검증·쿠키 발급을 담당한다. 콜백 후 앱으로 돌아오면 `/api/session`을 다시 조회하며, 콜백 성공만으로 내부 계정 연결을 가정하지 않는다.
 - 로그아웃: same-origin 쿠키로 `POST /auth/logout`을 보내고 `200 {"status":"LOGGED_OUT"}`를 확인한 뒤 탭의 세션과 업무 표시를 지운다. 실패하면 종료됐다고 표시하지 않으며 자동 재시도하지 않는다. Origin/Referer 검증과 서버 세션 폐기·쿠키 삭제는 회사 router의 책임이다. IdP 전체 로그아웃은 회사 정책에 따라 별도 연결한다.
-- SSO의 `authorization_ready`가 true가 아니면 인증 확인·업무 권한 연결 대기 화면을 보여주고 번들·근거·분류 등 업무 요청을 시작하지 않는다. 서버의 기존 업무 API 차단도 유지한다.
+- SSO의 `authorization_ready`가 true가 아니면 인증 확인·권한 연결 대기 화면을 보여주고 업무 요청을 시작하지 않는다. 준비된 엔진에서 배정이 없는 사용자는 `/?page=welcome`으로 안내하고, env 관리자는 `/?page=admin`에서 등록·승인을 진행한다. 정상 SSO 세션과 범위 거부 403/404를 구분하며 타인의 데이터나 이전 선택 자료를 남기지 않는다.
 - 로컬 토큰: 기존 메모리 Bearer 토큰 로그인을 유지한다. 공통 인증 UI는 `/workspace`의 합성 계정 로그인과 별도이며, 명시적인 데모 진입은 예시 데이터만 사용한다.
 
-검증된 SSO 계정이 연결되면 DB의 업무 데이터에 접근하지 않고 세션을 확인할 수 있다.
+검증된 SSO 계정이 연결되면 report 원문에 접근하지 않고 세션을 확인할 수 있다. 아래는 관리자 설정이 없는 보호 상태 예다. 권한 엔진이 준비된 경우의 추가 필드와 계산 기준은 [운영 권한 계약 5절](ACCESS_MANAGEMENT.md#5-api세션요청-보호)을 따른다.
 
 ```json
 {
@@ -143,11 +143,14 @@ UI 동작은 다음 계약을 따른다.
   "access_mode": "postgresql",
   "writable": false,
   "authorization_ready": false,
+  "is_admin": false,
+  "can_read_business": false,
+  "can_receive": false,
   "notice": "SSO 사용자 연결 확인 · 프로젝트·블록 권한 연동은 아직 준비되지 않았습니다."
 }
 ```
 
-`GET /api/session` 응답에서 issuer·subject·원본 claims·토큰·쿠키를 노출하지 않는다. `writable`은 현재 운영 권한 미구현 상태에서는 false다. 로컬 모드의 `user_id="local-reviewer"`는 단일 사용자 prototype 식별자이며 회사 사용자 계정으로 이전·연결하지 않는다.
+`GET /api/session` 응답에서 issuer·subject·원본 claims·토큰·쿠키를 노출하지 않는다. `writable`은 미설정 상태에서는 false이고, 준비된 엔진에서는 OWNER 배정을 반영한다. 특정 bundle의 수정 여부는 상세 `permissions`와 서버의 대상별 검사로 판단한다. 로컬 모드의 `user_id="local-reviewer"`는 단일 사용자 prototype 식별자이며 회사 사용자 계정으로 이전·연결하지 않는다.
 
 | HTTP | code | 의미 |
 |---|---|---|
@@ -158,21 +161,25 @@ UI 동작은 다음 계약을 따른다.
 | 503 | `AUTH_DIRECTORY_NOT_CONFIGURED` | 계정 연결 어댑터 미연결·미구현 |
 | 503 | `AUTH_PROVIDER_UNAVAILABLE`, `AUTH_DIRECTORY_UNAVAILABLE` | 공급자 또는 계정 저장소 장애 |
 | 503 | `AUTH_CONFIG`, `AUTH_INVALID_RESULT` | 잘못된 모드·주입 설정 또는 계약에 맞지 않는 어댑터 결과 |
-| 503 | `AUTHORIZATION_NOT_IMPLEMENTED` | SSO 신원은 확인됐으나 업무 데이터 범위 검사가 아직 없음 |
+| 403 | `FORBIDDEN` | 관리 권한 없음·조회 전용 범위의 수정·요청 출처 보호 실패 |
+| 404 | `RESOURCE_NOT_FOUND` | 업무 대상 없음 또는 허용 범위 밖·scope 없음 |
+| 409 | `REVISION_CONFLICT`, `REQUEST_CONFLICT` | 관리 개정 충돌 또는 UUID/내용·요청 상태 충돌 |
+| 503 | `AUTHORIZATION_NOT_IMPLEMENTED` | SSO 신원은 확인됐으나 운영 관리자/권한 엔진이 미설정 |
+| 503 | `AUTHORIZATION_CONFIG`, `AUTHORIZATION_SCHEMA`, `AUTHORIZATION_STATE_CORRUPT` | 관리자 설정·필수 저장 구조·관리 이력 계약 오류 |
 
 인증 공급자·계정 저장소를 매 요청에서 다시 확인하므로 이전 요청 성공을 그대로 캐시하지 않는다. 공급자의 자체 세션 검증·폐기 정책은 사내 구현 책임이다. 알 수 없는 SDK/DB 예외는 고정 장애 코드로 변환하며 상세 내용은 응답에 포함하지 않는다.
 
-## 6. SSO 사용자에게 업무 화면을 연결하는 순서 — Codex 후속 작업
+## 6. 운영 권한 연결과 사내 반영
 
-1번의 회사 어댑터 검증은 내부 AI 범위다. **2~7번의 저장·권한·감사·기존 UI/API 변경은 Codex가 수행한다.** 내부 AI는 사내 사실과 요구 계약만 제공하고 관련 보호 파일은 수정하지 않는다.
+Codex 공통 구현과 사내 SDK 구현을 분리한다. 상세 API·저장·검증·반영 순서는 [ACCESS_MANAGEMENT.md](ACCESS_MANAGEMENT.md)를 따른다. 내부 AI는 이 목록을 근거로 공통 코드를 직접 수정하지 않는다.
 
-1. 위 두 어댑터를 구현하고 `/api/session`의 사용자 ID·활성/비활성·미연결·만료를 확인한다.
-2. 실제 SSO 사용자와 기존 workspace 사용자/담당 배정의 연결·수명 주기를 검토한다. 합성 환경에서 구현된 저장/범위 검사를 실제 원천에 연결하되 테스트 사용자를 회사 계정으로 재사용하지 않는다. TOP은 담당 프로젝트 전체 조회, PoR 지정은 해당 블록 담당자라는 [15절 업무 규칙](../requirement.md#dashboard-domain-spec)을 따른다.
-3. API의 `authorized_actor`를 대상별 권한 검사로 확장한다. **`require_business_access`의 SSO 차단만 삭제하지 않는다.** `/api/bundles`의 SQL 목록·건수·페이지부터 허용 범위를 적용해야 한다. 현재는 전체 번들을 조회한다.
-4. bundle/unit/report/download, 근거 request/response/record, AI 작업·구성원·수신·변경 API까지 대상 ID의 실제 프로젝트·블록을 조회해 검사한다. `/api/receive`는 전역 큐 처리이므로 별도의 운영 권한·작업자 책임을 결정한다. URL의 ID나 사용자 입력 범위를 그대로 신뢰하지 않는다.
-5. 감사·검토·PoR 저장에 `actor.user_id`를 추가한다. 현재 review/clustering 저장 함수의 `reviewer` 문자열은 이름이다. 이름만 저장하면 동명이인·이름 변경 이력을 구분할 수 없다. 기존 불변 이력은 덮어쓰지 않고 새 계약으로 확장한다.
-6. 그다음 `/api/session`의 `authorization_ready`와 `writable`을 실제 권한에 맞춰 계산한다. 미배정 사용자는 정상 인증된 상태로 업무 데이터가 없는 안내를 보여준다. 계정 미연결과 업무 미배정을 구분한다.
-7. **인증 UI 공통 연결은 제공했다.** `DashboardLogin.tsx`와 `useDashboardAuth.ts`는 5절의 쿠키 SSO 계약을 사용하고 `App.tsx`는 권한 준비 전 업무 조회를 막는다. 회사 router·CSRF/세션 폐기·실제 IdP 리다이렉트는 사내에서 검증한다. 이 UI 연결은 2~6번의 RBAC·workspace·감사 구현을 완료한 것이 아니다. 데모 사용자 선택은 인증 수단으로 사용하지 않는다.
+1. 사내 두 인증 어댑터와 기존 회사 router를 유지하고 `/api/session`의 검증된 user_id·활성/미연결·만료를 확인한다. 등록은 별도 승인된 로그인 경로에서만 수행하며 조회가 계정을 자동 생성하지 않는다.
+2. OA 비공개 `SANITY_ADMIN_USER_ID`에 관리자 한 명의 정확한 user_id를 설정한다. env는 SSO를 대신하지 않고 report 권한도 자동 부여하지 않는다. 빈 값이면 기존 보호 차단을 유지한다.
+3. 관리자가 프로젝트·블록을 등록하고, 사용자가 Welcome에서 TOP/OWNER를 요청한다. 관리자는 사유와 기대 개정으로 승인·거절·회수한다. 자기 요청 승인도 허용한다. synthetic `WS_USER`·`tops/owners`는 운영 권한의 근거가 아니다.
+4. 기존 자유 `run.project`에 이름 매핑을 추가하지 않는다. VWP 수집 전의 명시적 `run.scope`를 봉인하고 수신 시 레지스트리 소속을 검증한다. scope 없는 결과는 SSO에서 숨긴다. legacy 신뢰된 서비스 수신과 사용자 신원을 검증하는 V2 제출은 서로 다른 계약이다.
+5. 목록·건수·페이지 SQL과 모든 대상별 API에 최신 TOP/OWNER 범위를 검사한다. TOP은 프로젝트 조회, OWNER는 해당 블록 조회·검토·분류·근거 변경이다. SSO의 전역 `/api/receive`는 관리자 포함 403이며 수신은 신뢰된 서비스 작업자가 담당한다.
+6. 기존 005~009 저장 구조에서 불변 레지스트리와 `oa-rbac-v1` 관리 이벤트를 사용한다. 추가 DDL·초기 설치 재실행 없이 기존 SSO 행을 보존한다. 업무 요청/권한 회수의 공유·배타 잠금, `READ COMMITTED`, 안정 검토자 user_id를 적용한다.
+7. 업무 쓰기는 JSON과 `X-Sanity-Request: 1` 및 요청 출처 검사를 사용한다. 회사 callback/logout의 CSRF·세션 폐기·실제 IdP 리다이렉트 검증은 계속 사내 책임이다. `/workspace`를 운영에 마운트하거나 데모 사용자를 fallback으로 사용하지 않는다. PoR/V2의 운영 SSO 연결은 별도다.
 
 ## 7. 검증과 완료 기준
 
@@ -186,7 +193,7 @@ UI 동작은 다음 계약을 따른다.
 ```
 
 마지막 명령의 PostgreSQL 통합 테스트는 별도 테스트 DB 설정이 없으면 skip된다. skip을 DB 검증 성공으로 보고하지 않는다. 실제 어댑터 구현 후에는 회사 SDK/mock transport로 아래를 검증한다.
-어댑터 전용 테스트는 신규 허용 위치에 추가하며 기존 테스트는 수정하지 않는다. 아래 중 UI·업무 권한 검증은 Codex의 후속 구현 수용 기준이다. 예상하지 못한 실패는 자체 수정하지 않고 문의한다.
+어댑터 전용 테스트는 신규 허용 위치에 추가하며 기존 테스트는 수정하지 않는다. 아래 중 UI·업무 권한 검증은 Codex 공통 구현의 수용 기준이며 실제 사내 배포 검증과 구분한다. 예상하지 못한 실패는 자체 수정하지 않고 문의한다.
 
 - 검증 성공, 자격증명 없음·위조·만료·폐기, 잘못된 issuer/audience, 인증 서비스 장애.
 - 같은 subject의 다른 issuer, 동명이인, 이름 변경, 미연결·비활성 계정, 계정 저장소 장애.
@@ -201,13 +208,13 @@ UI 동작은 다음 계약을 따른다.
 
 ## 9. 인증 UI 공통 수정본의 사내 반영
 
-회사 어댑터와 `sso_app.py`의 기존 SDK/router 주입을 유지하면서 사용자가 Codex의 공통 수정본을 반영한다. 이 목록은 내부 AI에게 공통 설계 변경 권한을 추가하지 않는다.
+회사 어댑터와 `sso_app.py`의 기존 SDK/router 주입을 유지하면서 사용자가 Codex의 공통 수정본을 반영한다. 이 목록은 2026-10-20 인증 UI 변경의 기록이며, 최신 Welcome·관리 기능의 파일/API·반영 순서는 [운영 권한 계약](ACCESS_MANAGEMENT.md)을 함께 따른다. 내부 AI의 공통 설계 변경 권한을 추가하지 않는다.
 
 - 서버: `oa/sanity_auth.py`, `oa/dashboard_api.py`.
 - 화면: `oa/dashboard/src/App.tsx`, `DashboardLogin.tsx`, `useDashboardAuth.ts`, `types.ts`, `demo.ts`. Node 20.18에서 프런트엔드를 다시 빌드한다.
-- 검증: `oa/test_auth_config.py`, `oa/test_sso.py`, `oa/dashboard/e2e/sso-login.spec.ts`, `dashboard.spec.ts`. 기존 업무 API의 SSO 차단 검증은 유지한다.
+- 검증: `oa/test_auth_config.py`, `oa/test_sso.py`, `oa/dashboard/e2e/sso-login.spec.ts`, `dashboard.spec.ts`. 권한 미설정 시 기존 SSO 업무 API 차단 검증을 유지하고, 설정 후 범위 제한은 새 전용 검증으로 확인한다.
 
-새 환경변수나 DB SQL은 필요하지 않다. 프록시는 기존 `/api/*`, `/auth/*`를 같은 OA 서비스로 전달한다. 설정 조회 → SSO 로그인 이동 → 콜백 후 세션 조회 → POST 로그아웃을 실제 HTTPS 진입 주소에서 사내 검증한다. 실제 SAML 검증·회사 저장소·SP 등록은 합성 검증의 범위에 포함되지 않는다. 인계에는 고정 오류 코드와 합성/실환경 검증 결과만 기록하며 실제 사내 코드·diff·세션 쿠키·SAML 원문을 외부에 전달하지 않는다.
+2026-10-20 인증 UI 변경만에는 새 환경변수나 DB SQL이 필요하지 않았다. 최신 관리 기능은 OA 전용 `SANITY_ADMIN_USER_ID`를 추가하며 DB SQL은 추가하지 않는다. 프록시는 기존 `/api/*`, `/auth/*`를 같은 OA 서비스로 전달한다. 설정 조회 → SSO 로그인 이동 → 콜백 후 세션 조회 → POST 로그아웃을 실제 HTTPS 진입 주소에서 사내 검증한다. 실제 SAML 검증·회사 저장소·SP 등록은 합성 검증의 범위에 포함되지 않는다. 인계에는 고정 오류 코드와 합성/실환경 검증 결과만 기록하며 실제 사내 코드·diff·세션 쿠키·SAML 원문을 외부에 전달하지 않는다.
 
 ## 10. 승인된 SSO 의존성
 

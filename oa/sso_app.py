@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Company SSO composition root. Session integration only until scoped RBAC exists."""
+"""Company SSO composition root; scoped RBAC requires explicit admin configuration."""
 from pathlib import Path
 import os
 import sys

@@ -11,13 +11,24 @@ from common.sanity_common import ReviewError
 JsonObject = dict[str, Any]
 
 
-class RunDescription(TypedDict):
+class RunScope(TypedDict):
+    schema_version: Literal[1]
+    project_id: str
+    block_id: str
+
+
+class _RequiredRunDescription(TypedDict):
     run_id: str
     project: str
     design: str
     stage: str
     tool: str
     tool_version: str
+
+
+class RunDescription(_RequiredRunDescription, total=False):
+    # Explicit registered IDs for production SSO; descriptive strings are not IDs.
+    scope: RunScope
 
 
 class _PlannedUnit(TypedDict):

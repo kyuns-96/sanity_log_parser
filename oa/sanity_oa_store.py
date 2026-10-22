@@ -94,6 +94,14 @@ class OAStore:
         return body
 
     def receive(self, payload, context):
+        from common.sanity_scope import run_scope
+        canonical_scope = run_scope(payload.get("run", {}))
+        if canonical_scope is not None:
+            from oa.sanity_access import AccessStore, access_lock
+            access_lock(self.db)
+            access = AccessStore(self.db, None)
+            access.require_ready(ingestion=True)
+            access.validate_scope(canonical_scope)
         existing = self.db.execute("SELECT * FROM {oa} WHERE bundle_id=%s AND record_type='RECEIVED_BUNDLE'",
                                    (payload["bundle_id"],)).fetchone()
         if existing:

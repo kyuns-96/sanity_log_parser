@@ -20,6 +20,8 @@ AI가 매 report의 초기 그룹 구성·이름·근거를 제안한다. 과거
 현재 참고 엔진의 `reusable` opt-in과 선택형 UI는 이 목표로 전환할 공통 구현 과제다. 이번 문서로 기존 필드 의미·과거 승인 기록·어댑터 서명을 변경하지 않는다.
 공통 후보 조회/저장/API/UI와 실제 VWP job 연결은 Codex 담당이며 내부 AI는 아래의 SDK 어댑터 허용 범위를 유지한다.
 
+2026-10-22 legacy 공통 분류 scope에는 선택형 봉인 `run.scope={schema_version:1,project_id,block_id}`도 포함한다. 자유 project/design 이름이 같아도 canonical 블록이 다르면 과거 규칙·그룹·근거를 재사용하지 않으며, scope 없는 이력을 scoped 결과와 섞지 않는다. 회사 SDK는 주어진 scope를 임의 정규화·확장하지 않는다. 등록 ID·수신 경계는 [운영 권한 계약](../oa/ACCESS_MANAGEMENT.md)을 따른다. 이 변경은 기존 legacy worker의 scope 검증 보강이며 workspace V2의 `CORPORATE` 운영 job 연결 완료를 뜻하지 않는다.
+
 ## 구현 경계
 
 `ClusteringAdvisor.propose(context, cases, identity_fields)` 추상 계약과

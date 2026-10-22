@@ -3,7 +3,7 @@
 현재 실행 계약은 같은 PostgreSQL DB의 4개 테이블이다. SQLite와 브리지 간 직접 통신/파일 복사는 사용하지 않는다.
 Python 3.10 이상, 직접 모드는 psycopg2, DBaaS 접속은 HTTPX/python-dotenv를 사용한다. DB 신청은 [db/README.md](db/README.md),
 환경 변수·배포 파일·실행 명령은 [README.md](README.md)를 따른다. Jira 조회·게시·시뮬레이터는 폐지했다.
-OA는 React·shadcn 대시보드와 인증된 로컬 FastAPI를 사용한다. VWP AI 어댑터의 기본 설정은 disabled다. SSO 인증·사용자 연결 추상 인터페이스는 제공하지만 사내 검증 어댑터와 운영 RBAC는 미구현이다.
+OA는 React·shadcn 대시보드와 인증된 로컬 FastAPI를 사용한다. VWP AI 어댑터의 기본 설정은 disabled다. SSO 인증·사용자 연결 추상 인터페이스와 [운영 Welcome·관리·legacy 범위 권한](oa/ACCESS_MANAGEMENT.md)을 제공한다. 실제 회사 어댑터·배포 검증과 V2/PoR의 운영 SSO 연결은 별도다.
 
 VWP AI의 API·CLI 호출 가능 여부는 사용자에게 확인했다. AI clustering·사람 피드백·지속 그룹·evidence 추가의 목표 계약은
 [요구사항 14절](requirement.md#ai-clustering)에 정리되어 있으며, 이 파일은 현재 구현된 프로토콜을 설명한다.
@@ -13,6 +13,8 @@ VWP AI의 API·CLI 호출 가능 여부는 사용자에게 확인했다. AI clus
 
 프로젝트·사용자 배정·블록별 버전·PoR의 목표 요구사항은 [15절 명세](requirement.md#dashboard-domain-spec)를 따른다.
 OA 관리 API·DB 레코드와 VWP의 NET_VER/REVISION/ECO를 받는 별도 V2 source 전송·workspace import를 제공한다. 실제 회사 원천/신원·승인 SDK·운영 DB는 미연결이다. [분산 수집 V2 설계](vwp/SOURCE_COLLECTION_DESIGN.md), 실행 가능한 타입/validator와 설정은 [제출 실행 안내](vwp/SUBMISSION.md)를 따른다.
+
+운영은 `/`·`/api/*`이고 `/workspace`·`/workspace/api/*`는 운영에 마운트하지 않는다. 아래 workspace API는 독립 합성 환경의 계약이며 운영 SSO의 버전/PoR API로 간주하지 않는다.
 
 ## OA 워크스페이스 관리 계약
 
@@ -104,6 +106,16 @@ Collector must refuse a nonempty output directory; source inputs must not be mod
 
 Required run fields: `run_id, project, design, stage, tool, tool_version` (nonempty strings).
 Units have unique `review_unit_id` and unique `report` paths in prototype v1.
+
+2026-10-22 운영 SSO용 legacy 결과는 선택형 `run.scope`에 정확히
+`{schema_version:1, project_id:"project-example", block_id:"block-example"}`를 포함한다.
+형식은 [sanity_scope.py](common/sanity_scope.py), 실제 등록/소속 계약은 [ACCESS_MANAGEMENT.md](oa/ACCESS_MANAGEMENT.md)를 따른다.
+한 bundle은 등록된 프로젝트·블록 한 쌍에 속하며 자유 문자열 `run.project/design`을 ID로 매핑하지 않는다.
+회사 plan provider가 수집 전에 실제 report 소속을 확인해 반환하고 collector·분석·bundle 해시에 그대로 봉인한다.
+추가 키·null·잘못된 ID·미등록/부모 불일치를 허용하지 않는다. scope 없는 prototype 입력의 기존 hash/로컬 경로는 유지하되 SSO에서는 목록·건수 제외/개별 조회 404다.
+봉인 후 scope를 붙이거나 바꾸지 않는다. legacy envelope에는 검증된 제출자가 없어 이 수신은 신뢰된 VWP 서비스 경로다.
+별도 V2의 source 신원·승인/collection 계약을 대체하거나 V2 SourceReceiver를 새 권한 엔진에 연결한 것은 아니다.
+
 
 ```json
 {
@@ -367,11 +379,16 @@ SSO 확장 계약과 사내 구현 방법은 [SSO_INTEGRATION.md](oa/SSO_INTEGRA
 `create_app(auth_mode="sso", identity_provider=..., user_directory=..., auth_router=...)`로 주입하며,
 인증 router는 `/auth` 아래에 등록한다. 공급자 실패·미구현 시 로컬 토큰으로 우회하지 않는다.
 
-`GET /api/session`에는 기존 필드 외 `user_id`, `auth_method`, `authorization_ready`를 반환한다.
-SSO 세션은 신원 확인만 지원하며 `writable=false`, `authorization_ready=false`다.
-권한 필터 미구현 상태의 모든 업무 API는 인증 후 `503 AUTHORIZATION_NOT_IMPLEMENTED`로 차단한다.
-인증 실패는 401, 계정 미연결·비활성은 403, 어댑터 미설정·장애는 503이며 고정 code만 반환한다.
-회사 로그인 redirect·callback·세션 생성/폐기와 브라우저 SSO 흐름은 사내 구현 범위다.
+`GET /api/session`은 기존 필드와 `user_id`, `auth_method`, `authorization_ready`,
+`is_admin`, `can_read_business`, `can_receive`를 반환한다. 운영 관리자/권한 엔진 미설정 시
+`writable=false`, `authorization_ready=false`이며 업무 API는 `503 AUTHORIZATION_NOT_IMPLEMENTED`로 차단한다.
+설정된 경우 authorization_ready는 엔진 준비를 뜻하며 미배정도 정상 인증 상태다.
+OA 비공개 `SANITY_ADMIN_USER_ID`의 활성 SSO 사용자 한 명만 등록/승인/거절/회수를 관리하고 report 권한은 별도 승인한다.
+TOP은 프로젝트 조회, OWNER는 블록 조회·검토·분류·근거 변경이며 목록 count/페이지 SQL과 대상별 API에서 최신 범위를 검사한다.
+관리·신청 API, 불변 WS_CONFIG 이력, `READ COMMITTED` 공유/배타 잠금과 전체 입력 계약은 [ACCESS_MANAGEMENT.md](oa/ACCESS_MANAGEMENT.md)를 따른다.
+SSO 쓰기는 JSON·`X-Sanity-Request: 1` 및 명시적 cross-site 차단을 요구한다. CORS·임의 forwarded header 신뢰를 추가하지 않는다.
+인증 실패는 401, 계정 미연결·비활성/금지 행위는 403, 범위 밖·미봉인 결과는 404, 어댑터 미설정·장애는 503이며 고정 code만 반환한다.
+회사 로그인 redirect·callback·세션 생성/폐기와 callback/logout CSRF는 사내 구현 범위다.
 
 
 서버는 python oa/dashboard_api.py로 실행하며 127.0.0.1:8000에만 bind한다.
@@ -380,21 +397,21 @@ npm ci / npm run build 결과 dist를 같은 origin으로 제공한다. 개발 �
 이 HTTP는 OA 브라우저→OA API이며 bridge 간 통신은 여전히 공유 DB만 사용한다.
 
 private .env의 SANITY_DASHBOARD_TOKEN은 최소 32자이고 SANITY_DASHBOARD_REVIEWER는
-서버가 고정하는 검토자다. 모든 업무 데이터 조회/변경은 Bearer 인증이 필요하다.
+서버가 고정하는 검토자다. 로컬 모드의 업무 조회/변경은 Bearer 인증, SSO 모드는 검증된 same-origin 세션과 대상별 권한이 필요하다.
 브라우저는 토큰을 메모리에만 보관한다. localStorage·URL·로그·VITE_*나 빌드 파일에 넣지 않는다.
 health와 정적 UI는 공개 가능하지만 업무 정보를 제공하지 않는다.
-현재 단일 사용자 로컬 prototype이며 SSO/RBAC·TLS proxy·운영 인증은 미구현이다.
+이 Bearer 경로는 단일 사용자 로컬 prototype이며 회사 SSO 실패 fallback이 아니다. 운영 SSO의 현장 검증은 별도다.
 
 - GET /api/session: 서버 검토자, access_mode, writable 설정. 기본 HTTP 모드는 읽기 전용 안내.
   이 응답만으로 DB 연결·권한이나 업무 조회 어댑터가 준비됐다고 보지 않는다.
 - GET /api/bundles: offset/limit 페이지, 전체 수.
-- POST /api/receive: 빈 JSON 객체로 다음 메시지 한 건 수동 처리.
+- POST /api/receive: 로컬 토큰 prototype에서 빈 JSON 객체로 다음 메시지 한 건 수동 처리. SSO는 관리자 포함 403이며 운영 수신은 신뢰된 서비스 작업자/CLI가 담당.
 - GET /api/bundles/{bundle_id}: unit_offset/unit_limit, 전체 coverage, 단위 페이지,
   최근 REVIEW_EVENT 50개와 전체 history_total.
 - GET /api/bundles/{bundle_id}/units/{unit_id}/groups: 그룹 페이지와 전체 수.
 - POST /api/bundles/{bundle_id}/reviews:
   {unit_id,conclusion:PASS|FAIL,reason,request_id:UUID,expected_revision:integer}.
-  reviewer는 요청 본문을 받지 않고 서버 설정을 사용한다.
+  reviewer는 요청 본문을 받지 않고 서버 인증 결과를 사용한다. SSO의 새 검토는 안정 user_id를 기록하며 기존 이력은 덮어쓰지 않는다.
 - GET /api/bundles/{bundle_id}/report: 현재 개정의 저장된 불변 Markdown 보고서 다운로드.
 - POST /api/bundles/{bundle_id}/evidence:
   {unit_id,record_ids,reason,request_id:UUID,ttl_seconds}; VWP 작업자가 자동으로 범위/무결성을 검사한다.
@@ -435,6 +452,9 @@ where는 정확한 scalar 일치이고 필수 identity 누락·상충하는 규�
 AI 근거 ID는 입력 표본에 속해야 하고 사용자가 준 규칙의 근거도 같은 scope의 봉인된 VWP 근거여야 한다.
 
 scope는 project/design/stage/tool/tool_version/item_id/parser/rule_version/condition의 정확한 조합이다.
+선택형 `run.scope`가 있으면 canonical 프로젝트·블록 객체도 분류 scope/hash에 포함한다.
+표시 문자열이 같아도 블록 간 규칙·지속 그룹·과거 근거를 재사용하지 않고, scope 없는 과거 결과를 scoped 결과와 섞지 않는다.
+이 보강은 legacy 공통 matcher의 범위 계약이며 workspace V2용 회사 AI job 연결 완료를 뜻하지 않는다.
 rule ID는 scope+identity_fields+where, 지속 group ID는 rule ID+identity로 결정한다. 설명/근거 추가만으로 ID가 바뀌지 않는다.
 규칙 의미/범위가 바뀌면 ID가 바뀌므로 의미 기반 그룹 연속성이나 임의 merge/split을 자동 추정하지 않는다.
 

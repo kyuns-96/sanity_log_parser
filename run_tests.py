@@ -14,6 +14,10 @@ PROFILES = ("quick", "full")
 # complete portal migration replay in full, with their original assertions.
 QUICK_TESTS = (
     "tests.test_auth", "tests.test_db_config", "tests.test_db_single_account", "tests.test_common", "tests.test_parsers",
+    "tests.test_scope_contract", "tests.test_access_store.AccessConfigurationTests", "tests.test_access_api.AccessApiBoundaryTests",
+    "tests.test_access_store.AccessStoreTests.test_top_and_owner_have_sql_scoped_lists_and_exact_bundle_permissions",
+    "tests.test_scoped_dashboard.ScopedDashboardTests.test_admin_starts_without_business_grants_and_can_approve_own_top_request",
+    "tests.test_scoped_dashboard.ScopedDashboardTests.test_response_id_alias_cannot_expose_another_blocks_evidence",
     "tests.test_schema", "tests.test_submission_contracts", "tests.test_integration_contracts",
     "tests.test_mock_runner", "tests.test_test_runner", "oa.test_auth_config", "oa.test_sso",
     "tests.test_sso_identity_migration.SSOIdentityMigrationTests.test_008_checkpoint_runs_one_portal_statement_with_the_exact_original_009_catalog",

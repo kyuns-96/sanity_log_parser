@@ -26,6 +26,8 @@ from common.sanity_db import Database, Queue
 from oa.sanity_exchange import request_evidence, receive_evidence, _validate_response
 from oa.sanity_oa_store import OAStore
 from oa.sanity_cluster_store import ClusterStore, receive_cluster
+from oa.sanity_access import AccessStore, access_lock, administrator_id
+from oa.access_api import create_access_router, require_mutation_request
 
 spec = importlib.util.spec_from_file_location("dashboard_oa_commands", Path(__file__).with_name("main.py"))
 commands = importlib.util.module_from_spec(spec)
@@ -127,8 +129,54 @@ def authenticated(request: Request) -> Actor:
     return request.app.state.authentication.authenticate(context, load_environment())
 
 
-def authorized_actor(actor: Actor = Depends(authenticated)) -> Actor:
-    return require_business_access(actor)
+class ScopedActor(Actor):
+    def __init__(self, actor, access):
+        super().__init__(actor.user_id, actor.reviewer, actor.auth_method)
+        object.__setattr__(self, "access", access)
+
+
+def authorized_actor(request: Request, actor: Actor = Depends(authenticated)):
+    """Keep current grants locked until every route/helper has completed.
+
+    The ordinary READ COMMITTED transaction deliberately takes its snapshot
+    after waiting for a concurrent revoke. Helper connections remain protected
+    by this connection's shared transaction lock.
+    """
+    if actor.auth_method == "local_token":
+        yield require_business_access(actor)
+        return
+    admin = administrator_id(load_environment())
+    if admin is None:
+        require_business_access(actor)  # Preserve the unconfigured SSO barrier.
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        require_mutation_request(request)
+    with Database("oa") as db, db.transaction():
+        db.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        access_lock(db)
+        store = AccessStore(db, admin)
+        store.require_ready()
+        store.require_actor(actor)
+        yield ScopedActor(actor, store)
+
+
+def require_bundle(actor, bundle_id, *, write=False):
+    if isinstance(actor, ScopedActor):
+        return actor.access.require_bundle(actor.user_id, bundle_id, write=write)
+    return None
+
+
+def audit_reviewer(actor):
+    # Stable SSO identity is retained in all new review/clustering events.
+    return actor.user_id if isinstance(actor, ScopedActor) else actor.reviewer
+
+
+def require_evidence(actor, db, request_id, *, write=False):
+    if not isinstance(actor, ScopedActor):
+        return
+    request = Queue(db, "oa_to_vwp").get("request-" + str(request_id))
+    if request is None or request["message_type"] != "EVIDENCE_REQUEST":
+        raise ReviewError("RESOURCE_NOT_FOUND", "Resource is not available")
+    require_bundle(actor, request["bundle_id"], write=write)
 
 
 def summary_only(value):
@@ -150,7 +198,7 @@ def create_app(*, auth_mode: AuthMode | None = None,
     async def review_error(request, exc):
         code = exc.code
         status = (401 if code == "UNAUTHORIZED" else
-                  403 if code in {"ACCOUNT_NOT_LINKED", "ACCOUNT_DISABLED"} else
+                  403 if code in {"ACCOUNT_NOT_LINKED", "ACCOUNT_DISABLED", "FORBIDDEN"} else
                   404 if code.endswith("NOT_FOUND") else
                   503 if code.startswith(("DATABASE_", "DBAAS_", "DASHBOARD_", "AUTH_", "AUTHORIZATION_")) else
                   409 if code in {"REVISION_CONFLICT", "REQUEST_CONFLICT", "REVIEW_BLOCKED", "FAIL_CANNOT_PASS",
@@ -185,22 +233,39 @@ def create_app(*, auth_mode: AuthMode | None = None,
 
     @app.get("/api/session")
     def session(actor=Depends(authenticated)):
-        mode = access_mode(load_environment())
+        settings = load_environment()
+        mode = access_mode(settings)
         direct = mode == "postgresql"
         authorization_ready = actor.auth_method == "local_token"
+        admin, readable, writable = False, authorization_ready, direct and authorization_ready
+        if actor.auth_method == "sso" and administrator_id(settings) is not None:
+            with Database("oa") as db, db.transaction():
+                db.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY")
+                access_lock(db)
+                store = AccessStore(db, administrator_id(settings))
+                store.require_ready()
+                store.require_actor(actor)
+                authorization_ready, admin = True, store.is_admin(actor.user_id)
+                readable = store.can_read_business(actor.user_id)
+                writable = direct and store.can_write_business(actor.user_id)
         return {"user_id": actor.user_id, "reviewer": actor.reviewer, "auth_method": actor.auth_method,
-                "access_mode": mode, "writable": direct and authorization_ready,
+                "access_mode": mode, "writable": writable,
                 "authorization_ready": authorization_ready,
+                "is_admin": admin, "can_read_business": readable,
+                "can_receive": actor.auth_method == "local_token" and direct,
                 "notice": "SSO 사용자 연결 확인 · 프로젝트·블록 권한 연동은 아직 준비되지 않았습니다." if not authorization_ready else
+                          "프로젝트·블록 권한을 요청하고 승인 상태를 확인하세요." if actor.auth_method == "sso" and not readable else
                           "직접 PostgreSQL 검증 모드 · 접속/권한은 데이터 요청 시 검증" if direct else
                           "현재 DBaaS 방식은 임시 읽기 전용입니다. 정식 전체 접근 방식이 필요합니다."}
 
     @app.get("/api/bundles")
     def bundles(offset: Offset = 0, limit: Limit = 20, actor=Depends(authorized_actor)):
+        predicate, params = actor.access.read_predicate(actor.user_id, alias="r") if isinstance(actor, ScopedActor) else ("TRUE", ())
         with Database("oa") as db, db.transaction(readonly=True):
-            total = db.execute("SELECT count(*) AS n FROM {oa} WHERE record_type='RECEIVED_BUNDLE'").fetchone()["n"]
-            rows = db.execute("SELECT bundle_id,created_at FROM {oa} WHERE record_type='RECEIVED_BUNDLE' "
-                              "ORDER BY created_at DESC,record_id DESC LIMIT %s OFFSET %s", (limit, offset)).fetchall()
+            total = db.execute("SELECT count(*) AS n FROM {oa} r WHERE r.record_type='RECEIVED_BUNDLE' AND " + predicate,
+                               params).fetchone()["n"]
+            rows = db.execute("SELECT r.bundle_id,r.created_at FROM {oa} r WHERE r.record_type='RECEIVED_BUNDLE' AND " + predicate +
+                              " ORDER BY r.created_at DESC,r.record_id DESC LIMIT %s OFFSET %s", (*params, limit, offset)).fetchall()
             store, items = OAStore(db), []
             for row in rows:
                 payload, decisions, _, revision = store.load(row["bundle_id"])
@@ -211,6 +276,8 @@ def create_app(*, auth_mode: AuthMode | None = None,
 
     @app.post("/api/receive")
     def receive(body: Command, actor=Depends(authorized_actor)):
+        if isinstance(actor, ScopedActor):
+            raise ReviewError("FORBIDDEN", "Global queue ingestion is a trusted worker responsibility")
         from argparse import Namespace
         result = commands.receive(Namespace(message_id=None, lease_seconds=300))
         if "coverage" in result:
@@ -219,6 +286,15 @@ def create_app(*, auth_mode: AuthMode | None = None,
 
     @app.get("/api/bundles/{bundle_id}")
     def bundle(bundle_id: BundleID, unit_offset: Offset = 0, unit_limit: Limit = 50, actor=Depends(authorized_actor)):
+        canonical_scope = require_bundle(actor, bundle_id)
+        can_write = True
+        if isinstance(actor, ScopedActor):
+            try:
+                require_bundle(actor, bundle_id, write=True)
+            except ReviewError as exc:
+                if exc.code != "FORBIDDEN":
+                    raise
+                can_write = False
         with Database("oa") as db, db.transaction(readonly=True):
             store = OAStore(db)
             payload, decisions, context, revision = store.load(bundle_id)
@@ -235,10 +311,13 @@ def create_app(*, auth_mode: AuthMode | None = None,
             return {"bundle_id": bundle_id, "run": payload["run"], "review_revision": revision,
                     "coverage": summary_only(cov), "units": units, "unit_total": len(payload["review_units"]),
                     "unit_offset": unit_offset, "unit_limit": unit_limit, "history": history, "history_total": revision + 1,
+                    "scope": canonical_scope,
+                    "permissions": {key: can_write for key in ("can_review", "can_cluster", "can_request_evidence", "can_receive_evidence")},
                     "context": {"ai": context.get("ai", {"status": "NOT_CONFIGURED"})}}
 
     @app.get("/api/bundles/{bundle_id}/units/{unit_id}/groups")
     def groups(bundle_id: BundleID, unit_id: ID, offset: Offset = 0, limit: Limit = 20, actor=Depends(authorized_actor)):
+        require_bundle(actor, bundle_id)
         with Database("oa") as db, db.transaction(readonly=True):
             payload, _, _, _ = OAStore(db).load(bundle_id)
             if unit_id not in {u["review_unit_id"] for u in payload["review_units"]}:
@@ -248,24 +327,28 @@ def create_app(*, auth_mode: AuthMode | None = None,
 
     @app.post("/api/bundles/{bundle_id}/reviews")
     def review(bundle_id: BundleID, body: ReviewCommand, actor=Depends(authorized_actor)):
+        require_bundle(actor, bundle_id, write=True)
         with Database("oa") as db, db.transaction():
-            result = OAStore(db).review(bundle_id, body.unit_id, actor.reviewer, body.conclusion,
+            result = OAStore(db).review(bundle_id, body.unit_id, audit_reviewer(actor), body.conclusion,
                                        body.reason, body.request_id, body.expected_revision)
             result["coverage"] = summary_only(result["coverage"])
             return result
 
     @app.get("/api/bundles/{bundle_id}/report")
     def report(bundle_id: BundleID, actor=Depends(authorized_actor)):
+        require_bundle(actor, bundle_id)
         with Database("oa") as db, db.transaction(readonly=True):
             body = OAStore(db).report(bundle_id)
         return PlainTextResponse(body, headers={"Content-Disposition": f'attachment; filename="{bundle_id}.md"'})
 
     @app.post("/api/bundles/{bundle_id}/evidence")
     def evidence(bundle_id: BundleID, body: EvidenceCommand, actor=Depends(authorized_actor)):
+        require_bundle(actor, bundle_id, write=True)
         return request_evidence(bundle_id, body.unit_id, body.record_ids, body.reason, body.request_id, body.ttl_seconds)
 
     @app.get("/api/bundles/{bundle_id}/requests")
     def requests(bundle_id: BundleID, offset: Offset = 0, limit: Limit = 20, actor=Depends(authorized_actor)):
+        require_bundle(actor, bundle_id)
         with Database("oa") as db, db.transaction(readonly=True):
             OAStore(db).root(bundle_id)
             total = db.execute("SELECT count(*) AS n FROM {oa_to_vwp} WHERE bundle_id=%s "
@@ -282,11 +365,14 @@ def create_app(*, auth_mode: AuthMode | None = None,
 
     @app.post("/api/evidence/{request_id}/receive")
     def response_receive(request_id: UUID, body: Command, actor=Depends(authorized_actor)):
+        if isinstance(actor, ScopedActor):
+            require_evidence(actor, actor.access.db, request_id, write=True)
         return receive_evidence(request_id)
 
     @app.get("/api/evidence/{request_id}")
     def response_preview(request_id: UUID, actor=Depends(authorized_actor)):
         with Database("oa") as db, db.transaction(readonly=True):
+            require_evidence(actor, db, request_id)
             response = Queue(db, "vwp_to_oa").get("response-" + str(request_id))
             if response is None:
                 raise ReviewError("EVIDENCE_NOT_FOUND", "No response")
@@ -302,6 +388,7 @@ def create_app(*, auth_mode: AuthMode | None = None,
     def full_record(request_id: UUID, record_id: ID, start: Annotated[int, Query(ge=0)] = 0,
                     length: Annotated[int, Query(ge=1, le=16000)] = 8000, actor=Depends(authorized_actor)):
         with Database("oa") as db, db.transaction(readonly=True):
+            require_evidence(actor, db, request_id)
             response = Queue(db, "vwp_to_oa").get("response-" + str(request_id))
             if response is None or response["status"] != "RECEIVED":
                 raise ReviewError("EVIDENCE_NOT_RECEIVED", "Receive the evidence first")
@@ -315,32 +402,38 @@ def create_app(*, auth_mode: AuthMode | None = None,
 
     @app.get("/api/bundles/{bundle_id}/units/{unit_id}/clustering")
     def cluster_view(bundle_id: BundleID, unit_id: ID, offset: Offset = 0, limit: Limit = 20, actor=Depends(authorized_actor)):
+        require_bundle(actor, bundle_id)
         with Database("oa") as db, db.transaction(readonly=True):
             return ClusterStore(db, bundle_id, unit_id).view(offset, limit)
 
     @app.post("/api/bundles/{bundle_id}/units/{unit_id}/clustering")
     def cluster_request(bundle_id: BundleID, unit_id: ID, body: ClusterCommand, actor=Depends(authorized_actor)):
+        require_bundle(actor, bundle_id, write=True)
         with Database("oa") as db, db.transaction():
-            return ClusterStore(db, bundle_id, unit_id, lock=True).request(**body.model_dump(), reviewer=actor.reviewer)
+            return ClusterStore(db, bundle_id, unit_id, lock=True).request(**body.model_dump(), reviewer=audit_reviewer(actor))
 
     @app.post("/api/bundles/{bundle_id}/units/{unit_id}/clustering/actions")
     def cluster_action(bundle_id: BundleID, unit_id: ID, body: ClusterAction, actor=Depends(authorized_actor)):
+        require_bundle(actor, bundle_id, write=True)
         values = body.model_dump()
         values["jid"] = values.pop("job_id")
         with Database("oa") as db, db.transaction():
-            return ClusterStore(db, bundle_id, unit_id, lock=True).action(**values, reviewer=actor.reviewer)
+            return ClusterStore(db, bundle_id, unit_id, lock=True).action(**values, reviewer=audit_reviewer(actor))
 
     @app.get("/api/bundles/{bundle_id}/units/{unit_id}/clustering/{jid}/members")
     def cluster_members(bundle_id: BundleID, unit_id: ID, jid: ID, offset: Offset = 0, limit: Limit = 20,
                         filter: Literal["all", "unresolved", "candidates"] = "all", group_id: ID | None = None,
                         actor=Depends(authorized_actor)):
+        require_bundle(actor, bundle_id)
         with Database("oa") as db, db.transaction(readonly=True):
             return ClusterStore(db, bundle_id, unit_id).members(jid, offset, limit, filter, group_id)
 
     @app.post("/api/bundles/{bundle_id}/units/{unit_id}/clustering/{jid}/receive")
     def cluster_receive(bundle_id: BundleID, unit_id: ID, jid: ID, body: Command, actor=Depends(authorized_actor)):
+        require_bundle(actor, bundle_id, write=True)
         with Database("oa") as db, db.transaction(readonly=True):
-            if ClusterStore(db, bundle_id, unit_id).get("CLUSTER_JOB", jid) is None:
+            job = ClusterStore(db, bundle_id, unit_id).get("CLUSTER_JOB", jid)
+            if job is None or job["bundle_id"] != bundle_id or job["review_unit_id"] != unit_id:
                 raise ReviewError("CLUSTER_NOT_FOUND", "Unknown classification job")
         count = 0
         for _ in range(20):
@@ -348,6 +441,8 @@ def create_app(*, auth_mode: AuthMode | None = None,
                 break
             count += 1
         return {"status": "RECEIVED" if count else "NO_MESSAGE", "messages": count}
+
+    app.include_router(create_access_router(authenticated))
 
     # Company login/callback/logout routes must precede the root static mount.
     if auth_router is not None:

@@ -33,6 +33,17 @@ def request_evidence(bundle_id, unit_id, record_ids, reason, request_id, ttl_sec
 
 def _validate_response(db, response):
     from oa.sanity_oa_store import OAStore
+    # The path authorizes request-<UUID> before fetching response-<UUID>.
+    # A producer must not put another request's data under that response ID.
+    correlation = response.get("correlation_id")
+    try:
+        canonical_request = request_message_id(correlation.removeprefix("request-")) if isinstance(correlation, str) else None
+    except ReviewError:
+        canonical_request = None
+    if (response.get("message_type") != "EVIDENCE_RESPONSE" or canonical_request is None
+            or correlation != canonical_request
+            or response.get("message_id") != "response-" + canonical_request.removeprefix("request-")):
+        raise ReviewError("INVALID_RESPONSE", "Evidence response request identity differs")
     request = Queue(db, "oa_to_vwp").get(response["correlation_id"])
     if (request is None or request["message_type"] != "EVIDENCE_REQUEST"
             or any(response[key] != request[key] for key in ("project", "run_id", "bundle_id"))):
