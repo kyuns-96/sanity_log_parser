@@ -72,9 +72,11 @@ def records_page(db, header, *, offset=0, limit=50, search='', member_ids=None):
     return {'items':items,'total':total,'offset':offset,'limit':limit,'counts':counts}
 
 
-def submissions(db, user_id, block_id, *, offset=0, limit=25):
+def submissions(db, user_id, block_id, *, offset=0, limit=25, workspace=None):
     from oa.sanity_workspace import WorkspaceStore, record_id
-    WorkspaceStore(db).access(user_id,block_id)
+    workspace = WorkspaceStore(db) if workspace is None else workspace
+    check(workspace.db is db,'AUTHORIZATION_CONFIG')
+    workspace.access(user_id,block_id)
     check(type(offset) is int and offset>=0 and type(limit) is int and 1<=limit<=100,'INVALID_REQUEST')
     total = db.execute("SELECT count(*) AS n FROM {oa} WHERE record_type='WS_SUBMISSION' AND workspace_block_ref=%s",
                        (record_id('WS_BLOCK',block_id),)).fetchone()['n']

@@ -1,4 +1,7 @@
 """Persistent human judgments, confirmed criteria and auditable reference proposals."""
+import re
+
+from common.sanity_clustering import check
 from common.sanity_common import ReviewError, digest
 from common.sanity_db import json_value, lock_key, uuid_value
 from common.sanity_review_advice import ApprovedCriteriaAdvisor, report_facts, validate_advice
@@ -6,13 +9,36 @@ from common.sanity_submission import source_digest
 from oa.sanity_workspace import WorkspaceStore, record_id, utcnow
 
 
+def validate_ai_receipt(metadata, retrieval, cases):
+    """Only trusted worker receipts use this path; browser commands cannot mint one."""
+    check(isinstance(metadata, dict) and metadata.get("model_called") is True
+          and metadata.get("provider") == "OA_OPENAI_COMPATIBLE"
+          and isinstance(metadata.get("model"), str) and metadata["model"]
+          and isinstance(metadata.get("prompt_version"), str) and metadata["prompt_version"]
+          and isinstance(metadata.get("input_sha256"), str)
+          and re.fullmatch(r"[0-9a-f]{64}", metadata["input_sha256"]), "INVALID_AI_RECEIPT")
+    check(isinstance(retrieval, dict) and isinstance(cases, list)
+          and all(isinstance(case, dict) and isinstance(case.get("id"), str) for case in cases)
+          and len({case["id"] for case in cases}) == len(cases), "INVALID_AI_RECEIPT")
+    selected = retrieval.get("selected")
+    check(isinstance(selected, list) and all(isinstance(row, dict) for row in selected)
+          and [row.get("id") for row in selected] == [case["id"] for case in cases]
+          and all(row.get("revision") == case["revision"]
+                  and row.get("source_sha256") == case["source_sha256"]
+                  for row, case in zip(selected, cases)), "INVALID_AI_RECEIPT")
+
+
 class WorkspaceReviewStore:
     max_cases = 1000
     head_kind, event_kind, proposal_kind = "WS_REVIEW", "WS_REVIEW_EVENT", "WS_REVIEW_PROPOSAL"
     report_ref, event_ref = "workspace_review_report_ref", "workspace_review_event_ref"
 
-    def __init__(self, db):
-        self.db, self.ws = db, WorkspaceStore(db)
+    def __init__(self, db, ws=None):
+        self.db, self.ws = db, ws if ws is not None else WorkspaceStore(db)
+
+    @property
+    def ai_case_policy(self):
+        return getattr(self.ws, "case_policy", None) == "OA_RETRIEVAL_V1"
 
     def row(self, kind, key):
         return self.db.execute("SELECT * FROM {oa} WHERE record_type=%s AND workspace_key=%s", (kind, key)).fetchone()
@@ -24,7 +50,7 @@ class WorkspaceReviewStore:
         scope = {key: report.get(key) for key in ("project_id", "block_id", "item_id", "family", "parser", "rule_version", "eco")}
         scope["layout"] = version["layout"]
         return {"report": report, "version": version, "scope": scope, "facts": report_facts(report),
-                "source_sha256": source_digest(report), "can_review": user_id in block["payload"]["owners"],
+                "source_sha256": source_digest(report), "can_review": self.ws.can_write(user_id, block),
                 "ready": bool(report.get("analysis_ready") and report.get("parse_status") == "COMPLETE"
                               and (report.get('source_complete') and report.get('delivery_ready')
                                    if report.get('source_storage')=='PARTS_V2' else report.get("raw_report")))}
@@ -41,6 +67,8 @@ class WorkspaceReviewStore:
         return report_id
 
     def locked_context(self, context, user_id, block_id, version_id, report_id):
+        if self.ai_case_policy:
+            return self.context(user_id, block_id, version_id, report_id, write=True)
         return context
 
     def decision_stale(self, event, context):
@@ -64,6 +92,9 @@ class WorkspaceReviewStore:
         return current, revision
 
     def cases(self, context):
+        if self.ai_case_policy:
+            from oa.sanity_ai_cases import CaseRetriever
+            return CaseRetriever(self.db, self.ws).select(context, stage="REVIEW")["cases"]
         rows = self.db.execute(
             "SELECT e.payload FROM {oa} h JOIN {oa} e ON e.record_id=h." + self.event_ref + " "
             "WHERE h.record_type=%s AND h.workspace_block_ref=%s "
@@ -90,6 +121,14 @@ class WorkspaceReviewStore:
         if (proposal["source_sha256"] != context["source_sha256"] or proposal["review_revision"] != revision
                 or self.decision_stale(proposal, context)):
             return True
+        if proposal.get("case_policy") == "OA_RETRIEVAL_V1":
+            from oa.sanity_ai_cases import CaseRetriever
+            if "criteria_sha256" in proposal:
+                if proposal["criteria_sha256"] != digest(self.current_criteria(context)):
+                    return True
+            resolved = CaseRetriever(self.db, self.ws).resolve_references(
+                context, proposal["references"], stage="REVIEW")
+            return bool(resolved["stale_ids"] or resolved["over_budget_ids"])
         cases = self.cases(context) if cases is None else cases
         if proposal.get("case_catalog_sha256") != digest([case["id"] for case in cases]):
             return True
@@ -151,6 +190,8 @@ class WorkspaceReviewStore:
         # be superseded between validation and commit; PoR writes remain independent.
         self.db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("workspace-review-write"),))
         context = self.locked_context(context, user_id, block_id, version_id, report_id)
+        if conclusion != "DEFER" and not context["ready"]:
+            raise ReviewError("REVIEW_BLOCKED", "Resolve missing or incomplete evidence before a final decision")
         self.db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("workspace-review-request-" + request_id),))
         previous = self.row(self.event_kind, request_id)
         if previous:
@@ -175,6 +216,11 @@ class WorkspaceReviewStore:
                  "proposal_conclusion": proposal["payload"]["conclusion"] if proposal else None,
                  "proposal_agreed": proposal["payload"]["conclusion"] == conclusion if proposal else None,
                  "source_version": context["version"]}
+        if proposal and proposal["payload"].get("case_policy") == "OA_RETRIEVAL_V1":
+            supplied = proposal["payload"]
+            event.update(case_policy="OA_RETRIEVAL_V1", ai_proposal={key: supplied[key] for key in
+                         ("id", "conclusion", "reason", "evidence_ids", "reference_ids", "criterion_ids",
+                          "model_metadata", "retrieval")})
         self.ws.put(self.event_kind, request_id, event, project=event["project_id"], block=block_id)
         if old is None:
             self.ws.put(self.head_kind, self.head_key(report_id), self.metadata(context), project=event["project_id"], block=block_id)

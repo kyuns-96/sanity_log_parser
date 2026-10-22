@@ -90,13 +90,20 @@ class RequestBoundary:
         if scope["path"].startswith("/api/") and scope["method"] == "POST":
             if headers.get(b"content-type", b"").split(b";", 1)[0].strip() != b"application/json":
                 return await JSONResponse({"code": "JSON_REQUIRED"}, 415)(scope, receive, send)
+            # Large partition edits still have explicit bounds. Other business
+            # APIs retain their original small request limit.
+            ceiling = 65536
+            if scope["path"].startswith("/api/workbench/"):
+                ceiling = (16777216 if scope["path"].endswith("/clustering/operations") else
+                           4194304 if "/clustering" in scope["path"] else
+                           262144 if scope["path"].endswith("/rationale") else 65536)
             chunks, size = [], 0
             while True:
                 message = await receive()
                 if message["type"] == "http.disconnect":
                     return
                 size += len(message.get("body", b""))
-                if size > 65536:
+                if size > ceiling:
                     return await JSONResponse({"code": "REQUEST_TOO_LARGE"}, 413)(scope, receive, send)
                 chunks.append(message.get("body", b""))
                 if not message.get("more_body", False):
@@ -200,10 +207,15 @@ def create_app(*, auth_mode: AuthMode | None = None,
         status = (401 if code == "UNAUTHORIZED" else
                   403 if code in {"ACCOUNT_NOT_LINKED", "ACCOUNT_DISABLED", "FORBIDDEN"} else
                   404 if code.endswith("NOT_FOUND") else
+                  413 if code in {"AI_INPUT_LIMIT", "AI_OUTPUT_LIMIT", "CLUSTER_LIMIT", "REPORT_LIMIT", "SOURCE_CONTEXT_LIMIT"} else
+                  503 if code in {"AI_NOT_CONFIGURED", "AI_CONFIG", "INVALID_AI_CRITERIA", "WORKSPACE_NOT_CONFIGURED"} else
                   503 if code.startswith(("DATABASE_", "DBAAS_", "DASHBOARD_", "AUTH_", "AUTHORIZATION_")) else
                   409 if code in {"REVISION_CONFLICT", "REQUEST_CONFLICT", "REVIEW_BLOCKED", "FAIL_CANNOT_PASS",
                                  "STATE_CORRUPT", "STATE_CONFLICT", "EVIDENCE_NOT_RECEIVED", "LEASE_LOST",
-                                 "CLUSTER_NOT_READY", "CLUSTER_BLOCKED", "STALE_REFERENCE", "CANDIDATES_UNRESOLVED"} else 400)
+                                 "CLUSTER_NOT_READY", "CLUSTER_BLOCKED", "STALE_REFERENCE", "CANDIDATES_UNRESOLVED",
+                                 "POR_UNCHANGED", "PROPOSAL_STALE", "CLUSTER_NOT_CONFIRMED", "CLUSTER_TASK_ACTIVE",
+                                 "RATIONALE_REQUIRED", "RATIONALE_STALE", "SOURCE_FILE_ON_VWP", "AI_BUSY",
+                                 "AI_JOB_ACTIVE", "AI_INPUT_STALE", "AI_CASES_STALE", "AI_CRITERIA_STALE", "AI_CONFIG_CHANGED"} else 400)
         return JSONResponse({"code": code}, status, headers={"Cache-Control": "no-store"})
 
     @app.exception_handler(RequestValidationError)
@@ -443,6 +455,8 @@ def create_app(*, auth_mode: AuthMode | None = None,
         return {"status": "RECEIVED" if count else "NO_MESSAGE", "messages": count}
 
     app.include_router(create_access_router(authenticated))
+    from oa.ai_workbench_api import create_workbench_router
+    app.include_router(create_workbench_router(authorized_actor))
 
     # Company login/callback/logout routes must precede the root static mount.
     if auth_router is not None:

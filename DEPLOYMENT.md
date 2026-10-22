@@ -1,5 +1,7 @@
 # 서버별 소스 구조와 실행
 
+[AI 판단 설계](AI_DECISION_DESIGN.md)의 **최초 AI 분류·그룹 판정과 확정 근거 검색·피드백**이 최우선 목표다. 이번 모델 연동은 사내 OA OpenAI 호환 API를 우선 사용한다. OA 모델 실행·사례 검색·직접 근거 판정·운영 workbench의 공통 경로는 [OA 실행 계약](oa/AI_RUNTIME.md)을 따른다. 전체 입력이 설정 한도에 들어가는 첫 판단 순환을 제공하며, 대량 모델 분할과 사내 실제 품질 검증은 별도다. 새 AI용 HTTP 서버는 필수가 아니고 OA 배포 환경의 별도 관리 worker가 실행한다.
+
 각 서버는 이 Git 저장소를 사용한다. 소스는 서버별 디렉터리로 나누고, 공통 계약은 `common/` 한 곳에서 관리한다. 모든 Python 명령은 **저장소 루트**에서 실행한다. 디렉터리를 다른 서버 폴더 안에 복사하거나 공통 파일을 중복 관리하지 않는다.
 
 ## 1. 서버와 코드 위치
@@ -7,8 +9,8 @@
 | 서버 / 개발 AI | 실행 코드 | 사내 구현 위치 | DB / 설정 예제 |
 |---|---|---|---|
 | VWP 원천 수집 | `vwp/` | `vwp/integration/` — plan·원천 SDK | 앱 DB·모델 계정 없음 |
-| VWP-bridge | `vwp_bridge/` | `vwp_bridge/integration/` — item parser·분류/판정 SDK | VWP 제한 로그인 / [예제](vwp_bridge/.env.example) |
-| OA | `oa/`, `oa/dashboard/` | `oa/integration/` — SSO·사용자 조회 SDK | OA 제한 로그인 / [예제](oa/.env.example) |
+| VWP-bridge | `vwp_bridge/` | item parser·submission, 기존 VWP SDK는 해당 실행 경로 유지 시 사용 | VWP 제한 로그인 / [예제](vwp_bridge/.env.example) |
+| OA | `oa/`, `oa/dashboard/` | SSO·source 허용 어댑터, OA AI private 설정·승인 기준 catalog·현장 평가 | OA 제한 로그인 / [예제](oa/.env.example). 모델 설정·worker는 [AI 실행 계약](oa/AI_RUNTIME.md) |
 | 공통 | `common/` | 사내 AI는 읽기 전용 | 설정·DB·전송 계약·추상 타입·순수 검증 |
 | 개발 시험 | `devtools/`, `tools/`, `tests/` | 설계 담당 Codex 관리 | 합성 report·seed·외부 모델 mock·QA |
 | DB 관리 | `db/` | 사용자/DBA 관리 | 기존 SQL·form·권한·접속 인계 |
@@ -60,14 +62,14 @@ VWP-bridge/OA는 같은 논리 DB·스키마를 기본적으로 서로 다른 �
 
 ### VWP-bridge
 
-[담당 AI 지시문](vwp_bridge/INTERNAL_AI_TASK.md)을 읽는다. 회사 parser 등록은 `vwp_bridge/integration/corporate_parsers.py`, 분류/판정 모델은 같은 폴더의 `corporate_clustering.py`, `corporate_review.py`에 구현한다.
+[담당 AI 지시문](vwp_bridge/INTERNAL_AI_TASK.md)을 읽는다. 회사 parser 등록은 `vwp_bridge/integration/corporate_parsers.py`다. 같은 폴더의 `corporate_clustering.py`, `corporate_review.py`는 기존 VWP 모델 경로를 사용할 때의 어댑터이며 OA 모델용 파일이 아니다. 전체 로그·원본 위치·조건을 DB로 전달하는 준비를 우선한다.
 
 ```bash
 .venv/bin/python -m vwp_bridge.corporate_analyze analyze --input SNAPSHOT_DIR/run.json
 .venv/bin/python -m vwp_bridge.main work --interval 2
 ```
 
-첫 명령은 회사 registry를 명시적으로 주입한다. 빈 registry와 미구현 회사 SDK를 실제 지원으로 취급하지 않는다. 현재 worker는 기존 legacy 분류/추가 근거 계약용이며, 새 workspace `CORPORATE` 운영 job 연결은 COMMON 후속 작업이다.
+첫 명령은 회사 registry를 명시적으로 주입한다. 빈 registry와 미구현 회사 SDK를 실제 지원으로 취급하지 않는다. 위 worker는 기존 legacy 분류/추가 근거 계약용이다. OA 기본 AI 분류·판정은 OA의 `oa.ai_worker`가 실행하며 VWP SDK `CORPORATE` 경로가 자동 연결되는 것은 아니다.
 
 ### OA
 
@@ -87,11 +89,23 @@ npm --prefix oa/dashboard run build
 
 UI 소스와 빌드 출력은 `oa/dashboard/`, `oa/dashboard/dist/`다. 빌드 출력은 Git 제외 대상이므로 Git 소스 업데이트 후 승인된 빌드 환경에서 생성해야 한다. 회사 SDK가 미구현이면 인증이 실패하고, SSO 인증이 되어도 업무 권한이 연결되기 전에는 `AUTHORIZATION_NOT_IMPLEMENTED`가 유지된다. `/workspace` 합성 시험은 [별도 안내](oa/WORKSPACE.md)를 따른다.
 
+OA AI 실행은 위 기존 `oa.main work`와 별도다. 같은 OA release·private 환경으로 [AI 실행 계약](oa/AI_RUNTIME.md)의 작업자를 관리 프로세스로 실행한다.
+
+```bash
+# 한 번 처리하거나, 아래 주기 실행 명령 중 하나 사용
+.venv/bin/python -m oa.ai_worker --once
+.venv/bin/python -m oa.ai_worker --interval 2
+```
+
+`SANITY_OA_AI_*`는 root private `.env` 또는 프로세스 환경에서 읽는다. 승인된 기준 파일은 `SANITY_OA_AI_CRITERIA_FILE`의 절대 경로로 지정한다. 웹과 worker에 같은 설정·release를 사용하고 모델 비밀을 브라우저에 전달하지 않는다. 기존 `WS_CONFIG` namespace `oa-ai-v1`에 작업 이력을 기록하며 초기 DDL을 반복하지 않는다. API 호출 동안 DB 잠금/트랜잭션을 유지하지 않고 `RUNNING` 결과 불명은 자동 재호출하지 않는다.
+
+운영 검토는 `/?page=workbench`·`/api/workbench/*`에서 같은 SSO와 운영 프로젝트/블록 권한을 사용한다. 기존 합성 `/workspace`를 운영에 마운트하지 않는다. 실제 모델/원천 어댑터·회사 설정·배포 검증과 공통 코드 제공을 구분한다.
+
 ## 4. 세 사내 AI에게 전달할 문서
 
 각 AI에게 루트 [AGENTS.md](AGENTS.md), [작업 가이드](INTERNAL_AI_GUIDE.md), [통합 인계](INTERNAL_AI_HANDOFF.md)와 **자기 역할의 `AGENTS.md`·`INTERNAL_AI_TASK.md`**를 전달한다. 세 역할의 회사 어댑터가 물리적으로 분리되어도 수정 허용 범위는 기존 가이드 그대로다. 공통 코드·SQL·UI·기존 테스트 변경과 디버깅은 설계 담당 Codex가 맡는다.
 
-소스 정리는 회사 SDK·운영 DB·SSO/RBAC·신규 workspace job의 연동 완료를 뜻하지 않는다. 실제 원문과 접속 사실은 사내에서 검증하며, 예상 밖 오류는 비식별 문의와 `WAITING_FOR_CODEX` 상태로 인계한다.
+소스 정리는 회사 SDK·운영 DB·SSO/RBAC·OA AI의 실제 모델 연결·판단 품질 검증 완료를 뜻하지 않는다. 실제 원문과 접속 사실은 사내에서 검증하며, 예상 밖 오류는 비식별 문의와 `WAITING_FOR_CODEX` 상태로 인계한다.
 
 ## 5. 사용자 제출 명령과 데이터 배치
 

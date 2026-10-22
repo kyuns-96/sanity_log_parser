@@ -5,12 +5,21 @@ from common.sanity_submission import check
 
 
 def require_schema(db):
-    value = db.conn.execute("SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid "
+    expected = {
+        'sanity_vwp_data': {'sanity_vwp_submission_parent_v3'},
+        'sanity_oa_data': {'sanity_oa_workspace_scope_v6', 'sanity_oa_workspace_scope_v7'},
+        'sanity_vwp_to_oa': {'sanity_vwp_message_scope_v3'},
+        'sanity_oa_to_vwp': {'sanity_oa_message_scope_v3'},
+    }
+    # Migration 009 replaces the OA scope constraint with v7 to include strict
+    # SSO identities; its submission constraints remain in force. Match each
+    # validated constraint to its own table, not an aggregate name count.
+    rows = db.conn.execute("SELECT t.relname,c.conname FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid "
         "JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=%s AND c.convalidated "
-        "AND c.conname=ANY(%s)", (db.schema, ['sanity_vwp_submission_parent_v3','sanity_oa_workspace_scope_v6',
-                                          'sanity_vwp_message_scope_v3','sanity_oa_message_scope_v3'])).fetchone()
-    count = next(iter(value.values())) if isinstance(value, dict) else value[0]
-    check(count == 4, "SUBMISSION_SCHEMA_REQUIRED", "DBA migration 008 is required")
+        "AND c.conname=ANY(%s)", (db.schema, sorted(set().union(*expected.values())))).fetchall()
+    present = {(row['relname'], row['conname']) if isinstance(row, dict) else tuple(row) for row in rows}
+    check(all(any((table, name) in present for name in names) for table, names in expected.items()),
+          "SUBMISSION_SCHEMA_REQUIRED", "DBA migration 008 or compatible 009 is required")
 
 
 class SubmissionStore:

@@ -2,6 +2,8 @@
 
 너는 **VWP 원천 입력 담당 개발 AI**다. 이 문서의 VWP는 `vwp/`의 수집 단계를 뜻한다. 운영 중 report를 분석하는 모델이나 VWP-bridge 담당 개발 AI와 구분한다.
 
+[AI 판단 설계](../AI_DECISION_DESIGN.md)를 먼저 읽는다. 최우선 목표는 AI 최초 분류·그룹 판정과 사람 확정 근거의 다음 판단 활용이다. 이번 모델 연동은 OA OpenAI 호환 API를 우선 사용한다. VWP 원천 담당은 이 판단에 필요한 전체 로그·실행 조건·점검 기준·정답/반례를 누락 없이 준비하며, 수집 성공만으로 AI 기능 완료를 보고하지 않는다.
+
 VWP 수집 코드는 `vwp/`, 회사 구현은 `vwp/integration/`에 있다. Git 저장소 루트에서 실행하며, 공통 계약은 `common/`을 사용한다. [서버별 실행](../DEPLOYMENT.md)을 따른다. 이 단계에는 앱 DB·모델 설정이 없다.
 
 ## 1. 먼저 읽을 문서
@@ -33,6 +35,8 @@ Q1 이후에는 [분산 수집·PRE/POST 설계](SOURCE_COLLECTION_DESIGN.md)도
 4. V2는 `common.sanity_submission.validate_plan`으로 검증하고 공통 CLI에 전달한다. CLI가 byte 동일 snapshot/해시·명시적 제출 확인·원자 인계를 수행한다. 기존 현장 launcher를 유지할 때의 `get_plan()`은 schema 1과 기존 `vwp.main.validate_plan`/collector를 그대로 사용한다. 두 wire schema를 혼합하지 않는다.
 5. project/block 안정 키, NET_VER·전체 REVISION·PRE/POST·ECO, PRE 연결, **실제 재검사를 구별하고 다른 PC 재전달에도 보존하는 실행 ID와 권위 있는 정수 순서**를 확인한다. 실제 source별 tool/version·stage를 V2 필드에 대응한다. GCA 공통 stage는 `sanity`이며 버전 메타데이터를 condition에 숨기지 않는다. 불명확한 의미/순서는 `FACTS_REQUIRED`다.
 6. VWP-bridge 담당자에게 item별 실제 형식/도구 버전, 종료·건수·명시적 0건 의미, 비교 방향·단위·임계값·identity 출처와 비공개 정답 사례를 현장 승인 절차로 인계한다. 실제 parser 코드는 VWP-bridge 담당자가 작성한다.
+
+7. OA 담당자에게 사내에서 확인된 item별 점검 기준·조건·예외·정답/반례와 사람의 분류/판정 정정 사례를 전달한다. 원본·실행/버전 정보를 보존해 첫 판단의 직접 근거와 다음 판단의 사례 검색에 사용하게 한다. 공유는 사내 승인 경로로 하고 Codex에게는 합성 예제·비식별 계약만 전달한다.
 
 수집 snapshot은 **VWP 영역 안에서 VWP-bridge가 사용하는 입력**이다. OA로 report/snapshot 파일을 직접 복사하거나 새로운 전송 채널을 만들지 않는다. 평균 10,000건·100,000건 이상은 한 item report 안의 로그/위반 항목 수이며 파일 수가 아니다.
 
@@ -66,4 +70,4 @@ python3 -m unittest discover -s vwp/integration/company_plan -p 'test_*.py' -v
 
 ## 7. 그대로 전달할 시작 명령
 
-> 너는 VWP 원천 입력 담당이다. AGENTS.md와 INTERNAL_AI_GUIDE.md를 전체 읽고 vwp/INTERNAL_AI_TASK.md와 vwp/SUBMISSION.md를 수행하라. INT-02의 corporate_plan.py/get_plan, corporate_submission.py의 허용 입력·신원·권한·승인 메서드/명시적 factory와 company_plan/만 구현하라. INT-06의 실행 ID/순서·버전·item/report 원천 대응과 비공개 정답 자료를 준비하라. DB 계정은 사용하지 않는다. 파서와 모델 SDK 코드는 VWP-bridge 담당자에게 맡기고 공통 CLI·collector·DB·worker·UI·기존 테스트를 수정하지 말라. 예상 밖 오류는 수정/재시도를 멈추고 비식별 문의와 WAITING_FOR_CODEX 상태를 남겨라. 완료 시 plan/사내 검증 결과와 다음 담당자에게 넘길 자료를 보고하라.
+> 너는 VWP 원천 입력 담당이다. AI_DECISION_DESIGN.md, AGENTS.md, INTERNAL_AI_GUIDE.md 전체와 vwp/INTERNAL_AI_TASK.md, vwp/SUBMISSION.md를 읽어라. AI 최초 분류·그룹 판정과 사람 확정 근거의 다음 판단 활용이 최우선 목표다. INT-02의 corporate_plan/get_plan, corporate_submission의 허용 입력·신원·권한·승인 메서드/명시적 factory와 company_plan/만 구현하라. 전체 로그·실행 조건·원천 ID/순서·점검 기준·정답/반례를 사내에서 확인해 준비하라. 파서는 VWP-bridge, OA 모델 API 계약은 OA 담당자에게 인계하라. 앱 DB·모델 계정을 사용하지 않고 공통 CLI·collector·DB·worker·UI·기존 테스트를 수정하지 말라. 예상 밖 오류는 WAITING_FOR_CODEX로 문의하고 수집 성공과 실제 AI 판단 순환 완료를 구분해 보고하라.

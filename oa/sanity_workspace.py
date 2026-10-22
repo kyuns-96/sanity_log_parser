@@ -118,6 +118,10 @@ class WorkspaceStore:
             raise ReviewError("STATE_CORRUPT", "Workspace scope mismatch")
         return block, project
 
+    def can_write(self, user_id, block):
+        self.access(user_id, block["workspace_key"])
+        return user_id in block["payload"]["owners"]
+
     def version(self, user_id, block_id, version_id):
         block, project = self.access(user_id, block_id)
         version = self.get("WS_VERSION", version_id)
@@ -174,7 +178,7 @@ class WorkspaceStore:
                     "AND " + CURRENT_SOURCES_SQL + " GROUP BY payload->>'check_status'", (block["record_id"], record_id("WS_VERSION", report_version["id"]) if report_version else None)).fetchall()
                 counts = {row["check_status"]: row["count"] for row in reports}
                 blocks.append({**value, "owners": [people[uid] for uid in value["owners"]],
-                               "can_assign_por": user_id in value["owners"], "por": por, "report_version": report_version,
+                               "can_assign_por": self.can_write(user_id, block), "por": por, "report_version": report_version,
                                "counts": counts, "total": sum(counts.values())})
             if blocks:
                 projects.append({**data, "tops": [people[uid] for uid in data["tops"]], "blocks": blocks})
@@ -185,7 +189,7 @@ class WorkspaceStore:
         rows = self.db.execute("SELECT * FROM {oa} WHERE record_type='WS_VERSION' AND workspace_block_ref=%s "
                                "ORDER BY payload->>'net_ver' DESC,payload->>'layout' DESC", (block["record_id"],)).fetchall()
         return {"items": [self.version_ecos(row) for row in rows], "por": self.por(block_id),
-                "can_assign_por": user_id in block["payload"]["owners"]}
+                "can_assign_por": self.can_write(user_id, block)}
 
     def reports(self, user_id, block_id, version_id, *, eco=None, item_id=None, family=None, status=None, search="", offset=0, limit=25, include_history=False):
         version = self.version(user_id, block_id, version_id)

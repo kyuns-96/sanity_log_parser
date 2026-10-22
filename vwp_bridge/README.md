@@ -1,5 +1,7 @@
 # VWP bridge — PostgreSQL
 
+[AI 판단 설계](../AI_DECISION_DESIGN.md)의 **AI 초기 분류·그룹 판정과 확정 근거의 다음 판단 활용**이 최우선 제품 목표입니다. 이번 모델 연동은 OA API를 우선 사용합니다. bridge는 판단 입력인 전체 로그·실행 조건·원본 위치·점검 근거를 검증해 DB로 전달합니다. 아래 기존 VWP 모델/worker가 OA 판단 연결의 선행 조건은 아닙니다.
+
 VWP-bridge의 파서·근거·모델·worker는 이 디렉터리, 회사 구현은 `integration/`에 있습니다. [담당 AI 지시문](INTERNAL_AI_TASK.md), [서버별 소스·실행 안내](../DEPLOYMENT.md), [DB 연결 인계](../db/CONNECTION_HANDOFF.md)를 따릅니다. 저장소 루트에서 `python -m vwp_bridge.main`으로 실행합니다.
 
 Docker 이미지 빌드·비공개 설정·CA/분석 입력 마운트와 worker 실행은 [Docker 안내](docker/README.md)를 따릅니다.

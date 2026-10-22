@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import re
@@ -17,6 +18,7 @@ from common.sanity_submission import (HEX, PART_BYTES, PART_RECORDS, PROTOCOL, S
     message_id, scope_digest, source_execution, source_unit, source_version, validate_packet, validate_plan)
 from common.sanity_submission_store import require_schema
 from oa.sanity_workspace import WorkspaceStore, record_id
+from oa.sanity_production_workspace import ProductionWorkspaceStore
 
 
 def validate_record(record):
@@ -40,10 +42,24 @@ def validate_record(record):
 
 
 class SourceReceiver:
-    def __init__(self, db, identity):
+    def __init__(self, db, identity, *, workspace=None):
         check(db.side=='oa','FORBIDDEN')
         require_schema(db)
-        self.db, self.ws, self.identity = db, WorkspaceStore(db), identity
+        self.db, self.ws, self.identity = db, WorkspaceStore(db) if workspace is None else workspace, identity
+        check(self.ws.db is db,'AUTHORIZATION_CONFIG')
+
+    @contextmanager
+    def transaction(self):
+        with self.db.transaction():
+            if isinstance(self.ws, ProductionWorkspaceStore):
+                from oa.sanity_access import AccessStore, access_lock
+                self.db.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
+                access_lock(self.db)
+                # A receiver lives across many polls; its permission snapshot
+                # must not outlive the transaction that protects that snapshot.
+                self.ws = ProductionWorkspaceStore(self.db,
+                    AccessStore(self.db,self.ws.authorization.administrator_id))
+            yield
 
     def existing(self, kind, key):
         return self.db.execute('SELECT * FROM {oa} WHERE record_type=%s AND workspace_key=%s',(kind,key)).fetchone()
@@ -206,7 +222,8 @@ class SourceReceiver:
                     'version':value['version_id'],'tab':'reports'}
                 if value['source']['eco'] is not None:
                     params['eco'] = value['source']['eco']
-                link = '/workspace?'+urlencode(params)
+                link = ('/?'+urlencode({'page':'workbench',**params})
+                        if isinstance(self.ws,ProductionWorkspaceStore) else '/workspace?'+urlencode(params))
                 if link not in links:
                     links.append(link)
         receipt = self.receipt(packet,'OA_STORED',sorted(blockers),links)
@@ -272,7 +289,7 @@ class SourceReceiver:
                   'SOURCE_SCOPE_MISMATCH')
             SecretGuard().ensure_public(packet)
             trusted = True
-            with self.db.transaction():
+            with self.transaction():
                 self.db.execute('SELECT pg_advisory_xact_lock(%s)',(lock_key('oa-submission-'+packet['submission_id']),))
                 self.authorize(packet)
                 row = self.submission(packet)
@@ -302,7 +319,7 @@ class SourceReceiver:
             code = error.code if isinstance(error,ReviewError) else 'INVALID_SOURCE_MESSAGE'
             if code=='LEASE_LOST':
                 raise
-            with self.db.transaction():
+            with self.transaction():
                 if trusted:
                     row = self.existing('WS_SUBMISSION',packet['submission_id'])
                     if not row:
@@ -322,8 +339,11 @@ def main(argv=None):
     try:
         from oa.integration.corporate_submission import CorporateSourceIdentity
         from common.sanity_workers import poll
+        from common.sanity_config import load_environment
+        from oa.sanity_access import AccessStore, administrator_id
         with Database('oa') as db:
-            receiver = SourceReceiver(db,CorporateSourceIdentity())
+            access = AccessStore(db,administrator_id(load_environment()))
+            receiver = SourceReceiver(db,CorporateSourceIdentity(),workspace=ProductionWorkspaceStore(db,access))
             print(poll(receiver.receive_one,args.once,args.interval))
         return 0
     except ReviewError as exc:

@@ -1,20 +1,51 @@
 # 프로토타입 데이터 계약 — PostgreSQL
 
+제품의 최우선 목표와 모델 실행 방향은 [AI 판단 설계](AI_DECISION_DESIGN.md)를 따른다. **AI 최초 분류·그룹 판정 → 사람 수정·확정 근거 축적 → 관련 사례 검색·다음 AI 판단 활용**이 필수 흐름이며 이번 연동은 사내 OA OpenAI 호환 API를 우선한다. 이 파일은 현재 직렬화 계약을 설명한다. OA 공통 모델 호출·불변 job·현재 확정 사례 검색·직접 근거 판정 V2와 운영 SSO workbench를 제공한다. 실제 사내 API·판단 품질과 대량 모델 분할/통합은 별도 검증/구현 대상이다.
+
 현재 실행 계약은 같은 PostgreSQL DB의 4개 테이블이다. SQLite와 브리지 간 직접 통신/파일 복사는 사용하지 않는다.
 Python 3.10 이상, 직접 모드는 psycopg2, DBaaS 접속은 HTTPX/python-dotenv를 사용한다. DB 신청은 [db/README.md](db/README.md),
 환경 변수·배포 파일·실행 명령은 [README.md](README.md)를 따른다. Jira 조회·게시·시뮬레이터는 폐지했다.
-OA는 React·shadcn 대시보드와 인증된 로컬 FastAPI를 사용한다. VWP AI 어댑터의 기본 설정은 disabled다. SSO 인증·사용자 연결 추상 인터페이스와 [운영 Welcome·관리·legacy 범위 권한](oa/ACCESS_MANAGEMENT.md)을 제공한다. 실제 회사 어댑터·배포 검증과 V2/PoR의 운영 SSO 연결은 별도다.
+OA는 React·shadcn 대시보드와 인증된 로컬 FastAPI를 사용한다. VWP AI 어댑터의 기본 설정은 disabled다. SSO 인증·사용자 연결 추상 인터페이스와 [운영 Welcome·관리·legacy 범위 권한](oa/ACCESS_MANAGEMENT.md)을 제공한다. V2 source 수신과 버전/PoR·검토의 운영 SSO 권한 연결도 제공한다. 실제 회사 어댑터·배포 검증은 별도다.
 
 VWP AI의 API·CLI 호출 가능 여부는 사용자에게 확인했다. AI clustering·사람 피드백·지속 그룹·evidence 추가의 목표 계약은
 [요구사항 14절](requirement.md#ai-clustering)에 정리되어 있으며, 이 파일은 현재 구현된 프로토콜을 설명한다.
 새 AI 작업/메시지·분류 개정의 DB 기반은 `db/004_clustering.sql`로 추가한다. 기존 신청 form과 `002`·`003`은 유지한다.
-작업자·분류 개정·분할 전송 API와 화면을 연결했다. OA는 검토 화면이고 AI 분석은 VWP에서만 수행한다.
+기존 legacy 작업자·분류 개정·분할 전송 API와 화면을 연결했다. 이 경로는 VWP에서 모델을 호출한다. 새 OA 모델 실행은 OA의 로그·관련 확정 사례 조회 → 자기 모델 API → 근거/개정 검증·DB 저장으로 연결했다. 별도 AI용 HTTP 서버 없이 OA 작업자를 실행하며 전체 입력이 설정한 모델 한도 안에 들어가는 첫 순환을 지원한다.
 실제 사내 API/DB 호환성과 report 사례는 사용자 제공 후 검증한다.
 
 프로젝트·사용자 배정·블록별 버전·PoR의 목표 요구사항은 [15절 명세](requirement.md#dashboard-domain-spec)를 따른다.
 OA 관리 API·DB 레코드와 VWP의 NET_VER/REVISION/ECO를 받는 별도 V2 source 전송·workspace import를 제공한다. 실제 회사 원천/신원·승인 SDK·운영 DB는 미연결이다. [분산 수집 V2 설계](vwp/SOURCE_COLLECTION_DESIGN.md), 실행 가능한 타입/validator와 설정은 [제출 실행 안내](vwp/SUBMISSION.md)를 따른다.
 
-운영은 `/`·`/api/*`이고 `/workspace`·`/workspace/api/*`는 운영에 마운트하지 않는다. 아래 workspace API는 독립 합성 환경의 계약이며 운영 SSO의 버전/PoR API로 간주하지 않는다.
+운영은 `/`·`/api/*`이고 workbench는 `/?page=workbench`·`/api/workbench/*`를 사용한다. `/workspace`·`/workspace/api/*`는 운영에 마운트하지 않는다. 아래에서 `/workspace/api`로 명시한 기존 계약은 독립 합성 환경이며 운영 인증 경로와 구분한다.
+
+## 운영 OA AI 작업과 직접 근거 계약
+
+[OA AI 실행 안내](oa/AI_RUNTIME.md)의 OpenAI 호환 호출은 전체 report의 분류와 현재 확정 그룹 전체의 판정을 처리한다. 모델 설정은 서버의 `SANITY_OA_AI_*`, 실행은 `oa.ai_worker`다. 웹 요청에서 모델을 직접 호출하거나 브라우저가 모델 접속값을 지정하지 않는다.
+
+운영 API prefix는 `/api/workbench`, report 경로는 `/blocks/{block}/versions/{version}/reports/{report}`다. 기존 `authorized_actor`의 SSO/현재 권한·변경 요청 검사를 적용하고 합성 session/user 저장을 사용하지 않는다.
+
+| API | 요청/응답 |
+|---|---|
+| `GET /session` | 현재 SSO `user`, 빈 `csrf`/`expires_at`, `environment=PRODUCTION_SSO` |
+| `GET /overview`, `/blocks/{block}/versions`, `/blocks/{block}/versions/{version}/reports` | 승인된 범위의 프로젝트·버전·ECO·검사 목록 |
+| `GET/POST /blocks/{block}/por` | 현재 PoR 조회 / `version_id`, `expected_revision`, UUID `request_id`, `reason`으로 명시적 지정 |
+| `GET .../workbench`, `.../clustering/groups`, `.../clustering/records` | 현재 개정과 페이지/이력 범위를 고정한 검토 자료 |
+| `GET/POST .../clustering/ai` | capability/job 조회 / `expected_revision`, UUID `request_id`로 등록(202) |
+| `GET/POST .../groups/{group}/review/ai` | capability/job 조회 / 판정 `expected_revision`, `expected_cluster_revision`, UUID `request_id`로 등록(202) |
+| `POST .../clustering`, `.../clustering/operations`, `.../groups/{group}/rationale` | 사람의 수정·근거 검토·분류 확정 |
+| `GET/POST .../groups/{group}/review` | 현재 제안/판정/이력 조회와 사람 판정 저장 |
+
+AI 요청은 actor·모델·기준·endpoint를 본문에서 받지 않는다. 사람 판정은 `GroupReviewChange`, 분류/근거 편집은 기존 strict body 계약을 사용한다. 운영에는 synthetic login, `CRITERIA` proposal/task, 보고서 전체 `/review`를 노출하지 않는다. V2 원본 `/source` 다운로드는 `SOURCE_FILE_ON_VWP`이며 추출 로그는 OA에서 조회한다.
+
+OA job은 기존 `sanity_oa_data`의 `WS_CONFIG`에 namespace `oa-ai-v1`의 append-only 이벤트로 저장한다. 물리 row의 `state={}`, `version=0`, 생성/수정 시각 불변을 유지하고 논리 상태는 payload에 기록한다. `PENDING → RUNNING → RESULT_READY → COMPLETED`와 `FAILED/STALE/UNKNOWN/CANCELLED`를 구분한다. 모델 호출 동안 DB 트랜잭션/권한 잠금을 유지하지 않으며 기한이 지난 RUNNING/불명확한 호출을 자동 재호출하지 않는다. 저장된 RESULT_READY만 모델 재호출 없이 재검증·반영한다.
+
+최종 분류는 기존 `WS_CLUSTER_EVENT`, 판정 제안은 `WS_GROUP_REVIEW_PROPOSAL`에 저장하며 원본/버전/분류 FK를 유지한다. command·원본/개정·선정 사례·점검 기준·모델/prompt를 고정하고 적용 직전 현재 권한과 유효성을 다시 검사한다. 이번 범위에 새 물리 테이블·DDL·GRANT는 없다. 누적 queue/index 성능은 후속 검토 대상이다.
+
+사례 검색은 현재 head의 유효한 사람 확정 사례를 단어/한글 n-gram으로 선별한다. `reusable=false`도 후보이며 자동 규칙 적용 승인과 구분한다. 프로젝트/블록/item/family/parser/규칙 버전/layout은 제한하고 ECO 차이는 모델 입력에 보존한다. 다른 버전은 기존 명시적 `compatible_versions` 승인이 필요하다. 미확정/철회/정정 전·자기 정답·순환 의존을 제외한다. 선정 사례를 완전한 단위로 제공하고 검색/제외와 실제 제공/인용을 기록한다. 이 lexical 선정은 모델의 의미 판단이나 품질 검증을 대신하지 않는다.
+
+분류 출력은 기존 `ClusteringProposalV2`와 전체 ID 단일 배정·그룹별 근거 검사를 사용한다. 그룹 판정 출력은 [validate_review_v2](common/sanity_ai_contracts.py)가 정확히 `schema_version=2`, `conclusion`, `reason`, `evidence_ids`, `reference_ids`, `criterion_ids`를 검증한다. PASS/FAIL은 현재 그룹 직접 근거와 제공된 승인 기준 또는 확정 사례를 인용해야 한다. 과거 사례 0건이어도 승인 기준이 있으면 최초 판정을 제안할 수 있다. 모델은 사람의 확정/actor를 생성하지 않는다. 기존 VWP `ReviewProposal`/`validate_advice`는 변경하지 않는다.
+
+현재 전체 입력/응답 한도를 넘으면 `AI_INPUT_LIMIT`/`AI_OUTPUT_LIMIT`로 실패하고 누락·잘림·거절·허위 참조를 제안으로 저장하지 않는다. 평균 10,000건·100,000건 이상의 실제 모델 분할/조각 통합은 COMMON-05 후속이며 기존 참고 엔진의 분할 성공으로 완료 처리하지 않는다.
 
 ## OA 워크스페이스 관리 계약
 
@@ -28,10 +59,10 @@ PoR은 블록의 버전 참조이고 ECO/특정 검사 실행을 포함하지 �
 같은 요청은 같은 결과, 다른 내용의 UUID 재사용/오래된 개정은 409다. 검사 판정·원문·다른 블록은 변경하지 않는다.
 세션/Origin/CSRF와 서버의 프로젝트·블록 범위를 검사하고 조회 응답에도 같은 범위를 적용한다.
 
-현재 실행 진입점은 **독립 합성 workspace**를 명시적으로 초기화한 `devtools/workspace_app.py`다.
+위 `/workspace/api` 계약의 실행 진입점은 **독립 합성 workspace**를 명시적으로 초기화한 `devtools/workspace_app.py`다.
 검증된 공개 parser 스냅샷을 해당 테스트 버전에 연결하며 실제 회사 SSO/자료/운영 DB를 쓰지 않는다.
 회사 인증 실패 시 이 계정을 선택하거나 기존 `AUTHORIZATION_NOT_IMPLEMENTED`를 해제하지 않는다.
-별도 V2 importer가 실제 source 메타데이터를 받을 수 있지만 회사 SDK/인프라와 SSO 완성을 뜻하지 않는다.
+별도 V2 importer의 운영 진입점은 SSO와 같은 계정 매핑 및 현재 프로젝트/블록 권한을 검사한다. 합성 importer 시험은 회사 SDK/인프라의 실제 배포 검증을 뜻하지 않는다.
 필드·실행·인계는 [WORKSPACE.md](oa/WORKSPACE.md)를 따른다.
 
 검사 조회는 같은 버전·ECO 안에서 `item_id`로 구분한다. reports API의 `groups`는 필터·페이지 적용 전의 항목별 집계이며,
@@ -114,7 +145,7 @@ Units have unique `review_unit_id` and unique `report` paths in prototype v1.
 회사 plan provider가 수집 전에 실제 report 소속을 확인해 반환하고 collector·분석·bundle 해시에 그대로 봉인한다.
 추가 키·null·잘못된 ID·미등록/부모 불일치를 허용하지 않는다. scope 없는 prototype 입력의 기존 hash/로컬 경로는 유지하되 SSO에서는 목록·건수 제외/개별 조회 404다.
 봉인 후 scope를 붙이거나 바꾸지 않는다. legacy envelope에는 검증된 제출자가 없어 이 수신은 신뢰된 VWP 서비스 경로다.
-별도 V2의 source 신원·승인/collection 계약을 대체하거나 V2 SourceReceiver를 새 권한 엔진에 연결한 것은 아니다.
+이 legacy scope 계약은 별도 V2의 source 신원·승인/collection 계약을 대체하지 않는다. V2 SourceReceiver 운영 진입점은 별도로 제공한 ProductionWorkspaceStore/AccessStore 연결을 사용한다.
 
 
 ```json
@@ -313,7 +344,7 @@ VWP→OA 분석 메시지 필드는 다음과 같다.
 기존 `receive` CLI는 한 건 처리하며 heartbeat를 사용하지 않는다. 별도 `work` 프로세스는
 분류 큐를 지속 polling하고 VWP 분류 작업은 heartbeat로 lease를 갱신한다.
 
-OA private `sanity_oa_data`의 record_type은 RECEIVED_BUNDLE, REVIEW_UNIT, REVIEW_EVENT, REPORT뿐이다.
+이 legacy 수신/단위 검토 흐름은 OA private `sanity_oa_data`의 RECEIVED_BUNDLE, REVIEW_UNIT, REVIEW_EVENT, REPORT를 사용한다. 다른 절의 workspace/SSO/AI 작업 record_type과 구분한다.
 원본 수신 payload와 context={interface:"dashboard-v1",ai:{status:"NOT_CONFIGURED"}},
 전체 REVIEW_UNIT, 초기 REVIEW_EVENT(개정 0), REPORT를 저장한다. 공유 RECEIVED까지 같은 트랜잭션이다.
 재수신은 기존 검토/맥락을 유지하며 새 번들은 승인 없이 시작한다. Jira 작업·전용 컬럼·인덱스는 없다.
@@ -338,7 +369,7 @@ REVIEW_EVENT·current_review_revision/version·REPORT를 원자적으로 기록�
 
 2026-10-15 합의한 후속 판정 정책은 [사람의 판정 기준 축적](requirement.md#human-judgment-learning)을 따른다.
 원본 규칙 FAIL과 별도로 사용자의 PASS를 사유/근거와 함께 저장하고, 확정 사례·조건을 다음 AI review에 참조하는 것이 목표다.
-위 FAIL 제한은 현재 legacy 구현 상태의 설명이며 새 합의의 목표 정책은 아니다. 실제 공통 코드/API·저장 계약은 후속 구현 전까지 그대로다.
+위 FAIL 제한은 현재 legacy bundle 계약이다. 별도 운영 workbench의 그룹 판정과 독립 workspace의 사용자 판정은 원본 FAIL을 보존하면서 사람의 PASS/FAIL을 저장한다. legacy 승인 API를 이 새 판정 경로로 소급 변경하지 않는다.
 
 Jira 게시·시뮬레이터는 폐지했다. 과거 CLI publish는 --simulate/--dry-run을 포함해
 항상 JIRA_DISABLED로 즉시 실패하며 DB 작업을 만들지 않는다. --jira-context는 지원하지 않는다.
@@ -428,6 +459,8 @@ POST는 JSON 객체를 사용하고 추가 필드·잘못된 ID/UUID·범위 밖
 인증/DB/API 오류에서 demo로 자동 fallback하지 않고 demo 결과를 실제 DB 저장으로 표현하지 않는다.
 
 ## VWP AI와 분류 계약
+
+아래 키·한도·메시지는 **현재 legacy VWP 실행 계약**이다. OA 모델 실행/설정에는 위 별도 계약과 [AI_RUNTIME.md](oa/AI_RUNTIME.md)를 사용한다. OA의 우선 연동·사례 검색·직접 근거 판정·품질 비교는 [AI 판단 설계](AI_DECISION_DESIGN.md)와 [COMMON-03~06](INTERNAL_AI_HANDOFF.md#5-codex-공통-연결의-상태와-남은-작업)을 따른다.
 
 `SANITY_AI_MODE=api|cli`와 모델을 명시해야 한다. 미설정은 AI_NOT_CONFIGURED 실패이며 합성 응답으로 대체하지 않는다.
 URL은 전체 HTTPS 주소, token은 Bearer, CA는 선택적인 절대 PEM 경로다. redirect·환경 proxy·자동 재시도·API→CLI 우회는 없다.
@@ -528,7 +561,7 @@ PASS 기록에도 후보를 표시하지만 소속은 NOT_TARGET로 남는다. C
 2026-10-15 사용자 정정에 따른 1단계 목표는 **report 로그와 과거 사람 확정 사례를 참고한 AI 초기 그룹 생성 → 사람 수정·확정 → DB 사례 축적 → 다음 AI 초기 분류의 참고 입력**이다.
 AI는 각 report의 그룹 구성·이름·근거를 새로 제안한다. 과거 그룹과의 필수 일대일 매칭이나 고정 분류 유형 사전의 선택으로 대체하지 않는다.
 확정 사례를 다음 AI 입력 후보로 축적하는 것이 기본 동작이며 별도 재사용 체크/필수 기준 작성이 선행 조건은 아니다.
-일반 화면은 정확한 필드 비교·선택형 사례 재사용 엔진을 사용하며 사내 모델은 미연결이다. 운영 목표 전환의 공통 API/저장/worker/UI 변경은 별도 구현한다.
+독립 합성 일반 화면은 정확한 필드 비교·선택형 사례 재사용 엔진을 유지한다. 운영 workbench는 위 OA AI job·직접 근거 V2·현재 확정 사례 검색을 사용하며 실제 사내 모델 연결/품질은 별도 검증한다.
 외부 Codex의 실제 호출은 [합성 mock 시험](oa/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)에만 추가했다. 이는 회사 VWP/SDK 연결이 아니다.
 명시적으로 켠 합성 workspace의 전용 `/clustering/ai`와 **AI로 그룹 만들기** 버튼은 UUID 예약·고정 입력 검사 후 실제 모델을 호출한다. 기존 제안 API의 mode는 확장하지 않는다. 호출 상태/receipt는 기존 `WS_CLUSTER.state`에 보관하며 새 물리 테이블이나 브리지 간 전송 경로를 만들지 않는다.
 기존 `reusable`/버전 호환 승인·저장 데이터·어댑터 서명이나 내부 AI의 수정 허용 범위는 유지한다.
@@ -548,7 +581,7 @@ AI는 각 report의 그룹 구성·이름·근거를 새로 제안한다. 과거
 완성된 전체 배정만 불변 event/head로 원자적으로 저장한다. 진행/실패/오래된 작업은 새 그룹 판정의 선행 확정으로 사용하지 않는다.
 기대 분류 개정이 다른 페이지는 409로 거부하며 편집 UUID와 명시적 ID로 전체 구성에서 변경한다. 과거 구성과 제거된 그룹은 읽기 전용 조회다.
 API·상한·task 재개 계약은 [대용량 순차 검토](oa/WORKSPACE.md#대용량-report의-순차-검토)를 따른다. 새 테이블·권한·DDL은 추가하지 않았다.
-현재 분할 실행은 모델 호출이 없는 참고 엔진이다. 사내 VWP 모델/운영 작업 전송을 연결한 것으로 표시하지 않는다.
+이 `WS_CLUSTER.state.task` 분할 실행은 모델 호출이 없는 참고 엔진이다. 별도 OA 모델의 한도 내 첫 순환·현재 확정 사례 검색과 구분하며 실제 모델 대량 분할/그룹 통합·품질 검증을 완료한 것으로 표시하지 않는다.
 
 **그룹별 분류 근거 V2**는 [요구사항 18.10절](requirement.md#group-clustering-rationale)을 구현한다.
 물리 테이블·DDL은 추가하지 않는다. `groups`는 기존 `id`·`label`·`record_ids`를 유지하고
@@ -592,7 +625,7 @@ CONFIRM은 현재 기대 개정 전체의 **명시적인 DRAFT 일괄 채택 + �
 `WS_REVIEW_PROPOSAL`은 참조 event와 전체 사례 목록의 해시를 보관하며 기준 정정·추가 시 오래된 제안으로 확정하지 못한다.
 AI 제안은 자동 사람 확정이 아니며 제안과 최종 판정의 차이도 기록한다.
 현재 `CRITERIA` 모드는 확정 조건 적용, `model_called=false`다. `CORPORATE` 모드는 아직 `AI_NOT_CONFIGURED`로 차단한다.
-실제 VWP AI의 job/DB 전송 연결과 구형 승인 API는 이 별도 workspace 계약으로 자동 교체되지 않는다.
+운영 OA 모델 실행·현재 확정 사례 검색/피드백·직접 근거 판정 V2는 위 별도 계약을 사용한다. 이 독립 합성/기존 VWP `ReviewAdvisor`의 사람 사례 참조 필수 제한과 구형 승인 API는 유지한다. 실제 회사 API/자료의 판단 품질은 별도 검증한다.
 상세 저장/API/역할 경계는 [WORKSPACE.md](oa/WORKSPACE.md#사용자-판정과-사례-재사용)를 따른다.
 
 Expected = reviewed + approved_na + unresolved (mutually exclusive unit counts).

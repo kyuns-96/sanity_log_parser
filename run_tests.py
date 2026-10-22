@@ -19,6 +19,8 @@ QUICK_TESTS = (
     "tests.test_scoped_dashboard.ScopedDashboardTests.test_admin_starts_without_business_grants_and_can_approve_own_top_request",
     "tests.test_scoped_dashboard.ScopedDashboardTests.test_response_id_alias_cannot_expose_another_blocks_evidence",
     "tests.test_schema", "tests.test_submission_contracts", "tests.test_integration_contracts",
+    "tests.test_ai_model.ReviewV2Tests.test_first_judgment_uses_direct_evidence_and_an_approved_criterion",
+    "tests.test_oa_ai_feedback.OAFeedbackCycleTests.test_human_corrections_and_counterexamples_reach_the_next_eco_model_calls",
     "tests.test_mock_runner", "tests.test_test_runner", "oa.test_auth_config", "oa.test_sso",
     "tests.test_sso_identity_migration.SSOIdentityMigrationTests.test_008_checkpoint_runs_one_portal_statement_with_the_exact_original_009_catalog",
     "tests.test_sso_identity_migration.SSOIdentityMigrationTests.test_conflicting_insert_preserves_original_issuer_disabled_state_and_role_permissions",

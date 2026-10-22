@@ -2,6 +2,8 @@
 
 이 문서는 **기존 PostgreSQL 연결 구현과 권한 계약**을 세 담당자에게 전달한다. 실제 접속값은 기입하지 않았다. [공통 작업 지침](../INTERNAL_AI_GUIDE.md)과 [DB 설치/증분 안내](README.md)를 함께 따른다. 이 문서가 운영 DB 쓰기·SQL 적용 권한을 부여하지 않는다.
 
+DB의 핵심 목적에는 **사람이 확정한 분류·판정·근거와 정정 이력을 축적해 다음 AI 판단에 제공하는 것**이 포함된다. 최신 목표는 [AI 판단 설계](../AI_DECISION_DESIGN.md)를 따른다. 이번 연동은 OA의 사내 OpenAI 호환 API를 우선 사용하며 OA 프로그램이 자기 범위의 로그·사례를 조회하고 결과를 검증·저장한다. 모델에 DB 계정을 주거나 VWP private 접근 권한을 추가하지 않는다. OA 모델 작업은 기존 `sanity_oa_data`의 `WS_CONFIG` 불변 ledger와 namespace `oa-ai-v1`에 저장하고 검증된 결과는 기존 분류/그룹 판정 event와 FK로 연결한다. 이번 한도 내 첫 판단 순환에 새 테이블·DDL·GRANT를 추가하지 않는다. 작업/사례가 누적될 때의 큐 인덱스·처리 성능은 별도 검토 대상이며 현재 구조가 무제한 처리 보장은 아니다. 설정·실행은 [OA AI 실행 안내](../oa/AI_RUNTIME.md)를 따른다.
+
 코드 위치와 실행은 [서버별 소스 안내](../DEPLOYMENT.md)를 따른다. [VWP-bridge 설정 예제](../vwp_bridge/.env.example)와 [OA 설정 예제](../oa/.env.example)의 키를 각 서버의 **저장소 루트 `.env`**에 설정한다. 예제 파일은 자동으로 읽거나 덮어쓰지 않는다.
 
 ## 1. 누가 어떤 계정을 사용하는가
@@ -9,8 +11,8 @@
 | 담당 개발 AI | 실행 단계 | DB 로그인/역할 | 확인할 내용 |
 |---|---|---|---|
 | [VWP](../vwp/INTERNAL_AI_TASK.md) | 원천 조회·예상 목록·snapshot 수집 | **없음** | plan과 VWP 내부 snapshot을 VWP-bridge에 인계 |
-| [VWP-bridge](../vwp_bridge/INTERNAL_AI_TASK.md) | parser·VWP 모델 SDK 연동, 기존 분석/전달 실행 환경 | VWP 전용 제한 로그인 → `sanity_vwp_app` | VWP 서버 설정, `--side vwp` 점검 결과 |
-| [OA](../oa/INTERNAL_AI_TASK.md) | SSO·사용자 연결, 기존 수신/사람 검토 실행 환경 | OA 전용 제한 로그인 → `sanity_oa_app` | OA 서버 설정, `--side oa` 점검 결과 |
+| [VWP-bridge](../vwp_bridge/INTERNAL_AI_TASK.md) | parser·원본 검증·DB 전달, 기존 VWP 모델 경로 유지 시 자기 SDK | VWP 전용 제한 로그인 → `sanity_vwp_app` | VWP 서버 설정, `--side vwp` 점검 결과 |
+| [OA](../oa/INTERNAL_AI_TASK.md) | SSO/source 수신·현재 사례 검색·OA 모델 작업·검증 결과/사람 근거 저장 | OA 전용 제한 로그인 → `sanity_oa_app` | 공통 경로의 DB 점검과 사내 API·한도·점검 기준·정답/반례 검증 |
 
 위 표는 기본 `restricted` 모드다. **개발 AI는 세 개지만 앱 DB 계정은 기본 두 개**다. 두 bridge는 같은 PostgreSQL DB와 네 테이블을 사용한다. 별도 제한 계정을 발급할 수 없는 환경은 [3.1절의 단일 계정 모드](#31-단일-계정-모드)를 명시적으로 선택할 수 있다. 이 경우 두 bridge가 공유 DB 로그인 하나를 사용하며 VWP 원천 수집에는 여전히 DB 계정이 없다.
 
@@ -163,7 +165,15 @@ side DSN 사용 여부 / 필드 방식 전환 여부:
 남은 의존성 / 다음 담당자 / WAITING_FOR_CODEX 문의 ID:
 ```
 
-외부 Codex에 전달할 때는 실제 서버/주소/DB/로그인/경로/비밀 참조를 제거하고 `담당·기준 commit·설정 키 존재 여부·역할 일치 여부·설치 단계·check 성공/오류 코드·미확정 사항`만 남긴다. 모델 URL/token은 VWP 측 별도 비밀이며 DB 계정/SSO 자격증명과 공유하지 않는다.
+외부 Codex에 전달할 때는 실제 서버/주소/DB/로그인/경로/비밀 참조를 제거하고 `담당·기준 commit·설정 키 존재 여부·역할 일치 여부·설치 단계·check 성공/오류 코드·미확정 사항`만 남긴다. 모델 URL/token은 실제 모델 호출 서버의 별도 비밀이다. OA 모델의 비밀은 OA에만 두고 VWP legacy 모델·DB 계정·SSO 자격증명과 공유하지 않는다.
+
+## OA AI 작업과 사례 저장
+
+운영 `/api/workbench/*`는 기존 SSO 인증 후 현재 프로젝트/블록 권한을 검사한다. 작업 등록과 결과 반영도 같은 권한·원본·분류/판정 개정 및 선정 사례의 현재 유효성을 다시 확인한다. `WS_CONFIG` job에는 명령/입력 고정값·검색/모델 provenance·상태 변화를 불변 이벤트로 보존하고, 네트워크 호출 동안 DB 트랜잭션/권한 잠금을 유지하지 않는다.
+
+사람 확정 기록은 기존 `WS_CLUSTER_EVENT`, `WS_GROUP_REVIEW_EVENT`에서 조회한다. 현재 head에 연결된 완전한 사례를 선정하며 미확정/철회/정정 전·자기 정답·다른 블록을 제외한다. 별도 `reusable` 체크는 AI 참고 후보의 조건이 아니며 다른 버전은 기존 `compatible_versions` 승인이 필요하다. ECO 차이는 모델 입력에 명시한다. 검색은 현재 lexical 방식으로, 새 vector DB나 모델용 DB 계정을 요구하지 않는다.
+
+상태와 복구·기준 파일·사내 검증 절차는 [AI_RUNTIME.md](../oa/AI_RUNTIME.md)를 따른다. 현재 앱은 전체 입력이 모델 한도에 맞는 순환을 제공한다. 대량 모델 분할/통합·큐 누적 성능·실제 판단 품질은 남은 검증/구현 범위다.
 
 ## 7. 사용자 제출의 저장 경로
 

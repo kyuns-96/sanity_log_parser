@@ -1,16 +1,20 @@
-# Sanity Reviewer — OA 대시보드 prototype
+# Sanity Reviewer — AI 분류·판정과 사람의 근거 축적
 
-VWP bridge와 OA bridge는 **같은 PostgreSQL DB의 4개 테이블로만 통신**합니다.
-검토 화면은 React·shadcn 기반 [OA 대시보드](oa/README.md)입니다.
-Jira 조회·게시와 시뮬레이터는 폐지했습니다. VWP AI 어댑터는 구현했으며 기본 설정은 disabled입니다.
+**AI가 report의 로그를 분류하고 그룹별 판정·근거를 제안하며, 사람이 확정한 구성·판정·근거를 다음 AI 판단에 활용하는 시스템입니다.** 가장 중요한 완료 기준은 AI 판단 품질과 사람의 정정이 다음 판단에 반영되는지입니다. 수집·파서·DB·인증·대시보드는 이 순환을 지원합니다.
+
+현재 목표·실행 구조·사례 검색·품질 수용 기준은 [AI 판단 설계](AI_DECISION_DESIGN.md)를 먼저 읽습니다. 흐름은 **전체 로그 + 관련 확정 사례 → AI 초기 분류 → 사람 확정 → AI 그룹 판정 → 사람 확정 → DB 사례 축적 → 다음 판단**입니다. 첫 report도 기존 사례 없이 AI가 제안할 수 있어야 합니다.
+
+이번 연동은 **사내 OA의 OpenAI 호환 AI API를 우선 사용**합니다. 기존 OA 프로그램이 DB에서 로그·사례를 조회해 모델을 호출하고 결과를 검증·저장하는 구조이며, AI용 HTTP 서버나 새 서버 장비를 필수로 추가하지 않습니다. VWP-bridge와 OA는 **같은 PostgreSQL DB의 4개 테이블로만 통신**합니다. OA의 자기 모델 API 호출은 이 브리지 간 경계와 구분합니다.
+
+**현재 제공 범위:** OA OpenAI 호환 호출·영속 작업·현재 사람 확정 사례 검색·직접 근거 판정 V2와 운영 SSO/V2 검토 연결을 구현했습니다. 운영 진입점은 `/?page=workbench`, API는 `/api/workbench/*`입니다. 첫 순환은 **전체 report 또는 선택 그룹이 설정한 모델 입출력 한도에 들어가는 경우**를 처리합니다. 실제 사내 API·자료의 정확도/성능은 미검증이며, 10,000건·100,000건 이상의 실제 모델 분할·그룹 통합은 COMMON-05 후속입니다. 설정·실행·한계는 [OA AI 실행 안내](oa/AI_RUNTIME.md)를 따릅니다.
 
 서버별 코드는 아래 위치에 있습니다. 각 사내 AI는 자기 `integration/`의 허용 파일만 구현합니다. 실행·의존성·설정 위치는 [소스 구조와 실행 안내](DEPLOYMENT.md)를 따릅니다.
 
 | 담당 | 실제 코드 | 회사 연동 구현 |
 |---|---|---|
 | VWP | [vwp/](vwp/README.md) — 원천 수집 | `vwp/integration/` |
-| VWP-bridge | [vwp_bridge/](vwp_bridge/README.md) — parser·모델·worker | `vwp_bridge/integration/` |
-| OA | [oa/](oa/README.md) — API·검토·SSO·dashboard | `oa/integration/` |
+| VWP-bridge | [vwp_bridge/](vwp_bridge/README.md) — parser·원본 검증·DB 전달·기존 VWP 실행 | `vwp_bridge/integration/` |
+| OA | [oa/](oa/README.md) — 모델 호출·작업·사례 검색·검토·SSO·dashboard | `oa/integration/`의 허용 SSO/source 지점. 모델은 제공된 공통 설정 사용 |
 | 공통 | [common/](common/README.md) — 계약·DB·설정·검증 | 사내 AI 읽기 전용 |
 | 개발 시험 | [devtools/](devtools/README.md), `tools/`, `tests/` | 합성 자료·mock·회귀 |
 
@@ -18,7 +22,7 @@ Jira 조회·게시와 시뮬레이터는 폐지했습니다. VWP AI 어댑터�
 
 [사용자 제출 실행 안내](vwp/SUBMISSION.md)의 `bin/sanity submit/status/retry`, VWP 내부 제출/영속 원본 보관, DB 분할 송수신·OA 페이지/접수 응답을 구현했습니다. **회사 입력·신원/승인 SDK와 실제 마운트/운영 DB는 미연결**입니다. schema 1의 `collect`는 유지하며 사용자 DB 계정이나 OA report 파일 복사로 대체하지 않습니다. 신규 DB 계약은 `db/008_submissions.sql`, 설계 근거는 [제출 명세](vwp/SUBMISSION_DESIGN.md)입니다.
 
-VWP AI와 사람이 함께 만드는 분류 루프, 대량 report 처리, 그룹별 evidence 추가의 **확장 설계**는
+AI와 사람이 함께 만드는 분류 루프, 대량 report 처리, 그룹별 evidence 추가의 **확장 설계**는
 [요구사항 14절](requirement.md#ai-clustering)에 정리했습니다. 알려진 두 report 형식에 대해 AI 규칙 제안·전체 시험·사람 확정 루프를 구현했습니다.
 실제 사내 AI/DB 연결과 새 report 형식·의미 기반 후보 검색은 아직 검증/확장 대상입니다.
 
@@ -27,17 +31,17 @@ VWP AI와 사람이 함께 만드는 분류 루프, 대량 report 처리, 그룹
 기존 데모와 별도로 **`/workspace`에서 로그인·프로젝트·블록·버전·검사·PoR을 서버에 연결**했습니다.
 10개 테스트 계정의 범위를 서버에서 검사하고 PoR·변경 이력을 PostgreSQL에 저장합니다. 새로고침/다른 계정 조회/서버 재시작에도 유지됩니다.
 검사별 사용자 판정·사유·재사용 조건과 제안을 따로 저장합니다. 원본 FAIL에 사용자 PASS를 기록할 수 있고,
-확정한 조건을 다음 보고서의 제안에 재사용합니다. 현재는 조건 적용 엔진이며 실제 사내 AI는 미연결입니다.
+확정한 조건을 다음 보고서의 제안에 재사용합니다. 이 독립 합성 환경의 일반 제안은 조건 적용 엔진이며 운영 OA AI 경로와 구분합니다.
 별도 [Codex 합성 mock 시험](oa/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)은 `gpt-6-luna`를 실제 호출해 AI 초기 분류 → 사람 수정·DB 확정 → 다음 AI 입력의 사례 활용을 검증합니다. 명시적으로 활성화한 합성 workspace의 **AI로 그룹 만들기** 버튼에서도 호출할 수 있으며 일반 회귀 테스트는 외부 모델을 호출하지 않습니다.
 sanity item의 **검토 시작**에서는 단일 report의 평균 10,000건·100,000건 이상 로그를 1단계 분류·확정 후 2단계 그룹별 판정으로 검토합니다.
 그룹/원문은 페이지로 조회하며 분류 작업은 저장한 위치에서 이어갈 수 있습니다. 분류 확정 전에 판정을 시작할 수 없습니다.
 확정 분류 사례와 그룹 판정 근거를 각각 재사용하고, 재분류된 그룹의 이전 판정은 재검토 대상으로 남깁니다.
-[워크스페이스 실행 안내](oa/WORKSPACE.md)를 따릅니다. 실제 회사 SSO·원천 버전 전송·운영 DB 연동은 후속 검증 대상입니다.
+[워크스페이스 실행 안내](oa/WORKSPACE.md)를 따릅니다. 운영 화면은 같은 검토 흐름에 SSO의 현재 프로젝트/블록 권한을 적용합니다. 합성 환경의 대량 참고 엔진 검증은 OA 모델의 대량 처리 검증을 대신하지 않으며 실제 회사 SDK·원천·DB 배포는 사내 검증 대상입니다.
 
 SSO의 인증 검증·내부 사용자 연결은 교체 가능한 추상 인터페이스로 분리했습니다.
 사내 AI는 먼저 [내부 AI 작업 범위](INTERNAL_AI_GUIDE.md)와 [AGENTS.md](AGENTS.md)를 읽습니다.
 [사내 AI 통합 인계 명세](INTERNAL_AI_HANDOFF.md)에 작업별 선행 정보·허용 파일/메서드·입출력·수용 기준·실행 명령·Codex 후속 연결과 복사 가능한 시작 지시문을 정리했습니다.
-사내 개발 AI 세 명에게는 [VWP 원천 입력 지시문](vwp/INTERNAL_AI_TASK.md), [VWP-bridge parser·모델 SDK 지시문](vwp_bridge/INTERNAL_AI_TASK.md), [OA SSO·사용자 연결 지시문](oa/INTERNAL_AI_TASK.md)을 각각 전달합니다. 각 문서 마지막에 복사할 시작 명령이 있습니다.
+사내 개발 AI 세 명에게는 [VWP 원천 입력 지시문](vwp/INTERNAL_AI_TASK.md), [VWP-bridge parser·원천 전달 지시문](vwp_bridge/INTERNAL_AI_TASK.md), [OA 사용자 연결·모델 연동 준비 지시문](oa/INTERNAL_AI_TASK.md)을 각각 전달합니다. 각 문서 마지막에 복사할 시작 명령이 있습니다.
 DB 설정 키·모드별 권한·서버별 확인 명령·비공개 접속 인계 양식은 [DB 연결 인계](db/CONNECTION_HANDOFF.md)에 있습니다. VWP 원천 수집에는 DB 계정이 없고, 두 bridge만 기본적으로 별도 제한 로그인을 사용합니다. 별도 계정이 없는 환경에는 명시적 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`의 [단일 계정 모드](db/CONNECTION_HANDOFF.md#31-단일-계정-모드)를 제공합니다. 단일 모드는 DB의 private/큐 컬럼 격리를 제공하지 않습니다.
 코드는 서버별로 **`vwp/`·`vwp_bridge/`·`oa/`**, 공통 계약은 **`common/`**, 합성 시험은 **`devtools/`**에 분리했습니다. 각 서버는 Git 저장소 루트에서 자기 모듈만 실행합니다. [서버별 코드·실행 안내](DEPLOYMENT.md)에 디렉터리 책임·의존성·실행 명령·설정 위치를 정리했습니다.
 
@@ -81,7 +85,7 @@ GUI에는 컬럼 정의 전체만 넣고 CREATE TABLE이나 바깥 괄호를 붙
 owner/DBA가 작업을 중지한 점검 시간에 파일 전체를 한 번 실행합니다.
 앱은 DDL이나 자동 테이블 생성을 하지 않습니다.
 
-각 서버는 [서버별 코드·실행 안내](DEPLOYMENT.md)에 따라 자기 역할의 `requirements.txt`를 설치하고 자기 진입점만 실행합니다. `common/`은 공유 계약이며 서버 앱을 import하지 않습니다. 기본 모드에서 VWP-bridge/OA는 별도 제한 로그인과 각각 `sanity_vwp_app`/`sanity_oa_app` 역할을 사용합니다. 단일 모드는 위 별도 계약을 따릅니다. 모델 자격증명은 VWP-bridge에만 두고, 두 모드 모두 owner·superuser 등 금지 권한을 검사합니다.
+각 서버는 [서버별 코드·실행 안내](DEPLOYMENT.md)에 따라 자기 역할의 `requirements.txt`를 설치하고 자기 진입점만 실행합니다. `common/`은 공유 계약이며 서버 앱을 import하지 않습니다. 기본 모드에서 VWP-bridge/OA는 별도 제한 로그인과 각각 `sanity_vwp_app`/`sanity_oa_app` 역할을 사용합니다. 단일 모드는 위 별도 계약을 따릅니다. 모델 자격증명은 해당 모델을 호출하는 서버의 비공개 설정에만 두며, OA 모델 설정 키와 별도 작업자 실행은 [OA AI 실행 안내](oa/AI_RUNTIME.md)를 따릅니다. 두 모드 모두 owner·superuser 등 금지 권한을 검사합니다.
 
 ## 2. 비공개 PostgreSQL 접속 설정
 
@@ -135,7 +139,7 @@ cd ../..
 
 브라우저에서 http://127.0.0.1:8000 에 접속합니다. 빌드된 dist와 API가 같은 origin으로 제공됩니다.
 단일 사용자 로컬 prototype이므로 **외부 bind를 하지 않습니다**.
-SSO/RBAC·TLS proxy·운영 인증은 구현되지 않았습니다. 서버 검토자 이름은 UI에서 바꿀 수 없습니다.
+이 명령은 local_token 방식의 로컬 검증용입니다. 운영 SSO·현재 권한 검사는 별도 `oa.sso_app` 진입점을 사용합니다. 서버 검토자 이름은 UI에서 바꿀 수 없습니다.
 
 프런트엔드 개발 시 Python API를 실행한 상태에서 별도 터미널로 다음을 실행합니다.
 
@@ -177,7 +181,7 @@ OA 대시보드에서도 다음 메시지 한 건을 수동 수신할 수 있습
 최근 50개 검토 개정과 전체 개정 수를 표시합니다. 모든 판정은 PASS/FAIL·사유·요청 UUID와
 expected_revision을 보내며 개정이 바뀌면 최신 상태 확인이 필요합니다.
 blocker 면제와 알려진 FAIL→PASS는 금지합니다. review=COMPLETE와 check=PASS는 별도 상태입니다.
-이 절은 legacy bundle/CLI 검토 계약입니다. `/workspace`의 별도 사용자 판정은 원본 FAIL에 PASS를 저장할 수 있으며 원본 결과를 보존합니다.
+이 절은 legacy bundle/CLI 검토 계약입니다. 운영 `/api/workbench`의 그룹 판정과 독립 `/workspace`의 사용자 판정은 원본 FAIL에 PASS를 저장할 수 있으며 원본 결과를 보존합니다.
 새 번들은 기존 승인을 상속하지 않으며 A→B→A도 서로 다른 개정으로 남습니다.
 보고서 다운로드는 저장된 현재 개정의 불변 바이트를 검증해서 제공합니다.
 
@@ -203,6 +207,8 @@ FULFILLED/REJECTED/EXPIRED는 최종 결과이고 일부만 성공으로 내보�
 --jira-context는 지원하지 않습니다. Jira 작업이나 로컬 게시 시뮬레이터를 만들지 않습니다.
 
 ## 6. VWP AI 분류 루프
+
+이 절은 **현재 legacy VWP 실행의 설정·명령**입니다. 이번 우선 연동인 OA 모델 호출·사례 검색·직접 근거 판정은 [OA AI 실행 안내](oa/AI_RUNTIME.md)를 따릅니다. 아래 legacy 키·worker와 별도로 실행합니다.
 
 VWP의 비공개 `.env`에 다음 변수를 설정합니다. 실제 값은 저장소에 올리지 않습니다.
 
@@ -241,7 +247,7 @@ API 실패 시 CLI·다른 모델·합성 응답으로 우회하지 않습니다
 
 같은 scope의 확정 규칙은 다음 run에 재사용합니다. 후보 비교는 현재 정확한 필드 대조이며 확률·공통 원인을 추론한 결과가 아닙니다.
 기존 FAIL 기록을 포함하는 확정 그룹을 후보 대상으로 삼고, 한 scope의 비교 그룹이 100개를 넘으면 `CATALOG_LIMIT`로 명시적으로 중단합니다.
-AI 표본 수와 전체 적용 건수는 별도입니다. 새 파서 자동 생성, 임의 구성원 이동/merge·split UI, 의미 기반 검색, 대규모 성능 보증은 후속 범위입니다.
+이 legacy 경로의 AI 표본 수와 전체 적용 건수는 별도입니다. 새 파서 자동 생성·의미 기반 검색·대규모 성능 보증은 후속 범위입니다. 임의 구성원 이동/병합·분리 UI는 별도 workbench에서 제공합니다.
 
 ## 7. 합성 demo와 검증
 

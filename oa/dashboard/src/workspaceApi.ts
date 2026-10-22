@@ -13,8 +13,8 @@ export type WorkspaceReports = { items: WorkspaceReport[]; total: number; offset
 export type WorkspaceEvent = { id: string; previous_version_id: string | null; version: WorkspaceVersion; actor: WorkspaceUser; reason: string; at: string; revision: number }
 export type Judgment = 'PASS' | 'FAIL' | 'DEFER'
 export type ReviewCase = { id: string; report_id: string; version_id: string; conclusion: Judgment; reason: string; criteria: string; conditions: Record<string, string>; reusable: boolean; compatible_versions: boolean; revision: number; actor: WorkspaceUser; at: string; source_sha256: string; source_version: WorkspaceVersion; proposal_id: string | null; proposal_conclusion: Judgment | null; proposal_agreed: boolean | null; group_id?: string; cluster_revision?: number; group_snapshot?: PipelineGroup }
-export type ReviewProposal = { id: string; conclusion: Judgment; reason: string; references: ReviewCase[]; advisor: string; model_called: boolean; at: string; stale?: boolean }
-export type ReportReview = { current: ReviewCase | null; revision: number; history: ReviewCase[]; facts: Record<string, string>; ready: boolean; can_review: boolean; cases: ReviewCase[]; case_count: number; reusable_count: number; cases_displayed: number; proposal: ReviewProposal | null; corporate_ai_connected: boolean; current_stale?: boolean; blocked_reason?: string | null }
+export type ReviewProposal = { id: string; conclusion: Judgment; reason: string; references: ReviewCase[]; advisor: string; model_called: boolean; at: string; stale?: boolean; schema_version?: 2; evidence_ids?: string[]; criterion_ids?: string[]; model_metadata?: ClusterModelMetadata }
+export type ReportReview = { current: ReviewCase | null; revision: number; history: ReviewCase[]; facts: Record<string, string>; ready: boolean; can_review: boolean; cases: ReviewCase[]; case_count: number; reusable_count: number; cases_displayed: number; proposal: ReviewProposal | null; corporate_ai_connected: boolean; current_stale?: boolean; blocked_reason?: string | null; ai?: CodexCapability }
 export type PipelineGroup = { id: string; label: string; record_ids: string[] }
 export type RationaleStatus = 'MISSING' | 'DRAFT' | 'CONFIRMED' | 'STALE'
 export type RationaleContent = { reason: string; evidence_ids: string[]; reference_groups: { case_id: string; group_id: string; reason: string }[] }
@@ -26,8 +26,8 @@ export type ClusterEvent = { id: string; report_id: string; revision: number; ac
 export type PipelineView = { current: ClusterEvent | null; revision: number; ready: boolean; can_edit: boolean; stale: boolean; history: ClusterEvent[]; case_count: number; reusable_count: number; summary: PipelineSummary | null; corporate_ai_connected: boolean; record_count: number }
 export type ClusterBrief = Omit<ClusterEvent, 'groups'> & { group_count: number; record_count: number; rationale_counts: Record<RationaleStatus, number> }
 export type PipelineTask = { id: string; status: 'PENDING' | 'RUNNING' | 'FAILED' | 'STALE' | 'CANCELLED' | 'COMPLETED'; record_count: number; processed: number; next_chunk: number; error: string | null; chunks: { index: number; start: number; stop: number; record_count: number; input_sha256: string; status: string }[] }
-export type CodexJob = { id: string; status: 'RUNNING' | 'RESULT_READY' | 'COMPLETED' | 'FAILED' | 'STALE' | 'UNKNOWN' | 'SAVE_FAILED'; error: string | null; model: string; created_at: string; finished_at?: string; expected_revision: number; input_case_count: number; event_id?: string }
-export type CodexCapability = { available: boolean; supported: boolean; enabled: boolean; model: string; remaining: number; job: CodexJob | null }
+export type CodexJob = { id: string; status: 'PENDING' | 'RUNNING' | 'RESULT_READY' | 'COMPLETED' | 'FAILED' | 'STALE' | 'UNKNOWN' | 'CANCELLED' | 'SAVE_FAILED'; error: string | null; model: string; created_at: string; finished_at?: string; expected_revision: number; input_case_count: number; event_id?: string }
+export type CodexCapability = { available: boolean; supported: boolean; enabled: boolean; model: string; remaining: number | null; job: CodexJob | null; provider?: string; synthetic_only?: boolean }
 export type WorkbenchView = { report: WorkspaceReport; version: WorkspaceVersion; current: ClusterBrief | null; revision: number; ready: boolean; can_edit: boolean; stale: boolean; task: PipelineTask | null; ai?: CodexCapability; record_count: number; raw_line_count: number; source_sha256: string; case_count: number; reusable_count: number; removed_count: number; corporate_ai_connected: boolean; summary: { confirmed: boolean; total: number; reviewed: number; pending: number; complete: boolean; rationale_counts: Record<RationaleStatus, number>; counts: Record<string, number> } }
 export type GroupBrief = { id: string; label: string; record_count: number; status: string; revision: number; example: Record<string, unknown>; rationale: { status: RationaleStatus; reason: string; reason_truncated: boolean; reason_omitted_chars: number; source: string | null; evidence_count: number } }
 export type PageResult<T> = { items: T[]; total: number; offset: number; limit: number }
@@ -54,6 +54,18 @@ const messages: Record<string, string> = {
   SOURCE_FILE_ON_VWP: '원본 report 파일은 VWP에 보관됩니다. 로그는 검토 화면에서 확인할 수 있습니다.',
   PROPOSAL_STALE: '판정 또는 참조 기준이 변경되었습니다. 최신 기준으로 제안을 다시 받아 주세요.',
   AI_NOT_CONFIGURED: '사내 AI 검토가 아직 연결되지 않았습니다.',
+  AI_CONTEXT_LIMIT: '전체 로그 또는 참고 사례가 AI 입력 한도를 넘었습니다. 일부만 처리하지 않았습니다. 운영 담당자가 처리 한도를 확인해야 합니다.',
+  AI_INPUT_LIMIT: '전체 AI 입력이 처리 한도를 넘었습니다. 로그를 생략하지 않았습니다. 운영 담당자에게 확인해 주세요.',
+  AI_OUTPUT_LIMIT: 'AI 응답이 출력 한도를 넘었습니다. 전체 결과가 검증되지 않아 적용하지 않았습니다.',
+  AI_CALL_FAILED: '사내 AI 호출에 실패했습니다. 기존 검토 내용은 유지됩니다.',
+  AI_RESULT_UNKNOWN: 'AI 호출 결과가 불명확합니다. 자동 재호출하지 않습니다. 작업 상태를 확인해 주세요.',
+  AI_OUTCOME_UNKNOWN: 'AI 호출 결과가 불명확합니다. 자동 재호출하지 않습니다. 작업 상태를 확인해 주세요.',
+  AI_INVALID_RESPONSE: 'AI 응답의 형식 또는 근거를 검증하지 못해 적용하지 않았습니다.',
+  INVALID_AI_RESPONSE: 'AI 응답의 형식 또는 근거를 검증하지 못해 적용하지 않았습니다.',
+  INVALID_AI_INPUT: 'AI 판단에 필요한 전체 로그와 근거를 확인하지 못했습니다.',
+  INVALID_AI_CRITERIA: '확인된 점검 기준의 형식과 적용 범위를 확인해 주세요.',
+  INVALID_ADVICE: 'AI 제안의 직접 근거 또는 참고 사례를 검증하지 못해 적용하지 않았습니다.',
+  AI_JOB_ACTIVE: 'AI 작업이 진행 중입니다. 현재 상태를 확인해 주세요.',
   AI_BUSY: '다른 AI 분류 요청이 진행 중입니다. 완료 후 다시 요청해 주세요.',
   AI_MOCK_LIMIT: '이 합성 report의 AI 테스트 호출 한도에 도달했습니다.',
   SYNTHETIC_ONLY: 'Codex 연결은 지정된 합성 mock report에서만 사용할 수 있습니다.',
@@ -72,18 +84,32 @@ export class WorkspaceError extends Error {
   constructor(code: string) { super(messages[code] || '요청을 완료하지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해 주세요.'); this.code = code }
 }
 
+export const productionWorkbench = () => location.pathname === '/' && new URLSearchParams(location.search).get('page') === 'workbench'
+export const workspaceApiBase = () => productionWorkbench() ? '/api/workbench' : '/workspace/api'
+export const aiJobActive = (job?: CodexJob | null) => !!job && ['PENDING', 'RUNNING', 'RESULT_READY'].includes(job.status)
+export const aiJobMessage = (job: CodexJob) => {
+  if (job.status === 'PENDING') return 'AI 작업을 등록했습니다. 처리 시작을 기다리고 있습니다.'
+  if (job.status === 'RUNNING') return 'AI가 전체 로그와 관련 확정 사례를 검토하고 있습니다.'
+  if (job.status === 'RESULT_READY') return 'AI 응답의 근거와 현재 개정을 검증하고 있습니다.'
+  if (job.status === 'UNKNOWN') return 'AI 호출 결과가 불명확합니다. 자동 재호출하지 않습니다. 운영 담당자에게 작업 상태를 확인해 주세요.'
+  if (job.status === 'STALE') return '로그·분류·판정 또는 참고 사례가 변경되어 결과를 적용하지 않았습니다. 최신 내용을 확인해 주세요.'
+  if (job.status === 'CANCELLED') return 'AI 작업이 취소되었습니다. 이전 검토 내용은 유지됩니다.'
+  if (job.status === 'COMPLETED') return 'AI 제안을 저장했습니다. 내용을 검토한 뒤 사람이 확정해 주세요.'
+  return `${messages[job.error || ''] || 'AI 작업을 완료하지 못했습니다. 기존 검토 내용은 유지됩니다.'}${job.error ? ` (${job.error})` : ''}`
+}
+
 export async function workspaceRequest<T>(path: string, options: { body?: unknown; csrf?: string; signal?: AbortSignal } = {}): Promise<T> {
   // Explicit opt-in only. Server/authentication failures never select the demo.
-  if (new URLSearchParams(location.search).get('demo') === '1') {
+  if (!productionWorkbench() && new URLSearchParams(location.search).get('demo') === '1') {
     const { workspaceDemoRequest } = await import('./workspaceDemo')
     options.signal?.throwIfAborted()
     return workspaceDemoRequest<T>(path, options)
   }
   let response: Response
   try {
-    response = await fetch(`/workspace/api${path}`, {
+    response = await fetch(`${workspaceApiBase()}${path}`, {
       method: options.body === undefined ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store',
-      headers: options.body === undefined ? undefined : { 'Content-Type': 'application/json', 'X-CSRF-Token': options.csrf || '' },
+      headers: options.body === undefined ? undefined : { 'Content-Type': 'application/json', ...(productionWorkbench() ? { 'X-Sanity-Request': '1' } : { 'X-CSRF-Token': options.csrf || '' }) },
       body: options.body === undefined ? undefined : JSON.stringify(options.body), signal: options.signal,
     })
   } catch (error) {

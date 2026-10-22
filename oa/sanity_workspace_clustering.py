@@ -1,7 +1,7 @@
 """Two-stage workspace classification, with immutable partitions and human cases.
 
-This local advisor reuses confirmed examples and the common exact-field matcher.
-It never calls a model on OA. Corporate model execution remains a VWP adapter.
+The reference advisor remains available for synthetic workspaces. Trusted OA AI
+receipts enter through apply_ai after the background worker validates its input.
 """
 from collections import defaultdict
 import re
@@ -12,7 +12,7 @@ from common.sanity_common import digest
 from common.sanity_submission import source_digest
 from common.sanity_db import json_value, lock_key, uuid_value
 from oa.sanity_workspace import WorkspaceStore, record_id, utcnow
-from oa.sanity_workspace_review import WorkspaceReviewStore
+from oa.sanity_workspace_review import WorkspaceReviewStore, validate_ai_receipt
 import common.sanity_workspace_rationale as rationale
 
 # Resource guards, not the expected/business report size. Typical is ~10,000;
@@ -122,8 +122,13 @@ def ai_job_active(head):
 
 
 class WorkspaceClusteringStore:
-    def __init__(self, db):
-        self.db, self.ws, self.reviews = db, WorkspaceStore(db), WorkspaceReviewStore(db)
+    def __init__(self, db, ws=None):
+        self.db, self.ws = db, ws if ws is not None else WorkspaceStore(db)
+        self.reviews = WorkspaceReviewStore(db, ws=self.ws)
+
+    @property
+    def ai_case_policy(self):
+        return getattr(self.ws, "case_policy", None) == "OA_RETRIEVAL_V1"
 
     def context(self, user_id, block_id, version_id, report_id, write=False):
         context = self.reviews.context(user_id, block_id, version_id, report_id, write)
@@ -143,6 +148,16 @@ class WorkspaceClusteringStore:
         return rationale.unpack(row["payload"]), head["version"]
 
     def catalog(self, context):
+        if self.ai_case_policy:
+            from oa.sanity_ai_cases import CaseRetriever
+            retriever = CaseRetriever(self.db, self.ws)
+            selected = retriever.select(context, stage="CLUSTER")["cases"]
+            current, _ = self.current(context["report"]["id"])
+            # A still-valid cited group must remain editable/confirmable even
+            # when unrelated cases move it outside the ranked selection window.
+            pinned = retriever.resolve_references(context, current.get("references", []) if current else [],
+                                                  stage="CLUSTER")["cases"]
+            return list({case["id"]: case for case in [*selected, *pinned]}.values())
         source = "FROM {oa} h " \
             "JOIN {oa} e ON e.record_id=h.workspace_pipeline_event_ref "
         source += (
@@ -191,6 +206,14 @@ class WorkspaceClusteringStore:
         head = self.reviews.row("WS_CLUSTER", event["report_id"])
         if ai_job_active(head) or head and head["state"].get("task", {}).get("status") in ("PENDING", "RUNNING", "FAILED", "STALE"):
             return False
+        if event.get("case_policy") == "OA_RETRIEVAL_V1":
+            from oa.sanity_ai_cases import CaseRetriever
+            if any(reference["report_id"] == exclude_report for reference in event["references"]):
+                return False
+            context = {"scope": event["scope"], "report": {"id": exclude_report or event["report_id"],
+                                                          "version_id": event["version_id"]}}
+            resolved = CaseRetriever(self.db, self.ws).resolve_references(context, event["references"], stage="CLUSTER")
+            return not resolved["stale_ids"] and not resolved["over_budget_ids"]
         pending, visited = list(event["references"]), set()
         while pending:
             reference = pending.pop()
@@ -214,6 +237,7 @@ class WorkspaceClusteringStore:
     def stale(self, event, context):
         return (event["source_sha256"] != context["source_sha256"] or not self.references_current(event)
                 or not event["confirmed"] and bool(event["references"])
+                and event.get("case_policy") != "OA_RETRIEVAL_V1"
                 and event["case_catalog_sha256"] != self.catalog_hash(context))
 
     def view(self, user_id, block_id, version_id, report_id):
@@ -237,6 +261,65 @@ class WorkspaceClusteringStore:
                 "case_count": len(cases), "reusable_count": sum(case["reusable"] for case in cases),
                 "summary": summaries, "corporate_ai_connected": False, "record_count": len(evidence(context))}
 
+    def apply_ai(self, user_id, block_id, version_id, report_id, *, expected_revision,
+                 request_id, advice, cases, metadata, retrieval, identity_fields=None):
+        """Publish an already obtained model receipt, never call a model or confirm it.
+
+        The background worker owns config/input/criterion pinning. This method
+        reauthorizes and checks the source, partition revision and supplied case
+        revisions under the same lock used by human edits and confirmations.
+        """
+        from oa.sanity_ai_cases import CaseRetriever
+        check(self.ai_case_policy, "AI_NOT_CONFIGURED")
+        check(type(expected_revision) is int and expected_revision >= 0, "INVALID_REQUEST")
+        rid = str(uuid_value(request_id))
+        validate_ai_receipt(metadata, retrieval, cases)
+        command = {"user_id": user_id, "block_id": block_id, "version_id": version_id, "report_id": report_id,
+                   "action": "PROPOSE", "mode": "OA_AI", "expected_revision": expected_revision,
+                   "identity_fields": identity_fields, "receipt_sha256": digest({"advice": advice,
+                       "cases": cases, "metadata": metadata, "retrieval": retrieval})}
+        self.db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("workspace-review-write"),))
+        context = self.context(user_id, block_id, version_id, report_id, write=True)
+        previous = self.reviews.row("WS_CLUSTER_EVENT", rid)
+        if previous:
+            check(previous["payload"]["command"] == command, "REQUEST_CONFLICT")
+            return rationale.unpack(previous["payload"])
+        old, revision = self.current(report_id)
+        check(revision == expected_revision, "REVISION_CONFLICT")
+        check(context["ready"] and context["can_review"], "CLUSTER_BLOCKED")
+        check(not old or old["source_sha256"] == context["source_sha256"], "STATE_CORRUPT")
+        head = self.reviews.row("WS_CLUSTER", report_id)
+        check(not ai_job_active(head) and (not head or head["state"].get("task", {}).get("status")
+              not in ("PENDING", "RUNNING", "FAILED", "STALE")), "CLUSTER_TASK_ACTIVE")
+        check(CaseRetriever(self.db, self.ws).revalidate(context, cases, stage="CLUSTER"), "PROPOSAL_STALE")
+        fields = identity_fields if identity_fields is not None else old["identity_fields"] if old else ["object", "check_point", "mode"]
+        fields = identity_fields_valid(fields, evidence(context))
+        value = validate_clustering_advice(advice, context, cases, require_rationales=True)
+        groups = value["groups"]
+        references = [{key: case[key] for key in ("id", "report_id", "revision", "criteria", "source_sha256")}
+                      for case in cases if case["id"] in value["reference_ids"]]
+        event = {**WorkspaceReviewStore.metadata(context), "id": rid, "revision": revision + 1, "command": command,
+                 "previous_event_id": old["id"] if old else None, "at": utcnow().isoformat(), "actor": self.ws.user(user_id),
+                 "action": "PROPOSE", "groups": groups, "identity_fields": fields, "reason": value["reason"].strip(),
+                 "confirmed": False, "reusable": False, "compatible_versions": False, "criteria": "",
+                 "references": references, "advisor": "OA_OPENAI_COMPATIBLE", "model_called": True,
+                 "case_policy": "OA_RETRIEVAL_V1", "case_catalog_sha256": digest([case["id"] for case in cases]),
+                 "input_cases": [{"id": case["id"], "revision": case["revision"],
+                                  "source_sha256": case["source_sha256"], "sha256": digest(case)} for case in cases],
+                 "retrieval": retrieval, "model_metadata": metadata, "input_sha256": metadata["input_sha256"],
+                 "initial_ai_event_id": rid, "rationale_schema": 2,
+                 "membership_sha256": digest([{key: group[key] for key in ("id", "record_ids")} for group in groups])}
+        proposed = rationale.validate_group_rationales(value["group_rationales"], groups, cases, value["reference_ids"])
+        event["rationales"] = rationale.carry(None, event, proposed)
+        self.ws.put("WS_CLUSTER_EVENT", rid, rationale.pack(event), project=event["project_id"], block=block_id)
+        if head is None:
+            self.ws.put("WS_CLUSTER", report_id, WorkspaceReviewStore.metadata(context), project=event["project_id"], block=block_id)
+        self.db.execute("UPDATE {oa} SET state=%s,version=%s,updated_at=clock_timestamp() "
+                        "WHERE record_type='WS_CLUSTER' AND workspace_key=%s",
+                        (json_value({**(head["state"] if head else {}), "event_id": rid,
+                                     "event_record_id": str(record_id("WS_CLUSTER_EVENT", rid))}), revision + 1, report_id))
+        return event
+
     def change(self, user_id, block_id, version_id, report_id, *, action, expected_revision, request_id,
                reason="", groups=None, identity_fields=None, reusable=False, compatible_versions=False,
                criteria="", mode="CRITERIA", prepared=None, task=None, operation=None, mock_receipt=None,
@@ -251,7 +334,7 @@ class WorkspaceClusteringStore:
         check(action in ("PROPOSE", "EDIT", "CONFIRM", "WITHDRAW"), "INVALID_REQUEST")
         check(mode in ("CRITERIA", "CORPORATE", "MOCK_CODEX"), "INVALID_REQUEST")
         if mode == "CORPORATE":
-            check(False, "AI_NOT_CONFIGURED", "Corporate clustering runs on VWP only")
+            check(False, "AI_NOT_CONFIGURED", "Corporate proposals require a validated OA background job")
         if mode == "MOCK_CODEX":
             check(action == "PROPOSE" and isinstance(mock_receipt, dict) and prepared is None
                   and task is None and operation is None, "AI_NOT_CONFIGURED")
@@ -276,6 +359,8 @@ class WorkspaceClusteringStore:
             # Bind UUID retries to the exact externally obtained result, never another call.
             command["mock_receipt_sha256"] = digest(mock_receipt)
         self.db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("workspace-review-write"),))
+        if self.ai_case_policy:
+            context = self.context(user_id, block_id, version_id, report_id, write=True)
         previous = self.reviews.row("WS_CLUSTER_EVENT", rid)
         if previous:
             check(previous["payload"]["command"] == command, "REQUEST_CONFLICT")
@@ -394,6 +479,9 @@ class WorkspaceClusteringStore:
         elif action != "PROPOSE" and old and old.get("model_metadata"):
             # A human edit/confirmation keeps the original proposal's provenance.
             event.update(model_metadata=old["model_metadata"], initial_ai_event_id=old["initial_ai_event_id"])
+            for key in ("case_policy", "retrieval", "input_cases", "input_sha256"):
+                if key in old:
+                    event[key] = old[key]
         self.ws.put("WS_CLUSTER_EVENT", rid, rationale.pack(event), project=event["project_id"], block=block_id)
         if head is None:
             self.ws.put("WS_CLUSTER", report_id, WorkspaceReviewStore.metadata(context), project=event["project_id"], block=block_id)

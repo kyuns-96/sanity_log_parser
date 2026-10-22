@@ -1,6 +1,8 @@
 # VWP-bridge 담당 사내 AI 작업 지시문
 
-너는 **VWP-bridge 회사 parser·AI SDK 연동 담당 개발 AI**다. 실제 수정 범위는 아래 회사 어댑터다. 이 역할 이름이 bridge 공통 코드·DB/worker 전체의 수정 권한을 뜻하지 않는다.
+너는 **VWP-bridge 회사 parser·원천 검증/전달 연동 담당 개발 AI**다. 기존 VWP 모델 경로를 유지할 때는 자기 회사 SDK 어댑터도 맡는다. 실제 수정 범위는 아래 회사 어댑터이며 공통 코드·DB/worker 전체의 수정 권한을 뜻하지 않는다.
+
+[AI 판단 설계](../AI_DECISION_DESIGN.md)를 먼저 읽는다. 가장 중요한 기능은 AI 최초 분류·그룹 판정과 사람 확정 근거의 다음 판단 활용이다. 이번 모델 연동은 **OA OpenAI 호환 API를 우선 사용**한다. bridge는 이를 위한 전체 파싱 로그·원본 위치·점검 기준·실행 조건을 보존하고 DB로 전달한다. parser가 AI 그룹을 고정 사전/이름 매칭으로 미리 확정하지 않는다.
 
 VWP-bridge 코드는 `vwp_bridge/`, 회사 구현은 `vwp_bridge/integration/`에 있다. Git 저장소 루트에서 실행한다. [자기 설정 예제](.env.example)의 키를 저장소 루트 비공개 `.env`에 설정하며 [서버별 실행](../DEPLOYMENT.md)을 따른다.
 
@@ -12,7 +14,7 @@ VWP-bridge 코드는 `vwp_bridge/`, 회사 구현은 `vwp_bridge/integration/`�
 
 ## 2. 맡을 작업과 수정 소유권
 
-담당 작업은 **INT-03·04·05와 INT-06의 VWP 측 접속/SDK 확인**이다.
+담당 우선 작업은 **INT-03 parser와 INT-06 원천 신원/승인·VWP DB 연결 자료**다. INT-04·05의 기존 VWP 회사 어댑터는 해당 실행 경로를 유지할 때만 사용한다. OA 모델 API·한도는 OA 담당자가 확인하고, OA 모델 실행·사례 검색·최초 직접 근거 판정 공통 코드는 Codex가 제공한다.
 
 | 수정 위치 | 허용하는 작업 |
 |---|---|
@@ -32,12 +34,12 @@ VWP-bridge 코드는 `vwp_bridge/`, 회사 구현은 `vwp_bridge/integration/`�
 1. `git status --short`로 시작 상태를 기록하고, 수정할 자기 허용 파일/메서드를 제시한다.
 2. VWP 담당자로부터 승인된 plan/snapshot과 item별 형식·의미·정답 사례를 받는다. 자료가 없으면 `FACTS_REQUIRED`다. 공개 GCA·VC LP·SpyGlass 초기 파서를 실제 회사 형식의 정답으로 간주하지 않는다.
 3. 확인된 item 한 개부터 추출 parser를 구현·등록한다. 원본 span, 끝까지 읽기, 종료/전체 건수, PASS/FAIL/UNKNOWN과 명시적 0건을 보존한다. 수치 판정은 공통 엔진에 맡긴다. parser에서 DB·모델·네트워크·shell·다른 report를 호출하지 않는다.
-4. 승인된 VWP 모델 SDK의 입출력·timeout·한도에 맞춰 1단계 `propose(context, cases, identity_fields)`를 구현한다. 응답은 `groups`, `reason`, `reference_ids`, `group_rationales` 네 키다. 사례 0건에서 초기 그룹/이름/그룹별 근거를 제안하고, 사례가 있으면 사람의 정정을 참고한다. 전체 원본 ID를 정확히 한 번씩 배정하고 `require_rationales=True`로 검사한다.
-5. 2단계 `propose(context, cases)`는 **선택 그룹 전체**에 대한 `conclusion`, `reason`, `reference_ids`만 반환한다. 분류 근거와 판정 근거를 구분한다. 현 계약에서 AI PASS/FAIL은 입력된 사람 확정 사례 참조가 필요하고 사례 0건은 `DEFER`다. 가짜 참조나 보호 검사 제거로 첫 판정을 만들지 않는다.
+4. **기존 VWP 모델 경로를 사용할 경우에만** 승인된 SDK의 입출력·timeout·한도에 맞춰 1단계 `propose(context, cases, identity_fields)`를 구현한다. 응답은 `groups`, `reason`, `reference_ids`, `group_rationales` 네 키다. 사례 0건의 초기 그룹과 사람 정정의 참고, 전체 ID 단일 배정과 `require_rationales=True` 검증을 지킨다. OA 기본 실행의 선행 조건으로 VWP SDK 완성을 요구하지 않는다.
+5. 같은 VWP 경로의 현재 2단계 `propose(context, cases)`는 선택 그룹 전체의 `conclusion`, `reason`, `reference_ids`를 반환한다. 현재 PASS/FAIL은 사람 사례 참조가 필요하지만 **목표는 사례 없는 최초 직접 근거 판정도 포함**한다. 이 차이는 COMMON-04 공통 확장으로 해결하며 가짜 참조·검사 삭제로 우회하지 않는다.
 6. SDK의 실제 입력/출력 한도, 토큰·동시성·timeout/결과 불명·요청 조회/취소 기능을 확인해 COMMON-03~05 설계 자료로 제출한다. 평균 10,000건·100,000건 이상을 wrapper 안에서 임의 절단/요약하고 전체 처리로 표시하거나 자체 worker/DB/운영 재시도 루프를 만들지 않는다.
 7. source 접수용 회사 authority는 인증된 mount 계정/UID와 inbox 소유자의 안정 신원을 검증하고 현재 블록 담당·정확한 scope 승인 참조를 조회한다. 디렉터리명이나 사용자 작성 `actor`로 인증을 대체하지 않는다. 실제 storage ID·UID·ACL/상속·rename/flush·영속 volume 조건을 현장 확인해 배포 담당자에게 인계한다.
 
-두 SDK 어댑터는 **VWP 측에서 호출할 모델**을 위한 것이다. OA 모델로 대체하지 않는다. SDK 작성 완료와 새 workspace `CORPORATE` job/DB/worker 연결 완료는 다르다. 후자는 설계 담당 Codex 작업이며 현재 차단을 해제하지 않는다. 기존 legacy AI의 API/CLI 설정도 새 SDK의 자동 설정/주입 계약이 아니다.
+현재 두 SDK 파일은 VWP 실행 위치의 어댑터다. OA 모델용 코드는 Codex가 OA 지점에 제공할 예정이며 VWP 어댑터를 복사하거나 망 간 OA API 호출로 바꾸지 않는다. OA 사용은 새 목표이며 기존 파일의 위치·보호 검사를 우회하는 지시가 아니다. SDK 작성 완료와 새 AI 판단/사례 검색·운영 연결 완료를 구분하고 `CORPORATE` 차단은 공통 구현 전까지 유지한다.
 
 Q1의 [분산 수집 설계](../vwp/SOURCE_COLLECTION_DESIGN.md)는 제출 묶음과 PRE/POST 원천 버전·실행을 분리한다. 별도 V2 source 작업자가 각 실제 tool/version으로 기존 checked parser를 호출하고 분할 전달·PRE 재사용/실행 충돌을 처리한다. 기존 schema 1 분석 경로는 유지한다. source worker·원본 봉인/DB와 workspace import는 보호된 공통 구현이며 회사 어댑터에서 변경하지 않는다.
 
@@ -79,4 +81,4 @@ Q1의 [분산 수집 설계](../vwp/SOURCE_COLLECTION_DESIGN.md)는 제출 묶�
 
 ## 7. 그대로 전달할 시작 명령
 
-> 너는 VWP-bridge 회사 parser·VWP 모델 SDK 담당이다. AGENTS.md와 INTERNAL_AI_GUIDE.md를 전체 읽고 vwp_bridge/INTERNAL_AI_TASK.md와 vwp/SUBMISSION.md를 수행하라. INT-03 parser/명시적 등록, INT-04·05의 corporate_clustering/review, corporate_submission의 허용 신원·권한·승인 메서드와 각 company_* wrapper/테스트만 작성하라. DB는 4절의 기본 VWP 제한 로그인 또는 명시적 단일 계정 계약으로 설정 자료를 준비하고 실제 점검은 사용자에게 인계하라. 공통 bridge·DB SQL·전송·source 작업자를 포함한 worker·UI·기존 테스트와 CORPORATE 차단을 수정하지 말라. 입력 전체 coverage·그룹별 근거·사람 확정 경계를 유지하고 예상 밖 오류는 수정/재시도를 멈춰 WAITING_FOR_CODEX로 문의하라. SDK 검증과 운영 연결 완료를 구분해 보고하라.
+> 너는 VWP-bridge 회사 parser·원천 검증/전달 담당이다. AI_DECISION_DESIGN.md, AGENTS.md, INTERNAL_AI_GUIDE.md 전체와 vwp_bridge/INTERNAL_AI_TASK.md, vwp/SUBMISSION.md를 읽어라. AI 최초 분류·그룹 판정과 확정 근거의 다음 판단 활용이 최우선이며 이번 모델은 OA API 연동을 우선한다. INT-03의 허용 parser/명시적 등록, corporate_submission의 허용 신원·권한·승인 메서드와 자기 company_* 테스트만 구현하라. 전체 로그·원본 위치·실행 조건·점검 기준·정답/반례를 보존해 OA 판단 입력으로 인계하라. 기존 VWP SDK는 그 경로를 유지할 때만 자기 허용 범위에서 구현하고 OA 실행의 선행 조건으로 삼지 말라. DB 점검은 4절을 따르고 공통 bridge·DB SQL·전송·worker·UI·기존 테스트·보호 장치를 수정하지 말라. 예상 밖 오류는 WAITING_FOR_CODEX로 문의하며 파싱/접속·모의 SDK 검증과 실제 AI 판단 순환 완료를 구분하라.

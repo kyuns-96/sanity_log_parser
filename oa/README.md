@@ -1,15 +1,19 @@
-# OA bridge — 검토 대시보드
+# OA bridge — AI 판단 연결·확정 근거·검토
+
+**가장 중요한 목표는 AI 최초 분류·그룹 판정과 사람의 확정 근거를 다음 판단에 활용하는 것**입니다. [AI 판단 설계](../AI_DECISION_DESIGN.md)를 먼저 읽습니다. 이번 연동은 사내 OA OpenAI 호환 API를 우선 사용하며 OA가 DB에서 전체 로그·관련 확정 사례를 조회해 모델을 호출하고 결과를 검증·저장하는 구조입니다. 모델에 DB 계정이나 별도 AI용 HTTP 서버를 제공할 필요는 없습니다.
+
+OA OpenAI 호환 호출·영속 작업·현재 확정 사례 검색·직접 근거 판정 V2와 운영 SSO/V2 검토 연결을 제공합니다. 운영 화면은 `/?page=workbench`, API는 `/api/workbench/*`이며 현재 SSO 프로젝트/블록 권한을 검사합니다. 첫 순환은 전체 대상이 모델 입출력 한도에 들어가는 경우를 처리합니다. 실제 사내 API·판단 품질과 COMMON-05의 대량 모델 분할/통합은 별도 검증·구현 대상입니다. [OA AI 실행 안내](AI_RUNTIME.md)에 설정·작업자·점검 기준·실패 경계를 정리했습니다.
 
 OA의 API·검토 저장·인증은 이 디렉터리, UI는 `dashboard/`, 회사 SSO는 `integration/`에 있습니다. [담당 AI 지시문](INTERNAL_AI_TASK.md), [서버별 소스·실행 안내](../DEPLOYMENT.md), [DB 연결 인계](../db/CONNECTION_HANDOFF.md)를 따릅니다. 저장소 루트에서 `python -m oa.sso_app`으로 회사 인증 진입점을 실행합니다.
 
 OA는 sanity_vwp_to_oa에서만 결과를 수신하고 검토·이력·불변 보고서는 sanity_oa_data에 저장합니다.
 VWP private 테이블과 파일에는 접근하지 않습니다. Jira 조회·게시·시뮬레이터는 폐지했습니다.
-React·shadcn UI가 검토 화면이고 AI 호출은 VWP 작업자만 수행합니다. 실제 사내 AI/DB 검증은 대기 중입니다.
+React·shadcn UI가 검토 화면입니다. legacy VWP 모델 호출과 새 OA 모델 작업자는 별도 경로입니다. 실제 사내 모델 판단 품질은 현장에서 검증합니다.
 공통 설치·배포와 DB 신청은 [루트 안내](../README.md)를 따릅니다.
 
 사내 Nginx 뒤에서 사용하는 CI/CD는 [간단한 Docker 구성](../docker/README.md)을 사용합니다. `docker/`, `oa/`, `common/`을 같은 Git 루트에 두고 `docker/Dockerfile-prod`를 빌드합니다. 컨테이너는 OA 앱 한 개만 8080에서 실행하며 `OA_ALLOWED_HOSTS`로 서비스 도메인을 지정합니다. 아래 loopback 설명은 직접 실행하는 로컬 prototype에 해당합니다.
 
-[사용자 report 제출](../vwp/SUBMISSION.md)은 VWP 터미널에서 시작하고 OA에는 DB로 수신합니다. 별도 `python -m oa.submission_receiver`가 V2 staging·전체 검증·원자 반영/응답을 수행하며 기존 검토 화면에 로그를 페이지로 제공합니다. VWP 제출/원본 폴더를 OA에 마운트하지 않습니다. 공통 구현과 실제 회사 계정/담당·SSO·운영 DB 연결 완료를 구분합니다.
+[사용자 report 제출](../vwp/SUBMISSION.md)은 VWP 터미널에서 시작하고 OA에는 DB로 수신합니다. 별도 `python -m oa.submission_receiver`가 V2 staging·전체 검증·원자 반영/응답을 수행하며 기존 검토 화면에 로그를 페이지로 제공합니다. VWP 제출/원본 폴더를 OA에 마운트하지 않습니다. 운영 수신은 SSO와 같은 계정 매핑 및 현재 프로젝트/블록 권한을 검사합니다. 공통 구현과 실제 회사 원천·신원/승인 SDK·운영 DB 배포 검증은 구분합니다.
 
 ## 사내 SSO 연동 경계
 
@@ -18,7 +22,7 @@ SSO의 기술 계약은 [SSO_INTEGRATION.md](SSO_INTEGRATION.md)에 있습니다
 `oa/sanity_auth.py`의 인증 검증·내부 사용자 연결 추상 인터페이스를 제공하며,
 [corporate_sso.py](integration/corporate_sso.py)의 두 메서드에 회사 구현을 연결합니다.
 사내용 진입점은 `sso_app.py`이고 `/auth` 로그인·콜백·로그아웃 router 주입을 지원합니다.
-실제 SSO 연결은 미구현이며, SSO 사용자의 업무 API는 프로젝트·블록 권한 필터 구현 전까지 차단합니다.
+공통 SSO·Welcome·관리·현재 프로젝트/블록 권한과 운영 workbench 연결을 제공합니다. 실제 인증 SDK와 배포는 사내에서 검증합니다. 관리자 설정·계정/권한이 없는 경우 보호 상태를 유지하며, 관리자는 별도 업무 권한 없이 report에 접근할 수 없습니다.
 기존 `local_token` 모드와 데모는 유지합니다.
 
 ## 접속 모드와 실행
@@ -45,10 +49,20 @@ cd ../..
 ```
 
 http://127.0.0.1:8000 에서 dist와 API가 같은 origin으로 제공됩니다.
-단일 사용자 로컬 prototype이므로 외부 bind를 금지합니다. SSO/RBAC·TLS proxy·운영 인증은 미구현입니다.
+이 명령은 단일 사용자 local_token prototype이므로 외부 bind를 금지합니다. 운영 SSO/RBAC는 별도 `oa.sso_app` 진입점과 승인된 proxy 구성을 사용합니다.
 위 local_token prototype을 별도 공개 서비스로 노출하는 구성은 지원 범위가 아닙니다. 사내 Nginx 뒤의 명시적 SSO 컨테이너 진입점은 [루트 Docker 안내](../docker/README.md)를 따릅니다.
 프런트엔드 개발은 API를 실행한 상태에서 별도 터미널의 dashboard 폴더에서 npm run dev를 실행합니다.
 개발 서버는 127.0.0.1:5173이며 /api를 8000으로 proxy합니다.
+
+## 운영 AI 작업 화면
+
+SSO 로그인 뒤 `/?page=workbench`에서 배정된 프로젝트·블록·버전·ECO·sanity item을 선택합니다. OWNER는 PoR 지정과 분류/판정·근거 변경을 수행하고 TOP은 조회합니다. 관리자 역할 자체는 업무 권한이 아닙니다. 신규 PoR은 revision 0의 미지정 상태로 조회되며 첫 명시적 지정 때 저장됩니다.
+
+`/api/workbench/*`는 기존 SSO 세션과 변경 요청 보호를 사용합니다. `POST .../clustering/ai`, `POST .../groups/{group_id}/review/ai`는 202로 작업을 등록하고 GET으로 상태를 조회합니다. `oa.ai_worker`가 전체 입력·검색 사례·확인된 기준으로 모델을 호출하며 사람 확정은 별도 저장입니다. 기준·API 설정이 없거나 한도를 넘으면 가짜 제안이나 참고 엔진 결과로 대체하지 않습니다.
+
+분류/판정 확정은 별도 재사용 체크 없이 다음 AI의 참고 사례 후보가 됩니다. 현재 검색은 단어/한글 n-gram 기반이며 의미 검색 품질을 보장하지 않습니다. ECO는 차이를 비교하고 다른 버전은 기존 명시적 `compatible_versions` 승인을 유지합니다. 정확한 실행 명령·입력 한도·직접 근거 계약은 [AI_RUNTIME.md](AI_RUNTIME.md)를 따릅니다.
+
+아래 API 표와 수신·검토 CLI는 기존 legacy bundle 경로입니다. 독립 합성 `/workspace`는 운영에 마운트하지 않습니다.
 
 ## 화면과 인증 API
 
@@ -127,6 +141,8 @@ FULFILLED/REJECTED/EXPIRED가 최종 결과이고 일부만 성공으로 내보�
 
 ## AI 분류 탭
 
+이 절은 기존 legacy 분류 화면과 VWP 작업자의 사용법입니다. OA 모델·관련 확정 사례 검색과 현재 두 단계의 목표는 [AI 판단 설계](../AI_DECISION_DESIGN.md)를 따르며 아래 worker로 이미 제공되는 기능이 아닙니다.
+
 점검 항목과 자연어 피드백을 선택해 VWP 작업을 요청합니다. AUTO/AI/규칙 전용 모드와 선언형 규칙 JSON 편집을 지원합니다.
 결과 수신 후 전체 건수·미분류·이전 소속 대비 변경·모든 FAIL 연관 후보·표본 출처를 확인합니다.
 사유를 입력하고 제안 적용·후보별 연관/다른 문제/보류·분류 확정·규칙 재사용 저장을 별도로 실행합니다.
@@ -135,7 +151,7 @@ FULFILLED/REJECTED/EXPIRED가 최종 결과이고 일부만 성공으로 내보�
 
 OA 결과 수신을 계속 실행하려면 별도 프로세스에서 `.venv/bin/python oa/main.py work --interval 2`를 실행합니다.
 한 번만 수신하는 `--once`와 화면의 ‘분류 결과 수신’도 지원합니다. VWP에서도 별도 작업자를 실행해야 합니다.
-OA에는 AI URL/token이나 VWP DB 계정을 배포하지 않습니다. 상세 설정/한도는 [루트 안내](../README.md#6-vwp-ai-분류-루프)를 따릅니다.
+위 legacy VWP 모델의 자격증명·DB 계정은 OA에 배포하지 않습니다. OA 자기 모델의 비밀 설정은 OA 공통 호출 계약을 제공한 뒤 현장에서 주입합니다. 기존 VWP 키를 OA에 복사하지 않습니다. legacy 설정/한도는 [루트 안내](../README.md#6-vwp-ai-분류-루프)를 따릅니다.
 
 ## 검증
 
