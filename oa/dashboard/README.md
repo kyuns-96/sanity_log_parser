@@ -160,3 +160,32 @@ UUID 재시도·개정 충돌, 읽기 전용, 판단 기록, 근거 요청·응�
 이동/병합/분리로 바뀐 그룹은 근거 재검토가 필요합니다. `분류 확정 · 판정 시작`은 현재 개정의 유효한 미확인 초안을 일괄 채택하며 2단계로 진행합니다. 전체 메모는 선택 입력입니다.
 구형 근거 미작성 자료는 이력을 유지하며 새 확정 전에 보완합니다. TOP은 조회만 가능합니다.
 브라우저 회귀는 별도 합성 QA 서버에서 `npx playwright test --config playwright.rationale.config.ts`를 사용합니다. 외부 모델은 호출하지 않습니다.
+
+## Shadcn Studio 검토 시안
+
+`/studio.html`에서 승인한 Shadcn Studio 디자인을 별도로 확인합니다. `npm run dev`와
+`npm run build` 모두 이 진입점을 제공하며, 빌드 결과는 기존 `dist/`에 포함됩니다.
+예: `http://127.0.0.1:5173/studio.html`, 어두운 화면은 `/studio.html?theme=dark`입니다.
+
+그룹 목록은 의미를 추측한 아이콘 대신 **순번·이름·로그 건수·검토 상태**를 표시합니다.
+순번은 현재 합성 보고서의 원래 그룹 순서이며 검색과 상태 필터로 다시 매기지 않습니다.
+고정 분류 사전이나 그룹의 의미를 나타내는 ID가 아닙니다.
+
+프로젝트 맥락 / 그룹 / 로그·원문 / 판정·근거를 나란히 배치하고 모바일에서는 세로로
+연결합니다. 검색·페이지·체크박스 선택·탭·검토 이력 시트·밝은/어두운 화면을 체험할 수 있습니다.
+원본 도구 결과, 합성 AI 제안, 사람의 판정은 구분하며 보류는 완료로 집계하지 않습니다.
+합성 5개 그룹·126개 로그만 사용하고 확정 내용은 탭 메모리에 저장되어 새로고침하면 초기화됩니다.
+실제 API·SSO·DB·모델 호출은 없습니다. 운영 화면의 분류 편집·권한·개정·AI 연동을
+대체하지 않는 독립 시안이며, 스타일과 컴포넌트도 이 HTML 진입점에서만 사용합니다.
+
+출처는 [`public/studio-preview/sources.json`](public/studio-preview/sources.json)에
+고정한 Shadcn Studio commit과 네 가지 컴포넌트 변형입니다. 원문의
+[MIT + Commons Clause](public/studio-preview/SHADCN-STUDIO-LICENSE.txt),
+[Pretendard 라이선스](public/studio-preview/Pretendard-LICENSE.txt),
+[Geist Mono 라이선스](public/fonts/Geist-Mono-OFL.txt)를 함께 제공합니다.
+이 시안은 수정된 업무 화면이며 재배포용 컴포넌트 제품이 아닙니다.
+
+```sh
+npm run build
+npm run test:studio
+```
