@@ -38,7 +38,11 @@ curl --fail http://127.0.0.1:8080/api/health
 
 화면은 `http://127.0.0.1:8080/` 또는 허용한 사내 진입 주소로 접속한다. Compose는 `8080:8080`을 매핑한다. 플랫폼이 컨테이너 포트만 지정받는 경우에도 **8080**을 사용한다. 8000은 공개하지 않는다. 실행 계정은 UID/GID `10001:10001`이며, 쓰기 위치는 `/tmp`다.
 
-Nginx는 기존 OA 앱으로 `/`, `/api/*`, `/auth/*`를 전달한다. 허용 Host 검사 후 내부 Host를 loopback으로 바꾸며 전달된 신원/proxy 헤더로 사용자를 인증하지 않는다. OA의 `proxy_headers=False`는 그대로 적용된다. 실제 SSO의 외부 callback URL·Secure cookie·CSRF·TLS ingress 계약은 회사 어댑터 연동 시 별도로 확인해야 한다. 이 HTTP 8080 예제가 TLS 종료나 SSO 운영 연결을 구현한 것은 아니다.
+Nginx는 기존 OA 앱으로 `/`, `/api/*`, `/auth/*`를 전달한다. `proxy_set_header Host $http_host;`로 공개 Host와 명시된 포트를 보존하고 Origin도 원본 그대로 전달한다. Nginx와 OA의 `TrustedHostMiddleware`는 같은 `OA_ALLOWED_HOSTS`의 정확한 호스트 허용 목록을 각각 적용한다. `$host`로 포트를 생략하거나 Host를 내부 주소로 바꾸지 않는다. Origin을 소거하거나 검사를 비활성화하는 옵션은 추가하지 않는다.
+
+백엔드 접속 주소는 loopback을 유지한다. 전달된 신원/proxy 헤더로 사용자를 인증하지 않으며 `Forwarded`/`X-Forwarded-*` 소거와 OA의 `proxy_headers=False`도 유지한다. Host 보존은 TLS scheme 신뢰를 추가하지 않는다. 실제 SSO의 외부 callback URL·Secure cookie·CSRF·TLS ingress 계약은 회사 어댑터 연동 시 별도로 확인해야 한다. 이 HTTP 8080 예제가 TLS 종료나 SSO 운영 연결을 구현한 것은 아니다.
+
+SSO 변경 API는 JSON·`X-Sanity-Request: 1`을 요구하며, 제공된 Origin의 호스트·포트와 공개 Host를 비교한다. Fetch Metadata와 쿠키 SameSite는 추가 방어로 유지한다. 회사 `/auth/logout`의 Origin/Referer 검증도 유지하며 전역 헤더 삭제로 우회하지 않는다. 반영 후 정상 공개 Host·Origin의 POST, 다른 Origin·미허용 Host·잘못된 포트의 거부와 loopback health를 합성 입력으로 확인한다. 원본 설정·테스트·문서 수정은 Codex 담당이며 사내 AI는 승인된 Host 설정과 현장 검증만 수행한다.
 
 `start.py`는 두 프로세스를 함께 관리한다. 하나가 종료되면 다른 프로세스도 정리하고 컨테이너를 실패로 종료한다. Docker 종료 신호는 두 프로세스 그룹에 전달되며 제한 시간 후 강제 정리한다. 요청 URL/토큰이 로그로 남지 않도록 Nginx/uvicorn access log를 끈다.
 
@@ -102,5 +106,14 @@ docker run -d --name sanity-oa --init \
 .venv/bin/python -m unittest discover -s oa -p test_sso.py -v
 npm --prefix oa/dashboard run build
 ```
+
+`test_proxy_origin.py`는 실제 OA 요청 검사와 합성 호스트를 사용한다. Nginx가 PATH에 있으면 로컬 프록시도 띄워 공개 Host·포트·Origin 보존과 교차 출처 거부를 검증한다. 별도 바이너리를 사용할 때는 다음처럼 테스트 전용 경로를 지정한다. 시스템 Nginx 설정·회사 SSO·DB는 사용하지 않는다.
+
+```bash
+SANITY_TEST_NGINX_BINARY=/path/to/nginx \
+  .venv/bin/python -m unittest oa.docker.test_proxy_origin -v
+```
+
+Nginx가 없으면 해당 프록시 테스트는 명시적으로 skip하며, 이를 프록시 검증 통과로 보고하지 않는다.
 
 외부 개발 환경에서의 검증과 사내 베이스 이미지 빌드·SSO·실제 DB 점검 결과를 구분한다. 실제 이미지 빌드와 사내 접속 확인은 위 실행 절차로 현장에서 수행한다.

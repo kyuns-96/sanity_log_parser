@@ -110,6 +110,8 @@ app = create_app(
 
 직접 실행하는 `python -m oa.sso_app`은 loopback 8000을 유지한다. 사용자가 요청한 사내 Nginx 뒤의 컨테이너 실행은 [루트 Docker 구성](../docker/README.md)이 담당하며, uvicorn 한 개를 컨테이너의 8080에 실행한다. `sso_app.py`는 `OA_ALLOWED_HOSTS`의 정확한 도메인/IP를 적용하고 미지정 시 기존 localhost 목록만 허용한다. 회사 어댑터 주입 시 이 배포 설정을 보존한다. 사내 AI는 실제 proxy·TLS·SSO callback 계약을 확인하되 공통 bind·Host 검증을 변경하지 않는다. 무조건적인 forwarded header 신뢰나 모든 Host 허용으로 대체하지 않는다.
 
+프록시에서 공개 Host·포트와 Origin을 보존해야 업무 API의 Origin 검사가 일치한다. [Nginx 포함 구성](docker/README.md#2-빌드와-실행)은 `proxy_set_header Host $http_host;`를 사용하며 OA와 같은 정확한 호스트 허용 목록을 적용한다. Origin 삭제·검증 비활성화로 해결하지 않으며 `/auth/logout`의 기존 CSRF 정책을 유지한다. forwarded 헤더 신뢰나 TLS scheme 추론을 새로 허용하는 변경은 아니다.
+
 ## 5. 세션 응답과 오류 계약
 
 로그인 전 `GET /api/auth-config`로 서버가 선택한 인증 방식을 조회한다. 세션의 `auth_method`나 빌드 플래그로 미인증 사용자의 로그인 방식을 추측하지 않는다.

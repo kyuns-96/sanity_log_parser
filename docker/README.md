@@ -16,7 +16,7 @@ common/
 
 - **베이스 이미지**: Python 3.10 이상, pip, Node 20.18과 npm이 들어 있는 승인된 이미지. `OA_BASE_IMAGE` 빌드 인자로 지정한다. CI가 빌드 인자를 지원하지 않으면 Dockerfile의 `FROM ${OA_BASE_IMAGE}` 한 줄을 실제 사내 이미지로 교체한다. 기본 `sanity-oa-base:local`은 현장에서 준비할 이미지 이름이며 제공된 이미지가 아니다.
 - **실행 포트**: `8080`. 사내 Nginx의 upstream을 이 컨테이너의 8080으로 연결하고 `/`, `/api/`, `/auth/`를 같은 서비스에 전달한다.
-- **`OA_ALLOWED_HOSTS` 실행 환경변수**: 실제 서비스 도메인/IP를 쉼표로 구분한다. URL, 포트, 와일드카드는 넣지 않는다. 미지정 시 localhost만 허용한다. `127.0.0.1`은 상태 확인용으로 항상 허용된다. Nginx가 Host를 보존한다면 서비스 도메인을, 변경한다면 변경 후 Host도 포함한다.
+- **`OA_ALLOWED_HOSTS` 실행 환경변수**: 실제 서비스 도메인/IP를 쉼표로 구분한다. URL, 포트, 와일드카드는 넣지 않는다. 미지정 시 localhost만 허용한다. `127.0.0.1`은 상태 확인용으로 항상 허용된다. 앞단 Nginx와 OA에 같은 정확한 서비스 호스트를 설정하고 공개 Host·포트와 Origin을 그대로 전달한다. Origin 비교를 피하려고 Host를 내부 주소로 바꾸거나 Origin을 삭제하지 않는다.
 - **DB·SSO 설정**: [OA 설정 예제](../oa/.env.example)의 기존 키와 회사 SDK 설정을 CI의 비공개 실행 환경으로 주입한다. 비밀번호·토큰·인증서·패키지 저장소 인증 설정을 Dockerfile이나 Git에 넣지 않는다. 사내 npm/pip 저장소와 CA는 승인된 베이스 이미지/CI 구성을 사용한다. TLS 검증은 끄지 않는다.
 
 Dockerfile은 전역 Python에 패키지를 설치하므로 회사 SDK도 해당 Python에서 import할 수 있어야 한다. 베이스 이미지의 Python은 pip 설치를 지원해야 한다.

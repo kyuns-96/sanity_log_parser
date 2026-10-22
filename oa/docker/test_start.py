@@ -33,7 +33,11 @@ class HostBoundaryTests(unittest.TestCase):
             self.assertIn("server_name oa.example.invalid 127.0.0.1;", text)
             self.assertNotIn("__OA_SERVER_NAMES__", text)
             self.assertIn("return 400;", text)
-            self.assertIn("proxy_set_header Host 127.0.0.1;", text)
+            self.assertIn("proxy_set_header Host $http_host;", text)
+            self.assertNotIn("proxy_set_header Host $host;", text)
+            self.assertNotIn("proxy_set_header Origin", text)
+            for header in ("Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-IP"):
+                self.assertIn(f'proxy_set_header {header} "";', text)
 
     def test_invalid_config_is_rejected_before_creating_runtime_files(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -103,6 +103,8 @@ request status는 `PENDING`, `APPROVED`, `REJECTED`다. grant는 승인된 활�
 
 SSO 상태 변경 요청은 JSON과 `X-Sanity-Request: 1` 헤더가 필요하다. 명시적인 cross-site `Origin`/`Sec-Fetch-Site`는 거부하고 CORS를 개방하지 않는다. Origin은 검증된 Host와 비교하며 임의 forwarded header를 신뢰하지 않는다. 회사 `/auth/logout`과 콜백의 CSRF/세션 검증은 계속 회사 router의 책임이다.
 
+프록시는 공개 Host와 포트를 보존하고 Origin을 그대로 전달한다. Nginx 포함 구성은 `proxy_set_header Host $http_host;`를 사용하며 Nginx와 OA 양쪽에서 동일한 정확한 호스트 허용 목록을 적용한다. Host를 내부 주소로 바꾸거나 Origin을 삭제해 비교를 피하지 않는다. 전달 헤더 소거·백엔드 loopback·검증 활성 상태는 유지한다. 구체적인 배치는 [OA Docker 안내](docker/README.md#2-빌드와-실행)를 따른다.
+
 SSO 목록은 허용 scope를 **SQL count·정렬·페이지 제한 전에** 적용한다. 상세·원문·다운로드·검토 이력·근거 요청/응답·AI 작업/구성원/수신도 실제 소속 ID를 검사한다. 다른 범위·scope 없음은 `404 RESOURCE_NOT_FOUND`, 조회 가능한 TOP의 수정 시도·비관리자의 관리 시도는 `403 FORBIDDEN`이다. 범위 거부만으로 정상 SSO 세션을 지우지 않으며 이전 업무 자료를 화면에 남기지 않는다.
 
 업무 요청은 공유 transaction advisory lock을 검사부터 사용 완료까지 유지하고, 레지스트리/요청/승인/회수 변경은 같은 전역 잠금을 배타적으로 잡는다. `READ COMMITTED`에서 잠금 후 최신 계정·배정을 읽어, 회수와 이미 진행 중인 요청의 순서를 직렬화한다. 회수 완료 후 시작한 요청이 이전 배정으로 실행되지 않게 한다. 새 SSO 검토 작성자는 표시 이름만으로 식별하지 않고 안정 `user_id`를 기록한다.
