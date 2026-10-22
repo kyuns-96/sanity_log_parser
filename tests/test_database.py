@@ -125,6 +125,18 @@ class DatabaseTests(PgTestCase):
             Database("oa")
         self.assertEqual("DATABASE_PRIVILEGES", err.exception.code)
 
+    def test_destructive_and_ddl_related_rights_are_rejected_in_restricted_mode(self):
+        for side, table in (("vwp", "vwp_to_oa"), ("oa", "oa_to_vwp")):
+            for right in ("DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"):
+                with self.subTest(side=side, right=right):
+                    self.admin_query(f"GRANT {right} ON {{{table}}} TO sanity_{side}_app")
+                    try:
+                        with self.assertRaises(ReviewError) as error:
+                            Database(side)
+                        self.assertEqual("DATABASE_PRIVILEGES", error.exception.code)
+                    finally:
+                        self.admin_query(f"REVOKE {right} ON {{{table}}} FROM sanity_{side}_app")
+
     def test_required_indexes_accept_existing_names(self):
         from psycopg2 import sql
         indexes = self.admin.execute(

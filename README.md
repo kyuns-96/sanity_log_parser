@@ -38,7 +38,7 @@ SSO의 인증 검증·내부 사용자 연결은 교체 가능한 추상 인터�
 사내 AI는 먼저 [내부 AI 작업 범위](INTERNAL_AI_GUIDE.md)와 [AGENTS.md](AGENTS.md)를 읽습니다.
 [사내 AI 통합 인계 명세](INTERNAL_AI_HANDOFF.md)에 작업별 선행 정보·허용 파일/메서드·입출력·수용 기준·실행 명령·Codex 후속 연결과 복사 가능한 시작 지시문을 정리했습니다.
 사내 개발 AI 세 명에게는 [VWP 원천 입력 지시문](vwp/INTERNAL_AI_TASK.md), [VWP-bridge parser·모델 SDK 지시문](vwp_bridge/INTERNAL_AI_TASK.md), [OA SSO·사용자 연결 지시문](oa/INTERNAL_AI_TASK.md)을 각각 전달합니다. 각 문서 마지막에 복사할 시작 명령이 있습니다.
-DB 설정 키·역할/컬럼 권한·서버별 확인 명령·비공개 접속 인계 양식은 [DB 연결 인계](db/CONNECTION_HANDOFF.md)에 있습니다. VWP 원천 수집에는 DB 계정이 없고, 두 bridge만 별도 제한 로그인을 사용합니다.
+DB 설정 키·모드별 권한·서버별 확인 명령·비공개 접속 인계 양식은 [DB 연결 인계](db/CONNECTION_HANDOFF.md)에 있습니다. VWP 원천 수집에는 DB 계정이 없고, 두 bridge만 기본적으로 별도 제한 로그인을 사용합니다. 별도 계정이 없는 환경에는 명시적 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`의 [단일 계정 모드](db/CONNECTION_HANDOFF.md#31-단일-계정-모드)를 제공합니다. 단일 모드는 DB의 private/큐 컬럼 격리를 제공하지 않습니다.
 코드는 서버별로 **`vwp/`·`vwp_bridge/`·`oa/`**, 공통 계약은 **`common/`**, 합성 시험은 **`devtools/`**에 분리했습니다. 각 서버는 Git 저장소 루트에서 자기 모듈만 실행합니다. [서버별 코드·실행 안내](DEPLOYMENT.md)에 디렉터리 책임·의존성·실행 명령·설정 위치를 정리했습니다.
 
 GCA·VC LP·SpyGlass의 공개 문서를 참고한 **초기 추출 파서와 1,000개 합성 데이터 대시보드**도 제공합니다.
@@ -81,13 +81,14 @@ GUI에는 컬럼 정의 전체만 넣고 CREATE TABLE이나 바깥 괄호를 붙
 owner/DBA가 작업을 중지한 점검 시간에 파일 전체를 한 번 실행합니다.
 앱은 DDL이나 자동 테이블 생성을 하지 않습니다.
 
-각 서버는 [서버별 코드·실행 안내](DEPLOYMENT.md)에 따라 자기 역할의 `requirements.txt`를 설치하고 자기 진입점만 실행합니다. `common/`은 공유 계약이며 서버 앱을 import하지 않습니다. VWP-bridge/OA는 별도 제한 로그인과 각각 `sanity_vwp_app`/`sanity_oa_app` 역할을 사용합니다. 모델 자격증명은 VWP-bridge에만 두고, owner·superuser·상대 역할 상속·과도한 유효 권한은 거부합니다.
+각 서버는 [서버별 코드·실행 안내](DEPLOYMENT.md)에 따라 자기 역할의 `requirements.txt`를 설치하고 자기 진입점만 실행합니다. `common/`은 공유 계약이며 서버 앱을 import하지 않습니다. 기본 모드에서 VWP-bridge/OA는 별도 제한 로그인과 각각 `sanity_vwp_app`/`sanity_oa_app` 역할을 사용합니다. 단일 모드는 위 별도 계약을 따릅니다. 모델 자격증명은 VWP-bridge에만 두고, 두 모드 모두 owner·superuser 등 금지 권한을 검사합니다.
 
 ## 2. 비공개 PostgreSQL 접속 설정
 
 VWP-bridge는 [자기 설정 예제](vwp_bridge/.env.example), OA는 [자기 설정 예제](oa/.env.example)의 키를 각 서버의 **저장소 루트 private `.env`**에 설정합니다. `vwp_bridge/.env`, `oa/.env`, `common/.env`는 자동으로 읽지 않습니다. `.env`·실제 접속 문서 `dbaccess.md`는 Git 제외 대상이며 실행 계정만 읽도록 관리합니다. 공개 저장소에는 [접속 인계 예시](dbaccess.example.md)만 남깁니다. 브라우저나 `VITE_*`에는 비밀값을 넣지 않습니다.
 
 - `SANITY_DB_ACCESS=postgresql`: 기본값. 드라이버는 `psycopg2`입니다.
+- `SANITY_DB_ALLOW_SINGLE_ACCOUNT=false`: 기본 제한 모드. 정확한 `true`만 공유 로그인 모드이며 빈 값·`yes`·`1` 등은 오류입니다.
 - `SANITY_DB_HOST`, `SANITY_DB_NAME`: 같은 DB 서버와 DB 이름. DB 이름과 스키마는 다릅니다.
 - `SANITY_DB_PORT`: 실제 발급된 포트, 생략 시 5432.
 - `SANITY_DB_USER_NAME`, `SANITY_DB_PASSWORD`: **해당 환경의 제한된 계정**. VWP/OA 각 서버의 `.env`에 서로 다른 값을 둡니다.
@@ -153,7 +154,7 @@ UI demo는 사용자가 명시적으로 선택하는 합성 메모리 상태이�
 ## 4. PostgreSQL 분석·수신 실행
 
 2절에 따라 VWP/OA 각각의 비공개 `.env`를 설정합니다. 두 환경은 같은 DB·스키마를
-서로 다른 제한된 로그인으로 사용합니다. HTTP URL·Bearer 토큰은 PostgreSQL 접속 정보가 아닙니다.
+기본적으로 서로 다른 제한 로그인으로 사용하며 명시적 단일 계정 모드는 위 별도 계약을 따릅니다. HTTP URL·Bearer 토큰은 PostgreSQL 접속 정보가 아닙니다.
 
 비밀번호는 CLI 인자·소스·결과물에 넣지 않고 승인된 libpq/TLS 설정을 사용합니다.
 SANITY_TEST_ADMIN_DSN은 테스트에만 사용하며 실제 앱 환경에 설정하지 않습니다.

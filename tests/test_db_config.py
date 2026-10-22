@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from common.sanity_common import ReviewError
-from common.sanity_config import access_mode, load_environment, postgres_parameters
+from common.sanity_config import access_mode, database_privilege_mode, load_environment, postgres_parameters
 import common.sanity_db as sanity_db
 from common.sanity_privacy import MASK, SecretGuard
 
@@ -25,6 +25,16 @@ class ConnectionConfigTests(unittest.TestCase):
         with self.assertRaises(ReviewError):
             access_mode({"SANITY_DB_ACCESS": "sqlite"})
 
+    def test_single_account_requires_exact_explicit_true(self):
+        self.assertEqual("restricted", database_privilege_mode({}))
+        for value, expected in (("false", "restricted"), ("true", "single_account")):
+            with self.subTest(value=value):
+                self.assertEqual(expected, database_privilege_mode({"SANITY_DB_ALLOW_SINGLE_ACCOUNT": value}))
+        for value in (None, "", "yes", "1", "TRUE", " true ", True, False):
+            with self.subTest(value=value), self.assertRaises(ReviewError) as error:
+                database_privilege_mode({"SANITY_DB_ALLOW_SINGLE_ACCOUNT": value})
+            self.assertEqual("DATABASE_CONFIG", error.exception.code)
+
     def test_fields_are_separate_kwargs_and_password_is_not_rewritten(self):
         params = postgres_parameters(self.settings, "vwp")
         self.assertEqual({"host": "db.synthetic.invalid", "dbname": "fixture", "user": "fixture_user",
@@ -37,12 +47,16 @@ class ConnectionConfigTests(unittest.TestCase):
             path = Path(tmp) / ".env"
             from common.sanity_common import atomic_text
             atomic_text(path, 'SANITY_DB_HOST=file.invalid\nSANITY_DB_PASSWORD="literal ${TOKEN}"\n'
-                        'SANITY_DB_PORT=6543\nSANITY_DB_SSLROOTCERT=/synthetic/root.pem\nUNRELATED=no\n')
+                        'SANITY_DB_PORT=6543\nSANITY_DB_SSLROOTCERT=/synthetic/root.pem\n'
+                        'SANITY_DB_ALLOW_SINGLE_ACCOUNT=true\nUNRELATED=no\n')
             with patch.dict(os.environ, {"SANITY_DB_HOST": "export.invalid"}):
                 values = load_environment(path)
             self.assertEqual("export.invalid", values["SANITY_DB_HOST"])
             self.assertEqual("literal ${TOKEN}", values["SANITY_DB_PASSWORD"])
             self.assertEqual("6543", values["SANITY_DB_PORT"])
+            self.assertEqual("single_account", database_privilege_mode(values))
+            with patch.dict(os.environ, {"SANITY_DB_ALLOW_SINGLE_ACCOUNT": "false"}):
+                self.assertEqual("restricted", database_privilege_mode(load_environment(path)))
             self.assertNotIn("UNRELATED", values)
             self.assertNotIn("SANITY_DB_PASSWORD", os.environ)
 
@@ -94,6 +108,32 @@ class ConnectionConfigTests(unittest.TestCase):
                 self.fail("Expected connection failure")
         connect.assert_called_once()
 
+    def test_invalid_single_account_setting_is_rejected_before_connecting(self):
+        with patch.object(sanity_db, "load_environment", return_value={
+                **self.settings, "SANITY_DB_ALLOW_SINGLE_ACCOUNT": "yes"}), \
+                patch.object(sanity_db, "connect") as connect, self.assertRaises(ReviewError) as error:
+            sanity_db.Database("oa")
+        self.assertEqual("DATABASE_CONFIG", error.exception.code)
+        connect.assert_not_called()
+
+    def test_contract_failure_closes_connection_without_retrying_or_changing_mode(self):
+        for value, expected in (("false", "restricted"), ("true", "single_account")):
+            with self.subTest(value=value):
+                connection = MagicMock()
+                checked_modes = []
+                def reject(db):
+                    checked_modes.append(db.privilege_mode)
+                    raise ReviewError("DATABASE_PRIVILEGES", "Synthetic contract failure")
+                with patch.object(sanity_db, "load_environment", return_value={
+                        **self.settings, "SANITY_DB_ALLOW_SINGLE_ACCOUNT": value}), \
+                        patch.object(sanity_db, "connect", return_value=connection) as connect, \
+                        patch.object(sanity_db.Database, "_check_contract", reject), self.assertRaises(ReviewError) as error:
+                    sanity_db.Database("oa")
+                self.assertEqual("DATABASE_PRIVILEGES", error.exception.code)
+                self.assertEqual([expected], checked_modes)
+                connect.assert_called_once()
+                connection.close.assert_called_once()
+
     def test_configured_password_is_redacted_even_without_a_password_label(self):
         self.assertEqual("prefix " + MASK, SecretGuard(self.settings).text("prefix " + self.settings["SANITY_DB_PASSWORD"]))
 
@@ -108,3 +148,14 @@ class ConnectionConfigTests(unittest.TestCase):
                 redirect_stdout(output), redirect_stderr(errors):
             self.assertEqual(2, sanity_db.main(["check", "--side", "vwp"]))
         self.assertEqual("code=DATABASE_CONFIG\n", errors.getvalue())
+
+    def test_check_command_identifies_the_checked_mode_and_database_isolation(self):
+        for mode, isolation in (("restricted", "enforced"), ("single_account", "not_enforced")):
+            with self.subTest(mode=mode):
+                output = io.StringIO()
+                with patch.object(sanity_db, "Database") as db, redirect_stdout(output):
+                    db.return_value.__enter__.return_value.privilege_mode = mode
+                    self.assertEqual(0, sanity_db.main(["check", "--side", "vwp"]))
+                self.assertEqual("status=CONNECTED backend=POSTGRESQL driver=psycopg2 side=vwp "
+                                 f"checks=schema,permissions privilege_mode={mode} db_isolation={isolation}\n",
+                                 output.getvalue())

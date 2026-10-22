@@ -62,7 +62,7 @@ OA에서 사내 AI SDK를 실행하지 않는다. VWP와 OA는 기존 DB 경계�
 
 VWP가 형식/판정 의미·정답을 준비하고 VWP-bridge가 parser를 구현한다. VWP-bridge는 고정 SDK 계약을 확인하며 VWP 자료 준비와 독립적으로 모의 wrapper를 검증할 수 있다. OA는 SSO/사용자 연결을 독립적으로 준비한다. 결과는 각 지시문의 인계 형식으로 사용자/Codex 검토에 제출하며, 서로의 파일을 대신 고치거나 자동 연락 채널을 만들지 않는다.
 
-**DB 연결은 두 bridge만 담당한다.** 원천 VWP는 DB 계정이 없고, VWP-bridge는 VWP 로그인/`sanity_vwp_app`, OA는 별도 OA 로그인/`sanity_oa_app`을 사용한다. 실제 접속값은 비공개 `.env`에 현장 입력한다. 지원 키·우선순위·역할별 권한·읽기 전용 확인 명령·비공개 인계 양식은 [DB 연결 인계](db/CONNECTION_HANDOFF.md)에 있다. 실제 DB 확인·설치·배포는 사용자/DBA 관리 범위를 유지한다.
+**DB 연결은 두 bridge만 담당한다.** 원천 VWP는 DB 계정이 없고, 기본 모드에서 VWP-bridge는 VWP 로그인/`sanity_vwp_app`, OA는 별도 OA 로그인/`sanity_oa_app`을 사용한다. 별도 제한 계정을 확보할 수 없는 환경은 양쪽에서 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`를 명시해 공유 로그인 계약을 선택한다. 이 모드는 DB의 private/큐 컬럼 격리를 제공하지 않으며 검사 실패 후 자동 선택하지 않는다. 실제 접속값은 비공개 `.env`에 현장 입력한다. 지원 키·우선순위·모드별 권한·읽기 전용 확인 명령·비공개 인계 양식은 [DB 연결 인계](db/CONNECTION_HANDOFF.md)에 있다. 실제 DB 확인·설치·배포와 내부 AI의 공통 코드 보호 범위는 유지한다.
 
 ## 3. 읽는 순서와 수정 위치
 

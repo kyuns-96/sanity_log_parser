@@ -114,7 +114,11 @@ DB 확장과 AI 작업자·분류 화면의 구현 완료를 구분한다.
 
 테이블은 기존 `db/form/`으로 이미 신청한 상태다. **form 4개와 기존 `002`·`003`은 변경하지 않고 이후 변경은 증분 SQL로 작성한다.** 전체 준비 순서는 **신청한 form으로 생성 → db/002_indexes.sql → 역할 준비 → db/003_grants.sql → db/004_clustering.sql**이다. 완료한 단계는 반복하지 않으며 `002`·`003`까지 적용했다면 `004`만 실행한다. 테이블 재생성·기존 데이터 삭제는 하지 않는다. `004`는 owner/DBA가 점검 시간에 한 트랜잭션으로 실행하고, 원본 제약 불일치 시 변경 전체를 rollback한다. Jira 작업은 추가하지 않는다. 세부 절차는 [db/README.md](db/README.md)를 따른다.
 
-두 앱은 별도의 제한된 로그인과 sanity_vwp_app/sanity_oa_app 역할을 사용한다. private 테이블은 상대 앱에 공개하지 않는다. 공유 큐는 송신 내용 INSERT와 수신 상태 UPDATE를 컬럼 권한으로 분리한다. owner·superuser·상대 역할 상속·과도한 유효 권한은 실행 시 거부한다. 앱은 DDL·DELETE·TRUNCATE를 수행하지 않는다. DBA 접근 가능성과 반출 정책 승인은 별개다.
+기본 `restricted` 모드에서 두 앱은 별도의 제한된 로그인과 sanity_vwp_app/sanity_oa_app 역할을 사용한다. private 테이블은 상대 앱에 공개하지 않으며 공유 큐는 송신 내용 INSERT와 수신 상태 UPDATE를 컬럼 권한으로 분리한다. owner·superuser·상대 역할 상속·과도한 유효 권한은 실행 시 거부한다.
+
+별도 제한 계정을 발급할 수 없는 환경에는 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`로 명시적으로 선택하는 `single_account` 모드를 제공한다. 기본값은 `false`이며 이 두 소문자 문자열 외 값은 `DATABASE_CONFIG`로 거부한다. 역할 존재/소속은 요구하지 않고 네 테이블 모든 컬럼의 유효 SELECT/INSERT/UPDATE를 검사한다. DELETE는 보유 허용·필수 아님, TRUNCATE/REFERENCES/TRIGGER·관리자/상위 관리자 역할·테이블 소유/소유자 역할·앱/public 스키마 CREATE는 계속 금지한다. 기존 네 테이블·필수 UNIQUE 검사는 공통으로 적용한다. **단일 모드는 private 접근과 큐 송수신 컬럼을 DB 권한으로 분리하지 못한다.** 앱의 정상 side 사용·입력 필드·불변값·트랜잭션·lease·업무 권한 검사는 유지한다. 실패 후 자동 전환·새 GRANT/역할·원본 SQL/포털 계획 변경은 없다. 읽기 전용 check는 모드와 `db_isolation=enforced|not_enforced`를 출력하며 단일 계약 검사를 제한 계정 격리 통과로 표시하지 않는다. 상세 계약과 현장 점검은 [DB 연결 인계 3.1절](db/CONNECTION_HANDOFF.md#31-단일-계정-모드)을 따른다.
+
+앱은 두 모드 모두 DDL·DELETE·TRUNCATE를 수행하지 않는다. DBA 접근 가능성과 반출 정책 승인은 별개다.
 
 DB는 타입·CHECK·고유 키·바이트 해시·parent/scope FK·lease 상태를 검사한다. 앱은 parent 종류·단위/파일/그룹 연결, inventory·전체 집계, 상태 전이·개정 연속성을 검사한다. 컬럼 생성만으로 준비 완료가 아니며 인덱스·권한 적용과 실제 앱 계정 검증까지 필요하다.
 
@@ -150,7 +154,7 @@ AI URL·token은 VWP 서버의 비공개 `.env`/환경변수에서 읽는다. AP
 
 현재 대시보드는 단일 사용자 로컬 prototype이다. private .env의 SANITY_DASHBOARD_TOKEN은 최소 32자, SANITY_DASHBOARD_REVIEWER는 서버가 고정하는 이름이다. 모든 데이터 조회·변경 API에 인증을 적용한다. health 확인과 정적 UI는 업무 데이터가 아니다. 브라우저 토큰은 메모리에만 두며 localStorage·URL·로그·VITE_*·번들에 넣지 않는다. 자유 입력으로 서버 검토자 이름을 바꾸지 않는다. DB 계정·DBaaS 토큰은 서버에만 둔다. 외부 bind는 금지하며 운영 인증으로 표현하지 않는다. 다중 사용자 SSO/RBAC·TLS proxy·운영 감사는 별도 구현·검증 대상이다. SSO 인증·내부 사용자 연결의 추상 인터페이스와 사내 구현 진입점은 15.14절에 추가했으며, 실제 사내 인증과 업무 범위 권한은 별도다.
 
-PostgreSQL 설정은 `SANITY_DB_HOST`, `SANITY_DB_PORT`(기본 5432), `SANITY_DB_NAME`, `SANITY_DB_USER_NAME`, `SANITY_DB_PASSWORD`, `SANITY_DB_SCHEMA`(기본 public), `SANITY_DB_SSLMODE`(기본 verify-full), `SANITY_DB_SSLROOTCERT`(필요 시 절대 CA 파일 경로)를 사용한다. 호스트·DB 이름·계정·비밀번호가 없으면 실패하며 다른 로컬 DB를 사용하지 않는다. VWP/OA 각 실행 서버는 같은 키 이름으로 서로 다른 제한된 계정 값을 설정한다. 두 계정을 통합하거나 상대 private 테이블의 권한을 열지 않는다. 비어 있지 않은 해당 side의 `SANITY_VWP_DSN`/`SANITY_OA_DSN`은 기존 환경·테스트 호환용으로 연결 필드보다 우선하므로 필드 방식으로 바꿀 때 제거/비운다. 비밀번호는 psycopg2의 별도 인자로 전달하며 실패 시 다른 설정/TLS 수준으로 재시도하지 않는다. `.env`보다 환경변수가 우선하고 보간은 하지 않는다. 기존 `.env`의 HTTP 모드는 운영자가 직접 바꿔야 한다.
+PostgreSQL 설정은 `SANITY_DB_HOST`, `SANITY_DB_PORT`(기본 5432), `SANITY_DB_NAME`, `SANITY_DB_USER_NAME`, `SANITY_DB_PASSWORD`, `SANITY_DB_SCHEMA`(기본 public), `SANITY_DB_SSLMODE`(기본 verify-full), `SANITY_DB_SSLROOTCERT`(필요 시 절대 CA 파일 경로)를 사용한다. 호스트·DB 이름·계정·비밀번호가 없으면 실패하며 다른 로컬 DB를 사용하지 않는다. VWP/OA 각 실행 서버는 기본적으로 같은 키 이름으로 서로 다른 제한 계정을 설정한다. 명시적인 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`에서는 7절의 공유 로그인 계약을 사용하며 private DB 격리를 보장하지 않는다. 비어 있지 않은 해당 side의 `SANITY_VWP_DSN`/`SANITY_OA_DSN`은 기존 환경·테스트 호환용으로 연결 필드보다 우선하므로 필드 방식으로 바꿀 때 제거/비운다. 비밀번호는 psycopg2의 별도 인자로 전달하며 실패 시 다른 설정/TLS 수준으로 재시도하지 않는다. `.env`보다 환경변수가 우선하고 보간은 하지 않는다. 기존 `.env`의 HTTP 모드는 운영자가 직접 바꿔야 한다.
 
 임시 DBaaS는 DBAAS_BASE_URL과 별칭 DBASS_BASE_URL이 다르면 중단한다. DBAAS_TOKEN과 절대 경로 DBAAS_CA_PATH를 사용하며 PEM/DER CA를 검증한다. 검증 끄기·redirect·환경 proxy는 사용하지 않는다. HTTPX timeout 30초는 각 I/O 대기 제한이며 요청 전체 시간 보장이 아니다. URL·토큰·CA 경로·서버 detail을 진단에 출력하지 않는다.
 
@@ -799,7 +803,7 @@ DB 증분 저장과 감사 계약은 Codex 담당이며 내부 AI가 임의 수�
 
 각 [VWP](vwp/INTERNAL_AI_TASK.md)·[VWP-bridge](vwp_bridge/INTERNAL_AI_TASK.md)·[OA](oa/INTERNAL_AI_TASK.md) 지시문과 scoped `AGENTS.md`를 따른다. 소유권·허용 메서드·비식별 문의·`WAITING_FOR_CODEX` 경계는 유지한다. 공통 코드·SQL·UI·기존 테스트 변경/디버깅은 설계 담당 Codex가 맡는다. 사내 회사 구현·원문·비밀값을 덮어쓰거나 공개하지 않는다.
 
-[DB 연결 인계](db/CONNECTION_HANDOFF.md)에 기존 키·우선순위·TLS·역할/컬럼 권한·읽기 전용 check·설치 단계·비공개 인계 양식을 둔다. 두 bridge는 같은 논리 DB/스키마를 서로 다른 제한 로그인으로 사용한다. 실제 사내 값·설치 상태는 현장 확인 대상이다. 소스 분리는 회사 SDK·SSO→workspace·원천 import·신규 VWP job의 연동 완료를 뜻하지 않는다. COMMON 후속 작업·사람 확정·`AUTHORIZATION_NOT_IMPLEMENTED`·`CORPORATE` 보호를 유지한다.
+[DB 연결 인계](db/CONNECTION_HANDOFF.md)에 지원 키·우선순위·TLS·모드별 권한·읽기 전용 check·설치 단계·비공개 인계 양식을 둔다. 두 bridge는 같은 논리 DB/스키마를 기본적으로 서로 다른 제한 로그인으로 사용하며 명시적 단일 계정 모드에서는 공유 로그인과 DB 격리 미제공을 기록한다. 실제 사내 값·설치 상태는 현장 확인 대상이다. 소스 분리는 회사 SDK·SSO→workspace·원천 import·신규 VWP job의 연동 완료를 뜻하지 않는다. COMMON 후속 작업·사람 확정·`AUTHORIZATION_NOT_IMPLEMENTED`·`CORPORATE` 보호를 유지한다.
 
 <a id="human-judgment-learning"></a>
 

@@ -6,7 +6,7 @@ import hashlib
 import uuid
 
 from common.sanity_common import ReviewError, canonical_json
-from common.sanity_config import load_environment, access_mode, postgres_parameters
+from common.sanity_config import load_environment, access_mode, database_privilege_mode, postgres_parameters
 
 try:
     import psycopg2
@@ -51,6 +51,7 @@ class Database:
             # Do not silently weaken locks, atomic commits or role checks, or fall back to a DSN.
             raise ReviewError("DBAAS_SQL_CONTRACT_REQUIRED",
                 "DBaaS HTTP access is configured separately; bridge storage needs the query and transaction contract")
+        self.privilege_mode = database_privilege_mode(settings)
         if psycopg2 is None:
             raise ReviewError("DATABASE_DRIVER_MISSING", "Install requirements.txt in the application environment")
         params = postgres_parameters(settings, side)
@@ -84,11 +85,15 @@ class Database:
             raise ReviewError("DATABASE_PRIVILEGES", "Application login must not inherit or switch to an elevated role")
         if self.conn.execute("SELECT has_schema_privilege(current_user,%s,'CREATE') AS allowed", (self.schema,)).fetchone()["allowed"]:
             raise ReviewError("DATABASE_PRIVILEGES", "Application login must not create objects in the application schema")
-        memberships = self.conn.execute("SELECT pg_has_role(current_user,%s,'MEMBER') AS own, "
-                                        "pg_has_role(current_user,%s,'MEMBER') AS other",
-                                        (f"sanity_{self.side}_app", f"sanity_{'oa' if self.side == 'vwp' else 'vwp'}_app")).fetchone()
-        if not memberships["own"] or memberships["other"]:
-            raise ReviewError("DATABASE_PRIVILEGES", "Application login must inherit only its own bridge role")
+        if self.privilege_mode == "restricted":
+            memberships = self.conn.execute("SELECT pg_has_role(current_user,%s,'MEMBER') AS own, "
+                                            "pg_has_role(current_user,%s,'MEMBER') AS other",
+                                            (f"sanity_{self.side}_app", f"sanity_{'oa' if self.side == 'vwp' else 'vwp'}_app")).fetchone()
+            if not memberships["own"] or memberships["other"]:
+                raise ReviewError("DATABASE_PRIVILEGES", "Application login must inherit only its own bridge role")
+        elif self.conn.execute("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='public' "
+                               "AND has_schema_privilege(current_user,oid,'CREATE')) AS allowed").fetchone()["allowed"]:
+            raise ReviewError("DATABASE_PRIVILEGES", "Single-account login must not create objects in the public schema")
         rows = self.conn.execute("SELECT c.oid,c.relname,c.relowner FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
                                  "WHERE n.nspname=%s AND c.relname=ANY(%s) AND c.relkind='r'",
                                  (self.schema, list(TABLES.values()))).fetchall()
@@ -98,10 +103,11 @@ class Database:
             if self.conn.execute("SELECT pg_has_role(current_user,%s,'MEMBER') AS owns", (row["relowner"],)).fetchone()["owns"]:
                 raise ReviewError("DATABASE_PRIVILEGES", "Application login must not own the tables")
             self._check_table_acl(row["oid"], row["relname"])
-        other = "oa" if self.side == "vwp" else "vwp"
-        other_oid = next(r["oid"] for r in rows if r["relname"] == TABLES[other])
-        if self.conn.execute("SELECT has_table_privilege(current_user,%s,'SELECT') AS exposed", (other_oid,)).fetchone()["exposed"]:
-            raise ReviewError("DATABASE_PRIVILEGES", "Private tables must be isolated between environments")
+        if self.privilege_mode == "restricted":
+            other = "oa" if self.side == "vwp" else "vwp"
+            other_oid = next(r["oid"] for r in rows if r["relname"] == TABLES[other])
+            if self.conn.execute("SELECT has_table_privilege(current_user,%s,'SELECT') AS exposed", (other_oid,)).fetchone()["exposed"]:
+                raise ReviewError("DATABASE_PRIVILEGES", "Private tables must be isolated between environments")
         self._check_indexes()
 
     def _check_indexes(self):
@@ -145,7 +151,11 @@ class Database:
         all_columns = {row["attname"] for row in columns}
         controls = {"status", "error_message", "attempt_count", "next_attempt_at", "lease_token",
                     "lease_owner", "lease_expires_at", "completed_at", "updated_at"}
-        if name == TABLES[self.side]:
+        if self.privilege_mode == "single_account":
+            # The shared login has no DB-enforced side or queue-column isolation.
+            # Still require every effective column right instead of bypassing ACL checks.
+            reads = inserts = updates = all_columns
+        elif name == TABLES[self.side]:
             reads = inserts = all_columns
             updates = {"state", "status", "version", "updated_at"}
         elif name in (TABLES["vwp"], TABLES["oa"]):
@@ -160,9 +170,12 @@ class Database:
         for right, expected in (("r", reads), ("i", inserts), ("u", updates)):
             if {row["attname"] for row in columns if row[right]} != expected:
                 raise ReviewError("DATABASE_PRIVILEGES", "Effective table/column rights differ from the bridge contract")
-        forbidden = self.conn.execute("SELECT has_table_privilege(current_user,%s,'DELETE,TRUNCATE,REFERENCES,TRIGGER') AS exposed",
-                                      (oid,)).fetchone()["exposed"]
-        if forbidden:
+        rights = self.conn.execute("SELECT has_table_privilege(current_user,%s,'DELETE') AS can_delete,"
+            "has_table_privilege(current_user,%s,'TRUNCATE') AS can_truncate,"
+            "has_table_privilege(current_user,%s,'REFERENCES') AS can_reference,"
+            "has_table_privilege(current_user,%s,'TRIGGER') AS can_trigger", (oid, oid, oid, oid)).fetchone()
+        if (rights["can_truncate"] or rights["can_reference"] or rights["can_trigger"]
+                or (self.privilege_mode == "restricted" and rights["can_delete"])):
             raise ReviewError("DATABASE_PRIVILEGES", "Destructive or DDL-related table rights are not allowed")
 
     def execute(self, query, params=None):
@@ -269,12 +282,14 @@ def main(argv=None):
     parser.add_argument("--side", choices=("vwp", "oa"), required=True)
     args = parser.parse_args(argv)
     try:
-        with Database(args.side):
-            pass
+        with Database(args.side) as db:
+            privilege_mode = db.privilege_mode
     except ReviewError as exc:
         print(f"code={exc.code}", file=sys.stderr)
         return 2
-    print(f"status=CONNECTED backend=POSTGRESQL driver=psycopg2 side={args.side} checks=schema,permissions")
+    isolation = "not_enforced" if privilege_mode == "single_account" else "enforced"
+    print(f"status=CONNECTED backend=POSTGRESQL driver=psycopg2 side={args.side} checks=schema,permissions "
+          f"privilege_mode={privilege_mode} db_isolation={isolation}")
     return 0
 
 

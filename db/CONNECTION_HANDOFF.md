@@ -12,7 +12,9 @@
 | [VWP-bridge](../vwp_bridge/INTERNAL_AI_TASK.md) | parser·VWP 모델 SDK 연동, 기존 분석/전달 실행 환경 | VWP 전용 제한 로그인 → `sanity_vwp_app` | VWP 서버 설정, `--side vwp` 점검 결과 |
 | [OA](../oa/INTERNAL_AI_TASK.md) | SSO·사용자 연결, 기존 수신/사람 검토 실행 환경 | OA 전용 제한 로그인 → `sanity_oa_app` | OA 서버 설정, `--side oa` 점검 결과 |
 
-**개발 AI는 세 개지만 앱 DB 계정은 두 개**다. 두 bridge는 같은 PostgreSQL DB와 네 테이블을 사용한다. 접속 endpoint는 각 망에서 승인된 주소를 사용하며, 주소 문자열이 다르더라도 DBA가 같은 논리 DB/스키마임을 확인해야 한다. `sanity_vwp_app`·`sanity_oa_app`은 권한 역할 이름이며 보통 `NOLOGIN`이다. 실제 발급된 로그인 이름은 별개로 확인한다. 코드의 side는 `vwp`, `oa`만 지원한다. `vwp-bridge`라는 새 side를 만들지 않는다.
+위 표는 기본 `restricted` 모드다. **개발 AI는 세 개지만 앱 DB 계정은 기본 두 개**다. 두 bridge는 같은 PostgreSQL DB와 네 테이블을 사용한다. 별도 제한 계정을 발급할 수 없는 환경은 [3.1절의 단일 계정 모드](#31-단일-계정-모드)를 명시적으로 선택할 수 있다. 이 경우 두 bridge가 공유 DB 로그인 하나를 사용하며 VWP 원천 수집에는 여전히 DB 계정이 없다.
+
+접속 endpoint는 각 망에서 승인된 주소를 사용하며, 주소 문자열이 다르더라도 같은 논리 DB/스키마임을 현장에서 확인해야 한다. `sanity_vwp_app`·`sanity_oa_app`은 기본 모드의 권한 역할 이름이며 보통 `NOLOGIN`이다. 실제 발급된 로그인 이름은 별개로 확인한다. 코드의 side는 두 모드 모두 `vwp`, `oa`만 지원한다. `vwp-bridge`라는 새 side를 만들지 않는다.
 
 ```mermaid
 flowchart LR
@@ -33,9 +35,10 @@ flowchart LR
 | `SANITY_DB_HOST` | 필수 | 해당 망에서 접근 가능한 승인 endpoint와 인증서 호스트 일치 |
 | `SANITY_DB_PORT` | 기본 `5432` | 실제 발급 포트, 1~65535 |
 | `SANITY_DB_NAME` | 필수 | 두 bridge가 함께 사용하는 실제 DB 이름 |
-| `SANITY_DB_USER_NAME` | 필수 | 해당 서버의 제한 로그인. 반대편 계정/owner/관리자 사용 금지 |
+| `SANITY_DB_USER_NAME` | 필수 | 기본은 해당 서버의 제한 로그인, 단일 모드는 공유 로그인. owner/관리자 사용 금지 |
 | `SANITY_DB_PASSWORD` | 필수 | 해당 로그인 비밀번호, 비밀 저장 경로에서 현장 주입 |
 | `SANITY_DB_SCHEMA` | 기본 `public` | 네 테이블의 실제 스키마. DB 이름과 별개 |
+| `SANITY_DB_ALLOW_SINGLE_ACCOUNT` | 기본 `false` | 정확한 소문자 `true`만 단일 계정 모드 선택. `false`는 기본 제한 모드. 빈 값·`yes`·`1`·대문자 등은 `DATABASE_CONFIG` |
 | `SANITY_DB_SSLMODE` | 기본 `verify-full` | DBA 승인 TLS 정책. 연결 오류를 해결하려고 검증 수준을 낮추지 않음 |
 | `SANITY_DB_SSLROOTCERT` | CA 필요 시 | 해당 서버 신뢰 CA 파일의 **절대 경로**, 인증서 파일은 비공개 배포 |
 | `SANITY_VWP_DSN` | 선택, VWP 측만 | 비어 있지 않으면 VWP의 host/user/password/port/TLS 필드보다 우선 |
@@ -45,6 +48,7 @@ flowchart LR
 
 ```dotenv
 SANITY_DB_ACCESS=postgresql
+SANITY_DB_ALLOW_SINGLE_ACCOUNT=false
 SANITY_DB_HOST=
 SANITY_DB_PORT=5432
 SANITY_DB_NAME=
@@ -55,13 +59,13 @@ SANITY_DB_SSLMODE=verify-full
 SANITY_DB_SSLROOTCERT=
 ```
 
-VWP-bridge 서버는 VWP 로그인 값만, OA 서버는 OA 로그인 값만 넣는다. 지원 예제는 [VWP-bridge](../vwp_bridge/.env.example)와 [OA](../oa/.env.example)로 구분하며, 구현 근거는 [sanity_config.py](../common/sanity_config.py)다. 실제 `.env`는 실행 계정만 읽도록 관리한다. 실제 `dbaccess.md`, 인증서, DSN·비밀번호·토큰을 Git/브라우저/`VITE_*`/외부 대화에 넣지 않는다.
+기본 모드에서는 VWP-bridge 서버는 VWP 로그인 값만, OA 서버는 OA 로그인 값만 넣는다. 단일 모드에서는 양쪽 서버의 비공개 설정에 같은 공유 로그인을 현장 주입하며 모델/SSO 자격증명을 공유하지 않는다. 지원 예제는 [VWP-bridge](../vwp_bridge/.env.example)와 [OA](../oa/.env.example)로 구분하며, 구현 근거는 [sanity_config.py](../common/sanity_config.py)다. 실제 `.env`는 실행 계정만 읽도록 관리한다. 실제 `dbaccess.md`, 인증서, DSN·비밀번호·토큰을 Git/브라우저/`VITE_*`/외부 대화에 넣지 않는다.
 
 **DSN 우선순위:** 기존 side DSN이 남아 있으면 위 필드를 고쳐도 접속이 바뀌지 않는다. 필드 방식으로 전환할 때는 승인된 설정에서 자기 side DSN을 제거하거나 비운다. DSN 사용 시 TLS/CA 등 연결 조건도 DSN 쪽에서 완결해야 한다. DSN 실패 후 필드 방식/다른 계정/HTTP로 자동 재접속하지 않는다. 새 env 키가 필요하면 공통 설정을 수정하지 말고 Codex에게 문의한다.
 
 ## 3. 네 테이블과 유효 권한
 
-기준은 [003_grants.sql](003_grants.sql)이다. 아래는 **기존 앱의 실행 권한**이며 개발 AI가 임의 SQL을 작성/실행할 허가가 아니다.
+기본 `restricted` 모드의 기준은 [003_grants.sql](003_grants.sql)이다. 아래는 **앱의 실행 권한**이며 개발 AI가 임의 SQL을 작성/실행할 허가가 아니다. 단일 계정 모드의 권한 계약은 3.1절을 따른다.
 
 | 테이블 | VWP 로그인 (`sanity_vwp_app`) | OA 로그인 (`sanity_oa_app`) |
 |---|---|---|
@@ -75,9 +79,31 @@ VWP-bridge 서버는 VWP 로그인 값만, OA 서버는 OA 로그인 값만 넣�
 - OA→VWP INSERT: `message_id`, `message_type`, `payload`, `project`, `run_id`, `bundle_id`, `expires_at`.
 - 양쪽 수신 큐 UPDATE: `status`, `error_message`, `attempt_count`, `next_attempt_at`, `lease_token`, `lease_owner`, `lease_expires_at`, `completed_at`, `updated_at`.
 
-DBA는 각 로그인에 자기 역할 하나만 연결한다. 두 앱 모두 owner/superuser/BYPASSRLS/상대 역할 상속이나 과도한 유효 권한을 사용하지 않는다. DELETE/TRUNCATE/DDL·schema CREATE는 앱 권한이 아니다. 앱의 현재 권한 검사는 직접 GRANT뿐 아니라 상속/공개 권한도 확인한다. 실패 시 광범위 GRANT나 검사 삭제로 해결하지 않는다.
+기본 모드에서 DBA는 각 로그인에 자기 역할 하나만 연결한다. 두 앱 모두 owner/superuser/BYPASSRLS/상대 역할 상속이나 과도한 유효 권한을 사용하지 않는다. 기본 모드에서는 DELETE/TRUNCATE/DDL·schema CREATE를 허용하지 않는다. 앱의 권한 검사는 직접 GRANT뿐 아니라 상속/공개 권한도 확인한다. 실패 시 광범위 GRANT나 검사 삭제로 해결하지 않는다.
 
 DB 버전 조건은 PostgreSQL 12.1 이상·UTF-8이며 실검증 버전은 12.1/16.15다. PG12의 기본 `public` 스키마는 `PUBLIC`에 CREATE가 부여되어 있을 수 있으므로 DBA가 **실제 앱 스키마와 두 로그인**의 유효 CREATE 권한까지 검토한다. 원본 `003`은 스키마의 PUBLIC CREATE를 자동 회수하지 않는다. 별도 비공개 스키마도 실제 권한으로 확인하며, 내부 AI나 앱이 권한을 자동 변경하지 않는다.
+
+### 3.1. 단일 계정 모드
+
+두 bridge의 저장소 루트 `.env` 또는 프로세스 환경에 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`를 명시한다. 미설정은 `false`다. `.env`의 `true`보다 프로세스 환경의 `false`가 우선하며, 빈 환경변수도 오류로 처리한다. DSN 우선순위·TLS·접속 실패 처리와 별개인 권한 계약 선택이며, 기본 모드 검사 실패 후 자동 전환하지 않는다. HTTP DBaaS를 PostgreSQL 저장 연결로 바꾸지도 않는다.
+
+| 검사 | 기본 `restricted` | 명시적 `single_account` |
+|---|---|---|
+| `sanity_vwp_app` / `sanity_oa_app` 소속 | 자기 역할만 필수 | 역할 조회·존재 요구 없음 |
+| 유효 SELECT/INSERT/UPDATE | 위 표의 side·컬럼별 범위와 정확히 일치 | 네 테이블의 모든 컬럼에 세 권한 모두 필수 |
+| 상대 private 테이블 접근 | 금지 | 허용, DB 격리 미제공 |
+| DELETE | 금지 | 보유 허용, 필수 아님 |
+| TRUNCATE / REFERENCES / TRIGGER | 각각 금지 | 각각 계속 금지 |
+| superuser / CREATEROLE / BYPASSRLS·상위 관리자 역할 소속 | 금지 | 계속 금지 |
+| 테이블 소유·소유자 역할 소속 | 금지 | 계속 금지 |
+| 스키마 CREATE | 앱 스키마 금지 | 앱 스키마와 `public` 모두 금지 |
+| 네 테이블·필수 UNIQUE 검사 | 필수 | 그대로 필수 |
+
+`Database._check_contract`가 공통 관리자/소유/스키마/인덱스 검사와 모드별 ACL을 검사한다. 이 검사는 **DB 수준의 private 테이블 격리와 송수신 컬럼 분리를 단일 모드에서 보장하지 않는다.** 공유 계정으로 다른 SQL을 실행하면 상대 private 읽기·쓰기, 큐 내용·상태 수정, DELETE가 가능할 수 있다. 정상 앱 경로의 서버별 사용 범위, 송신 필드 제한·불변값 충돌 검사·상태 전이·트랜잭션·lease는 유지되지만 DB 권한 분리를 대신하지 않는다. 삭제 API/작업자도 추가하지 않는다.
+
+이 모드는 기존 공유 계정의 실측 권한을 검사하는 별도 계약이다. 새 GRANT·역할·테이블·증분 SQL이 필요하지 않으며, 기본 제한 계정용 `003_grants.sql`이나 포털 계획을 변경·실행해 우회하지 않는다. 테이블 구조용 `002`, `004`~`009`의 해당 기능별 설치 조건은 그대로다. 기존 완료 DDL을 반복하지 않는다.
+
+설정·DB 공통 코드·기존 테스트·명세 변경은 Codex 담당이다. 내부 AI는 제공된 수정본과 자기 서버 설정으로 아래 읽기 전용 check를 준비하고 비식별 결과를 인계한다. 회사 어댑터 변경 범위, SSO 검증·업무 권한·`AUTHORIZATION_NOT_IMPLEMENTED`는 확대하거나 해제하지 않는다.
 
 ## 4. 실제 연결 확인과 결과 인계
 
@@ -93,7 +119,7 @@ DB 버전 조건은 PostgreSQL 12.1 이상·UTF-8이며 실검증 버전은 12.1
 .venv/bin/python -m common.sanity_db check --side oa
 ```
 
-두 명령은 읽기 전용으로 **연결·설치 스키마·유효 권한**을 검사한다. 성공 출력은 `status=CONNECTED backend=POSTGRESQL driver=psycopg2 side=vwp checks=schema,permissions` 또는 같은 형식의 `side=oa`다. 실패 시 고정 `code=...`와 종료 코드 2를 보고한다. 연결 성공은 실제 송수신/사내 SSO/모델/새 workspace 운영 완료를 뜻하지 않는다.
+두 명령은 읽기 전용으로 **연결·설치 스키마·선택한 모드의 유효 권한**을 검사한다. 기본 모드 성공은 `status=CONNECTED backend=POSTGRESQL driver=psycopg2 side=vwp checks=schema,permissions privilege_mode=restricted db_isolation=enforced`이며 OA는 같은 형식의 `side=oa`다. 단일 모드에서는 `privilege_mode=single_account db_isolation=not_enforced`를 출력한다. `checks=schema,permissions`만으로 제한 계정 격리가 통과했다고 보고하지 않는다. 실패 시 고정 `code=...`와 종료 코드 2를 보고한다. 연결 성공은 실제 송수신/사내 SSO/모델/새 workspace 운영 완료를 뜻하지 않는다.
 
 접속 점검에서는 PING INSERT, 분석/수신/worker 실행, queue 상태 수정, fixture/전체 DB 시험을 하지 않는다. 쓰기·잠금·재수신·중복 방지의 전체 검증은 별도 승인된 점검 환경/절차에서 수행한다. `db/tests/run_mock.py`, `db/tests/create_fixture.sh`, `run_tests.py --require-db`는 일반 접속 점검 명령이 아니며 실제 운영 DB에 실행하지 않는다.
 
@@ -105,7 +131,7 @@ DB 버전 조건은 PostgreSQL 12.1 이상·UTF-8이며 실검증 버전은 12.1
 
 | 단계 | 상태 확인 대상 |
 |---|---|
-| 최초 form·`002`·역할 준비·`003` | 네 테이블/제약/인덱스, 별도 로그인과 컬럼 권한 |
+| 최초 form·`002`·권한 준비 | 네 테이블/제약/인덱스. 기본 모드는 역할·`003`, 단일 모드는 3.1절의 실측 권한 계약 |
 | `004_clustering.sql` | 기존 legacy 분류 작업/개정 |
 | `005_workspace.sql` | workspace 관리 레코드/PoR/세션 |
 | `006_workspace_reviews.sql` | 사용자 판정/사례/제안 |
@@ -114,7 +140,7 @@ DB 버전 조건은 PostgreSQL 12.1 이상·UTF-8이며 실검증 버전은 12.1
 
 사내 실제 적용 상태는 **미확인**이다. 합성 테스트 DB의 `008` 적용 기록으로 대체하지 않는다. 앱은 DDL/자동 migration을 하지 않는다. 비공개 스키마를 쓰면 SQL 대상과 `SANITY_DB_SCHEMA`가 일치해야 한다. 불일치는 DBA/Codex 검토로 해결하며 내부 AI가 SQL을 수정/적용하지 않는다.
 
-사용자가 2026-10-21 확인한 포털의 단일 문장 DDL/FK 경로에는 [포털 초기 설치 안내](portal/README.md)를 사용한다. 네 테이블이 모두 빈 상태에서 기존 읽기 전용 접속으로 catalog JSON을 사내에 저장하고 오프라인 도구로 실제 스키마/제약 이름에 맞는 실행본을 만든다. 원본 form/002~008은 보존하며 005를 생략하지 않는다. 앱에 DDL 권한을 주지 않고, 포털 적용은 사용자/승인 운영 담당자가 수행한다. 003의 별도 역할·컬럼 권한 완료와 양쪽 앱 로그인의 읽기 전용 검사는 여전히 필수다. 생성된 catalog·실제 스키마·SQL bundle은 공개 저장소나 외부 대화에 올리지 않는다.
+사용자가 2026-10-21 확인한 포털의 단일 문장 DDL/FK 경로에는 [포털 초기 설치 안내](portal/README.md)를 사용한다. 네 테이블이 모두 빈 상태에서 기존 읽기 전용 접속으로 catalog JSON을 사내에 저장하고 오프라인 도구로 실제 스키마/제약 이름에 맞는 실행본을 만든다. 원본 form/002~008은 보존하며 005를 생략하지 않는다. 앱에 DDL 권한을 주지 않고, 포털 적용은 사용자/승인 운영 담당자가 수행한다. 기본 모드에서는 003의 별도 역할·컬럼 권한 완료가 필요하며, 단일 모드는 3.1절을 따른다. 두 모드 모두 양쪽 서버의 읽기 전용 검사가 필수다. 생성된 catalog·실제 스키마·SQL bundle은 공개 저장소나 외부 대화에 올리지 않는다.
 
 ## 6. 사내에 남길 접속 인계 기록
 
@@ -127,10 +153,11 @@ DB 버전 조건은 PostgreSQL 12.1 이상·UTF-8이며 실검증 버전은 12.1
 설정 위치: root .env 또는 프로세스 환경의 사내 관리 위치
 DB host / port / name / schema: [사내에만 기입]
 발급 로그인 이름 / 소속 앱 역할: [사내에만 기입]
+권한 모드: restricted 또는 single_account / DB 격리: enforced 또는 not_enforced
 비밀 주입 경로 / 회전 담당자: [사내 참조, 비밀번호 자체 제외]
 TLS 정책 / 신뢰 CA의 사내 배포 경로:
 side DSN 사용 여부 / 필드 방식 전환 여부:
-설치 확인: form·002·003·004·005·006·007·008 각각 적용/미적용/미확인
+설치 확인: form·002·003·004·005·006·007·008·009 각각 적용/미적용/미확인 (단일 모드의 003은 해당 없음)
 읽기 전용 check: 미실행/성공/실패, side·일시·종료 코드·비식별 오류 코드
 실제 쓰기/송수신 시험: 미실시 또는 별도 승인/실행 기록의 사내 참조
 남은 의존성 / 다음 담당자 / WAITING_FOR_CODEX 문의 ID:
@@ -152,6 +179,6 @@ side DSN 사용 여부 / 필드 방식 전환 여부:
 | OA 저장/거부 결과 | OA 제한 로그인 → `sanity_oa_to_vwp`. SOURCE_RECEIPT. OA 반영/응답 등록을 같은 트랜잭션으로 확정 |
 | 사용자 상태 | bridge service → `/srv/sanity/vwp-submit/receipts/<principal-key>/<submission-id>.json`. 검증한 DB 상태/응답만 반영 |
 
-`008_submissions.sql`이 같은 네 테이블 안에서 신규 종류·scope·불변성/중복·실행 순서를 추가한다. 기존 legacy run 필수/제약과 최소 권한을 유지하며 별도 로그인·새 테이블·광범위 GRANT가 필요하지 않다. 앱은 008 미적용 시 실패하고 fake run/bundle ID·기존 PING/ANALYSIS_BUNDLE로 우회하지 않는다. 원본 byte 동일 파일은 VWP 영속 volume, 개별 raw 근거는 VWP private DB에 유지하며 OA는 상대 private 테이블을 읽지 않는다.
+`008_submissions.sql`이 같은 네 테이블 안에서 신규 종류·scope·불변성/중복·실행 순서를 추가한다. 기존 legacy run 필수/제약과 선택한 모드의 권한 계약을 유지하며 추가 로그인·새 테이블·광범위 GRANT가 필요하지 않다. 앱은 008 미적용 시 실패하고 fake run/bundle ID·기존 PING/ANALYSIS_BUNDLE로 우회하지 않는다. 원본 byte 동일 파일은 VWP 영속 volume, 개별 raw 근거는 VWP private DB에 유지하며 OA의 정상 앱 경로는 상대 private 테이블을 읽지 않는다. 단일 계정 모드에서는 이 경계를 DB가 강제하지 못한다.
 
 사내 비공개 인계에는 기존 DB 접속 기록과 함께 제출 마운트의 신원/ACL·실제 위치·용량/rename 검증, bridge 영속 volume/백업, 신원→블록 배정 검증 경로, release/설정 대응과 원본/DB 보존 정책의 담당자를 남긴다. 실제 인프라가 미구비면 접수를 차단하며 새 HTTP/SCP·별도 DB로 대체하지 않는다.

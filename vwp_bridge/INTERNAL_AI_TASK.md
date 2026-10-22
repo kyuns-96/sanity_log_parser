@@ -43,7 +43,7 @@ Q1의 [분산 수집 설계](../vwp/SOURCE_COLLECTION_DESIGN.md)는 제출 묶�
 
 ## 4. DB와 모델 접속
 
-- DB는 **VWP 제한 로그인 한 개**, 소속 역할은 `sanity_vwp_app`이다. `--side vwp`를 사용한다. 역할 이름을 실제 로그인 이름으로 추정하지 않는다.
+- 기본 DB 모드는 **VWP 제한 로그인 한 개**, 소속 역할은 `sanity_vwp_app`이다. 별도 계정이 없는 환경은 [단일 계정 계약](../db/CONNECTION_HANDOFF.md#31-단일-계정-모드)에 따라 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`와 공유 로그인을 설정한다. 역할 존재를 요구하지 않으며 DB 격리 미제공을 기록한다. 두 모드 모두 `--side vwp`를 사용한다. 공통 코드 수정 허용 범위는 확대하지 않는다.
 - 네 테이블의 역할/컬럼 권한, 지원 설정 키·TLS·DSN 우선순위는 [DB 연결 인계](../db/CONNECTION_HANDOFF.md)를 따른다. VWP 원천 수집 AI나 OA에 VWP 비밀번호를 넘기지 않는다.
 - 실제 DB 접속 확인은 사용자가 해당 서버에서 아래 읽기 전용 명령으로 수행한다. 결과는 값 없이 코드·성공 여부만 인계한다. DB 점검을 위해 분석/worker/PING 쓰기나 migration을 실행하지 않는다.
 
@@ -79,4 +79,4 @@ Q1의 [분산 수집 설계](../vwp/SOURCE_COLLECTION_DESIGN.md)는 제출 묶�
 
 ## 7. 그대로 전달할 시작 명령
 
-> 너는 VWP-bridge 회사 parser·VWP 모델 SDK 담당이다. AGENTS.md와 INTERNAL_AI_GUIDE.md를 전체 읽고 vwp_bridge/INTERNAL_AI_TASK.md와 vwp/SUBMISSION.md를 수행하라. INT-03 parser/명시적 등록, INT-04·05의 corporate_clustering/review, corporate_submission의 허용 신원·권한·승인 메서드와 각 company_* wrapper/테스트만 작성하라. DB는 sanity_vwp_app 역할의 별도 VWP 로그인으로 설정 자료를 준비하고 실제 점검은 사용자에게 인계하라. 공통 bridge·DB SQL·전송·source 작업자를 포함한 worker·UI·기존 테스트와 CORPORATE 차단을 수정하지 말라. 입력 전체 coverage·그룹별 근거·사람 확정 경계를 유지하고 예상 밖 오류는 수정/재시도를 멈춰 WAITING_FOR_CODEX로 문의하라. SDK 검증과 운영 연결 완료를 구분해 보고하라.
+> 너는 VWP-bridge 회사 parser·VWP 모델 SDK 담당이다. AGENTS.md와 INTERNAL_AI_GUIDE.md를 전체 읽고 vwp_bridge/INTERNAL_AI_TASK.md와 vwp/SUBMISSION.md를 수행하라. INT-03 parser/명시적 등록, INT-04·05의 corporate_clustering/review, corporate_submission의 허용 신원·권한·승인 메서드와 각 company_* wrapper/테스트만 작성하라. DB는 4절의 기본 VWP 제한 로그인 또는 명시적 단일 계정 계약으로 설정 자료를 준비하고 실제 점검은 사용자에게 인계하라. 공통 bridge·DB SQL·전송·source 작업자를 포함한 worker·UI·기존 테스트와 CORPORATE 차단을 수정하지 말라. 입력 전체 coverage·그룹별 근거·사람 확정 경계를 유지하고 예상 밖 오류는 수정/재시도를 멈춰 WAITING_FOR_CODEX로 문의하라. SDK 검증과 운영 연결 완료를 구분해 보고하라.

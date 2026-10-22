@@ -14,6 +14,7 @@ playwright-report/
 
 # Private connection instructions and local credentials must never be published.
 /dbaccess.md
+/question_from_internal/
 *.pem
 *.key
 *.cer

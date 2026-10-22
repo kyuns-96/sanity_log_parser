@@ -35,7 +35,7 @@ python3 -m venv .venv
 
 VWP-bridge는 `vwp_bridge/.env.example`, OA는 `oa/.env.example`의 키를 자기 서버의 **저장소 루트 `.env`**에 설정한다. 예제 파일의 위치와 읽는 위치를 구분한다. `common/sanity_config.py`는 저장소 루트 `.env`와 프로세스 환경을 읽으며 `common/.env`, `vwp_bridge/.env`, `oa/.env`는 읽지 않는다. 기존 `.env`를 덮어쓰지 않고 필요한 키만 현장에서 확인한다. 실제 값·인증서·사내 report는 Git에 넣지 않는다.
 
-VWP-bridge/OA는 같은 논리 DB·스키마를 서로 다른 제한 로그인으로 사용한다. 상세 키·TLS·DSN 우선순위·권한·비공개 인계 양식은 [DB 연결 인계](db/CONNECTION_HANDOFF.md)를 따른다.
+VWP-bridge/OA는 같은 논리 DB·스키마를 기본적으로 서로 다른 제한 로그인으로 사용한다. 별도 제한 계정이 없는 환경은 양쪽에서 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`를 명시해 공유 로그인 계약을 선택할 수 있다. 이 모드는 DB의 private/큐 컬럼 격리를 제공하지 않으며 원천 VWP의 DB 계정 없음과 내부 AI의 공통 코드 보호는 유지한다. 상세 키·TLS·DSN 우선순위·모드별 권한·비공개 인계 양식은 [DB 연결 인계](db/CONNECTION_HANDOFF.md)를 따른다.
 
 ```bash
 # VWP-bridge 서버: 읽기 전용 점검

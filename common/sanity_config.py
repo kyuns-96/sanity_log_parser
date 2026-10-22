@@ -5,7 +5,7 @@ import os
 from common.sanity_common import ReviewError
 
 ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
-ENV_KEYS = ("SANITY_DB_ACCESS", "SANITY_DB_SCHEMA", "SANITY_VWP_DSN", "SANITY_OA_DSN",
+ENV_KEYS = ("SANITY_DB_ACCESS", "SANITY_DB_SCHEMA", "SANITY_DB_ALLOW_SINGLE_ACCOUNT", "SANITY_VWP_DSN", "SANITY_OA_DSN",
             "SANITY_DB_HOST", "SANITY_DB_PORT", "SANITY_DB_NAME", "SANITY_DB_USER_NAME", "SANITY_DB_PASSWORD",
             "SANITY_DB_SSLMODE", "SANITY_DB_SSLROOTCERT",
             "DBAAS_BASE_URL", "DBASS_BASE_URL", "DBAAS_TOKEN", "DBAAS_CA_PATH",
@@ -37,6 +37,14 @@ def access_mode(settings):
     if mode not in ("dbaas_http", "postgresql"):
         raise ReviewError("DATABASE_CONFIG", "SANITY_DB_ACCESS must be dbaas_http or postgresql")
     return mode
+
+
+def database_privilege_mode(settings):
+    """Only an explicit true selects the shared-login permission contract."""
+    value = settings.get("SANITY_DB_ALLOW_SINGLE_ACCOUNT", "false")
+    if value not in ("false", "true"):
+        raise ReviewError("DATABASE_CONFIG", "SANITY_DB_ALLOW_SINGLE_ACCOUNT must be false or true")
+    return "single_account" if value == "true" else "restricted"
 
 
 def postgres_parameters(settings, side):

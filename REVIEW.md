@@ -924,3 +924,13 @@ RSS는 Linux `getrusage(RUSAGE_CHILDREN)`의 실행 누적 최대값이다. 단�
   인증 router 연결, 기존 토큰 인증 및 설정 회귀.
 - 실제 사내 SSO/계정 DB, 로그인 callback·서버 세션·프런트엔드 SSO, 프로젝트/블록 RBAC는 검증하지 않았다.
   사내 구현 순서·계약·작업 요청문은 [SSO_INTEGRATION.md](oa/SSO_INTEGRATION.md)에 제공한다.
+
+## 2026-10-22 — 명시적 단일 DB 계정 계약
+
+- `SANITY_DB_ALLOW_SINGLE_ACCOUNT`는 기본 `false`, 정확한 `true`에서만 공유 로그인 계약을 선택한다. 잘못된 값은 접속 전에 거부하며 검사 실패 후 모드/계정을 자동 전환하지 않는다.
+- 단일 모드에서도 네 테이블 전체 컬럼의 유효 SELECT/INSERT/UPDATE, 관리자·소유자 역할 차단, 앱/public 스키마 CREATE 금지, TRUNCATE/REFERENCES/TRIGGER 금지와 필수 UNIQUE를 검사한다. DELETE는 선택적 보유를 허용한다.
+- DB의 private 테이블·큐 컬럼 격리 미제공을 명세/인계에 기록하고 실제 check 출력에 `privilege_mode=single_account db_isolation=not_enforced`를 추가했다. 기존 큐의 불변값·송신 필드·트랜잭션·lease와 SSO 업무 보호는 유지한다. 원본 SQL/포털 계획은 변경하지 않았다.
+- PostgreSQL 12.1의 독립 소켓 DB에서 **quick 149/149 통과**(21.545초), 이후 추가한 기본 모드의 DELETE/TRUNCATE/REFERENCES/TRIGGER 거부 회귀 **1/1 통과**를 확인했다.
+- PostgreSQL 16.15의 최종 소스에서 **quick 150/150 통과**(23.362초), 실패·오류·skip 0개다. 두 quick 실행의 합성 처리 검사는 각각 100건/10그룹이며 전수/10만 건 검사는 실행하지 않았다.
+- 별도 PostgreSQL 12.1 fixture에서 제한 역할 두 개를 실제 제거하고, 공유 로그인으로 VWP/OA의 읽기 전용 check가 모두 성공함을 확인했다. 두 출력은 DB 격리 미제공을 표시하고 네 테이블의 행 수는 바뀌지 않았다. 테스트 인스턴스는 모두 종료했다.
+- 설정·권한·기존 모드·메시지 충돌/lease/rollback의 합성 검증이며 실제 사내 DB·계정·TLS·SSO/JIT 운영 검증을 대신하지 않는다. 상세 현장 절차는 [DB 연결 인계](db/CONNECTION_HANDOFF.md#31-단일-계정-모드)를 따른다.

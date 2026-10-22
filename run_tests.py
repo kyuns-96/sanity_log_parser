@@ -13,13 +13,14 @@ PROFILES = ("quick", "full")
 # A short regression set for everyday edits. Keep expensive datasets and the
 # complete portal migration replay in full, with their original assertions.
 QUICK_TESTS = (
-    "tests.test_auth", "tests.test_db_config", "tests.test_common", "tests.test_parsers",
+    "tests.test_auth", "tests.test_db_config", "tests.test_db_single_account", "tests.test_common", "tests.test_parsers",
     "tests.test_schema", "tests.test_submission_contracts", "tests.test_integration_contracts",
     "tests.test_mock_runner", "tests.test_test_runner", "oa.test_auth_config", "oa.test_sso",
     "tests.test_sso_identity_migration.SSOIdentityMigrationTests.test_008_checkpoint_runs_one_portal_statement_with_the_exact_original_009_catalog",
     "tests.test_sso_identity_migration.SSOIdentityMigrationTests.test_conflicting_insert_preserves_original_issuer_disabled_state_and_role_permissions",
     "tests.test_database.DatabaseTests.test_missing_configuration_and_admin_login_fail_closed",
     "tests.test_database.DatabaseTests.test_excess_column_rights_are_detected",
+    "tests.test_database.DatabaseTests.test_destructive_and_ddl_related_rights_are_rejected_in_restricted_mode",
     "tests.test_database.DatabaseTests.test_private_payload_and_sender_ack_cannot_be_modified",
     "tests.test_database.DatabaseTests.test_message_idempotence_and_conflict",
     "tests.test_database.DatabaseTests.test_psycopg2_outer_rollback_and_readonly_do_not_leak",

@@ -46,6 +46,8 @@ PoR은 블록의 버전 참조이고 ECO/특정 검사 실행을 포함하지 �
 직접 접속 성공과 실제 배포 DB의 역할/DDL/트랜잭션 검증 완료는 구분한다.
 [공개용 접속 안내](dbaccess.example.md)의 이전 DBaaS HTTPS API는 **임시 읽기 전용**으로 남는다.
 실제 사내 접속 안내 `dbaccess.md`는 Git 업로드에서 제외한다.
+
+권한 모드는 기본 `restricted`다. `SANITY_DB_ALLOW_SINGLE_ACCOUNT`는 미설정/`false`에서 기존 역할·side·컬럼 격리를 검사하고 정확한 `true`에서만 `single_account`를 선택한다. 다른 값은 `DATABASE_CONFIG`이며 실패 후 다른 모드로 전환하지 않는다. 단일 모드는 명명된 앱 역할을 조회하지 않고 네 테이블 전체 컬럼의 유효 SELECT/INSERT/UPDATE를 요구한다. DELETE는 보유를 허용하지만 필수는 아니며 TRUNCATE/REFERENCES/TRIGGER·관리자 속성/역할 소속·테이블 소유/소유자 역할·앱 및 public 스키마 CREATE는 금지한다. 공통 테이블/필수 UNIQUE 검사와 기존 큐/트랜잭션/lease/SSO·업무 권한 보호를 유지한다. **단일 모드에는 DB의 private 접근·송수신 컬럼 격리가 없다.** 새 SQL/GRANT나 DDL 재실행은 요구하지 않는다. 읽기 전용 check는 `privilege_mode=restricted db_isolation=enforced` 또는 `privilege_mode=single_account db_isolation=not_enforced`를 출력한다. 자세한 설정/인계는 [DB 연결 인계](db/CONNECTION_HANDOFF.md#31-단일-계정-모드)를 따른다.
 `common/sanity_config.py`는 저장소 루트 `.env`/환경변수에서 설정을 읽고 `common/sanity_dbaas.py`는
 Bearer·사내 CA 검증·trust_env=False·30초 timeout·redirect 금지·응답 크기 제한을 적용한다.
 URL/토큰/CA 경로/서버 오류 본문은 출력하지 않는다. `/api/vi/me`는 `/api/v1/me`의 오타로 해석했다.
@@ -62,7 +64,7 @@ URL/토큰/CA 경로/서버 오류 본문은 출력하지 않는다. `/api/vi/me
 - `common/sanity_parsers.py`, `vwp_bridge/integration/corporate_parsers.py`: 회사 report 추출 추상 계약·결과 검사와 명시적 registry. 회사 진입점은 `vwp_bridge/corporate_analyze.py`.
 - `oa/`, `oa/sanity_oa_store.py`: 수신본, 검토 개정, 불변 보고서, 대시보드/API.
 - `oa/dashboard_api.py`, `oa/dashboard/`: OA 로컬 인증·조회·수동 수신·검토·근거 요청 UI.
-- `common/sanity_db.py`: 제한된 계정·유효 권한 검사, 짧은 트랜잭션, 방향별 큐.
+- `common/sanity_db.py`: 기본 제한 계정/명시적 단일 계정의 유효 권한 검사, 짧은 트랜잭션, 방향별 큐.
 - `common/sanity_exchange.py`, `common/sanity_privacy.py`: OA 원문 요청 → VWP 범위/무결성 확인·자격증명 마스킹 → OA 수신.
 - `vwp_bridge/sanity_ai.py`, `vwp_bridge/sanity_cluster_worker.py`: VWP AI 호출·규칙 제안·전체 적용·체크포인트/분할 전송.
 - `common/sanity_clustering.py`, `oa/sanity_cluster_store.py`: 선언형 규칙·지속 ID·OA 분류 개정·후보 판단·규칙 저장.

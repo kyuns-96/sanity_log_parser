@@ -10,6 +10,8 @@ OA 브라우저의 로컬 API 접속은 브리지 간 통신과 별개다.
 이 문서는 DDL/권한 계약이다. Python 실행 코드도 이 4개 테이블을 사용한다.
 설치·환경변수 접속 설정·실행·통합 테스트는 [루트 README](../README.md)를 따른다.
 세 개발 AI의 DB 역할·기존 설정 키·서버별 읽기 전용 확인·비공개 접속 기록 양식은 [연결 인계](CONNECTION_HANDOFF.md)를 따른다. 각 서버는 [소스 구조·실행 안내](../DEPLOYMENT.md)에 따라 자기 모듈만 실행한다. 이 폴더의 SQL/fixture는 앱 시작과 함께 실행하지 않는다.
+
+기본은 별도 제한 로그인·`003`의 역할/컬럼 권한 계약이다. 별도 계정을 확보할 수 없는 환경에는 **명시적 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`**의 [단일 계정 계약](CONNECTION_HANDOFF.md#31-단일-계정-모드)을 제공한다. 이 모드는 네 테이블 전체 컬럼의 유효 SELECT/INSERT/UPDATE와 선택적 DELETE를 허용하며 DB의 private/큐 컬럼 격리를 제공하지 않는다. 관리자·소유·앱/public 스키마 CREATE·TRUNCATE/REFERENCES/TRIGGER 금지와 테이블/필수 UNIQUE 검사는 유지한다. 이 경우 `003` 역할 생성을 요구하지 않고 원본 SQL/포털 계획을 수정하거나 완료 DDL을 재실행하지 않는다. 아래 역할/권한 설치 설명은 기본 모드 기준이며 구조 증분 `002`, `004`~`009`의 기능별 필요 조건은 두 모드에 동일하다.
 접속 안내 [공개용 설정 문서](../dbaccess.example.md)의 DBaaS HTTP API는 **임시 읽기 전용**이다.
 사용자가 psycopg2 직접 PostgreSQL 접속 가능함을 확인했으며 이 방식을 기본으로 사용한다.
 4개 테이블 설계·신청 원본·기존 SQL은 변경하지 않는다. HTTP 인증·조회 클라이언트와 PostgreSQL 저장 어댑터는 별개다.
@@ -32,7 +34,7 @@ OA 브라우저의 로컬 API 접속은 브리지 간 통신과 별개다.
 | [008_submissions.sql](008_submissions.sql) | V2 SUBMISSION/SOURCE_RUN/OUTBOX·OA staging, SOURCE 큐 종류·중복/실행 순서·범위 제약 | `007` 적용 후 새 제출 경로 도입 시 owner/DBA가 검토해 한 번 실행. 앱 자동 적용 없음 |
 | [009_sso_identity.sql](009_sso_identity.sql) | OA `SSO_IDENTITY` kind/scope·엄격한 계정 JSON·기존 UNIQUE 재사용 | `008` 이후 검토·적용. 포털은 생성된 55번 단일 ALTER 사용. 실제 SSO/JIT 앱 구현·업무 권한 연결은 별도 |
 
-전체 준비 순서는 **신청한 `form`으로 생성 → `002` → 역할 준비 → `003` → `004`**다.
+기본 모드의 전체 준비 순서는 **신청한 `form`으로 생성 → `002` → 역할 준비 → `003` → `004`**다. 단일 모드는 역할 준비/`003` 대신 위 단일 계정 계약을 확인한다.
 이미 완료한 단계는 반복하지 않는다. 생성·`002`·`003`까지 완료했다면 **`004`만 실행**한다.
 workspace에는 이어서 `005 → 006 → 007`을 적용한다. 각 증분은 직전의 검증된 kind/scope 제약을 확인하고 기존 행·테이블·권한을 보존한다.
 OA에 `WS_REVIEW`, `WS_REVIEW_EVENT`, `WS_REVIEW_PROPOSAL`을 추가하며, 사례/제안은 state/version/갱신 시각을 고정한다.
@@ -57,7 +59,7 @@ PostgreSQL 12.1+ 서버 바이너리가 필요하며, 별도 로컬 소켓 DB �
 | `sanity_oa_data` | [컬럼 정의](form/sanity_oa_data.columns.sql) |
 | `sanity_oa_to_vwp` | [컬럼 정의](form/sanity_oa_to_vwp.columns.sql) |
 
-1. 실제 DB/스키마, 테이블 owner, VWP/OA의 서로 다른 로그인 계정을 확인한다.
+1. 실제 DB/스키마, 테이블 owner와 권한 모드를 확인한다. 기본은 VWP/OA의 서로 다른 로그인, 단일 모드는 공유 로그인이다.
 2. 위 표는 이미 신청한 원본의 위치다. 현재 사용자는 재신청하지 않는다.
    별도 새 환경을 만들 때만 각 `.columns.sql` 전체를 GUI에 넣는다. 바깥 `CREATE TABLE`은 추가하지 않는다.
 3. 네 테이블 생성 후 owner/DBA가 `002_indexes.sql` 전체를 한 번 실행한다.
@@ -147,6 +149,8 @@ owner/DBA가 작업 중지·백업/복구·잠금 시간을 검토한 뒤 파일
 
 ## 3. 권한과 운영 규칙
 
+아래 DB 권한 분리는 기본 `restricted` 모드 기준이다. 명시적 `single_account`는 [별도 계약](CONNECTION_HANDOFF.md#31-단일-계정-모드)의 전체 유효 권한과 격리 미제공을 검사한다. 정상 앱의 메시지 작성·수신·불변값·트랜잭션·lease 사용 규칙은 두 모드 모두 유지한다.
+
 - 두 앱은 같은 DB를 쓰지만 같은 owner 계정을 공유하지 않는다. VWP 전용과 OA 전용 테이블의 접근을 교차 허용하지 않는다.
   다른 역할/PUBLIC/owner 상속을 통한 권한 우회가 없어야 한다. 앱에 schema CREATE, DDL, DELETE/TRUNCATE를 허용하지 않는다.
 - 송신자는 공유 메시지의 ID·내용 컬럼만 INSERT한다. 상태/점유/완료 시각은 INSERT할 수 없다.
@@ -206,7 +210,7 @@ WHERE message_id = 'ping-vwp-001' AND message_type = 'PING' AND status = 'READY'
 ```
 
 역방향은 OA가 `sanity_oa_to_vwp`에 다른 PING ID를 INSERT하고 VWP가 같은 방법으로 확인한다.
-실제 로그·개인정보·비밀은 접속 검사에 넣지 않는다. 앱에 DELETE 권한은 부여하지 않는다.
+실제 로그·개인정보·비밀은 접속 검사에 넣지 않는다. 기본 모드에서 앱에 DELETE 권한을 부여하지 않는다. 단일 모드는 기존 DELETE 보유를 허용하지만 삭제 기능을 추가하지 않는다.
 
 로컬 회귀 검사는 운영 DB가 아닌 별도 빈 DB에서 실행한다. 두 앱 역할은 미리 준비한다.
 

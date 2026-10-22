@@ -9,7 +9,7 @@
 
 2026-10-16 사용자 요청의 통합 구현 지도는 [INTERNAL_AI_HANDOFF.md](INTERNAL_AI_HANDOFF.md)다. INT-01~06별 선행 정보·허용 메서드·수용 기준과 Codex의 COMMON 후속 작업을 구분한다. 이 가이드와 함께 읽으며, SDK 어댑터 검증을 운영 연결 완료로 보고하지 않는다. 현재 검토 UI와 업무 용어는 유지한다.
 
-사내 개발 AI는 **VWP·VWP-bridge·OA 세 담당**으로 나눈다. 작업 시작 전에 아래 역할을 확인하고 자기 [역할별 지시문](INTERNAL_AI_HANDOFF.md#21-세-개발-ai의-작업-소유권)을 따른다. 운영 분석 모델을 VWP AI라고 부르는 것과 개발 AI의 소유권은 별개다. VWP 원천 수집에는 DB 계정이 없고, 두 bridge만 별도 제한 로그인으로 같은 DB에 연결한다. 설정과 역할별 점검은 [DB 연결 인계](db/CONNECTION_HANDOFF.md)를 따른다.
+사내 개발 AI는 **VWP·VWP-bridge·OA 세 담당**으로 나눈다. 작업 시작 전에 아래 역할을 확인하고 자기 [역할별 지시문](INTERNAL_AI_HANDOFF.md#21-세-개발-ai의-작업-소유권)을 따른다. 운영 분석 모델을 VWP AI라고 부르는 것과 개발 AI의 소유권은 별개다. VWP 원천 수집에는 DB 계정이 없고, 두 bridge만 같은 DB에 연결한다. 기본은 별도 제한 로그인이며 명시적 단일 계정 모드는 3.4절을 따른다. 설정과 역할별 점검은 [DB 연결 인계](db/CONNECTION_HANDOFF.md)를 따른다.
 
 코드는 [서버별 소스·실행 안내](DEPLOYMENT.md)의 `vwp/`, `vwp_bridge/`, `oa/`, `common/`, `devtools/`로 분리한다. 각 서버는 Git checkout의 저장소 루트에서 자기 역할 모듈을 실행한다. 공통 소스는 한 곳에서 관리하며 회사 SDK 때문에 복사하거나 의존성을 임의 추가하지 않는다. 디렉터리 분리가 내부 AI의 수정 허용 범위를 넓히지 않는다.
 
@@ -98,7 +98,7 @@ PRE/POST의 여러 원천 루트 export는 같은 VWP 영역의 입력 준비만
 
 PG12.1 호환 수정본은 PG15 전용 catalog 컬럼을 직접 참조하지 않는다. 이 오류로 대기한 경우 수정본으로 새 조회 SQL을 생성해 읽기 전용 확인·실행본 준비를 재개할 수 있다. [PG12 재개 절차](db/portal/README.md#pg12-조회-오류가-있었던-경우)에 따라 새 비공개 경로를 사용하며, snapshot의 버전·계획 hash를 바꾸거나 검증 조건을 제거하지 않는다. 기준 계획은 PG12.1/PG16.15의 54단계 구조가 정확히 같음을 검증해 공통 사용한다. 다른 실패에는 기존 중단·문의 규칙을 유지한다.
 
-`db/form/`, 원본 `002`~`008`, `db/portal/`의 소스·계획 JSON과 기존 테스트는 내부 AI에게 읽기 전용이다. `003` 역할·권한은 별도 DBA 경로이며, 운영 앱의 네 테이블 전체 읽기/쓰기나 DDL 권한으로 대체하지 않는다. `005`는 필수다. 이 초기 3.2절 범위는 009/JIT를 포함하지 않으며 후속 009 저장 구조는 3.3절을 따른다. 사용자 자동 등록 앱 구현·SSO 업무 권한 확장 승인은 포함하지 않는다. 예상 밖 실패·응답 유실 후 DDL 재시도/다음 실행은 중단하고 읽기 전용 현황과 비식별 오류만 `WAITING_FOR_CODEX`로 문의한다.
+`db/form/`, 원본 `002`~`008`, `db/portal/`의 소스·계획 JSON과 기존 테스트는 내부 AI에게 읽기 전용이다. 기본 모드의 `003` 역할·권한은 별도 DBA 경로이며 임의의 전체 읽기/쓰기나 DDL 권한으로 대체하지 않는다. 명시적 단일 계정 모드는 별도 계약인 3.4절을 따른다. `005`는 필수다. 이 초기 3.2절 범위는 009/JIT를 포함하지 않으며 후속 009 저장 구조는 3.3절을 따른다. 사용자 자동 등록 앱 구현·SSO 업무 권한 확장 승인은 포함하지 않는다. 예상 밖 실패·응답 유실 후 DDL 재시도/다음 실행은 중단하고 읽기 전용 현황과 비식별 오류만 `WAITING_FOR_CODEX`로 문의한다.
 
 ### 3.3. 009 SSO 계정 저장 구조 — 2026-10-22
 
@@ -108,6 +108,14 @@ PG12.1 호환 수정본은 PG15 전용 catalog 컬럼을 직접 참조하지 않
 
 이것은 SQL/설치 절차 제공이며 내부 AI의 파일·메서드 허용 범위를 넓히지 않는다. 원본 009·포털 도구·계획·기존 테스트는 읽기 전용이다. JIT 등록/조회 공통 저장부·ACS 호출/세션 발급 실패 경계는 별도 Codex 후속 구현이며 내부 AI가 독자 작성하지 않는다. `resolve()`와 source 신원 조회는 등록/갱신을 수행하지 않는다. `AUTHORIZATION_NOT_IMPLEMENTED`, 프로젝트/블록 권한의 별도 부여와 오류 시 중단 규칙을 유지한다.
 
+### 3.4. 명시적 단일 DB 계정 모드 — 2026-10-22
+
+사용자 요청과 사내 비식별 권한 실측에 따라 Codex가 `SANITY_DB_ALLOW_SINGLE_ACCOUNT`와 별도 ACL 계약을 제공한다. 기본은 `false`이며 정확한 `true`만 단일 계정 모드를 선택한다. 두 bridge는 같은 공유 DB 로그인을 현장 설정할 수 있고 `sanity_vwp_app`/`sanity_oa_app` 역할은 요구하지 않는다. 원천 VWP의 DB 계정 없음·모델/SSO 비밀 분리는 유지한다. 실패 후 자동 전환하거나 내부 AI가 검사 목록을 삭제하지 않는다.
+
+단일 모드도 네 테이블의 모든 컬럼에 유효 SELECT/INSERT/UPDATE를 요구한다. DELETE는 보유할 수 있지만 앱 삭제 기능은 추가하지 않는다. TRUNCATE/REFERENCES/TRIGGER·관리자 속성/상위 관리자 역할·테이블 소유/소유자 역할·앱 및 public 스키마 CREATE는 계속 금지하며 기존 테이블/필수 UNIQUE 검사를 유지한다. **private 테이블 접근 격리와 큐의 송수신 컬럼 분리는 DB가 강제하지 못한다.** 정상 앱 경로의 불변값·입력 필드·트랜잭션·lease·업무 권한 검사는 그대로다.
+
+설정·모드별 권한 검사·기존 테스트·명세는 Codex 담당이며 회사 AI의 파일/메서드 허용 범위를 확대하지 않는다. 내부 AI는 수정본을 전달받은 뒤 자기 서버의 비공개 설정과 [DB 연결 인계 3.1절](db/CONNECTION_HANDOFF.md#31-단일-계정-모드)에 따른 읽기 전용 점검 결과만 준비한다. 단일 모드의 성공은 `privilege_mode=single_account db_isolation=not_enforced`이며 제한 계정 격리 검증 완료로 보고하지 않는다. 원본 SQL/포털 계획 수정·재실행이나 권한 자동 변경은 필요하지 않다. `AUTHORIZATION_NOT_IMPLEMENTED`와 오류 시 중단·문의 규칙은 유지한다.
+
 ## 4. 내부 AI가 절대 수정하지 않는 부분
 
 읽고 설명하거나 검토 요청을 만드는 것은 가능하지만, 수정·우회·테스트 완화는 금지한다. 허용 목록의 부분 변경 외에는 모두 보호 대상이다.
@@ -115,7 +123,7 @@ PG12.1 호환 수정본은 PG15 전용 catalog 컬럼을 직접 참조하지 않
 | 보호 대상 | 대표 파일·위치 | 보호하는 계약 |
 |---|---|---|
 | 원본·판정·coverage·ID·무결성 | `common/sanity_common.py`, `vwp_bridge/sanity_evidence.py`, `common/sanity_parsers.py`, `vwp/main.py`, `vwp_bridge/main.py`, `vwp_bridge/corporate_analyze.py` | 누락/UNKNOWN/FAIL 처리, Decimal 판정, parser 입력/출력 검사·등록 계약, scope·해시·전체 건수, 원문 위치·봉인 |
-| DB 연결·스키마·권한·큐 | `common/sanity_db.py`, `common/sanity_postgres.py`, `db/` 전체 | 4개 고정 테이블, 제한된 로그인, SQL 제약/인덱스, 트랜잭션·잠금·lease·중복 방지 |
+| DB 연결·스키마·권한·큐 | `common/sanity_db.py`, `common/sanity_postgres.py`, `db/` 전체 | 4개 고정 테이블, 기본 제한 로그인/명시적 단일 계정 계약, SQL 제약/인덱스, 트랜잭션·잠금·lease·중복 방지 |
 | 전송·추가 근거·비밀정보 | `common/sanity_exchange.py`, `vwp_bridge/sanity_exchange.py`, `oa/sanity_exchange.py`, `common/sanity_privacy.py` | DB만 사용하는 통신, 근거 범위·TTL·해시·마스킹, 불변 응답 |
 | V2 제출·원본 보관·source 수신 | `bin/sanity`, `common/sanity_submission*.py`, `vwp/submission_cli.py`, `vwp_bridge/submission_*.py`, `oa/submission_receiver.py`, `oa/sanity_workspace_sources.py`, 제출 JSON 예제 | 엄격한 설정·V2 schema·신원/범위·원본 hash·원자 인계·분할 staging/공개·receipt·중복/충돌·실행 순서 |
 | AI 호출·분류·규칙·작업자 | `vwp_bridge/sanity_ai.py`, `common/sanity_clustering.py`, `vwp_bridge/sanity_cluster_worker.py`, `oa/sanity_cluster_store.py`, `common/sanity_workers.py`, `vwp_bridge/worker.py`, `oa/worker.py` | strict JSON·근거 검증, scope, 전체 적용, 중단 복구, 불확실 호출 재시도 금지, 사람 확정 |

@@ -44,8 +44,8 @@ Q1의 [분산 수집 설계](../vwp/SOURCE_COLLECTION_DESIGN.md)에 필요한 �
 
 ## 4. DB 연결
 
-- DB는 **OA 제한 로그인 한 개**, 소속 역할은 `sanity_oa_app`이다. `--side oa`를 사용한다. 역할 이름을 실제 로그인 이름으로 추정하지 않는다.
-- VWP-bridge와 같은 PostgreSQL DB/스키마를 사용하지만 다른 계정이다. `sanity_vwp_data` 접근과 VWP 모델 자격증명은 필요하지 않다. 브라우저/`VITE_*`에 DB·SSO·모델 비밀값을 넣지 않는다.
+- 기본 DB 모드는 **OA 제한 로그인 한 개**, 소속 역할은 `sanity_oa_app`이다. 별도 계정이 없는 환경은 [단일 계정 계약](../db/CONNECTION_HANDOFF.md#31-단일-계정-모드)에 따라 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`와 공유 로그인을 설정한다. 역할 존재를 요구하지 않으며 DB 격리 미제공을 기록한다. 두 모드 모두 `--side oa`를 사용한다. 공통 코드 수정 허용 범위는 확대하지 않는다.
+- VWP-bridge와 같은 PostgreSQL DB/스키마를 사용하며 기본은 다른 계정, 명시적 단일 모드는 공유 계정이다. 정상 OA 경로는 `sanity_vwp_data`와 VWP 모델 자격증명을 사용하지 않는다. 단일 모드의 상대 private 접근은 DB가 차단하지 못한다. 브라우저/`VITE_*`에 DB·SSO·모델 비밀값을 넣지 않는다.
 - 설정 키·TLS·DSN 우선순위·네 테이블 권한은 [DB 연결 인계](../db/CONNECTION_HANDOFF.md)를 따른다. SSO 계정 원천 저장소와 이 프로젝트의 네 테이블 DB가 같다고 가정하지 않는다. 별도 계정 원천은 승인된 조회 client로만 연결한다.
 - 실제 DB 접속 확인은 사용자가 해당 서버에서 아래 읽기 전용 명령으로 수행한다. 성공 여부·고정 오류 코드만 인계한다. 접속 확인용으로 수신/검토 저장/PING/migration을 실행하지 않는다.
 
@@ -76,4 +76,4 @@ Q1의 [분산 수집 설계](../vwp/SOURCE_COLLECTION_DESIGN.md)에 필요한 �
 
 ## 7. 그대로 전달할 시작 명령
 
-> 너는 OA SSO·사용자 연결 담당이다. AGENTS.md와 INTERNAL_AI_GUIDE.md를 전체 읽고 oa/INTERNAL_AI_TASK.md와 vwp/SUBMISSION.md를 수행하라. corporate_sso.py 두 메서드, corporate_submission.py/CorporateSourceIdentity.resolve, sso_app.py의 허용된 주입, company_sso/ wrapper/router/테스트만 작성하라. 의존성은 가이드 3.1절의 oa/requirements.txt 세 고정 pin 추가만 허용하며 다른 버전과 충돌하면 문의하라. source 계정은 SSO와 같은 영속 매핑을 사용하고 INT-06의 사용자·TOP/블록 담당 원천 대응을 준비하라. DB는 sanity_oa_app 역할의 별도 OA 로그인으로 설정 자료를 준비하고 실제 점검은 사용자에게 인계하라. VWP 자격증명/모델은 사용하지 않는다. 공통 importer/API/store·SQL·UI·기존 테스트와 AUTHORIZATION_NOT_IMPLEMENTED를 수정하지 말라. 예상 밖 오류는 수정/재시도를 멈춰 WAITING_FOR_CODEX로 문의하고 SDK 검증·COMMON 권한 연결·운영 배포를 나눠 보고하라.
+> 너는 OA SSO·사용자 연결 담당이다. AGENTS.md와 INTERNAL_AI_GUIDE.md를 전체 읽고 oa/INTERNAL_AI_TASK.md와 vwp/SUBMISSION.md를 수행하라. corporate_sso.py 두 메서드, corporate_submission.py/CorporateSourceIdentity.resolve, sso_app.py의 허용된 주입, company_sso/ wrapper/router/테스트만 작성하라. 의존성은 가이드 3.1절의 oa/requirements.txt 세 고정 pin 추가만 허용하며 다른 버전과 충돌하면 문의하라. source 계정은 SSO와 같은 영속 매핑을 사용하고 INT-06의 사용자·TOP/블록 담당 원천 대응을 준비하라. DB는 4절의 기본 OA 제한 로그인 또는 명시적 단일 계정 계약으로 설정 자료를 준비하고 실제 점검은 사용자에게 인계하라. VWP 전용 자격증명/모델은 사용하지 않는다. 공통 importer/API/store·SQL·UI·기존 테스트와 AUTHORIZATION_NOT_IMPLEMENTED를 수정하지 말라. 예상 밖 오류는 수정/재시도를 멈춰 WAITING_FOR_CODEX로 문의하고 SDK 검증·COMMON 권한 연결·운영 배포를 나눠 보고하라.
