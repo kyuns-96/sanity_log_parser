@@ -7,6 +7,7 @@ from collections import defaultdict
 import re
 
 from common.sanity_clustering import FIELDS, assignment, check, validate_rules
+from common.sanity_ai_knowledge import shared_case_views
 from common.sanity_clustering_advice import ClusteringAdvisor, MAX_RECORDS, MAX_GROUPS, evidence, partition, identity_fields_valid, signature, validate_clustering_advice
 from common.sanity_common import digest
 from common.sanity_submission import source_digest
@@ -181,7 +182,7 @@ class WorkspaceClusteringStore:
             event = rationale.unpack(row["payload"])
             if event["version_id"] != context["report"]["version_id"] and not event["compatible_versions"]:
                 continue
-            if not self.references_current(event, exclude_report=context["report"]["id"]):
+            if not self.references_current(event, exclude_report=context["report"]["id"], context=context):
                 continue
             # Reject stale/self-dependent examples before materializing their
             # potentially 100,000-row source. The preceding byte guard is kept.
@@ -202,7 +203,7 @@ class WorkspaceClusteringStore:
     def catalog_hash(self, context):
         return digest([case["id"] for case in self.catalog(context)])
 
-    def references_current(self, event, exclude_report=None):
+    def references_current(self, event, exclude_report=None, *, context=None):
         head = self.reviews.row("WS_CLUSTER", event["report_id"])
         if ai_job_active(head) or head and head["state"].get("task", {}).get("status") in ("PENDING", "RUNNING", "FAILED", "STALE"):
             return False
@@ -210,9 +211,11 @@ class WorkspaceClusteringStore:
             from oa.sanity_ai_cases import CaseRetriever
             if any(reference["report_id"] == exclude_report for reference in event["references"]):
                 return False
-            context = {"scope": event["scope"], "report": {"id": exclude_report or event["report_id"],
+            reference_context = {"scope": event["scope"], "report": {"id": exclude_report or event["report_id"],
                                                           "version_id": event["version_id"]}}
-            resolved = CaseRetriever(self.db, self.ws).resolve_references(context, event["references"], stage="CLUSTER")
+            if context and context.get("_actor_user_id"):
+                reference_context["_actor_user_id"] = context["_actor_user_id"]
+            resolved = CaseRetriever(self.db, self.ws).resolve_references(reference_context, event["references"], stage="CLUSTER")
             return not resolved["stale_ids"] and not resolved["over_budget_ids"]
         pending, visited = list(event["references"]), set()
         while pending:
@@ -235,7 +238,7 @@ class WorkspaceClusteringStore:
         return True
 
     def stale(self, event, context):
-        return (event["source_sha256"] != context["source_sha256"] or not self.references_current(event)
+        return (event["source_sha256"] != context["source_sha256"] or not self.references_current(event, context=context)
                 or not event["confirmed"] and bool(event["references"])
                 and event.get("case_policy") != "OA_RETRIEVAL_V1"
                 and event["case_catalog_sha256"] != self.catalog_hash(context))
@@ -255,11 +258,11 @@ class WorkspaceClusteringStore:
         history = self.db.execute("SELECT payload FROM {oa} WHERE record_type='WS_CLUSTER_EVENT' "
             "AND workspace_pipeline_report_ref=%s ORDER BY created_at DESC,workspace_key LIMIT 30",
             (record_id("WS_REPORT", report_id),)).fetchall()
-        summaries = pipeline_summaries(self.db, [report_id]).get(report_id)
-        return {"current": current, "revision": revision, "ready": context["ready"], "can_edit": context["can_review"],
+        summaries = pipeline_summaries(self.db, [report_id], ws=self.ws, user_id=user_id).get(report_id)
+        return shared_case_views({"current": current, "revision": revision, "ready": context["ready"], "can_edit": context["can_review"],
                 "stale": bool(current and self.stale(current, context)), "history": [rationale.unpack(row["payload"]) for row in history],
                 "case_count": len(cases), "reusable_count": sum(case["reusable"] for case in cases),
-                "summary": summaries, "corporate_ai_connected": False, "record_count": len(evidence(context))}
+                "summary": summaries, "corporate_ai_connected": False, "record_count": len(evidence(context))})
 
     def apply_ai(self, user_id, block_id, version_id, report_id, *, expected_revision,
                  request_id, advice, cases, metadata, retrieval, identity_fields=None):
@@ -296,7 +299,8 @@ class WorkspaceClusteringStore:
         fields = identity_fields_valid(fields, evidence(context))
         value = validate_clustering_advice(advice, context, cases, require_rationales=True)
         groups = value["groups"]
-        references = [{key: case[key] for key in ("id", "report_id", "revision", "criteria", "source_sha256")}
+        references = [{key: case[key] for key in ("id", "report_id", "revision", "criteria", "source_sha256", "scope", "source_version")
+                       if key in case}
                       for case in cases if case["id"] in value["reference_ids"]]
         event = {**WorkspaceReviewStore.metadata(context), "id": rid, "revision": revision + 1, "command": command,
                  "previous_event_id": old["id"] if old else None, "at": utcnow().isoformat(), "actor": self.ws.user(user_id),
@@ -492,7 +496,7 @@ class WorkspaceClusteringStore:
         return event
 
 
-def pipeline_summaries(db, report_ids, compact=False):
+def pipeline_summaries(db, report_ids, compact=False, *, ws=None, user_id=None):
     if not report_ids:
         return {}
     clusters = db.execute("SELECT h.workspace_key,e.payload FROM {oa} h JOIN {oa} e ON e.record_id=h.workspace_pipeline_event_ref "
@@ -503,7 +507,8 @@ def pipeline_summaries(db, report_ids, compact=False):
     result = {}
     for row in clusters:
         cluster, groups = rationale.unpack(row["payload"]), {}
-        confirmed = cluster["confirmed"] and rationale.complete(cluster) and WorkspaceClusteringStore(db).references_current(cluster)
+        context = {"_actor_user_id": user_id} if user_id else None
+        confirmed = cluster["confirmed"] and rationale.complete(cluster) and WorkspaceClusteringStore(db, ws=ws).references_current(cluster, context=context)
         for group in cluster["groups"]:
             event = decisions.get((row["workspace_key"], group["id"]))
             stale = bool(event and (not confirmed or event["cluster_event_id"] != cluster["id"]))

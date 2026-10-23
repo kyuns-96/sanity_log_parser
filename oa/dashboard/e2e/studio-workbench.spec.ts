@@ -145,6 +145,8 @@ test.describe('independent Studio workbench preview', () => {
         expect(box!.y).toBeGreaterThanOrEqual(0)
         expect(box!.y + box!.height).toBeLessThanOrEqual(height)
       } else {
+        await expect(page.locator('.original-result')).toBeVisible()
+        await expect(page.locator('.original-result')).toContainText('FAIL')
         await confirm.scrollIntoViewIfNeeded()
         await expect(confirm).toBeVisible()
         await page.getByRole('textbox', { name: '판정 근거', exact: true }).fill('모바일 화면에서도 최종 근거를 작성하고 확정할 수 있습니다.')
@@ -181,7 +183,7 @@ test.describe('independent Studio workbench preview', () => {
     expect(consoleErrors).toEqual([])
   })
 
-  test('opening the existing workspace after Studio preserves its own green theme and entry point', async ({ page }) => {
+  test('opening the real workspace after Studio uses its shared neutral theme and preserves the entry point', async ({ page }) => {
     await openStudio(page, '?theme=dark')
     await expect(page.locator('html')).toHaveClass(/dark/)
     const requests: string[] = []
@@ -191,8 +193,9 @@ test.describe('independent Studio workbench preview', () => {
     await expect(page.locator('.ws-connected')).toHaveText('데모 환경')
     await expect(page.locator('.comparison')).toHaveCount(0)
     await expect(page.locator('html')).not.toHaveClass(/dark/)
-    expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#294f46')
-    expect(requests.filter(path => path.includes('/src/studio/') || path.includes('/studio-preview/'))).toEqual([])
+    await expect(page.locator('html')).toHaveClass(/studio-system/)
+    expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#272b35')
+    expect(requests.filter(path => path.includes('/studio-preview/'))).toEqual([])
     await page.getByRole('button', { name: 'CPU 버전과 검사 보기', exact: true }).click()
     await expect(page.locator('.ws-report-table tbody tr')).toHaveCount(25)
   })

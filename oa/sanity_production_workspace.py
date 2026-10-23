@@ -60,6 +60,17 @@ class ProductionWorkspaceStore(WorkspaceStore):
         return any(scope["block_id"] == block_id
                    for scope in self.authorization._scopes(user_id, write=True))
 
+    def case_reference_scopes(self, user_id):
+        """Global registered confirmed knowledge, independent of raw grants."""
+        self.authorization.require_ready()
+        self.authorization._identity(user_id)
+        registry = self.authorization._state()
+        registered = {(scope["project_id"], scope["block_id"]) for scope in self.registered_case_scopes()}
+        expected = {(block["project_id"], block["id"]) for block in registry["blocks"].values()}
+        if expected != registered:
+            raise ReviewError("STATE_CORRUPT", "Registered workspace scope differs")
+        return [{"project_id": project, "block_id": block} for project, block in sorted(expected)]
+
     def por(self, block_id):
         row = self.db.execute("SELECT * FROM {oa} WHERE record_type='WS_POR' AND workspace_key=%s",
                               (block_id,)).fetchone()

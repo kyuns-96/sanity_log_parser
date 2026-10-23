@@ -15,10 +15,11 @@ from fastapi import Depends, FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StringConstraints
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from common.sanity_common import ReviewError
+from common.sanity_ai_knowledge import shared_case_views
 from common.sanity_clustering import check
 from common.sanity_db import Database
 from oa.sanity_workspace import WorkspaceStore
@@ -46,6 +47,14 @@ class PorChange(BaseModel):
     reason: Annotated[str, Field(min_length=1, max_length=500)]
 
 
+class ReviewException(BaseModel):
+    """Human annotation; never an executable rule or catalog modification."""
+    model_config = ConfigDict(extra="forbid")
+    rule: Annotated[str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=500)]
+    reason: Annotated[str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=2000)]
+    conditions: Annotated[str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=2000)]
+
+
 class ReviewChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
     conclusion: Literal["PASS", "FAIL", "DEFER"]
@@ -54,6 +63,7 @@ class ReviewChange(BaseModel):
     conditions: Annotated[dict[str, Annotated[str, Field(strict=True, max_length=500)]], Field(max_length=12)] = Field(default_factory=dict)
     reusable: StrictBool = False
     compatible_versions: StrictBool = False
+    exception: ReviewException | None = None
     expected_revision: Annotated[StrictInt, Field(ge=0)]
     request_id: UUID
     proposal_id: UUID | None = None
@@ -309,12 +319,14 @@ def create_app(*, origins, static_dir=None, codex_mock_enabled=False, codex_advi
     @app.post(API + "/blocks/{block_id}/versions/{version_id}/reports/{report_id}/review")
     def review_save(block_id: ID, version_id: ID, report_id: ID, body: ReviewChange, actor=Depends(authenticated)):
         with workspace_transaction() as db:
-            return WorkspaceReviewStore(db).save(actor["user"]["id"], block_id, version_id, report_id, **body.model_dump())
+            return shared_case_views(WorkspaceReviewStore(db).save(
+                actor["user"]["id"], block_id, version_id, report_id, **body.model_dump()))
 
     @app.post(API + "/blocks/{block_id}/versions/{version_id}/reports/{report_id}/review-proposals")
     def review_proposal(block_id: ID, version_id: ID, report_id: ID, body: ReviewProposal, actor=Depends(authenticated)):
         with workspace_transaction() as db:
-            return WorkspaceReviewStore(db).propose(actor["user"]["id"], block_id, version_id, report_id, **body.model_dump())
+            return shared_case_views(WorkspaceReviewStore(db).propose(
+                actor["user"]["id"], block_id, version_id, report_id, **body.model_dump()))
 
     @app.get(API + "/blocks/{block_id}/versions/{version_id}/reports/{report_id}/clustering")
     def clustering_detail(block_id: ID, version_id: ID, report_id: ID, actor=Depends(authenticated)):
@@ -324,14 +336,14 @@ def create_app(*, origins, static_dir=None, codex_mock_enabled=False, codex_advi
     @app.post(API + "/blocks/{block_id}/versions/{version_id}/reports/{report_id}/clustering/proposals")
     def clustering_proposal(block_id: ID, version_id: ID, report_id: ID, body: ClusterProposal, actor=Depends(authenticated)):
         with workspace_transaction() as db:
-            return WorkspaceClusteringStore(db).change(actor["user"]["id"], block_id, version_id, report_id,
-                                                       action="PROPOSE", **body.model_dump())
+            return shared_case_views(WorkspaceClusteringStore(db).change(
+                actor["user"]["id"], block_id, version_id, report_id, action="PROPOSE", **body.model_dump()))
 
     @app.post(API + "/blocks/{block_id}/versions/{version_id}/reports/{report_id}/clustering")
     def clustering_change(block_id: ID, version_id: ID, report_id: ID, body: ClusterChange, compact: bool = False, actor=Depends(authenticated)):
         with workspace_transaction() as db:
             value = WorkspaceClusteringStore(db).change(actor["user"]["id"], block_id, version_id, report_id, **body.model_dump())
-            return event_brief(value) if compact else value
+            return event_brief(value) if compact else shared_case_views(value)
 
     @app.get(API + "/blocks/{block_id}/versions/{version_id}/reports/{report_id}/workbench")
     def workbench(block_id: ID, version_id: ID, report_id: ID, actor=Depends(authenticated)):
@@ -444,14 +456,14 @@ def create_app(*, origins, static_dir=None, codex_mock_enabled=False, codex_advi
         with workspace_transaction() as db:
             value = WorkspaceGroupReviewStore(db, group_id, body.expected_cluster_revision).save(
                 actor["user"]["id"], block_id, version_id, report_id, **body.model_dump(exclude={"expected_cluster_revision"}))
-            return compact_review(value) if compact else value
+            return shared_case_views(compact_review(value) if compact else value)
 
     @app.post(API + "/blocks/{block_id}/versions/{version_id}/reports/{report_id}/groups/{group_id}/review-proposals")
     def group_review_proposal(block_id: ID, version_id: ID, report_id: ID, group_id: ID, body: GroupReviewProposal, compact: bool = False, actor=Depends(authenticated)):
         with workspace_transaction() as db:
             value = WorkspaceGroupReviewStore(db, group_id, body.expected_cluster_revision).propose(
                 actor["user"]["id"], block_id, version_id, report_id, **body.model_dump(exclude={"expected_cluster_revision"}))
-            return compact_review(value) if compact else value
+            return shared_case_views(compact_review(value) if compact else value)
 
     if static_dir is not None:
         static_dir = Path(static_dir).resolve()

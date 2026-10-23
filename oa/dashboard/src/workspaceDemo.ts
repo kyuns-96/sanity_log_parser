@@ -4,7 +4,7 @@ import { WorkspaceError } from './workspaceApi'
 import { workspaceDemoUsers as users } from './workspaceDemoAccounts'
 import type {
   ClusterBrief, ClusterEvent, GroupBrief, GroupRationale, Judgment, PipelineGroup, PipelineTask,
-  RationaleContent, ReviewCase, ReviewProposal, WorkspaceEvent, WorkspacePor, WorkspaceRecord,
+  RationaleContent, ReviewCase, ReviewException, ReviewProposal, WorkspaceEvent, WorkspacePor, WorkspaceRecord,
   WorkspaceReport, WorkspaceSession, WorkspaceUser, WorkspaceVersion, WorkbenchView,
 } from './workspaceApi'
 
@@ -19,6 +19,7 @@ type Command = {
   request_id?: string; action?: string; reason?: string; identity_fields?: string[]; reusable?: boolean;
   compatible_versions?: boolean; criteria?: string; content?: RationaleContent; reviewed?: boolean;
   conclusion?: Judgment; conditions?: Record<string, string>; proposal_id?: string;
+  exception?: ReviewException | null;
   task_id?: string; expected_chunk?: number;
   operation?: { kind: string; destination_id?: string; new_group_id?: string; label?: string; record_ids?: string[]; group_ids?: string[] };
 }
@@ -215,7 +216,7 @@ export function makeWorkspaceDemo() {
       const key = group?.id || 'report', history = state.reviews[key] || [], latest = history[0] || null
       const stale = !!group && !!latest && latest.cluster_revision !== revision
       const canReview = canWrite(block) && (!group || !!snapshot?.event.confirmed && !!activeGroup)
-      const facts = Object.fromEntries(Object.entries((group ? state.records.find(record => record.id === group.record_ids[0]) : state.records[0])?.fields || {}).filter(([key]) => ['rule', 'mode', 'object', 'check_point', 'severity', 'code'].includes(key)).map(([key, value]) => [key, String(value)]))
+      const facts = Object.fromEntries(Object.entries((group ? state.records.find(record => record.id === group.record_ids?.[0]) : state.records[0])?.fields || {}).filter(([key]) => ['rule', 'mode', 'object', 'check_point', 'severity', 'code'].includes(key)).map(([key, value]) => [key, String(value)]))
       if (!body) return { current: latest, current_stale: stale, revision: history.length, history, facts, ready: state.report.analysis_ready, can_review: canReview,
         cases: [], case_count: 0, reusable_count: 0, cases_displayed: 0, proposal: state.proposals[key] || null, corporate_ai_connected: false,
         blocked_reason: group && !snapshot?.event.confirmed ? 'CLUSTER_NOT_CONFIRMED' : null }
@@ -229,8 +230,18 @@ export function makeWorkspaceDemo() {
       if (!command.reason?.trim() || !['PASS', 'FAIL', 'DEFER'].includes(command.conclusion || '')) reject('INVALID_REQUEST')
       if (!state.report.analysis_ready && command.conclusion !== 'DEFER') reject('REVIEW_BLOCKED')
       if (command.reusable && (!command.criteria?.trim() || command.conclusion === 'DEFER')) reject('INVALID_CRITERIA')
+      let exception: ReviewException | null = null
+      if (command.exception != null) {
+        const value = command.exception
+        if (typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== 3 || command.conclusion === 'DEFER' || command.reusable
+          || typeof value.rule !== 'string' || !value.rule.trim() || value.rule.length > 500
+          || typeof value.reason !== 'string' || !value.reason.trim() || value.reason.length > 2000
+          || typeof value.conditions !== 'string' || !value.conditions.trim() || value.conditions.length > 2000) reject('INVALID_EXCEPTION')
+        exception = { rule: value.rule.trim(), reason: value.reason.trim(), conditions: value.conditions.trim() }
+      }
       const event: ReviewCase = { id: `demo-review-${crypto.randomUUID()}`, report_id: state.report.id, version_id: version.id, conclusion: command.conclusion!, reason: command.reason,
         criteria: command.criteria || '', conditions: command.conditions || {}, reusable: !!command.reusable, compatible_versions: !!command.compatible_versions,
+        exception,
         revision: history.length + 1, actor: copy(user), at: now(), source_sha256: state.sha, source_version: version,
         proposal_id: command.proposal_id || null, proposal_conclusion: command.proposal_id ? state.proposals[key]?.conclusion || null : null, proposal_agreed: command.proposal_id ? state.proposals[key]?.conclusion === command.conclusion : null,
         ...(group ? { group_id: group.id, cluster_revision: revision, group_snapshot: copy(group) } : {}) }
@@ -270,9 +281,9 @@ export function makeWorkspaceDemo() {
     if (parts[7] === 'history') return params.get('removed') === 'true' ? page(removedGroups(state), params) : page([...state.snapshots].reverse().map(brief), params)
     const selected = selectedSnapshot(state, params)
     if (parts[7] === 'groups') {
-      const items: GroupBrief[] = (selected?.event.groups || []).map(group => {
+      const items: GroupBrief[] = (selected?.event.groups || []).map((group, index) => {
         const row = selected!.rationales[group.id]
-        return { id: group.id, label: group.label, record_count: group.record_ids.length, status: groupStatus(state, group.id, selected!.event.revision), revision: state.reviews[group.id]?.length || 0,
+        return { id: group.id, ordinal: index + 1, label: group.label, record_count: group.record_ids.length, status: groupStatus(state, group.id, selected!.event.revision), revision: state.reviews[group.id]?.length || 0,
           example: state.records.find(record => record.id === group.record_ids[0])?.fields || {}, rationale: { status: row?.status || 'MISSING', reason: row?.content.reason || '', reason_truncated: false, reason_omitted_chars: 0, source: row?.source || null, evidence_count: row?.content.evidence_ids.length || 0 } }
       }).filter(group => group.label.toLowerCase().includes((params.get('search') || '').toLowerCase())
         && (!params.get('status') || (params.get('status') === 'UNREVIEWED' ? !['PASS', 'FAIL'].includes(group.status) : group.status === params.get('status')))

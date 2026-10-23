@@ -1750,7 +1750,10 @@ textarea.kit-textarea {
     padding: 0;
   }
   .original-result {
-    display: none;
+    display: flex;
+    flex-wrap: wrap;
+    width: 100%;
+    gap: 8px;
   }
   .stage-number {
     width: 17px;

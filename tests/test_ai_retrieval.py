@@ -3,6 +3,7 @@ import copy
 import unittest
 import uuid
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from common.sanity_ai_retrieval import (compatible, comparison, query_profile,
     rank_case, select_ranked)
@@ -36,15 +37,24 @@ class RetrievalPolicyTests(unittest.TestCase):
         self.assertEqual({"current": "eco-2", "case": "eco-1"}, comparison(context(), case)["eco"])
         self.assertFalse(comparison(context(), case)["automatic_rule_reuse_approved"])
 
-    def test_each_security_or_format_scope_difference_is_excluded(self):
+    def test_project_block_and_format_metadata_are_comparison_inputs_not_case_filters(self):
         for key in ("project_id", "block_id", "item_id", "family", "parser", "rule_version", "layout"):
             with self.subTest(key=key):
                 case = example(scope={**context()["scope"], key: "other"})
-                self.assertFalse(compatible(context(), case, stage="CLUSTER"))
+                self.assertTrue(compatible(context(), case, stage="CLUSTER"))
+                self.assertTrue(compatible(context(), case, stage="REVIEW"))
 
-    def test_other_versions_require_existing_explicit_compatibility_permission(self):
-        self.assertFalse(compatible(context(), example(version_id="version-2"), stage="CLUSTER"))
+    def test_other_versions_do_not_require_legacy_compatibility_or_reuse_flags(self):
+        self.assertTrue(compatible(context(), example(version_id="version-2"), stage="CLUSTER"))
+        self.assertTrue(compatible(context(), example(version_id="version-2"), stage="REVIEW"))
         self.assertTrue(compatible(context(), example(version_id="version-2", compatible_versions=True), stage="CLUSTER"))
+
+    def test_missing_source_identifiers_remain_invalid(self):
+        for key in ("project_id", "block_id", "item_id"):
+            with self.subTest(key=key):
+                scope = dict(context()["scope"])
+                scope.pop(key)
+                self.assertFalse(compatible(context(), example(scope=scope), stage="CLUSTER"))
 
     def test_self_unconfirmed_and_deferred_results_are_excluded(self):
         self.assertFalse(compatible(context(), example(report_id="target"), stage="CLUSTER"))
@@ -130,6 +140,9 @@ class GraphRetriever(CaseRetriever):
         self.rows, self.events, self.read_count = {}, [], 0
         self.stage = stage
         self.reviews = SimpleNamespace(row=self.read)
+        self.rows[("WS_VERSION", "version-1")] = {"payload": {
+            "id": "version-1", "project_id": "project", "block_id": "block", "layout": "POST",
+            "net_ver": "NET_001", "revision": "synthetic-revision", "source_pre_id": None}}
         for index in range(nodes):
             report_id, event_id = f"report-{index}", f"event-{index}"
             scope = {**context()["scope"], "eco": "eco-1"}
@@ -162,6 +175,11 @@ class GraphRetriever(CaseRetriever):
         self.read_count += 1
         return self.rows.get((kind, key))
 
+    def _report_authorized(self, report_id):
+        # This immutable in-memory diagnostic DAG has no actor or DB ACL rows.
+        # Actual actor scope checks are exercised by RetrievalDatabaseTests.
+        return True
+
     def _bounded_row(self, kind, key):
         self._charge_work(2)
         return self.read(kind, key)
@@ -181,13 +199,40 @@ class GraphRetriever(CaseRetriever):
 
 
 class ReferenceGraphTests(unittest.TestCase):
+    def test_reference_dependencies_can_cross_projects_blocks_and_formats(self):
+        for stage in ("CLUSTER", "REVIEW"):
+            with self.subTest(stage=stage):
+                retriever = GraphRetriever(stage, nodes=4)
+                for index, event in enumerate(retriever.events):
+                    scope = {key: f"other-{key}-{index}" for key in context()["scope"]}
+                    event.update(scope=scope, version_id=f"other-version-{index}")
+                    source = retriever.rows[("WS_REPORT", event["report_id"])]["payload"]
+                    source.update({key: value for key, value in scope.items() if key != "layout"})
+                    source["version_id"] = event["version_id"]
+                    retriever.rows[("WS_VERSION", event["version_id"])] = {"payload": {
+                        "id": event["version_id"], "project_id": scope["project_id"],
+                        "block_id": scope["block_id"], "layout": scope["layout"],
+                        "net_ver": f"NET_{index:03d}", "revision": f"synthetic-revision-{index}",
+                        "source_pre_id": None}}
+                    event["source_sha256"] = source_digest(source)
+                    references = event.get("references") if stage == "CLUSTER" else retriever.rows[
+                        ("WS_REVIEW_PROPOSAL", event["proposal_id"])]["payload"]["references"]
+                    for ref in references:
+                        dependency = next(row for row in retriever.events if row["id"] == ref["id"])
+                        ref["source_sha256"] = dependency["source_sha256"]
+                    if stage == "CLUSTER":
+                        event["rationales"]["group"]["binding"] = rationale.binding(event, event["groups"][0])
+                result = retriever.select(context(), stage=stage, limit=1)
+                self.assertEqual(["event-3"], [case["id"] for case in result["cases"]])
+                self.assertTrue(retriever.revalidate(context(), result["cases"], stage=stage))
+
     def test_shared_ancestors_validate_once_instead_of_exponential_row_reads(self):
-        for stage, reads_per_node in (("CLUSTER", 3), ("REVIEW", 4)):
+        for stage, reads_per_node in (("CLUSTER", 4), ("REVIEW", 5)):
             with self.subTest(stage=stage):
                 retriever = GraphRetriever(stage, nodes=23)
                 result = retriever.select(context(), stage=stage, limit=1)
                 self.assertEqual(["event-22"], [case["id"] for case in result["cases"]])
-                self.assertLessEqual(retriever.read_count, 23 * reads_per_node + 1)
+                self.assertLessEqual(retriever.read_count, 23 * reads_per_node + 2)
                 self.assertEqual(23, retriever._validation_stats["unique_nodes"])
                 self.assertEqual({}, retriever._validation_memo)
                 # A new operation must not reuse even the successful DAG nodes.
@@ -248,6 +293,293 @@ class RetrievalDatabaseTests(PgTestCase):
                                    project=target["project_id"], block=target["block_id"])
         self.path = ("user-04", "project-1-cpu", "project-1-cpu-post-1")
 
+    def cross_scope_source(self, db, *, actor="user-04", project="project-3", block="project-3-gpu", mutate=None):
+        """Create a synthetic source in a registered block, without granting access."""
+        from oa.sanity_workspace import WorkspaceStore, record_id
+        source = copy.deepcopy(WorkspaceStore(db).get("WS_REPORT", "sample-0001")["payload"])
+        source.update(id="cross-scope-source", project_id=project, block_id=block,
+                      version_id=block + "-pre-0",
+                      version_record_id=str(record_id("WS_VERSION", block + "-pre-0")),
+                      item_id="cdc_check", family="SPYGLASS", parser="other-public-parser",
+                      rule_version="other-rule-set", rule="CDC_101", eco=None)
+        source["records"][0]["id"] = "cross-scope-log"
+        if mutate is not None:
+            mutate(source)
+        WorkspaceStore(db).put("WS_REPORT", source["id"], source,
+                               project=source["project_id"], block=source["block_id"])
+        return (actor, source["block_id"], source["version_id"]), source
+
+    def assert_shared_knowledge(self, case, *, count=1):
+        self.assertEqual("SHARED_CONFIRMED_KNOWLEDGE", case["evidence_mode"])
+        self.assertFalse(case["example_complete"])
+        self.assertEqual(count, case["source_record_count"])
+        forbidden = {"records", "raw", "fields", "raw_report", "record_ids", "evidence_ids", "command", "group_evidence"}
+
+        def verify(value):
+            if isinstance(value, dict):
+                self.assertEqual(set(), forbidden & value.keys())
+                for child in value.values():
+                    verify(child)
+            elif isinstance(value, list):
+                for child in value:
+                    verify(child)
+
+        verify(case)
+
+    def test_human_decision_crosses_all_execution_metadata_with_both_legacy_flags_false(self):
+        from common.sanity_db import Database
+        from oa.sanity_workspace_review import WorkspaceReviewStore
+        with Database("oa") as db, db.transaction():
+            path, source = self.cross_scope_source(db)
+            store = WorkspaceReviewStore(db)
+            event = store.save(*path, source["id"], conclusion="FAIL", reason="clock synchronizer 누락 확인",
+                criteria="", conditions={}, reusable=False, compatible_versions=False,
+                expected_revision=0, request_id=str(uuid.uuid4()))["event"]
+            target = store.context(*self.path, "retrieval-target")
+            retriever = CaseRetriever(db)
+            result = retriever.select(target, stage="REVIEW")
+            self.assertEqual([event["id"]], [case["id"] for case in result["cases"]])
+            case = result["cases"][0]
+            for key in ("project_id", "block_id", "item_id", "family", "parser", "rule_version", "layout", "eco"):
+                with self.subTest(key=key):
+                    self.assertNotEqual(target["scope"][key], case["scope"][key])
+                    self.assertEqual(event["scope"][key], case["scope"][key])
+            self.assertFalse(case["reusable"])
+            self.assertFalse(case["compatible_versions"])
+            self.assert_shared_knowledge(case)
+            self.assertEqual({"current": "project-1-cpu-post-1", "case": "project-3-gpu-pre-0"},
+                             case["retrieval_comparison"]["version"])
+            self.assertEqual({"current": "eco01", "case": None}, case["retrieval_comparison"]["eco"])
+            self.assertTrue(retriever.revalidate(target, result["cases"], stage="REVIEW"))
+
+    def test_confirmed_grouping_crosses_other_owned_project_block_and_revision(self):
+        from common.sanity_db import Database
+        from oa.sanity_workspace_clustering import WorkspaceClusteringStore
+        with Database("oa") as db, db.transaction():
+            path, source = self.cross_scope_source(db)
+            store = WorkspaceClusteringStore(db)
+            draft = store.change(*path, source["id"], action="PROPOSE", expected_revision=0,
+                                 request_id=str(uuid.uuid4()))
+            event = store.change(*path, source["id"], action="CONFIRM", expected_revision=draft["revision"],
+                                 request_id=str(uuid.uuid4()), reason="clock synchronizer 누락 분류 확인")
+            target = store.context(*self.path, "retrieval-target")
+            result = CaseRetriever(db).select(target, stage="CLUSTER")
+            self.assertEqual([event["id"]], [case["id"] for case in result["cases"]])
+            case = result["cases"][0]
+            self.assertEqual([{"id": group["id"], "label": group["label"], "record_count": len(group["record_ids"])}
+                              for group in event["groups"]], case["groups"])
+            for row in event["rationales"].values():
+                self.assertIn(row["content"]["reason"], canonical_json(case).decode())
+            self.assert_shared_knowledge(case)
+            self.assertFalse(result["cases"][0]["reusable"])
+            self.assertFalse(result["cases"][0]["compatible_versions"])
+
+    def test_unreadable_registered_block_shares_confirmed_knowledge_without_raw_access(self):
+        from common.sanity_db import Database
+        from oa.sanity_workspace import WorkspaceStore
+        from oa.sanity_workspace_review import WorkspaceReviewStore
+        raw_sentinel = "SOURCE-ONLY-RAW-SENTINEL-62e6"
+        field_sentinel = "SOURCE-ONLY-FIELD-SENTINEL-62e6"
+        def mutate(source):
+            source["records"][0].update(raw=raw_sentinel, fields={"object": field_sentinel})
+            source["raw_report"] = raw_sentinel
+        with Database("oa") as db, db.transaction():
+            path, source = self.cross_scope_source(db, actor="user-07", project="project-2", block="project-2-cpu", mutate=mutate)
+            store = WorkspaceReviewStore(db)
+            event = store.save(*path, source["id"], conclusion="FAIL", reason="clock synchronizer 누락 확인",
+                criteria="", conditions={}, reusable=False, compatible_versions=False,
+                expected_revision=0, request_id=str(uuid.uuid4()))["event"]
+            target = store.context(*self.path, "retrieval-target")
+            retriever = CaseRetriever(db)
+            cases = retriever.select(target, stage="REVIEW")["cases"]
+            self.assertEqual([event["id"]], [case["id"] for case in cases])
+            self.assert_shared_knowledge(cases[0])
+            encoded = canonical_json(cases).decode()
+            self.assertNotIn(raw_sentinel, encoded)
+            self.assertNotIn(field_sentinel, encoded)
+            with self.assertRaises(ReviewError) as error:
+                WorkspaceStore(db).report("user-04", source["block_id"], source["version_id"], source["id"])
+            self.assertEqual("FORBIDDEN", error.exception.code)
+            self.assertTrue(retriever.revalidate(target, cases, stage="REVIEW"))
+            pins = [{**{key: case[key] for key in ("id", "report_id", "revision", "source_sha256")},
+                     "sha256": digest(case)} for case in cases]
+            self.assertEqual({"cases": cases, "stale_ids": [], "over_budget_ids": []},
+                             retriever.resolve_references(target, pins, stage="REVIEW"))
+
+    def test_raw_read_revocation_does_not_withdraw_globally_shared_confirmed_knowledge(self):
+        from common.sanity_db import Database, json_value
+        from oa.sanity_workspace import WorkspaceStore
+        from oa.sanity_workspace_review import WorkspaceReviewStore
+        with Database("oa") as db, db.transaction():
+            path, source = self.cross_scope_source(db)
+            store = WorkspaceReviewStore(db)
+            event = store.save(*path, source["id"], conclusion="FAIL", reason="clock synchronizer 누락 확인",
+                criteria="", conditions={}, reusable=False, compatible_versions=False,
+                expected_revision=0, request_id=str(uuid.uuid4()))["event"]
+            target = store.context(*self.path, "retrieval-target")
+            retriever = CaseRetriever(db)
+            cases = retriever.select(target, stage="REVIEW")["cases"]
+            self.assertEqual([event["id"]], [case["id"] for case in cases])
+            block = WorkspaceStore(db).get("WS_BLOCK", source["block_id"])["payload"]
+            self.assertEqual(source["id"], WorkspaceStore(db).report(*path, source["id"])["id"])
+        # Assignment fixtures are immutable to the restricted application role.
+        # Commit the source first, then simulate revocation through the test DBA.
+        self.admin_query("UPDATE {oa} SET payload=%s WHERE record_type='WS_BLOCK' AND workspace_key=%s",
+                         (json_value({**block, "owners": []}), source["block_id"]))
+        with Database("oa") as db, db.transaction():
+            target = WorkspaceReviewStore(db).context(*self.path, "retrieval-target")
+            retriever = CaseRetriever(db)
+            with self.assertRaises(ReviewError) as error:
+                WorkspaceStore(db).report(*path, source["id"])
+            self.assertEqual("FORBIDDEN", error.exception.code)
+            self.assertEqual(cases, retriever.select(target, stage="REVIEW")["cases"])
+            self.assertTrue(retriever.revalidate(target, cases, stage="REVIEW"))
+
+    def test_no_actor_diagnostics_do_not_implicitly_search_other_blocks(self):
+        from common.sanity_db import Database
+        from oa.sanity_workspace_review import WorkspaceReviewStore
+        with Database("oa") as db, db.transaction():
+            path, source = self.cross_scope_source(db)
+            store = WorkspaceReviewStore(db)
+            for location, report_id in ((path, source["id"]), (self.path, "sample-0001")):
+                store.save(*location, report_id, conclusion="FAIL", reason="clock synchronizer 누락 확인",
+                    criteria="", conditions={}, reusable=False, compatible_versions=False,
+                    expected_revision=0, request_id=str(uuid.uuid4()))
+            target = store.context(*self.path, "retrieval-target")
+            target.pop("_actor_user_id", None)
+            cases = CaseRetriever(db).select(target, stage="REVIEW")["cases"]
+            self.assertEqual(["sample-0001"], [case["report_id"] for case in cases])
+            self.assert_shared_knowledge(cases[0])
+
+    def test_packed_confirmed_group_reason_is_searched_without_source_text_overlap(self):
+        from common.sanity_db import Database
+        from oa.sanity_workspace import WorkspaceStore
+        from oa.sanity_workspace_clustering import WorkspaceClusteringStore
+        token = "mesochronous"
+        def mutate(source):
+            source["records"][0].update(raw="PRIVATE-SOURCE-SENTINEL", fields={"object": "independent-object"})
+            source.update(raw_report="PRIVATE-SOURCE-SENTINEL", rule=None)
+        with Database("oa") as db, db.transaction():
+            path, source = self.cross_scope_source(db, mutate=mutate)
+            target = WorkspaceStore(db).get("WS_REPORT", "retrieval-target")["payload"]
+            target["id"] = "packed-rationale-target"
+            target["records"][0].update(raw=token, fields={})
+            target.update(raw_report=token, rule=None)
+            WorkspaceStore(db).put("WS_REPORT", target["id"], target,
+                                   project=target["project_id"], block=target["block_id"])
+            group = {"id": "independent-group", "label": "별도 합성 분류", "record_ids": ["cross-scope-log"]}
+            prepared = {"groups": [group], "reason": "별도 합성 분류 초안", "reference_ids": [],
+                        "group_rationales": [{"group_id": group["id"],
+                            "reason": token + " 분류 조건을 사람이 확인했습니다.",
+                            "evidence_ids": group["record_ids"], "reference_groups": []}]}
+            store = WorkspaceClusteringStore(db)
+            with patch.object(rationale, "PACK_THRESHOLD", 1):
+                draft = store.change(*path, source["id"], action="PROPOSE", expected_revision=0,
+                                     request_id=str(uuid.uuid4()), prepared=prepared)
+                event = store.change(*path, source["id"], action="CONFIRM", expected_revision=draft["revision"],
+                                     request_id=str(uuid.uuid4()), reason="별도 합성 분류 확정")
+            stored = WorkspaceStore(db).get("WS_CLUSTER_EVENT", event["id"])["payload"]
+            self.assertEqual("bucket-zlib-v1", stored["rationale_encoding"])
+            self.assertNotIn(token, canonical_json(stored).decode())
+            context = store.context(*self.path, target["id"])
+            self.assertEqual([token], query_profile(context)["terms"])
+            result = CaseRetriever(db).select(context, stage="CLUSTER")
+            self.assertEqual([event["id"]], [case["id"] for case in result["cases"]])
+            self.assert_shared_knowledge(result["cases"][0])
+            self.assertIn(token, canonical_json(result["cases"][0]).decode())
+            self.assertNotIn("PRIVATE-SOURCE-SENTINEL", canonical_json(result["cases"][0]).decode())
+
+    def test_large_source_does_not_consume_shared_knowledge_output_budget(self):
+        from common.sanity_db import Database
+        from oa.sanity_workspace import WorkspaceStore
+        from oa.sanity_workspace_review import WorkspaceReviewStore
+        def mutate(source):
+            source["records"][0]["raw"] = "PRIVATE-LARGE-SOURCE " * 1000
+            source["raw_report"] = source["records"][0]["raw"]
+        with Database("oa") as db, db.transaction():
+            path, source = self.cross_scope_source(db, mutate=mutate)
+            self.assertGreater(len(canonical_json(source)), 5000)
+            store = WorkspaceReviewStore(db)
+            event = store.save(*path, source["id"], conclusion="FAIL", reason="clock synchronizer 누락 확인",
+                criteria="", conditions={}, reusable=False, compatible_versions=False,
+                expected_revision=0, request_id=str(uuid.uuid4()))["event"]
+            context = store.context(*self.path, "retrieval-target")
+            result = CaseRetriever(db).select(context, stage="REVIEW", max_bytes=5000)
+            self.assertEqual([event["id"]], [case["id"] for case in result["cases"]])
+            self.assertLessEqual(result["metadata"]["selected_bytes"], 5000)
+            self.assert_shared_knowledge(result["cases"][0])
+            self.assertNotIn("PRIVATE-LARGE-SOURCE", canonical_json(result["cases"]).decode())
+
+    def test_oversized_packed_event_does_not_block_another_usable_confirmed_case(self):
+        from common.sanity_db import Database
+        from oa.sanity_workspace import WorkspaceStore
+        from oa.sanity_workspace_clustering import WorkspaceClusteringStore
+        with Database("oa") as db, db.transaction():
+            path, source = self.cross_scope_source(db)
+            store = WorkspaceClusteringStore(db)
+            with patch.object(rationale, "PACK_THRESHOLD", 1):
+                draft = store.change(*path, source["id"], action="PROPOSE", expected_revision=0,
+                                     request_id=str(uuid.uuid4()))
+                packed = store.change(*path, source["id"], action="CONFIRM", expected_revision=draft["revision"],
+                                      request_id=str(uuid.uuid4()), reason="clock synchronizer 누락 분류 확인")
+            self.assertEqual("bucket-zlib-v1", WorkspaceStore(db).get("WS_CLUSTER_EVENT", packed["id"])["payload"]["rationale_encoding"])
+            draft = store.change(*self.path, "sample-0001", action="PROPOSE", expected_revision=0,
+                                 request_id=str(uuid.uuid4()))
+            fallback = store.change(*self.path, "sample-0001", action="CONFIRM", expected_revision=draft["revision"],
+                                    request_id=str(uuid.uuid4()), reason="clock synchronizer 누락 분류 확인")
+            self.assertNotIn("rationale_encoding", WorkspaceStore(db).get("WS_CLUSTER_EVENT", fallback["id"])["payload"])
+            retriever = CaseRetriever(db)
+            read = retriever._bounded_row
+            blocked = []
+
+            def bounded_row(kind, key):
+                if (kind, key) == ("WS_CLUSTER_EVENT", packed["id"]):
+                    blocked.append(key)
+                    raise ReviewError("AI_CASE_BUDGET", "Synthetic complete packed event exceeds the internal byte budget")
+                return read(kind, key)
+
+            context = store.context(*self.path, "retrieval-target")
+            with patch.object(retriever, "_bounded_row", side_effect=bounded_row):
+                result = retriever.select(context, stage="CLUSTER", limit=1)
+            self.assertEqual([packed["id"]], blocked)
+            self.assertEqual([fallback["id"]], [case["id"] for case in result["cases"]])
+            self.assertEqual(1, result["metadata"]["counts"]["over_budget"])
+            self.assert_shared_knowledge(result["cases"][0])
+
+    def test_report_rule_metadata_can_match_when_raw_and_human_reason_do_not_overlap(self):
+        from common.sanity_ai_retrieval import words
+        from common.sanity_db import Database
+        from oa.sanity_workspace import WorkspaceStore
+        from oa.sanity_workspace_review import WorkspaceReviewStore
+        reason = "분리된 근거를 사람이 확정했습니다."
+
+        def mutate(source):
+            source["records"][0].update(raw="PRIVATE-SOURCE-METADATA-SENTINEL", fields={"object": "isolated"})
+            source.update(raw_report="PRIVATE-SOURCE-METADATA-SENTINEL", rule="CLOCK_RULE_A")
+
+        with Database("oa") as db, db.transaction():
+            path, source = self.cross_scope_source(db, mutate=mutate)
+            store = WorkspaceReviewStore(db)
+            event = store.save(*path, source["id"], conclusion="FAIL", reason=reason,
+                criteria="", conditions={}, reusable=False, compatible_versions=False,
+                expected_revision=0, request_id=str(uuid.uuid4()))["event"]
+            target = copy.deepcopy(WorkspaceStore(db).get("WS_REPORT", "retrieval-target")["payload"])
+            target["id"] = "metadata-query-target"
+            target["records"][0].update(raw="quantization boundary", fields={})
+            target.update(raw_report="quantization boundary", rule="CLOCK_RULE_A")
+            WorkspaceStore(db).put("WS_REPORT", target["id"], target,
+                                   project=target["project_id"], block=target["block_id"])
+            context = store.context(*self.path, target["id"])
+            terms = set(query_profile(context)["terms"])
+            self.assertIn("clock_rule_a", terms)
+            self.assertFalse(terms.intersection(words(reason)))
+            self.assertFalse(terms.intersection(words(source["records"][0]["raw"])))
+            result = CaseRetriever(db).select(context, stage="REVIEW")
+            self.assertEqual([event["id"]], [case["id"] for case in result["cases"]])
+            self.assertEqual("CLOCK_RULE_A", result["cases"][0]["report_rule"])
+            self.assert_shared_knowledge(result["cases"][0])
+            self.assertNotIn("PRIVATE-SOURCE-METADATA-SENTINEL", canonical_json(result["cases"]).decode())
+
     def test_latest_corrected_human_decision_is_retrieved_across_eco_without_reusable(self):
         from common.sanity_db import Database
         from oa.sanity_workspace_review import WorkspaceReviewStore
@@ -265,7 +597,7 @@ class RetrievalDatabaseTests(PgTestCase):
             self.assertNotIn(initial["id"], [case["id"] for case in result["cases"]])
             self.assertFalse(result["cases"][0]["reusable"])
             self.assertEqual("FAIL", result["cases"][0]["conclusion"])
-            self.assertEqual("old-log", result["cases"][0]["records"][0]["id"])
+            self.assert_shared_knowledge(result["cases"][0])
             self.assertEqual({"current": "eco01", "case": "chip_finish"}, result["cases"][0]["retrieval_comparison"]["eco"])
 
     def test_source_digest_mismatch_is_an_integrity_error(self):
@@ -286,6 +618,24 @@ class RetrievalDatabaseTests(PgTestCase):
                 CaseRetriever(db).select(target, stage="REVIEW")
             self.assertEqual("STATE_CORRUPT", caught.exception.code)
 
+    def test_global_metadata_eligibility_does_not_allow_forged_source_scope(self):
+        from common.sanity_db import Database, json_value
+        from oa.sanity_workspace_review import WorkspaceReviewStore
+        with Database("oa") as db, db.transaction():
+            store = WorkspaceReviewStore(db)
+            saved = store.save(*self.path, "sample-0001", conclusion="FAIL", reason="clock synchronizer 누락 확인",
+                criteria="", conditions={}, reusable=False, compatible_versions=False,
+                expected_revision=0, request_id=str(uuid.uuid4()))["event"]
+        # This is a deliberate immutable-event integrity fault via the test DBA.
+        # Cross-parser references are valid only when the source really used it.
+        self.admin_query("UPDATE {oa} SET payload=jsonb_set(payload,ARRAY['scope','parser'],%s) "
+            "WHERE record_type='WS_REVIEW_EVENT' AND workspace_key=%s", (json_value("forged-parser"), saved["id"]))
+        with Database("oa") as db, db.transaction():
+            context = WorkspaceReviewStore(db).context(*self.path, "retrieval-target")
+            with self.assertRaises(ReviewError) as error:
+                CaseRetriever(db).select(context, stage="REVIEW")
+            self.assertEqual("STATE_CORRUPT", error.exception.code)
+
     def test_confirmed_partition_and_feedback_are_retrieved_until_withdrawn(self):
         from common.sanity_db import Database
         from oa.sanity_workspace_clustering import WorkspaceClusteringStore
@@ -300,9 +650,11 @@ class RetrievalDatabaseTests(PgTestCase):
             self.assertEqual([confirmed["id"]], [case["id"] for case in result["cases"]])
             case = result["cases"][0]
             self.assertFalse(case["reusable"])
-            self.assertEqual(confirmed["rationales"], case["rationales"])
-            self.assertEqual(confirmed["groups"], case["groups"])
-            self.assertTrue(case["example_complete"])
+            self.assertEqual([{"id": group["id"], "label": group["label"], "record_count": len(group["record_ids"])}
+                              for group in confirmed["groups"]], case["groups"])
+            for row in confirmed["rationales"].values():
+                self.assertIn(row["content"]["reason"], canonical_json(case).decode())
+            self.assert_shared_knowledge(case)
             store.change(*self.path, "sample-0001", action="WITHDRAW", expected_revision=confirmed["revision"],
                          request_id=str(uuid.uuid4()), reason="분류 기준을 다시 검토")
             self.assertEqual([], CaseRetriever(db).select(target, stage="CLUSTER")["cases"])
@@ -336,7 +688,7 @@ class RetrievalDatabaseTests(PgTestCase):
             self.assertEqual({"cases": [], "stale_ids": [cases[0]["id"]], "over_budget_ids": []},
                              retriever.resolve_references(target, pins, stage="REVIEW"))
 
-    def test_group_case_requires_current_confirmed_partition_and_keeps_full_members(self):
+    def test_group_case_requires_current_confirmed_partition_and_exposes_shared_count(self):
         from common.sanity_db import Database
         from oa.sanity_workspace_clustering import WorkspaceClusteringStore
         from oa.sanity_workspace_group_review import WorkspaceGroupReviewStore
@@ -357,7 +709,7 @@ class RetrievalDatabaseTests(PgTestCase):
             target = target_store.context(*self.path, "retrieval-target")
             result = CaseRetriever(db).select(target, stage="REVIEW")
             self.assertEqual([event["id"]], [case["id"] for case in result["cases"]])
-            self.assertEqual(source["groups"][0]["record_ids"], [record["id"] for record in result["cases"][0]["records"]])
+            self.assert_shared_knowledge(result["cases"][0], count=len(source["groups"][0]["record_ids"]))
             clusters.change(*self.path, "sample-0001", action="WITHDRAW", expected_revision=source["revision"],
                             request_id=str(uuid.uuid4()), reason="기존 분류 재검토")
             self.assertFalse(CaseRetriever(db).revalidate(target, result["cases"], stage="REVIEW"))

@@ -7,6 +7,7 @@ here. Corporate mode remains explicitly unavailable.
 import copy
 
 from common.sanity_clustering import check
+from common.sanity_ai_knowledge import shared_case_views
 from common.sanity_common import ReviewError, digest
 from common.sanity_db import json_value, lock_key, uuid_value
 from oa.sanity_workspace import record_id, utcnow
@@ -63,9 +64,9 @@ def apply_operation(groups, operation):
 def event_brief(event):
     if not event:
         return None
-    return {**{key: value for key, value in event.items() if key not in ("groups", "command", "task", "rationales")},
+    return shared_case_views({**{key: value for key, value in event.items() if key not in ("groups", "command", "task", "rationales")},
             "rationale_counts": rationale.counts(event),
-            "group_count": len(event["groups"]), "record_count": sum(len(group["record_ids"]) for group in event["groups"])}
+            "group_count": len(event["groups"]), "record_count": sum(len(group["record_ids"]) for group in event["groups"])})
 
 
 def task_brief(task):
@@ -81,7 +82,10 @@ def compact_review(value):
     result = {key: compact_review(item) for key, item in value.items() if key != "command"}
     if "group_snapshot" in result:
         snapshot = result["group_snapshot"]
-        snapshot["record_count"] = len(snapshot.pop("record_ids", []))
+        if "record_ids" in snapshot:
+            snapshot["record_count"] = len(snapshot.pop("record_ids"))
+        else:
+            snapshot.setdefault("record_count", 0)
     return result
 
 
@@ -131,7 +135,7 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
         brief = event_brief(current)
         if brief:
             brief["rationale_counts"] = rationale.counts(current, case_ids)
-        return {"report": {key: value for key, value in report.items() if key not in ("records", "raw_report")},
+        return shared_case_views({"report": {key: value for key, value in report.items() if key not in ("records", "raw_report")},
                 "version": context["version"], "source_sha256": context["source_sha256"],
                 "raw_line_count": report.get('raw_line_count',len((report.get("raw_report") or "").splitlines())),
                 "current": brief, "revision": revision, "ready": context["ready"],
@@ -139,7 +143,7 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
                 "task": task_brief(task) if task else None, "summary": self.summary(context, current, decisions, case_ids),
                 "case_count": len(cases), "reusable_count": sum(case["reusable"] for case in cases),
                 "corporate_ai_connected": False, "record_count": report['record_count'],
-                "removed_count": len(set(decisions) - {group["id"] for group in current["groups"]}) if current else 0}
+                "removed_count": len(set(decisions) - {group["id"] for group in current["groups"]}) if current else 0})
 
     def selected_event(self, context, expected_revision, event_id=None):
         if event_id:
@@ -162,7 +166,7 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
         case_ids = {case["id"] for case in self.catalog(context)}
         records = {record["id"]: record for record in evidence(context)}
         items, needle = [], search.casefold()
-        for group in event["groups"] if event else []:
+        for ordinal, group in enumerate(event["groups"] if event else [], 1):
             group_rationale = rationale.brief(event, group, case_ids)
             if rationale_status and (group_rationale["status"] == "CONFIRMED" if rationale_status == "UNRESOLVED"
                                      else group_rationale["status"] != rationale_status):
@@ -176,7 +180,7 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
             if needle and not (needle in (group["id"]+" "+group["label"]+" "+str(first["fields"])).casefold()
                                or any(needle in key.casefold() for key in group["record_ids"])):
                 continue
-            items.append({"id": group["id"], "label": group["label"], "record_count": len(group["record_ids"]),
+            items.append({"id": group["id"], "ordinal": ordinal, "label": group["label"], "record_count": len(group["record_ids"]),
                           "status": state, "revision": decision["revision"] if decision else 0,
                           "rationale": group_rationale,
                           "example": {key: first["fields"][key] for key in ("code", "object", "mode", "severity") if key in first["fields"]}})
@@ -230,8 +234,8 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
             "jsonb_array_length(payload->'groups') AS group_count FROM {oa} WHERE record_type='WS_CLUSTER_EVENT' "
             "AND workspace_pipeline_report_ref=%s ORDER BY created_at DESC,workspace_key LIMIT %s OFFSET %s",
             (record_id("WS_REPORT", report_id), limit, offset)).fetchall()
-        return {"items": [{**row["event"], "group_count": row["group_count"]} for row in rows],
-                "total": count, "offset": offset, "limit": limit}
+        return shared_case_views({"items": [{**row["event"], "group_count": row["group_count"]} for row in rows],
+                "total": count, "offset": offset, "limit": limit})
 
     def rationale_detail(self, user_id, block_id, version_id, report_id, group_id, *, expected_revision,
                          event_id=None, offset=0, limit=10):
@@ -258,15 +262,17 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
             packed = item.pop("packed_rationale")
             if isinstance(item["rationale"], str):
                 item["rationale"] = rationale.unpack_group(group_id, item["rationale"], packed)
-        return {"group_id": group_id, "cluster_revision": event["revision"], "event_id": event["id"],
+        return shared_case_views({"group_id": group_id, "cluster_revision": event["revision"], "event_id": event["id"],
                 "status": rationale.state(event, group, {case["id"] for case in cases}), "rationale": rationale.materialized(row),
                 "samples": samples, "history": {"items": history, "total": total, "offset": offset, "limit": limit},
                 "references": [{"id": case["id"], "report_id": case["report_id"], "revision": case["revision"],
+                    "scope": case.get("scope"), "source_version": case.get("source_version"),
+                    "source_record_count": case.get("source_record_count"),
                     "group": {"id": g["id"], "label": g["label"]},
                     "rationale": case.get("rationales", {}).get(g["id"])}
                     for case in cases for g in case["groups"]
                     if row and any(ref["case_id"] == case["id"] and ref["group_id"] == g["id"]
-                                   for ref in row["content"]["reference_groups"])]}
+                                   for ref in row["content"]["reference_groups"])]})
 
     def write_task(self, report_id, task, history=None):
         head = self.reviews.row("WS_CLUSTER", report_id)

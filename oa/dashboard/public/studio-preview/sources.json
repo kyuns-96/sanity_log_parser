@@ -21,10 +21,10 @@
     "input/input-14.tsx",
     "data-table/data-table-04.tsx"
   ],
-  "purpose": "Synthetic Sanity report-review preview; no company data, authentication, database or model API connection.",
+  "purpose": "Sanity dashboard presentation components and an independent synthetic design preview. The preview has no company data, authentication, database or model API connection.",
   "modifications": [
-    "Use the dashboard radix-ui package and cn utility; keep Studio components private to the studio.html entry.",
-    "Adapt the listed variants for synthetic log selection and human verdict review.",
+    "Use the dashboard radix-ui package and cn utility; share presentation components with actual login, access, administration, workspace and review screens.",
+    "Adapt the listed variants for log selection and human verdict review while retaining existing application API, authorization and revision checks.",
     "Use stable group ordinals instead of inferred category icons."
   ]
 }

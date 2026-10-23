@@ -168,6 +168,13 @@ class ClusteringCase(_CaseIdentity, total=False):
     rationales: dict[str, JsonObject]
 
 
+class ReviewException(TypedDict):
+    """Explicit human exception context, separate from automatic rule approval."""
+    rule: str
+    reason: str
+    conditions: str
+
+
 class ReviewCase(_CaseIdentity, total=False):
     report_id: str
     version_id: str
@@ -177,6 +184,8 @@ class ReviewCase(_CaseIdentity, total=False):
     conditions: dict[str, str]
     reusable: bool
     compatible_versions: bool
+    # Historical absence remains absence; a new normal decision stores None.
+    exception: ReviewException | None
     revision: int
     actor: JsonObject
     at: str

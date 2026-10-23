@@ -2,9 +2,11 @@
 import re
 
 from common.sanity_clustering import check
+from common.sanity_ai_knowledge import shared_case_views
 from common.sanity_common import ReviewError, digest
 from common.sanity_db import json_value, lock_key, uuid_value
-from common.sanity_review_advice import ApprovedCriteriaAdvisor, report_facts, validate_advice
+from common.sanity_review_advice import (ApprovedCriteriaAdvisor, normalize_review_exception,
+    report_facts, validate_advice, validate_stored_review_exception)
 from common.sanity_submission import source_digest
 from oa.sanity_workspace import WorkspaceStore, record_id, utcnow
 
@@ -50,6 +52,7 @@ class WorkspaceReviewStore:
         scope = {key: report.get(key) for key in ("project_id", "block_id", "item_id", "family", "parser", "rule_version", "eco")}
         scope["layout"] = version["layout"]
         return {"report": report, "version": version, "scope": scope, "facts": report_facts(report),
+                "_actor_user_id": user_id,
                 "source_sha256": source_digest(report), "can_review": self.ws.can_write(user_id, block),
                 "ready": bool(report.get("analysis_ready") and report.get("parse_status") == "COMPLETE"
                               and (report.get('source_complete') and report.get('delivery_ready')
@@ -83,6 +86,7 @@ class WorkspaceReviewStore:
                 or event["payload"]["report_id"] != report_id
                 or event["record_id"] != head[self.event_ref]):
             raise ReviewError("STATE_CORRUPT", "Review head and immutable event differ")
+        validate_stored_review_exception(event["payload"])
         return event["payload"], head["version"]
 
     def checked_current(self, context):
@@ -106,6 +110,7 @@ class WorkspaceReviewStore:
         result, sources = [], {}
         for row in rows:
             event = row["payload"]
+            validate_stored_review_exception(event)
             if (event["conclusion"] in ("PASS", "FAIL")
                     and (event["version_id"] == context["report"]["version_id"] or event["compatible_versions"])):
                 # References must still point to the immutable source that was reviewed.
@@ -145,29 +150,34 @@ class WorkspaceReviewStore:
         current, revision = self.checked_current(context)
         history = self.db.execute("SELECT payload FROM {oa} WHERE record_type=%s "
                                   "AND " + self.report_ref + "=%s AND COALESCE(payload->>'group_id','')=%s "
-                                  "ORDER BY created_at DESC,workspace_key LIMIT 50",
+                                  "ORDER BY (payload->>'revision')::int DESC,created_at DESC,workspace_key LIMIT 50",
                                   (self.event_kind, record_id("WS_REPORT", report_id), context.get("group_id", ""))).fetchall()
         proposal = self.db.execute("SELECT payload FROM {oa} WHERE record_type=%s "
                                    "AND " + self.report_ref + "=%s AND COALESCE(payload->>'group_id','')=%s "
                                    "ORDER BY created_at DESC,workspace_key LIMIT 1",
                                    (self.proposal_kind, record_id("WS_REPORT", report_id), context.get("group_id", ""))).fetchone()
         cases = self.cases(context)
+        for row in history:
+            validate_stored_review_exception(row["payload"])
         value = proposal["payload"] if proposal else None
-        return {"current": current, "revision": revision, "history": [row["payload"] for row in history],
+        return shared_case_views({"current": current, "revision": revision, "history": [row["payload"] for row in history],
                 "facts": context["facts"], "ready": context["ready"], "can_review": context["can_review"],
                 "cases": cases[:50], "case_count": len(cases), "reusable_count": sum(case["reusable"] for case in cases),
                 "cases_displayed": min(50, len(cases)), "proposal": {**value, "stale": self.stale(value, context, revision, cases)} if value else None,
                 "corporate_ai_connected": False, "current_stale": bool(current and self.decision_stale(current, context)),
-                "blocked_reason": context.get("blocked_reason")}
+                "blocked_reason": context.get("blocked_reason")})
 
     def save(self, user_id, block_id, version_id, report_id, *, conclusion, reason, criteria, conditions,
-             reusable, compatible_versions, expected_revision, request_id, proposal_id=None):
+             reusable, compatible_versions, expected_revision, request_id, proposal_id=None, exception=None):
         context = self.context(user_id, block_id, version_id, report_id, write=True)
         if (conclusion not in ("PASS", "FAIL", "DEFER") or type(expected_revision) is not int or expected_revision < 0
                 or not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 2000
                 or not isinstance(criteria, str) or len(criteria) > 2000 or type(reusable) is not bool
                 or type(compatible_versions) is not bool or not isinstance(conditions, dict)):
             raise ReviewError("INVALID_REQUEST", "Review fields are invalid")
+        exception = normalize_review_exception(exception)
+        if exception is not None and (conclusion == "DEFER" or reusable):
+            raise ReviewError("INVALID_EXCEPTION", "An exception is a final human case, not an automatic rule approval")
         if conclusion != "DEFER" and not context["ready"]:
             raise ReviewError("REVIEW_BLOCKED", "Resolve missing or incomplete evidence before a final decision")
         if reusable:
@@ -176,14 +186,14 @@ class WorkspaceReviewStore:
                     or not mandatory <= set(conditions) or not context["scope"]["item_id"] or not context["scope"]["rule_version"]
                     or any(key not in context["facts"] or value != context["facts"][key] for key, value in conditions.items())):
                 raise ReviewError("INVALID_CRITERIA", "Confirm explicit conditions from the source facts")
-        elif conditions or criteria.strip() or compatible_versions:
+        elif conditions or criteria.strip():
             raise ReviewError("INVALID_CRITERIA", "One-time decisions have no reusable conditions")
         request_id = str(uuid_value(request_id))
         proposal_id = str(uuid_value(proposal_id)) if proposal_id else None
         command = {"user_id": user_id, "block_id": block_id, "version_id": version_id, "report_id": report_id,
                    "conclusion": conclusion, "reason": reason.strip(), "criteria": criteria.strip(), "conditions": conditions,
                    "reusable": reusable, "compatible_versions": compatible_versions, "expected_revision": expected_revision,
-                   "proposal_id": proposal_id}
+                   "proposal_id": proposal_id, "exception": exception}
         if context.get("group_id"):
             command.update(group_id=context["group_id"], cluster_revision=context["cluster_revision"])
         # Ten-user workflow: serialize judgment/criteria changes so references cannot
@@ -195,8 +205,13 @@ class WorkspaceReviewStore:
         self.db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("workspace-review-request-" + request_id),))
         previous = self.row(self.event_kind, request_id)
         if previous:
-            if previous["payload"]["command"] != command:
+            # Receipts written before exception annotations had no such key.
+            # Treat only that historical absence as null for replay comparison;
+            # preserve the immutable payload exactly as it was stored.
+            previous_command = previous["payload"]["command"]
+            if {**previous_command, "exception": previous_command.get("exception")} != command:
                 raise ReviewError("REQUEST_CONFLICT", "Review UUID has different contents")
+            validate_stored_review_exception(previous["payload"])
             return {"status": "REVIEW_SAVED", "event": previous["payload"]}
         # Lock before the initial head is inserted too; two first decisions cannot race.
         self.db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("workspace-review-head-" + report_id),))
@@ -212,7 +227,7 @@ class WorkspaceReviewStore:
         event = {**self.metadata(context), "id": request_id, "command": command, "revision": revision + 1,
                  "previous_event_id": old["id"] if old else None, "actor": self.ws.user(user_id), "at": utcnow().isoformat(),
                  "conclusion": conclusion, "reason": reason.strip(), "criteria": criteria.strip(), "conditions": conditions,
-                 "reusable": reusable, "compatible_versions": compatible_versions, "proposal_id": proposal_id,
+                 "reusable": reusable, "compatible_versions": compatible_versions, "exception": exception, "proposal_id": proposal_id,
                  "proposal_conclusion": proposal["payload"]["conclusion"] if proposal else None,
                  "proposal_agreed": proposal["payload"]["conclusion"] == conclusion if proposal else None,
                  "source_version": context["version"]}
