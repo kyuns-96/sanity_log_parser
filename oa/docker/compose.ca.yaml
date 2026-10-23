@@ -1,4 +1,4 @@
-# Optional: append -f oa/docker/compose.ca.yaml when the DB needs a private CA.
+# Append this override after the base Compose file for a mounted CA bundle.
 x-ca: &ca
   volumes:
     - type: bind

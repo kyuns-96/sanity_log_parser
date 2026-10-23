@@ -1,38 +1,64 @@
-# Build from the repository root:
-# docker build -f oa/docker/Dockerfile-prod -t sanity-oa:local .
-# Override OA_BASE_IMAGE with the approved company node/Python image.
-# Both stages can use the same approved Node 20.18 / Python company image.
+# Build from the repository root. For a standalone root docker/ directory,
+# set OA_DOCKER_DIR=docker and select docker/Dockerfile-prod.
 ARG OA_BASE_IMAGE=python:3.10-slim-bookworm
 ARG OA_NODE_IMAGE=node:20.18.0-bookworm-slim
+ARG OA_DOCKER_DIR=oa/docker
+ARG OA_APT_MIRROR=
+ARG OA_NPM_REGISTRY=https://registry.npmjs.org
+ARG OA_PIP_INDEX=https://pypi.org/simple
 
 FROM ${OA_NODE_IMAGE} AS frontend
+ARG OA_NPM_REGISTRY
 USER 0
 WORKDIR /build/oa/dashboard
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 COPY oa/dashboard/package.json oa/dashboard/package-lock.json ./
-# Optional private registry settings are BuildKit secrets, never image layers.
-RUN --mount=type=secret,id=npm_config,target=/root/.npmrc \
-    npm ci --include=dev --engine-strict --no-audit --no-fund
+# Registry arguments contain public values only; private settings use secrets.
+RUN --mount=type=secret,id=npm_config,target=/run/secrets/npmrc \
+    unset NPM_CONFIG_REGISTRY npm_config_registry; \
+    if [ -f /run/secrets/npmrc ]; then \
+        NPM_CONFIG_USERCONFIG=/run/secrets/npmrc \
+            npm ci --include=dev --engine-strict --no-audit --no-fund; \
+    else \
+        npm ci --include=dev --engine-strict --no-audit --no-fund \
+            --registry="${OA_NPM_REGISTRY}"; \
+    fi
 COPY oa/dashboard/ ./
 RUN npm run build
 
 FROM ${OA_BASE_IMAGE} AS python-dependencies
+ARG OA_PIP_INDEX
 USER 0
 WORKDIR /build
 COPY oa/requirements.txt ./requirements.txt
 RUN python3 -m venv /opt/venv
-RUN --mount=type=secret,id=pip_config,target=/etc/pip.conf \
-    /opt/venv/bin/python -m pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=secret,id=pip_config,target=/run/secrets/pip.conf \
+    unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL PIP_TRUSTED_HOST; \
+    if [ -f /run/secrets/pip.conf ]; then \
+        PIP_CONFIG_FILE=/run/secrets/pip.conf \
+            /opt/venv/bin/python -m pip install --no-cache-dir -r requirements.txt; \
+    else \
+        /opt/venv/bin/python -m pip install --no-cache-dir \
+            --index-url "${OA_PIP_INDEX}" -r requirements.txt; \
+    fi
 
 FROM ${OA_BASE_IMAGE} AS runtime
+ARG OA_APT_MIRROR
+ARG OA_DOCKER_DIR
 USER 0
-# Use the company's nginx if present. Otherwise this requires a Debian/Ubuntu
-# base with an approved apt mirror; do not disable TLS or replace its sources.
+# Preserve a base image's package sources unless a Debian mirror is explicit.
 RUN if ! command -v nginx >/dev/null 2>&1; then \
+        if [ -n "${OA_APT_MIRROR}" ]; then \
+            . /etc/os-release; \
+            [ "${ID}" = debian ] && [ -n "${VERSION_CODENAME}" ] || exit 1; \
+            rm -f /etc/apt/sources.list.d/debian.sources; \
+            printf 'deb %s %s main\n' "${OA_APT_MIRROR}" "${VERSION_CODENAME}" > /etc/apt/sources.list; \
+        fi; \
         apt-get update \
         && apt-get install -y --no-install-recommends nginx \
         && rm -rf /var/lib/apt/lists/*; \
     fi
+
 WORKDIR /opt/work
 ENV PATH="/opt/venv/bin:/usr/sbin:${PATH}" \
     PYTHONUNBUFFERED=1 \
@@ -42,7 +68,8 @@ COPY --from=python-dependencies /opt/venv/ /opt/venv/
 COPY common/ ./common/
 COPY oa/*.py ./oa/
 COPY oa/integration/ ./oa/integration/
-COPY oa/docker/start.py oa/docker/nginx-main.conf oa/docker/nginx.conf ./oa/docker/
+# Only the build-side directory moves. Keep the Python runtime package path.
+COPY ${OA_DOCKER_DIR}/start.py ${OA_DOCKER_DIR}/nginx-main.conf ${OA_DOCKER_DIR}/nginx.conf ./oa/docker/
 COPY --from=frontend /build/oa/dashboard/dist/ ./oa/dashboard/dist/
 # No privileged port, writable source tree, or root account is needed.
 USER 10001:10001
