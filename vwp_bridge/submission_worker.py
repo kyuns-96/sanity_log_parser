@@ -173,7 +173,7 @@ class SubmissionWorker:
             if exc.code in permanent or exc.code.startswith('PARSER_'):
                 with self.db.transaction():
                     row = self.store.get('SUBMISSION',sid,lock=True)
-                    if row and row['status'] in ('VWP_ACCEPTED','PARSING'):
+                    if row and row['status'] in ('VWP_ACCEPTED','PARSING','DB_QUEUED'):
                         row = self.store.state(sid,'REJECTED',{**row['state'],'blockers':[exc.code]})
                 if row:
                     self.write_receipt(row)

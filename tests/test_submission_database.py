@@ -102,6 +102,29 @@ class SubmissionDatabaseTests(PgTestCase):
             with self.assertRaises(RuntimeError):self.bridge()
         self.assertEqual(1,len(calls))
 
+    def assert_queued_rejection_does_not_block_next_submission(self, rejected, healthy, code):
+        sid = rejected['submission_id']
+        query = ("SELECT * FROM {vwp} WHERE record_type='SOURCE_OUTBOX' "
+                 "AND payload->>'submission_id'=%s ORDER BY record_id")
+        before = self.admin_query(query,(sid,)).fetchall()
+        self.assertTrue(before)
+        self.assertEqual('DB_QUEUED',self.admin_query(
+            "SELECT status FROM {vwp} WHERE record_type='SUBMISSION' AND entity_key=%s",(sid,)).fetchone()[0])
+        with self.assertRaises(ReviewError) as error:self.bridge()
+        self.assertEqual(code,error.exception.code)
+        receipt = self.client.status(sid)
+        self.assertEqual(('REJECTED','BLOCKED',[code]),
+            (receipt['delivery_state'],receipt['review_readiness'],receipt['blockers']))
+        self.assertEqual(before,self.admin_query(query,(sid,)).fetchall())
+        self.assertEqual(0,self.admin_query('SELECT count(*) FROM {vwp_to_oa}').fetchone()[0])
+        self.assertEqual('LOCAL_QUEUED',self.client.status(healthy['submission_id'])['delivery_state'])
+        self.assertEqual(1,self.bridge()['processed'])
+        self.receive(); self.bridge()
+        next_receipt = self.client.status(healthy['submission_id'])
+        self.assertEqual(('OA_STORED','READY'),(next_receipt['delivery_state'],next_receipt['review_readiness']))
+        self.assertEqual('REJECTED',self.client.status(sid)['delivery_state'])
+        self.assertEqual(before,self.admin_query(query,(sid,)).fetchall())
+
     def test_summary_numeric_plan_is_rejected_without_publication(self):
         self.summary_report(evaluation={'operator':'le','limit':10,'unit':'ns'})
         sent = self.submit()
@@ -166,16 +189,32 @@ class SubmissionDatabaseTests(PgTestCase):
         self.assertTrue(all('json_pointer' not in r for r in self.source_records(pre)))
 
     def test_old_sensitive_outbox_is_blocked_without_rewriting_or_publication(self):
-        self.invalid_utf8_report(); self.submit()
+        path = self.f['prepared'].reports[self.post_unit()['report']]
+        original = path.read_bytes()
+        self.invalid_utf8_report(); sent = self.submit()
         # Simulate an immutable packet created by the previous plaintext-only guard.
         with patch.object(SecretGuard,'text',new=lambda guard,value:value), \
                 patch.object(SubmissionWorker,'publish',side_effect=RuntimeError('synthetic pause before publication')):
             with self.assertRaises(RuntimeError):self.bridge()
-        before = self.admin_query("SELECT * FROM {vwp} WHERE record_type='SOURCE_OUTBOX' ORDER BY record_id").fetchall()
-        with self.assertRaises(ReviewError) as error:self.bridge()
-        self.assertEqual('SENSITIVE_CONTENT',error.exception.code)
-        self.assertEqual(before,self.admin_query("SELECT * FROM {vwp} WHERE record_type='SOURCE_OUTBOX' ORDER BY record_id").fetchall())
-        self.assertEqual(0,self.admin_query('SELECT count(*) FROM {vwp_to_oa}').fetchone()[0])
+        path.write_bytes(original)
+        self.post_unit()['source'].update(execution_ref='synthetic-after-sensitive-rejection',execution_order=2)
+        plan = self.f['prepared'].plan
+        plan['approval']['scope_sha256'] = scope_digest(plan)
+        healthy = self.submit()
+        self.assert_queued_rejection_does_not_block_next_submission(sent,healthy,'SENSITIVE_CONTENT')
+
+    def test_old_numeric_summary_outbox_is_rejected_without_blocking_later_submissions(self):
+        self.summary_report(evaluation={'operator':'le','limit':10,'unit':'ns'})
+        sent = self.submit()
+        with patch('common.sanity_parsers.validate_builtin_evaluation'), \
+                patch.object(SubmissionWorker,'publish',side_effect=RuntimeError('synthetic pause before publication')):
+            with self.assertRaises(RuntimeError):self.bridge()
+        self.summary_report()
+        self.post_unit()['source'].update(execution_ref='synthetic-after-numeric-rejection',execution_order=2)
+        plan = self.f['prepared'].plan
+        plan['approval']['scope_sha256'] = scope_digest(plan)
+        healthy = self.submit()
+        self.assert_queued_rejection_does_not_block_next_submission(sent,healthy,'PARSER_SCOPE_MISMATCH')
 
     def test_receiver_rejects_an_already_queued_sensitive_old_packet(self):
         self.invalid_utf8_report(); self.submit()

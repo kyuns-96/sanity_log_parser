@@ -11,25 +11,30 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test:e2e": "playwright test",
-    "test:workspace": "playwright test --config playwright.workspace.config.ts"
+    "test:workspace": "playwright test --config playwright.workspace.config.ts",
+    "test:studio": "npm run build && playwright test --config playwright.studio.config.ts"
   },
   "dependencies": {
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
-    "radix-ui": "1.8.0",
-    "lucide-react": "1.55.0",
+    "@phosphor-icons/react": "2.1.10",
+    "@tanstack/react-table": "8.21.3",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
-    "tailwind-merge": "3.7.0"
+    "lucide-react": "1.55.0",
+    "pretendard": "1.3.9",
+    "radix-ui": "1.8.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "tailwind-merge": "3.7.0",
+    "tw-animate-css": "1.3.4"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.0",
     "@tailwindcss/vite": "4.3.3",
-    "tailwindcss": "4.3.3",
-    "@vitejs/plugin-react": "4.7.0",
+    "@types/node": "20.19.43",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
-    "@types/node": "20.19.43",
-    "@playwright/test": "1.64.0",
+    "@vitejs/plugin-react": "4.7.0",
+    "tailwindcss": "4.3.3",
     "typescript": "~6.0.2",
     "vite": "6.4.4"
   }

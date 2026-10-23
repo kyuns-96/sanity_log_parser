@@ -23,6 +23,7 @@ QUICK_TESTS = (
     "tests.test_submission_database.SubmissionDatabaseTests.test_invalid_utf8_is_private_and_public_unknown_evidence_is_masked",
     "tests.test_submission_database.SubmissionDatabaseTests.test_json_pointers_survive_the_full_roundtrip_and_records_api",
     "tests.test_submission_database.SubmissionDatabaseTests.test_old_sensitive_outbox_is_blocked_without_rewriting_or_publication",
+    "tests.test_submission_database.SubmissionDatabaseTests.test_old_numeric_summary_outbox_is_rejected_without_blocking_later_submissions",
     "tests.test_submission_database.SubmissionDatabaseTests.test_partial_outbox_from_another_revision_is_rejected_and_preserved",
     "tests.test_submission_database.SubmissionDatabaseTests.test_normalization_revision_preserves_previous_sources_and_human_decisions",
     "tests.test_submission_database.SubmissionDatabaseTests.test_receiver_rechecks_staged_numeric_manifest_before_commit",

@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { ArrowRight, ClipboardCheck, FileSearch, Inbox, LoaderCircle, LockKeyhole, LogOut, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react'
-import { Button } from './components/ui/button'
-import { Input } from './components/ui/input'
+import { ArrowRight, ClipboardCheck, Layers3, LoaderCircle, LockKeyhole, LogOut, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react'
+import { Button } from './studio/components/ui/button'
+import { Badge } from './studio/components/ui/badge'
+import { Input } from './studio/components/ui/input'
 import { WorkspaceBrand } from './components/WorkspaceBrand'
 import type { AuthConfig, Session } from './types'
 
@@ -12,26 +13,25 @@ type Props = {
 
 export function DashboardLogin({ config, session, checking, signingOut, error, accountProblem, onToken, onRetry, onLogout }: Props) {
   const [tokenInput, setTokenInput] = useState('')
-  return <div className="login-page">
+  return <div className="login-page studio-system studio-auth">
     <a className="skip-link" href="#workspace-main">본문으로 건너뛰기</a>
     <div className="login-decoration">
       <WorkspaceBrand />
       <div>
-        <div className="eyebrow">FROM SIGNAL TO DECISION</div>
-        <h1>모든 검토에,<br />분명한 근거를.</h1>
-        <p>실행 결과부터 최종 판단까지.<br />Sanity 검토의 전체 흐름을 한곳에서 확인하세요.</p>
+        <Badge variant="outline" className="login-platform-badge"><Layers3 size={13} />Sanity review platform</Badge>
+        <h1>판단을 쌓고,<br />다음 검토를 가깝게.</h1>
+        <p>AI의 분류와 판정, 사람의 확정 근거를<br />하나의 검토 흐름으로 연결합니다.</p>
         <ol className="login-process" aria-label="검토 흐름">
-          <li><span>01</span><div><strong>실행 결과</strong><small>전체 점검 항목과 수신 상태 확인</small></div><Inbox /></li>
-          <li><span>02</span><div><strong>원본 근거</strong><small>판정 기준과 검사 기록 대조</small></div><FileSearch /></li>
-          <li><span>03</span><div><strong>사람의 검토</strong><small>판단 사유와 변경 이력 보존</small></div><ClipboardCheck /></li>
+          <li><span>01</span><div><strong>AI 로그 분류</strong><small>로그를 그룹으로 정리하고 분류 근거 확인</small></div><Layers3 /></li>
+          <li><span>02</span><div><strong>그룹별 판정</strong><small>원본 근거와 기준을 비교해 판단</small></div><Sparkles /></li>
+          <li><span>03</span><div><strong>사람의 확정</strong><small>검토 결과를 다음 AI의 참고 사례로 축적</small></div><ClipboardCheck /></li>
         </ol>
       </div>
-      <span>INTERNAL REVIEW WORKSPACE</span>
+      <span>Sanity Console · AI review workspace</span>
     </div>
     <main className="login-main" id="workspace-main" tabIndex={-1}>
       <div className="login-box">
         <div className="login-mark"><LockKeyhole size={24} /></div>
-        <div className="eyebrow">OA WORKSPACE</div>
         <h2>{session ? 'SSO 연결 확인' : '검토 공간에 연결'}</h2>
         <p>{session ? `${session.reviewer} 님의 인증이 확인되었습니다.` : config?.mode === 'sso' ? '회사 계정으로 로그인하세요.' : config?.mode === 'local_token' ? '발급받은 접근 토큰으로 로그인하세요.' : '서버의 인증 설정을 확인합니다.'}</p>
         {error && <div role="alert" className="error-banner">{error}</div>}

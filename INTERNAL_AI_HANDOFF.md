@@ -24,14 +24,14 @@ Q1 이후의 수집·버전 연결은 [분산 수집·PRE/POST 설계](vwp/SOURC
 |---|---|---|---|
 | 1단계 AI 분류 | `ClusteringAdvisor.propose`, V2 출력/전체 배정·그룹별 근거 검증 | OA API·입출력/한도 확인, 실제 점검 기준·정답/반례 | OA 공통 호출·검색·작업/운영 결과 연결 제공. 실제 사내 API/품질 검증과 대량 분할은 별도 |
 | 2단계 AI 판정 | OA schema 2 직접 원본+기준/사례 참조 검증, legacy `ReviewAdvisor`와 분리 | OA 모델의 근거 형식·한도와 사내 판정 정답/반례 | OA 최초 판정 제공. 현재 근거와 확인된 기준 또는 유효 사례 필요; 자료 부족은 DEFER |
-| 사례 검색·피드백 | 확정·개정·근거 저장, 현재 유효 사례 조회·단어/한글 n-gram 선정 | 관련/무관 사례·조건 차이·사람 정정의 비공개 검증 | 재사용 미승인 사례도 기본 후보·ECO 차이 제공·명시적 버전 호환. 실제 검색/판단 품질은 미검증 |
+| 사례 검색·피드백 | 확정·개정·근거 저장, 전역 공유 지식 조회·단어/한글 n-gram 선정 | 관련/무관 사례·블록/버전/조건 차이·사람 정정의 비공개 검증 | 모든 블록·revision·ECO의 확정 지식을 opt-in 없이 참고. 과거 원문 DTO와 분리하며 원문 RBAC 유지. 실제 검색/판단 품질은 미검증 |
 | SSO 검증·계정 연결 | `SSOIdentityProvider`, `UserDirectory`, 고정 모델/검증 | 승인 SDK·영속 `(issuer, subject) → user_id` 조회 | 운영 `/api/session` 주입 지점 제공. 회사 구현/현장 검증은 사내에서 관리 |
 | 예상 sanity 목록·제출 | schema 1 provider와 별도 V2 `SubmissionInputProvider`·`SubmissionAuthority`, CLI/분할 수신 | 승인된 원천/선언 입력, 신원·최신 담당·승인 SDK와 실행 ID/순서 대응 | 공통 구현 제공. 회사 `corporate_submission.py`는 기본 차단 |
 | item별 report parser | `ReportParser.parse`, 이벤트/원문 span/registry/공통 검증 | 실제 도구·형식 버전별 추출과 명시적 등록 | 회사 registry는 기본 비어 있음 |
 | 실제 프로젝트·블록·버전/담당 | 운영 레지스트리·Welcome 신청/승인·legacy scope 권한, 별도 source import/workspace PoR | 실제 원천의 고정 ID·소속·동일 계정 대응, 사내 검증 | 운영 관리 계약은 [ACCESS_MANAGEMENT](oa/ACCESS_MANAGEMENT.md). 운영 `/api/workbench/*`와 source receiver의 권한 연결 제공. 현장 어댑터/배포 검증 필요 |
 | DB·TLS·운영 실행 | 직접 PostgreSQL·네 테이블·기존 전송/작업자 | 회사 환경의 확인된 접속/SDK 제약 자료 | 실제 DB 확인·DDL/배포는 사용자/DBA 관리 |
 
-타입 선언은 [sanity_integration_contracts.py](common/sanity_integration_contracts.py)에 있다. 기존 dict/JSON 키, 메서드 인자 순서와 저장 계약은 유지했다. 타입 힌트는 런타임 검증·권한 검사·회사 연결을 대신하지 않는다. 작은 합성 입력/출력은 [sanity_integration_examples.py](common/sanity_integration_examples.py), 실행 가능한 계약 검증은 [test_integration_contracts.py](tests/test_integration_contracts.py)에 있다.
+타입 선언은 [sanity_integration_contracts.py](common/sanity_integration_contracts.py)에 있다. 기존 필드와 호출의 호환성을 유지하며 추가 계약은 해당 명세에서 구분한다. 2026-10-23 판정의 구조화된 `exception` 및 모든 블록·revision·ECO의 공유 확정 지식은 [규칙 예외와 AI 참고 범위](oa/WORKSPACE.md#규칙-예외와-ai-참고-범위)를 따른다. 예외도 다음 AI의 참고 지식이며 별도 버전 참고 허용은 필요 없다. 원문·파싱 로그는 공유 DTO와 분리하고 기존 열람 권한을 유지한다. 기존 `reusable` 승인 기록을 예외/전역 규칙 실행 승인으로 재해석하거나 내부 AI의 수정 권한을 넓히지 않는다. 타입 힌트는 런타임 검증·권한 검사·회사 연결을 대신하지 않는다. 작은 합성 입력/출력은 [sanity_integration_examples.py](common/sanity_integration_examples.py), 실행 가능한 계약 검증은 [test_integration_contracts.py](tests/test_integration_contracts.py)에 있다.
 
 ## 2. 책임과 시스템 경계
 

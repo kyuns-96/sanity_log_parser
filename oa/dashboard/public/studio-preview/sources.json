@@ -1,0 +1,30 @@
+{
+  "repository": "https://github.com/shadcnstudio/shadcn-studio",
+  "commit": "72a20331970218848103184b61e1efa9d0e08dea",
+  "license": "SHADCN-STUDIO-LICENSE.txt",
+  "ui_components": [
+    "button",
+    "badge",
+    "tabs",
+    "radio-group",
+    "checkbox",
+    "input",
+    "textarea",
+    "select",
+    "table",
+    "sheet",
+    "tooltip"
+  ],
+  "adapted_variants": [
+    "tabs/tabs-11.tsx",
+    "radio-group/radio-group-08.tsx",
+    "input/input-14.tsx",
+    "data-table/data-table-04.tsx"
+  ],
+  "purpose": "Sanity dashboard presentation components and an independent synthetic design preview. The preview has no company data, authentication, database or model API connection.",
+  "modifications": [
+    "Use the dashboard radix-ui package and cn utility; share presentation components with actual login, access, administration, workspace and review screens.",
+    "Adapt the listed variants for log selection and human verdict review while retaining existing application API, authorization and revision checks.",
+    "Use stable group ordinals instead of inferred category icons."
+  ]
+}

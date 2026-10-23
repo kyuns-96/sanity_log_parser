@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from pydantic import Field, StrictInt
 
 from common.sanity_clustering import check
+from common.sanity_ai_knowledge import shared_case_views
 from oa.sanity_production_workspace import ProductionWorkspaceStore
 from oa.sanity_workspace_clustering import WorkspaceClusteringStore
 from oa.sanity_workspace_group_review import WorkspaceGroupReviewStore
@@ -120,7 +121,7 @@ def create_workbench_router(authorized_actor):
                           compact: bool = False, scope=Depends(workspace)):
         value = WorkspaceClusteringStore(scope.db, ws=scope.ws).change(
             scope.user_id, block_id, version_id, report_id, **body.model_dump())
-        return event_brief(value) if compact else value
+        return event_brief(value) if compact else shared_case_views(value)
 
     @router.get(report_path + "/workbench")
     def workbench(block_id: ID, version_id: ID, report_id: ID, scope=Depends(workspace)):
@@ -206,7 +207,7 @@ def create_workbench_router(authorized_actor):
                           compact: bool = False, scope=Depends(workspace)):
         value = WorkspaceGroupReviewStore(scope.db, group_id, body.expected_cluster_revision, ws=scope.ws).save(
             scope.user_id, block_id, version_id, report_id, **body.model_dump(exclude={"expected_cluster_revision"}))
-        return compact_review(value) if compact else value
+        return shared_case_views(compact_review(value) if compact else value)
 
     @router.get(report_path + "/groups/{group_id}/review/ai")
     def group_ai_status(block_id: ID, version_id: ID, report_id: ID, group_id: ID,

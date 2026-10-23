@@ -11,6 +11,36 @@ from common.sanity_integration_contracts import AdvisorContext, ReviewCase, Revi
 FACT_FIELDS = ("mode", "object", "check_point", "severity", "code", "design")
 
 
+def normalize_review_exception(value, *, code="INVALID_EXCEPTION", canonical=False):
+    """Validate human context without interpreting rule names or conditions.
+
+    New writes trim text. Stored events must already be canonical, and are
+    never modified or retrospectively annotated by the reader.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {"rule", "reason", "conditions"}:
+        raise ReviewError(code, "Exception requires rule, reason and conditions")
+    normalized = {}
+    for key, maximum in (("rule", 500), ("reason", 2000), ("conditions", 2000)):
+        text = value[key]
+        if not isinstance(text, str) or not 1 <= len(text.strip()) <= maximum:
+            raise ReviewError(code, "Exception fields must contain bounded text")
+        normalized[key] = text.strip()
+    if canonical and value != normalized:
+        raise ReviewError(code, "Stored exception is not canonical")
+    return normalized
+
+
+def validate_stored_review_exception(event):
+    if "exception" not in event:
+        return
+    value = normalize_review_exception(event["exception"], code="STATE_CORRUPT", canonical=True)
+    if value is not None and (event.get("conclusion") not in ("PASS", "FAIL")
+                              or event.get("reusable") is not False):
+        raise ReviewError("STATE_CORRUPT", "Stored exception conflicts with decision semantics")
+
+
 def report_facts(report):
     facts = {"rule": str(report["rule"])} if report.get("rule") else {}
     records = report.get("records", [])
@@ -41,7 +71,8 @@ class ReviewAdvisor(ABC):
 
 class ApprovedCriteriaAdvisor(ReviewAdvisor):
     def propose(self, context, cases):
-        matching = [case for case in cases if case["reusable"] and case["conditions"]
+        matching = [case for case in cases if case.get("exception") is None
+                    and case["reusable"] and case["conditions"]
                     and all(context["facts"].get(key) == value for key, value in case["conditions"].items())]
         conclusions = {case["conclusion"] for case in matching}
         if len(matching) > 100:

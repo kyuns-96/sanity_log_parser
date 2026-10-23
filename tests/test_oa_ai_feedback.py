@@ -16,10 +16,12 @@ from uuid import uuid4
 
 import httpx
 
-from common.sanity_common import canonical_json, digest
+from common.sanity_common import ReviewError, canonical_json, digest
+from common.sanity_ai_knowledge import shared_case
 from common.sanity_db import Database, json_value, stable_uuid
 from oa.sanity_access import AccessStore, access_lock
 from oa.sanity_ai_criteria import load_criteria
+from oa.sanity_ai_cases import CaseRetriever
 from oa.sanity_ai_jobs import AIJobService, run_once
 from oa.sanity_ai_model import OAAdvisor
 from oa.sanity_auth import Actor
@@ -41,6 +43,23 @@ HUMAN_FAIL_REASON = "이 경로는 파생 클록 예외가 없고 실제 클록 
 
 
 class OAFeedbackCycleTests(PgTestCase):
+    def assert_shared_knowledge(self, case, *, source_count):
+        self.assertEqual("SHARED_CONFIRMED_KNOWLEDGE", case["evidence_mode"])
+        self.assertFalse(case["example_complete"])
+        self.assertEqual(source_count, case["source_record_count"])
+        forbidden = {"records", "raw", "fields", "raw_report", "record_ids", "evidence_ids", "command", "group_evidence"}
+
+        def verify(value):
+            if isinstance(value, dict):
+                self.assertFalse(forbidden.intersection(value))
+                for child in value.values():
+                    verify(child)
+            elif isinstance(value, list):
+                for child in value:
+                    verify(child)
+
+        verify(case)
+
     def setUp(self):
         super().setUp()
         for name in ("008_submissions.sql", "009_sso_identity.sql"):
@@ -224,6 +243,70 @@ class OAFeedbackCycleTests(PgTestCase):
             self.assertEqual(403, client.get(base + "/workbench").status_code)
         self.assertEqual(2, len(self.packets))
 
+    def test_revoked_source_grant_keeps_global_knowledge_but_not_original_report_access(self):
+        project, block, version = "feedback.shared.project", "feedback.shared.block", "feedback.shared.version"
+        report_id, sentinel = "shared-source-report", "PRIVATE-SOURCE-RAW-SENTINEL-47c8"
+        request_id = uuid4()
+        with self.store(management=True) as ws:
+            access = ws.authorization
+            access.create_project(ADMIN, uuid4(), project, "Synthetic shared knowledge project")
+            access.create_block(ADMIN, uuid4(), project, block, "Synthetic source block")
+            requested = access.request(OWNER, request_id, "OWNER", project, block, "Synthetic source review assignment")
+            access.decide(ADMIN, request_id, uuid4(), "APPROVE", "Synthetic source approval", requested["revision"])
+            source_version = {"id": version, "project_id": project, "block_id": block,
+                              "net_ver": "N9", "revision": "R9", "layout": "POST",
+                              "source_pre_id": None, "ecos": ["eco09"]}
+            ws.put("WS_VERSION", version, source_version, project=project, block=block)
+            source = copy.deepcopy(self.originals["report-A"])
+            source.update(id=report_id, project_id=project, block_id=block, version_id=version,
+                          version_record_id=str(record_id("WS_VERSION", version)), eco="eco09",
+                          record_count=1, raw_report=sentinel)
+            source["records"] = [{**source["records"][0], "id": "C1", "raw": sentinel,
+                                  "fields": {"object": "PRIVATE-SOURCE-FIELD-47c8", "mode": "FUNCTIONAL",
+                                             "check_point": "clock_definition"}}]
+            ws.put("WS_REPORT", report_id, source, project=project, block=block)
+        with self.store() as ws:
+            clusters = WorkspaceClusteringStore(ws.db, ws=ws)
+            reason = "클록 정의와 파생 경로를 사람이 확인한 확정 분류 사례입니다."
+            draft = clusters.apply_ai(OWNER.user_id, block, version, report_id,
+                expected_revision=0, request_id=str(uuid4()), cases=[], retrieval={"selected": []},
+                metadata={"provider": "OA_OPENAI_COMPATIBLE", "model_called": True,
+                          "model": "synthetic-only", "prompt_version": "synthetic-receipt-v1", "input_sha256": "a" * 64},
+                advice={"groups": [{"id": "shared-clock", "label": "사람이 확인한 클록 분류", "record_ids": ["C1"]}],
+                        "reason": reason, "reference_ids": [], "group_rationales": [{
+                            "group_id": "shared-clock", "reason": reason,
+                            "evidence_ids": ["C1"], "reference_groups": []}]})
+            confirmed = clusters.change(OWNER.user_id, block, version, report_id, action="CONFIRM",
+                expected_revision=draft["revision"], request_id=str(uuid4()), reason=reason)
+            self.assertEqual(report_id, ws.report(OWNER.user_id, block, version, report_id)["id"])
+        with self.store(management=True) as ws:
+            access = ws.authorization
+            snapshot = access.admin_snapshot(ADMIN)
+            grant = next(grant for grant in snapshot["grants"] if grant["block_id"] == block)
+            access.revoke(ADMIN, grant["grant_id"], uuid4(), "Synthetic source grant revocation", snapshot["revision"])
+        with self.store() as ws:
+            with self.assertRaises(ReviewError) as error:
+                ws.report(OWNER.user_id, block, version, report_id)
+            self.assertEqual("RESOURCE_NOT_FOUND", error.exception.code)
+            # The original target grant is still active. Only its complete logs
+            # are evidence; the other block contributes confirmed knowledge.
+            context = WorkspaceClusteringStore(ws.db, ws=ws).context(OWNER.user_id, BLOCK, VERSION, "report-A")
+            self.assertTrue(context["can_review"])
+            self.assertEqual(self.originals["report-A"]["records"], context["report"]["records"])
+            retriever = CaseRetriever(ws.db, ws)
+            cases = retriever.select(context, stage="CLUSTER")["cases"]
+            self.assertEqual([confirmed["id"]], [case["id"] for case in cases])
+            self.assert_shared_knowledge(cases[0], source_count=1)
+            self.assertEqual((project, block, version), (cases[0]["scope"]["project_id"],
+                             cases[0]["scope"]["block_id"], cases[0]["version_id"]))
+            self.assertTrue(retriever.revalidate(context, cases, stage="CLUSTER"))
+            self.advisor.cluster(context, cases, ["object", "check_point", "mode"])
+        self.assertEqual(1, len(self.packets))
+        self.assertEqual(cases, self.packets[0]["cases"])
+        self.assert_shared_knowledge(self.packets[0]["cases"][0], source_count=1)
+        self.assertNotIn(sentinel, canonical_json(self.packets[0]).decode())
+        self.assertNotIn("PRIVATE-SOURCE-FIELD-47c8", canonical_json(self.packets[0]).decode())
+
     def test_human_corrections_and_counterexamples_reach_the_next_eco_model_calls(self):
         # First report: the actual adapter proposes a single group with no cases.
         initial_id = self.run_job("report-A")
@@ -236,7 +319,7 @@ class OAFeedbackCycleTests(PgTestCase):
             self.assertFalse(first["confirmed"])
             self.assertEqual("OA_OPENAI_COMPATIBLE", first["advisor"])
             self.assertEqual(digest(self.bodies[0]), first["model_metadata"]["input_sha256"])
-            self.assertEqual("oa-semantic-clustering-v1", first["model_metadata"]["prompt_version"])
+            self.assertEqual("oa-semantic-clustering-v2", first["model_metadata"]["prompt_version"])
             groups = [{"id": "human-derived", "label": "파생 클록 예외", "record_ids": ["A1", "A2"]},
                       {"id": "human-missing", "label": "실제 클록 누락", "record_ids": ["A3"]}]
             edited = clusters.change(OWNER.user_id, BLOCK, VERSION, "report-A", action="EDIT",
@@ -274,6 +357,8 @@ class OAFeedbackCycleTests(PgTestCase):
                 reason=HUMAN_PASS_REASON, criteria="", conditions={}, reusable=False, compatible_versions=False,
                 expected_revision=0, request_id=str(uuid4()), proposal_id=review_id)["event"]
             self.assertFalse(corrected["proposal_agreed"])
+            self.assertEqual("FAIL", corrected["proposal_conclusion"])
+            self.assertEqual("PASS", corrected["conclusion"])
             self.assertEqual("FAIL", corrected["ai_proposal"]["conclusion"])
             self.assertEqual(proposal["reason"], corrected["ai_proposal"]["reason"])
             self.assertFalse(corrected["reusable"])
@@ -282,14 +367,19 @@ class OAFeedbackCycleTests(PgTestCase):
                 criteria="", conditions={}, reusable=False, compatible_versions=False,
                 expected_revision=0, request_id=str(uuid4()))["event"]
 
-        # Next ECO: all corrected grouping evidence reaches the actual HTTP body.
+        # Next ECO: confirmed human knowledge is shared; the current target's
+        # complete records remain evidence, while prior raw sources stay private.
         self.run_job("report-B")
         b_cluster_packet = self.packets[2]
         self.assertEqual([confirmed["id"]], [case["id"] for case in b_cluster_packet["cases"]])
         case = b_cluster_packet["cases"][0]
-        self.assertEqual(confirmed["groups"], case["groups"])
-        self.assertEqual(confirmed["rationales"], case["rationales"])
-        self.assertEqual(self.originals["report-A"]["records"], case["records"])
+        expected_knowledge = shared_case(confirmed)
+        self.assertEqual(expected_knowledge["groups"], case["groups"])
+        self.assertEqual(expected_knowledge["rationales"], case["rationales"])
+        self.assertEqual(confirmed["scope"], case["scope"])
+        self.assertEqual([2, 1], [group["record_count"] for group in case["groups"]])
+        self.assert_shared_knowledge(case, source_count=3)
+        self.assertEqual(self.originals["report-B"]["records"], b_cluster_packet["context"]["report"]["records"])
         self.assertEqual({"current": "eco02", "case": "eco01"}, case["retrieval_comparison"]["eco"])
         self.assertIn(HUMAN_GROUP_REASON, canonical_json(case).decode("utf-8"))
         self.assertFalse(case["reusable"])
@@ -307,11 +397,21 @@ class OAFeedbackCycleTests(PgTestCase):
         cases = {case["id"]: case for case in b_review_packet["cases"]}
         self.assertEqual({corrected["id"], negative["id"]}, set(cases))
         self.assertEqual(HUMAN_PASS_REASON, cases[corrected["id"]]["reason"])
-        self.assertEqual("FAIL", cases[corrected["id"]]["ai_proposal"]["conclusion"])
+        # The superseded AI verdict remains in the source's audit event above;
+        # shared examples carry the final human outcome and confirmed reason.
+        self.assertEqual("PASS", cases[corrected["id"]]["conclusion"])
+        self.assertEqual("FAIL", cases[corrected["id"]]["proposal_conclusion"])
+        self.assertFalse(cases[corrected["id"]]["proposal_agreed"])
+        self.assertEqual({key: corrected["ai_proposal"][key] for key in ("id", "conclusion")},
+                         cases[corrected["id"]]["ai_proposal"])
         self.assertEqual(HUMAN_FAIL_REASON, cases[negative["id"]]["reason"])
         self.assertEqual({"PASS", "FAIL"}, {case["conclusion"] for case in cases.values()})
-        self.assertEqual(["A1", "A2"], [row["id"] for row in cases[corrected["id"]]["records"]])
-        self.assertEqual(["A3"], [row["id"] for row in cases[negative["id"]]["records"]])
+        self.assert_shared_knowledge(cases[corrected["id"]], source_count=3)
+        self.assert_shared_knowledge(cases[negative["id"]], source_count=3)
+        self.assertEqual(2, cases[corrected["id"]]["group_snapshot"]["record_count"])
+        self.assertEqual(1, cases[negative["id"]]["group_snapshot"]["record_count"])
+        self.assertEqual(shared_case(corrected)["group_snapshot"], cases[corrected["id"]]["group_snapshot"])
+        self.assertEqual(shared_case(negative)["group_snapshot"], cases[negative["id"]]["group_snapshot"])
         self.assertEqual(["B1", "B2"], [row["id"] for row in b_review_packet["context"]["group_evidence"]])
         self.assertTrue(all(case["report_id"] != "report-B" for case in cases.values()))
         self.assertTrue(all(not case["reusable"] for case in cases.values()))
@@ -322,7 +422,7 @@ class OAFeedbackCycleTests(PgTestCase):
             self.assertEqual("PASS", proposal["conclusion"])
             self.assertEqual({corrected["id"], negative["id"]}, set(proposal["reference_ids"]))
             self.assertEqual(["B1", "B2"], proposal["evidence_ids"])
-            self.assertEqual("oa-direct-evidence-review-v2", proposal["model_metadata"]["prompt_version"])
+            self.assertEqual("oa-direct-evidence-review-v4", proposal["model_metadata"]["prompt_version"])
             for report_id, original in self.originals.items():
                 self.assertEqual(original, ws.report(OWNER.user_id, BLOCK, VERSION, report_id))
         self.assertEqual(4, len(self.packets))

@@ -11,7 +11,7 @@ async function login(page: Page, user = 'user04') {
   await expect(page.locator('.ws-block-table tbody tr').first()).toBeVisible()
 }
 
-test('real API scopes projects and reports and the original green theme is loaded', async ({ page }) => {
+test('real API scopes projects and reports and the shared Studio theme is loaded', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   await login(page)
@@ -20,7 +20,7 @@ test('real API scopes projects and reports and the original green theme is loade
   await expect(page.getByRole('button', { name: 'Boreal 프로젝트', exact: true })).toHaveCount(0)
   await expect(page.locator('.ws-block-table tbody tr')).toHaveCount(1)
   await expect(page.locator('.ws-account')).toContainText('정민수')
-  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#294f46')
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#272b35')
   expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 })
   const cookies = await page.context().cookies()
   expect(cookies.find(cookie => cookie.name === 'sanity_workspace_session')).toMatchObject({ httpOnly: true, sameSite: 'Strict' })
@@ -385,7 +385,7 @@ test.describe.serial('two-stage group review with separate multi-record QA fixtu
     await expect(review.getByRole('status')).toContainText('사용자 판정과 근거를 저장했습니다.')
     await expect(pipeline.locator('.ws-review-progress > span').nth(1)).toContainText('1 / 2')
     await page.screenshot({ path: 'artifacts/workspace-pipeline-group-pass.png', animations: 'disabled' })
-    await page.getByRole('button', { name: '보고서 목록', exact: true }).click()
+    await page.getByRole('button', { name: '검사 대장으로 돌아가기', exact: true }).click()
     await page.getByLabel('검사 검색').fill('qa-cluster-source')
     await expect(page.locator('.ws-report-table tbody tr').first().locator('td').first()).toContainText('qa-cluster-source')
     await page.getByRole('button', { name: '상세 열 보기', exact: true }).click()
@@ -498,7 +498,7 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
     await work.getByRole('checkbox', { name: '현재 페이지 로그 50건 이하 선택', exact: true }).check()
     await work.getByRole('button', { name: '다음 그룹 원문 페이지', exact: true }).click()
     await expect(work.locator('.ws-record-pages .ws-pagination')).toContainText('51–100 / 100')
-    await work.locator('.ws-paged-record > input').first().check()
+    await work.locator('.ws-paged-record [role="checkbox"]').first().check()
     await expect(work.locator('.ws-workbench-edit')).toContainText('선택한 로그 51건')
     await work.getByRole('button', { name: '새 그룹', exact: true }).click()
     await page.getByLabel('분리할 새 그룹 이름', { exact: true }).fill('브라우저 분리그룹')
@@ -585,7 +585,7 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
       await expect(work.locator('.ws-workbench-source .ws-paged-record')).toContainText(`${report}-e-10000`)
       const data = await (await page.request.get(pipelineBase + report + '/workbench')).json()
       expect(data.record_count).toBe(10000); expect(data.current.group_count).toBe(100)
-      await work.getByRole('button', { name: '보고서 목록', exact: true }).click()
+      await page.getByRole('button', { name: '검사 대장으로 돌아가기', exact: true }).click()
     }
   })
 

@@ -80,6 +80,40 @@ class AIStoreTests(PgTestCase):
                     "evidence_ids": [context["group_evidence"][0]["id"]], "reference_ids": [],
                     "criterion_ids": [criteria[0]["id"]]}}
 
+    def test_group_exception_is_a_pinned_ai_case_and_correction_supersedes_it(self):
+        annotation = {"rule": "CLK_0003", "reason": "합성 파생 클록의 별도 정의를 확인했습니다.",
+                      "conditions": "해당 파생 클록의 연결이 동일하게 확인되는 경우"}
+        with Database("oa") as db, db.transaction():
+            cluster = self.store(db)
+            source = self.confirm(cluster, self.apply(cluster))
+            review = self.review(db, source, [])
+            command = {"conclusion": "PASS", "reason": "전체 그룹과 예외 조건을 사람이 확인했습니다.",
+                       "criteria": "", "conditions": {}, "reusable": False, "compatible_versions": False,
+                       "expected_revision": 0, "request_id": str(uuid.uuid4()), "exception": annotation}
+            saved = review.save(*self.path, "sample-0001", **command)["event"]
+            self.assertEqual(annotation, saved["exception"])
+            self.assertEqual(annotation, saved["command"]["exception"])
+            self.assertEqual(source["id"], saved["cluster_event_id"])
+            self.assertEqual(source["membership_sha256"], saved["membership_sha256"])
+            target = self.confirm(cluster, self.apply(cluster, "next-report"), "next-report")
+            context = self.review(db, target, []).context(*self.path, "next-report")
+            retriever = CaseRetriever(db, SyntheticOAWorkspace(db))
+            selected = retriever.select(context, stage="REVIEW")["cases"]
+            self.assertEqual([saved["id"]], [case["id"] for case in selected])
+            self.assertEqual(annotation, selected[0]["exception"])
+            self.assertFalse(selected[0]["reusable"])
+            self.assertTrue(retriever.revalidate(context, selected, stage="REVIEW"))
+
+            corrected = review.save(*self.path, "sample-0001", **{**command,
+                "request_id": str(uuid.uuid4()), "expected_revision": 1, "conclusion": "FAIL",
+                "reason": "새 근거로 이전 예외 조건이 성립하지 않음을 확인했습니다.", "exception": None})["event"]
+            self.assertIsNone(corrected["exception"])
+            self.assertEqual(saved["id"], corrected["previous_event_id"])
+            self.assertFalse(retriever.revalidate(context, selected, stage="REVIEW"))
+            history = review.view(*self.path, "sample-0001")["history"]
+            self.assertEqual([2, 1], [event["revision"] for event in history])
+            self.assertEqual([None, annotation], [event["exception"] for event in history])
+
     def test_receipt_replay_is_exact_and_browser_corporate_command_stays_blocked(self):
         with Database("oa") as db, db.transaction():
             store = self.store(db)
