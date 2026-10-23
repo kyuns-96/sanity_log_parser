@@ -176,6 +176,10 @@ Two supported report formats:
   "results":[{"object":"...","check_point":"...","mode":"M1",
   "code":"CHECK-201","severity":"ERROR","status":"PASS"|"FAIL"}],
   "total":N }`. Missing/malformed fields or mismatched total block completion.
+  This is reported evaluation: an applicable unit must omit `evaluation` or set
+  it to null. Any non-null value, including `{}`, is `PARSER_SCOPE_MISMATCH`;
+  a report's PASS cannot override a configured numerical threshold. This check
+  applies before analysis writes, and to manifests received from older senders.
 
 An applicable empty report or zero-record results must be incomplete in this prototype.
 Non-applicable units require exclusion `{reason,approved_by,reference}`; no report is needed.
@@ -209,8 +213,9 @@ Used registrations are included in the VWP immutable RUN's `parser_contract` and
 payload `producer.parsers` as `{parser_id, implementation_version, evaluation,
 item_ids, tool, tool_versions, rule_versions}`. They participate in analysis and
 bundle IDs; installing/updating an adapter produces a separate immutable analysis.
-No SQL migration or review-status changes are needed. Built-in-only analyses keep
-the original producer/ID contract. Adapter changes must increment implementation_version.
+No SQL migration or review-status changes are needed. Legacy built-in-only analyses
+keep the original producer/ID contract. V2 source analysis uses the separate
+normalization revision described below. Adapter changes must increment implementation_version.
 
 Expected malformed input yields PARTIAL/UNKNOWN evidence. Unexpected adapter
 exceptions/invalid return contracts stop without sealing/enqueueing a success,
@@ -252,6 +257,39 @@ stay inside the company; external Codex debugging uses synthetic inputs only.
 | 중단/중복 | 동일 제출 UUID·내용 digest로 재개. 같은 원천 occurrence는 참조, 같은 실행/다른 원문은 충돌. 파일 보관과 DB commit 사이 복구 필요 |
 
 `db/008_submissions.sql`은 기존 네 테이블 안에 VWP private `SUBMISSION`·`SOURCE_RUN`·`SOURCE_OUTBOX`, OA private `WS_SUBMISSION`·`WS_SOURCE_PART`, 공유 `SOURCE_MANIFEST/PART/COMMIT/RECEIPT`를 추가한다. 007까지 적용된 DB에 DBA가 검토·적용하며 기존 run 필수/불변성/종류별 scope 제약을 유지한다. schema 2 envelope는 `protocol=source-collection-v2`, submission UUID/content hash, collection ID, 검증된 actor, collection scope와 body를 결합한다. OA는 모든 조각/manifest/commit의 전체 건수·순서·hash·현재 담당 권한을 대조한 뒤 report와 최종 receipt를 원자적으로 공개한다. source header는 불변 parts의 hash에 결합되며 원본 파일은 VWP에 남긴다. legacy 메시지로 위장하거나 수신 상태를 수동 변경하지 않는다. 내부 AI 수정 허용 범위는 유지한다.
+
+### 정규화·원문 위치·전송 개정
+
+- UTF-8 디코딩에 실패한 원문은 VWP archive의 실제 bytes와 private evidence의
+  `hex:<bytes>` 표현으로 보존하고 UNKNOWN/미완료 상태를 유지한다. 이 표현은
+  가역적이므로 공개 raw에는 전체 `[REDACTED]`를 쓰고 `redacted=true`로 전달한다.
+  `hex:` 뒤의 짝수 길이 16진 bytes가 유효한 UTF-8이 아닌 경우를 예약 표현으로
+  취급한다. 평문 마스킹만 적용하거나 hex 자체를 공개하지 않는다. 원문 위치·근거 ID·
+  private 원문 해시는 유지하며 해시를 마스킹된 문자열에서 다시 만들지 않는다.
+  legacy의 길이 제한 샘플에서 `raw_omitted_chars>0`인 hex raw도 불투명한 원문으로
+  가린다. 잘린 prefix가 유효한 UTF-8로 보인다는 이유로 공개하지 않는다. legacy
+  bundle의 기존 민감정보 검출 시 봉인·발행 중단 계약은 유지한다.
+- V2 record의 선택 필드 `json_pointer`는 `/results/0` 같은 비어 있지 않은
+  JSON Pointer다. `/`로 시작하고 `~` escape는 `~0`/`~1`만 허용한다. VWP가
+  실제 원본에서 해석한 Pointer를 OA part·record 조회까지 그대로 보존한다.
+  OA는 형식을 검사하며 원본 파일이 없는 OA에서 Pointer 해석을 추정하지 않는다.
+  필드가 없는 기존 record도 수용하되 정확한 JSON 위치를 사후 생성하지 않는다.
+- V2의 producer는 `postgresql-source-2.1`이며 source 분석 계약과 collection ID에
+  포함한다. 같은 실행·원본의 새 정규화 결과는 별도 analysis/report로 저장하며
+  기존 근거·봉인·사람의 확정 기록을 덮어쓰지 않는다. legacy producer는 그대로다.
+- 수신기를 먼저 갱신한 뒤 송신기를 갱신한다. 구 수신기는 새 Pointer 필드를
+  거부할 수 있다. 완성된 기존 outbox는 재작성하지 않고 현재 마스킹·판정 계약을
+  재검사한 뒤 발행한다. 민감한 구 packet은 `SENSITIVE_CONTENT`로 차단한다.
+  PARSING 중 이미 쓴 part의 collection 계약이 현재 버전과 다르면
+  `SUBMISSION_CONTRACT_MISMATCH`로 거부하고 archive/outbox를 보존한다. 같은
+  UUID의 다른 개정 part를 섞지 않고 새 제출 UUID로 다시 제출한다. 같은 개정의
+  중단은 기존 UUID로 재개한다. 이미 OA에 저장한 과거 자료는 자동 수정하지 않는다.
+- OA는 최종 report 공개 직전에 DB staging의 manifest와 모든 part를 현재 규약으로
+  다시 검사한다. 수신기 갱신 전에 보관한 자료도 수치 판정 방식·민감정보 마스킹·
+  record/Pointer 검증을 거친다. hash 일치는 현재 정규화 규약의 충족을 대신하지
+  않는다. 실패하면 report·버전·PoR·AI 입력을 공개하지 않고 제출을 `REJECTED`,
+  검토 준비 상태를 `BLOCKED`로 응답한다. 기존 불변 part를 수정해 통과시키지 않는다.
+  Pointer가 없는 유효한 구버전 자료는 그대로 수용한다.
 
 ## vwp-bridge payload
 

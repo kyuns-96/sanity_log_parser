@@ -1,16 +1,28 @@
-# Build from the repository root:
+# Like OA, place this file and its Dockerfile-prod.dockerignore at company root
+# docker/ beside common/ and vwp_bridge/. Build with that root as context.
+# In this combined repository:
 # docker build -f vwp_bridge/docker/Dockerfile-prod -t sanity-vwp-bridge:local .
 # Use the approved company Python image (a Node/Python image is also supported).
 ARG VWP_BRIDGE_BASE_IMAGE=python:3.10-slim-bookworm
+ARG VWP_BRIDGE_PIP_INDEX=https://pypi.org/simple
 
 FROM ${VWP_BRIDGE_BASE_IMAGE} AS python-dependencies
+ARG VWP_BRIDGE_PIP_INDEX
 USER 0
 WORKDIR /build
 COPY vwp_bridge/requirements.txt ./requirements.txt
 RUN python3 -m venv /opt/venv
-# Optional private package settings stay in a BuildKit secret, not an image layer.
-RUN --mount=type=secret,id=pip_config,target=/etc/pip.conf \
-    /opt/venv/bin/python -m pip install --no-cache-dir -r requirements.txt
+# The index argument contains only a public/non-secret mirror URL. An optional
+# private pip config takes precedence and stays in a BuildKit secret mount.
+RUN --mount=type=secret,id=pip_config,target=/run/secrets/pip.conf \
+    unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL PIP_TRUSTED_HOST; \
+    if [ -f /run/secrets/pip.conf ]; then \
+        PIP_CONFIG_FILE=/run/secrets/pip.conf \
+            /opt/venv/bin/python -m pip install --no-cache-dir -r requirements.txt; \
+    else \
+        /opt/venv/bin/python -m pip install --no-cache-dir \
+            --index-url "${VWP_BRIDGE_PIP_INDEX}" -r requirements.txt; \
+    fi
 
 FROM ${VWP_BRIDGE_BASE_IMAGE} AS runtime
 USER 0

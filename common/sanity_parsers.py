@@ -39,6 +39,18 @@ def _require(condition, code="PARSER_INVALID_RESULT"):
         raise ParserError(code)
 
 
+def validate_builtin_evaluation(parser_id, unit):
+    """Reported JSON cannot substitute for an approved numerical policy."""
+    _require(parser_id != "summary_json_v1" or unit.get("evaluation") is None,
+             "PARSER_SCOPE_MISMATCH")
+
+
+def valid_json_pointer(value):
+    """Non-root source pointer syntax; resolving it still requires the original JSON."""
+    return (isinstance(value, str) and value.startswith("/")
+            and re.search(r"~(?![01])", value) is None)
+
+
 def _freeze(value):
     if isinstance(value, dict):
         return MappingProxyType({key: _freeze(item) for key, item in value.items()})
@@ -223,8 +235,7 @@ class ReportSource:
     def _json_excerpt(self, span, pointer):
         _require(span.byte_start == 0 and self._eof and span.byte_end == self._bytes_read)
         _require(self._bytes_read <= JSON_LIMIT, "PARSER_SOURCE_LIMIT")
-        _require(isinstance(pointer, str) and pointer.startswith("/")
-                 and re.search(r"~(?![01])", pointer) is None)
+        _require(valid_json_pointer(pointer))
         if self._json is None:
             self._json = read_json(self._path)
         value = self._json
@@ -279,6 +290,7 @@ class ParserRegistry:
 
     def resolve(self, parser_id, run, unit) -> RegisteredParser | None:
         _require(parser_id is None or isinstance(parser_id, str))
+        validate_builtin_evaluation(parser_id, unit)
         registered = self._parsers.get(parser_id)
         if registered is None:
             return None

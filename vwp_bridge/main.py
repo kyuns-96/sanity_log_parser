@@ -337,12 +337,13 @@ def analyze_unit(unit, source, root, evidence, parser_registry=None):
         result.update(parse_status="MISSING", blockers=sorted(blockers))
         return result
     parser = unit.get("parser")
+    registered = (parser_registry or ParserRegistry()).resolve(parser, evidence.run, unit)
     path = safe_path(root, source["path"])
     if parser == "numeric_csv_v1":
         records = numeric_records(path, unit, blockers)
     elif parser == "summary_json_v1":
         records = summary_records(path, unit, blockers)
-    elif parser_registry is not None and (registered := parser_registry.resolve(parser, evidence.run, unit)) is not None:
+    elif registered is not None:
         context = ParseContext(evidence.run, unit)
         records = checked_records(registered.parser, path, context, blockers,
                                   lambda fields, numeric: evaluate(fields, unit, numeric=numeric),
@@ -372,10 +373,9 @@ def analyze(input_path, out_dir=None, parser_registry=None):
     manifest = read_json(input_path)
     root = input_path.resolve().parent
     files = validate_manifest(manifest, root)
-    parser_contract = None
     if parser_registry is not None:
         require(isinstance(parser_registry, ParserRegistry), "PARSER_REGISTRATION_ERROR", "Invalid parser registry")
-        parser_contract = parser_registry.contract(manifest["run"], manifest["inventory"]["units"])
+    parser_contract = (parser_registry or ParserRegistry()).contract(manifest["run"], manifest["inventory"]["units"])
     with Database("vwp") as db:
         evidence = Evidence(db, manifest, parser_contract=parser_contract)
         inventory = manifest["inventory"]

@@ -2,6 +2,8 @@
 
 사용자 CLI, VWP 내부 snapshot 인계/영속 보관, V2 분할 송수신, OA source 페이지와 접수 응답을 구현했다. **실제 회사 신원·예상 범위/승인·report 경로 SDK와 사내 파일시스템/운영 DB는 연결하지 않았다.** 아래 일반 실행은 그 준비와 승인된 배포 후 사용한다. SSO 업무 API와 CORPORATE 모델의 기존 차단은 유지한다.
 
+2026-10-23 사용자 결정으로 접수·원본 보관·파싱·검증·DB 전송은 **VWP 중앙 수집 서비스**가 맡는다. 사용자 CLI에는 DB·모델 계정이 없고 AI 분류·판정은 OA에서 실행한다. 중앙 서비스는 기존 `vwp_bridge.submission_worker`를 사용하며 별도 장비가 필수는 아니다. [Docker 운영 설정](../vwp_bridge/docker/README.md#4-중앙-수집-서비스-실행--oa-ai-운영-경로)은 `submission` profile과 private JSON·spool/archive 마운트를 제공한다.
+
 설계는 [SUBMISSION_DESIGN.md](SUBMISSION_DESIGN.md), 원천 ID·PRE 재사용은 [SOURCE_COLLECTION_DESIGN.md](SOURCE_COLLECTION_DESIGN.md), 수정 소유권은 [사내 AI 가이드](../INTERNAL_AI_GUIDE.md)를 따른다.
 
 ## 1. 사용자의 호출
@@ -90,12 +92,16 @@ sanity retry 11111111-1111-4111-8111-111111111111
 
 기존 `vwp_bridge.main work`, `oa.main work`는 legacy 분류/근거 작업용이며 이 두 새 작업자를 대신하지 않는다. OA importer는 사용자/프로젝트/블록을 자동 생성하지 않으므로 사내의 검증된 관리 데이터/배정을 먼저 준비한다. 기존 SSO 업무 차단을 해제하거나 합성 사용자를 회사 계정으로 쓰지 않는다.
 
+Docker 중앙 서비스는 `vwp_bridge/docker/compose.yaml`과 `compose.submission.yaml`의 `vwp-submission-worker`를 사용한다. 기존 `vwp-worker`는 별도 legacy 선택 경로다. OA AI 운영에는 VWP 모델 설정이나 legacy worker가 필요하지 않다. 컨테이너의 실제 UID와 JSON의 `service_uid`·인증된 제출 저장소 ACL을 함께 맞추며, 오류 시 자동 재시작 대신 기존 중단·문의 절차를 따른다.
+
 OA API는 기존 인증/CSRF/블록 범위를 적용한다.
 
 - `GET /workspace/api/blocks/{block_id}/submissions`: 소속/접수 상태·차단 사유·이동 링크의 페이지 조회. issuer/subject·원문·사내 경로를 응답하지 않는다.
 - 기존 versions/reports API: 수신한 PRE/POST·ECO와 최신 item/mode 결과. source version payload를 덮어쓰지 않고 ECO를 조회한다. PoR은 수신으로 변경되지 않는다.
 - 기존 report 상세는 V2 header만 반환하고, workbench/records API가 전체 로그를 페이지로 보여준다. 검증된 전체 source는 기존 두 단계의 분류·사람 확정·그룹 판정·사례 재사용에 연결된다. 회사 모델 SDK의 CORPORATE job 연결은 별도다.
 - byte 동일 원본 report 파일은 VWP에만 보관한다. V2의 원본 다운로드 요청은 `SOURCE_FILE_ON_VWP`이며 빈 파일이나 합성 원문을 반환하지 않는다. OA의 마스킹된 전체 추출 로그와 VWP 원본 파일을 구분한다. 기존 legacy EVIDENCE_REQUEST의 bundle 계약을 V2 원본 파일 요청으로 재해석하지 않는다.
+
+정규화 개정은 [PROTOCOL.md](../PROTOCOL.md#정규화원문-위치전송-개정)를 따른다. OA 수신기를 먼저 갱신하고 VWP를 갱신한다. `SUBMISSION_CONTRACT_MISMATCH`로 거부된 구버전 PARSING 제출은 archive와 불변 outbox를 남기고 새 UUID로 다시 제출한다. 기존 UUID의 packet을 편집하지 않는다. UTF-8 실패 원문은 VWP에서 보관하며 OA에는 마스킹된 UNKNOWN 근거를 전달한다.
 
 ## 6. 합성 검증
 

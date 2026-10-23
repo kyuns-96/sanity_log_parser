@@ -11,5 +11,7 @@ x-ca: &ca
 services:
   vwp-bridge:
     <<: *ca
+  vwp-submission-worker:
+    <<: *ca
   vwp-worker:
     <<: *ca

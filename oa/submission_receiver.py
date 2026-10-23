@@ -13,6 +13,7 @@ import uuid
 
 from common.sanity_common import ReviewError, canonical_json, digest, unpack_json
 from common.sanity_db import Database, Queue, json_value, lock_key
+from common.sanity_parsers import valid_json_pointer, validate_builtin_evaluation
 from common.sanity_privacy import SecretGuard
 from common.sanity_submission import (HEX, PART_BYTES, PART_RECORDS, PROTOCOL, SOURCE_TYPES, check,
     message_id, scope_digest, source_execution, source_unit, source_version, validate_packet, validate_plan)
@@ -25,7 +26,7 @@ def validate_record(record):
     check(isinstance(record,dict) and {'id','fields','check_status','raw','line_start','line_end',
         'reasons','evidence_id','source_raw_sha256','redacted'} <= set(record)
         and set(record) <= {'id','fields','check_status','raw','line_start','line_end','reasons',
-                           'evidence_id','source_raw_sha256','redacted','byte_start','byte_end'},'INVALID_SOURCE_RECORD')
+                           'evidence_id','source_raw_sha256','redacted','byte_start','byte_end','json_pointer'},'INVALID_SOURCE_RECORD')
     check(isinstance(record['id'],str) and record['id'].startswith('r-') and HEX.fullmatch(record['id'][2:])
           and record['evidence_id']==record['id'] and isinstance(record['fields'],dict)
           and isinstance(record['raw'],str) and record['check_status'] in ('PASS','FAIL','UNKNOWN')
@@ -37,6 +38,8 @@ def validate_record(record):
     if 'byte_start' in record or 'byte_end' in record:
         check(type(record.get('byte_start')) is int and type(record.get('byte_end')) is int
               and 0 <= record['byte_start'] <= record['byte_end'],'INVALID_SOURCE_RECORD')
+    if 'json_pointer' in record:
+        check(valid_json_pointer(record['json_pointer']),'INVALID_SOURCE_RECORD')
     if not record['redacted']:
         check(hashlib.sha256(record['raw'].encode()).hexdigest()==record['source_raw_sha256'],'INVALID_SOURCE_RECORD')
 
@@ -159,6 +162,8 @@ class SourceReceiver:
         units = output['plan']['inventory']['units']
         check(isinstance(output['reports'],list) and len(output['reports'])==len(units),'SOURCE_COVERAGE_MISMATCH')
         for unit,value in zip(units,output['reports']):
+            if unit['applicable']:
+                validate_builtin_evaluation(unit.get('parser'),unit)
             self.header(output,unit,value)
         check(packet['collection_id']=='sc-'+digest([packet['content_sha256'],output['inventory_confirmed'],
               output['producer'],[r['parser_contract'] for r in output['reports']]]),'SOURCE_MANIFEST_CONFLICT')
@@ -170,7 +175,11 @@ class SourceReceiver:
             return state
         if not state.get('manifest') or not state.get('commit'):
             return state
-        output = state['manifest']
+        # Staging may predate this receiver release. A valid content hash does
+        # not prove that cached data satisfies today's normalization rules.
+        guard = SecretGuard()
+        guard.ensure_public(state['manifest'])
+        output = self.validate_manifest({**packet,'body':state['manifest']})
         expected = [p['id'] for r in output['reports'] for p in r['parts']]
         check(len(expected)==len(set(expected)),'SOURCE_PART_CONFLICT')
         check(state['commit']=={'manifest_sha256':digest(output),'parts':len(expected)},'SOURCE_COMMIT_CONFLICT')
@@ -189,8 +198,10 @@ class SourceReceiver:
                 part = part_row['payload']
                 check(digest(part)==ref['sha256'] and part['report_id']==value['report_id']
                       and part['part_index']==part_index and len(part['records'])==ref['count'], 'SOURCE_PART_CONFLICT')
+                guard.ensure_public(part)
                 record_bytes += len(canonical_json(part['records']))
                 for record in part['records']:
+                    validate_record(record)
                     index += 1
                     check(record['id']=='r-'+digest([value['execution_id'],value['unit_key'],fid,index]),'SOURCE_RECORD_ID_MISMATCH')
                     counts[record['check_status']] += 1

@@ -12,12 +12,12 @@ PRODUCER_VERSION = "postgresql-2"
 
 
 class PgEvidence:
-    def __init__(self, db, manifest, parser_contract=None):
+    def __init__(self, db, manifest, parser_contract=None, *, producer_version=PRODUCER_VERSION):
         self.db, self.run = db, manifest["run"]
         contract = {key: manifest[key] for key in ("run", "inventory", "files", "unexpected_files")}
         contract["files"] = sorted(contract["files"], key=lambda item: item["path"])
         contract["unexpected_files"] = sorted(contract["unexpected_files"])
-        contract["producer_version"] = PRODUCER_VERSION
+        contract["producer_version"] = producer_version
         if parser_contract:
             contract["parser_contract"] = parser_contract
         self.analysis_id = stable_uuid("analysis", digest(contract))

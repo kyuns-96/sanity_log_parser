@@ -6,7 +6,7 @@
 
 작업별 선행 정보/공통 연결 의존성은 [INTERNAL_AI_HANDOFF.md](../INTERNAL_AI_HANDOFF.md)의 INT-02/03을 따른다. 파서에 전달할 예상 목록은 [PLAN_INTEGRATION.md](../vwp/PLAN_INTEGRATION.md)의 `SanityPlanProvider`로 기존 plan 계약에 대응한다. 이 provider와 파서가 workspace 버전 수신이나 회사 AI worker를 자동 연결하는 것은 아니다.
 
-parser/등록의 개발 소유자는 [VWP-bridge 담당 AI](INTERNAL_AI_TASK.md)다. VWP 원천 담당자는 실제 형식·의미·정답 자료를 사내에서 준비한다. 실행 코드와 회사 구현은 [소스 구조](../DEPLOYMENT.md)의 `vwp_bridge/`와 `vwp_bridge/integration/`에 둔다.
+파서의 공통 인터페이스·정규화 규약·검증·판정·DB 저장·전송과 전체 흐름의 설계·구현·디버깅은 **현재 대화의 설계 담당 Codex**가 책임진다. [VWP-bridge 담당 AI](INTERNAL_AI_TASK.md)는 확인된 사내 형식을 이 고정 규약에 대응하는 추출 어댑터와 명시적 등록·전용 테스트만 구현한다. VWP 원천 담당자는 실제 형식·의미·정답 자료를 사내에서 준비한다. 실행 코드와 회사 구현은 [소스 구조](../DEPLOYMENT.md)의 `vwp_bridge/`와 `vwp_bridge/integration/`에 둔다.
 
 ## 1. 제공 파일과 수정 책임
 
@@ -42,6 +42,23 @@ class ReportParser(ABC):
 
 파서는 DB·네트워크·운영 AI·shell·다른 report를 호출하지 않는다. 원문 변환 파일을 만들거나 DB에 직접 쓰지 않는다. 이 인터페이스는 Python sandbox가 아니며 수정 경계는 지침·검토로 관리한다.
 
+### 2.1. 정규화와 저장의 공통 책임
+
+실제 report의 사내 열람·검증과 처리 경로의 개발 책임을 구분한다. 원본이 사내에 있다는 이유로 내부 AI가 정규화 schema·판정·DB protocol을 새로 설계하지 않는다. Codex가 아래 기존 계약과 실행 코드를 제공하고, 회사 어댑터는 확인된 원문 문법을 `ParseEvent`로 대응한다. 이 절은 기존 계약의 책임과 연결을 명확히 하며 새 schema나 수정 권한을 추가하지 않는다.
+
+| 경계 | Codex가 제공하는 고정 계약·실행 | 사내 확인/구현 |
+|---|---|---|
+| 원본 → 추출 이벤트 | `ReportParser`, `ReportSource`, `ParseContext`, `ParsedRecord`·metadata·미해석·완료 이벤트 | 실제 GCA 등 지원 버전의 문법·섹션·필드·건수·종료 근거를 허용된 `parse()`에 대응 |
+| 추출 이벤트 → 정규화 근거 | `checked_records`의 원문 위치·EOF·누락·완료/건수 검사, `evaluate`의 필드·모드·Decimal/명시적 판정 검사 | 실제 추출 기대값과 정규화 결과가 일치하는지 사내 fixture로 검증 |
+| 정규화 근거 → VWP DB | `analyze_unit`, `SourceEvidence`의 record ID·원본 참조·상태·전체 건수 저장과 봉인 | 회사 파서에서 DB를 직접 쓰지 않음 |
+| VWP DB → OA DB | `build_transfer`의 마스킹·분할·manifest/commit, 제출 worker의 outbox 발행, OA `SourceReceiver`의 범위·해시·전체 건수 검증과 반영 | 기존 허용 신원 어댑터·실환경 설정/검증. 공통 packet·저장 코드는 읽기 전용 |
+
+`ParsedRecord.fields`의 공통 이름은 `code`, `severity`, `object`, `check_point`, `mode`다. `severity`는 `ERROR/WARNING/INFO/FATAL`을 사용한다. `numeric`은 정확한 십진 문자열 `observed`와 `unit`, `reported`는 원본의 명시적 `status=PASS/FAIL`을 사용한다. 필수 여부·판정·0건 의미는 4절의 기존 방식별 계약을 따른다. 회사 필드명을 공통 키에 대응하는 근거와 단위/판정의 의미는 사내에서 확인하며 공통 엔진이 추측하지 않는다.
+
+어댑터가 반환한 `fields`와 공통 코드가 생성하는 저장 레코드는 구분한다. ID·원문 추출·해시·위치·범위·전체 건수·parser/규칙 버전은 공통 경로가 결합/검증한다. V2 OA 전달 레코드는 `id`, `fields`, `check_status`, `raw`, `line_start`, `line_end`, `reasons`, `evidence_id`, `source_raw_sha256`, `redacted`와 제공된 경우의 byte 위치·`json_pointer`를 사용하며, 원본 파일 hash·실행/버전·parser 계약은 report header/manifest에 결합한다. Python 파서 이벤트와 DB 전송 packet을 회사 코드에서 별도로 변환·재정의하지 않는다.
+
+GCA 원문 추출 후에도 이 공통 경로 전체를 합성 입력으로 연결해 검증하는 것은 Codex 책임이다. 공통 검증 성공과 실제 사내 형식·업무 의미의 정확성 검증은 각각 결과를 남긴다. AI 초기 그룹·판정은 이후 OA 단계이며, 파서의 원본 규칙 결과를 AI 또는 사람의 최종 판단으로 저장하지 않는다.
+
 ## 3. 원문과 반환 이벤트
 
 `for line in source.lines():`로 UTF-8 report를 읽는다. `line.text`는 줄 끝 CR/LF를 제거한 문자열, `line.span`은 공통 reader가 만든 실제 byte/물리 줄 위치다. 디코딩 실패는 `line.encoding_valid=False`이며 해당 span을 `UnparsedRegion(..., "INVALID_ENCODING")`으로 남긴다.
@@ -75,6 +92,10 @@ registry의 `evaluation`은 파서별로 고정한다. 개별 이벤트가 판�
 | `reported` | `code`, `severity`, `status=PASS/FAIL`, `object`, `check_point`, `mode` | report에 명시된 판정과 필수 필드·모드 검증. plan의 수치 evaluation을 이 방식으로 우회할 수 없음 |
 
 severity는 기존 `ERROR`/`WARNING`/`INFO`/`FATAL` 중 확인된 대응을 사용하며 severity만으로 PASS/FAIL을 추정하지 않는다. 수치 임계값·단위·같은 문제의 기준을 내부 AI가 새로 정하지 않는다. 기존 설정·스크립트·담당자가 확인한 업무 규칙을 plan으로 전달한다. 복합식이나 새로운 판정 정책이 필요하면 공통 evaluator를 수정하지 않고 문의한다.
+
+내장 `summary_json_v1`도 `reported` 계약을 따른다. 적용 대상 unit의 `evaluation`은 생략하거나 null이어야 하며 `{}`를 포함한 non-null 값은 `PARSER_SCOPE_MISMATCH`로 거부한다. 수치 기준을 가진 item은 `numeric` 추출과 공통 Decimal 평가를 사용한다. JSON의 `status=PASS`로 그 기준을 대체하지 않는다.
+
+정규화 이후의 공개 근거에도 원문 위치 계약을 유지한다. `json_pointer`가 있으면 VWP private evidence에서 OA part·record 조회까지 보존하며 없는 위치를 만들어 넣지 않는다. UTF-8 실패의 `hex:<bytes>`는 VWP 안에서만 보존하고 공개 raw 전체를 `[REDACTED]`로 바꿔 `redacted=true`로 전달한다. UNKNOWN·완료 차단·근거 ID·원문 해시는 유지한다. 세부 예약 표현과 구 packet 호환성은 [PROTOCOL.md의 전송 개정](../PROTOCOL.md#정규화원문-위치전송-개정)을 따른다. 회사 어댑터가 이 마스킹이나 전송 개정을 직접 구현하지 않는다.
 
 **위반 0건:** 실제 report에 완료된 검사 범위와 `0 violations` 같은 정상 근거가 명시되어 있으면 그 문구의 span을 사용하는 결과 기록을 만든다. 수치 형식은 위반 수 `observed="0"`를 승인된 기준과 비교하고, 명시적 정상 판정 형식은 확인된 규칙으로 PASS를 대응한다. 합성 예제의 `CLEAN ...`은 후자의 예다. 빈 파일, header/footer만 있는 파일, 단순히 FAIL 문구가 없는 파일을 PASS로 만들지 않는다. 현재 계약은 결과 기록이 0개면 미완료다.
 
@@ -143,6 +164,10 @@ return registry
 | 빈 파일/종료 누락/잘림/건수 불일치 | PARTIAL/UNKNOWN·blocker, 검토 완료 차단 |
 | 미해석 섹션/encoding 실패/후속 내용 | 모든 해당 원문 UNKNOWN 보존 |
 | 다른 item·도구/규칙 버전 | `PARSER_SCOPE_MISMATCH`, DB 쓰기 전 중단 |
+| 수치 evaluation을 가진 `summary_json_v1` | `PARSER_SCOPE_MISMATCH`, 봉인·전송 없음 |
+| 한 물리 줄의 여러 JSON 결과 | VWP/OA의 정확한 Pointer·원문 해시·전체 건수 보존 |
+| UTF-8 실패의 공개 근거 | private hex/실제 bytes 보존, 공개 raw 마스킹·UNKNOWN·완료 차단 |
+| V2 정규화 개정/중단 복구 | 기존 봉인·사람 확정 보존, 다른 개정 part 혼합 차단·같은 개정 재개 |
 | 같은 입력·구현 버전 재실행 | 동일 분석 ID/번들, 원문·봉인 결과 불변 |
 | 구현 버전 변경 | 새 분석 ID/번들, 이전 결과 보존 |
 | 예상 밖 어댑터 예외/잘못된 반환 | 고정 오류 코드, 재시도/봉인/전송 성공 없음 |

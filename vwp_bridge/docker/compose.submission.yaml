@@ -1,0 +1,21 @@
+# Central intake stays inside VWP. OA receives checked records through the DB.
+# All three host paths must already exist; the service never creates mounts.
+services:
+  vwp-submission-worker:
+    volumes:
+      - type: bind
+        source: ${VWP_SUBMISSION_CONFIG_FILE:?Set an absolute path to the private submission worker JSON}
+        target: /etc/sanity/vwp-bridge-submit.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${VWP_SUBMISSION_SPOOL_DIR:?Set an absolute path to the authenticated VWP submission spool}
+        target: /srv/sanity/vwp-submit
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${VWP_SUBMISSION_ARCHIVE_DIR:?Set an absolute path to the persistent VWP source archive}
+        target: /var/lib/sanity/vwp-bridge/submissions
+        bind:
+          create_host_path: false

@@ -162,6 +162,28 @@ class ParserTests(unittest.TestCase):
                 registry.resolve(self.unit["parser"], run, unit)
             self.assertEqual("PARSER_SCOPE_MISMATCH", error.exception.code)
 
+    def test_builtin_reported_parser_cannot_bypass_a_numeric_plan(self):
+        body = json.dumps({"format_version": 1, "complete": True, "total": 1,
+                           "results": [self.fields(observed="12", unit="ns")]})
+        for evaluation in ({"operator": "le", "limit": 10, "unit": "ns"}, {}, False):
+            unit = {**self.unit, "parser": "summary_json_v1", "evaluation": evaluation}
+            with self.subTest(evaluation=evaluation):
+                with self.assertRaises(ParserError) as error:
+                    self.registry().contract(self.run, [unit])
+                self.assertEqual("PARSER_SCOPE_MISMATCH", error.exception.code)
+                with self.assertRaises(ParserError) as error:
+                    self.analyze(body, unit=unit, registry=ParserRegistry())
+                self.assertEqual("PARSER_SCOPE_MISMATCH", error.exception.code)
+
+    def test_builtin_reported_parser_accepts_absent_or_null_evaluation(self):
+        body = json.dumps({"format_version": 1, "complete": True, "total": 1,
+                           "results": [self.fields()]})
+        for extra in ({}, {"evaluation": None}):
+            with self.subTest(extra=extra):
+                result, records = self.analyze(body, unit={**self.unit, "parser": "summary_json_v1", **extra})
+                self.assertEqual(("COMPLETE", "PASS"), (result["parse_status"], result["check_status"]))
+                self.assertEqual("/results/0", records[0]["location"]["json_pointer"])
+
     def test_parser_version_is_present_in_contract_and_unused_adapters_are_excluded(self):
         first = self.registry().contract(self.run, [self.unit])
         second = self.registry(implementation_version="2").contract(self.run, [self.unit])

@@ -15,6 +15,8 @@ React·shadcn UI가 검토 화면입니다. legacy VWP 모델 호출과 새 OA �
 
 [사용자 report 제출](../vwp/SUBMISSION.md)은 VWP 터미널에서 시작하고 OA에는 DB로 수신합니다. 별도 `python -m oa.submission_receiver`가 V2 staging·전체 검증·원자 반영/응답을 수행하며 기존 검토 화면에 로그를 페이지로 제공합니다. VWP 제출/원본 폴더를 OA에 마운트하지 않습니다. 운영 수신은 SSO와 같은 계정 매핑 및 현재 프로젝트/블록 권한을 검사합니다. 공통 구현과 실제 회사 원천·신원/승인 SDK·운영 DB 배포 검증은 구분합니다.
 
+V2 수신기는 최종 반영 때 기존 DB staging의 manifest와 모든 part도 현재 정규화 규약으로 재검증합니다. 갱신 전 수신한 수치 기준 우회·마스킹되지 않은 hex 원문·잘못된 Pointer가 있으면 불변 자료를 보존하고 `REJECTED/BLOCKED` 접수 응답을 보냅니다. report·원천 버전 공개와 PoR 변경은 발생하지 않습니다. Pointer가 없는 유효한 구버전 자료는 수용합니다. [정규화·전송 개정](../PROTOCOL.md#정규화원문-위치전송-개정)을 참고해 OA 수신기를 VWP 송신기보다 먼저 갱신합니다.
+
 ## 사내 SSO 연동 경계
 
 사내 AI의 수정 허용 범위와 디버깅 중단 규칙은 [INTERNAL_AI_GUIDE.md](../INTERNAL_AI_GUIDE.md)를 먼저 따릅니다.
