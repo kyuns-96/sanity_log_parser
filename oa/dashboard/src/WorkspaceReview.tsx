@@ -92,7 +92,7 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
       const result = await request<{ event: ReviewCase }>(`${base}/review${query}`, { csrf: session.csrf, body: {
         conclusion, reason, criteria: legacy?.criteria || '', conditions: legacy?.conditions || {}, reusable: !!legacy,
         exception: exceptionEnabled ? { rule: exceptionRule.trim(), reason: exceptionReason.trim(), conditions: exceptionConditions.trim() } : null,
-        compatible_versions: data.current?.compatible_versions || false, expected_revision: data.revision, request_id: saveId.current, proposal_id: proposalId,
+        compatible_versions: legacy?.compatible_versions || false, expected_revision: data.revision, request_id: saveId.current, proposal_id: proposalId,
         ...(group ? { expected_cluster_revision: group.cluster_revision } : {}),
       } })
       onSaved(result.event)

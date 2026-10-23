@@ -544,7 +544,7 @@ test('human exceptions require explicit complete bounds, persist and restore wit
   await page.screenshot({ path: testInfo.outputPath('confirmed-human-exception-fullhd.png'), fullPage: true })
 })
 
-test('a deferred review clears exception intent while preserving legacy compatibility metadata and exception history', async ({ page }) => {
+test('a deferred review clears exception intent and legacy compatibility while preserving exception history', async ({ page }) => {
   const state = await openConfirmedReview(page, { currentCase: savedReview({ exception: exceptionFields, compatible_versions: true }) })
   const review = page.locator('.ws-judgment-workspace')
   const exception = review.getByRole('checkbox', { name: '이번 판정을 규칙 예외로 기록', exact: true })
@@ -556,7 +556,7 @@ test('a deferred review clears exception intent while preserving legacy compatib
   await review.getByRole('textbox', { name: '판정 근거', exact: true }).fill('필수 확인 자료가 부족하여 보류로 정정합니다.')
   await review.getByRole('button', { name: '판정 저장', exact: true }).click()
   await expect(review.getByText('사용자 판정과 근거를 저장했습니다.', { exact: false })).toBeVisible()
-  expect(state.current).toMatchObject({ conclusion: 'DEFER', exception: null, compatible_versions: true, reusable: false })
+  expect(state.current).toMatchObject({ conclusion: 'DEFER', exception: null, compatible_versions: false, reusable: false })
   await expect(review.locator('.ws-review-current-exception')).toHaveCount(0)
   await review.locator('.ws-review-records > summary').click()
   await expect(review.getByRole('region', { name: '사용자 판정 이력', exact: true }).locator('.ws-review-exception-evidence')).toContainText(exceptionFields.conditions)
@@ -581,7 +581,11 @@ for (const change of ['ordinary', 'ordinary-compatible-true', 'exception', 'defe
     await review.getByRole('button', { name: '판정 저장', exact: true }).click()
     await expect(review.getByText('사용자 판정과 근거를 저장했습니다.', { exact: false })).toBeVisible()
     expect(state.current).toMatchObject(ordinaryEdit ? { reusable: true, criteria: legacy.criteria, conditions: legacy.conditions, exception: null } : { reusable: false, criteria: '', conditions: {}, exception: change === 'exception' ? exceptionFields : null })
-    expect(state.current?.compatible_versions).toBe(legacy.compatible_versions)
+    expect(state.current?.compatible_versions).toBe(ordinaryEdit && legacy.compatible_versions)
+    expect(state.writes).toHaveLength(1)
+    expect(state.writes[0]).toMatchObject({ path: base + '/groups/g1/review', marker: '1', body: { reusable: ordinaryEdit, compatible_versions: ordinaryEdit && legacy.compatible_versions } })
+    const stored = await page.evaluate(path => fetch(path).then(response => response.json()), base + '/groups/g1/review')
+    expect(stored.history[1]).toEqual(legacy)
     await review.locator('.ws-review-records > summary').click()
     const history = review.getByRole('region', { name: '사용자 판정 이력', exact: true })
     await expect(history).toContainText(`이전 참고 엔진의 동일 조건 규칙 적용 승인: ${legacy.criteria}`)
