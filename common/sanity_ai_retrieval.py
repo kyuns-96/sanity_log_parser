@@ -9,9 +9,10 @@ import math
 import re
 
 from common.sanity_clustering import check
+from common.sanity_ai_knowledge import shared_case
 from common.sanity_common import canonical_json, digest
 
-METHOD = "lexical-hangul-ngram-v1"
+METHOD = "lexical-shared-confirmed-knowledge-v3"
 SCOPE_KEYS = ("project_id", "block_id", "item_id", "family", "parser", "rule_version", "layout")
 _WORDS = re.compile(r"[a-zA-Z][a-zA-Z0-9_.:/-]*|[가-힣]+")
 
@@ -59,13 +60,14 @@ def query_profile(context, *, max_terms=128):
 def compatible(context, case, *, stage):
     check(stage in ("CLUSTER", "REVIEW"), "INVALID_REQUEST")
     scope, other = context.get("scope", {}), case.get("scope", {})
-    if any(key not in scope or key not in other or scope[key] != other[key] for key in SCOPE_KEYS):
+    # These attributes describe the source, not permission to use its example.
+    # The DB retriever independently validates registered source scope and
+    # shared-knowledge eligibility. Original-source access keeps its own RBAC.
+    if any(key not in scope or key not in other for key in SCOPE_KEYS):
         return False
-    if any(not scope.get(key) for key in ("project_id", "block_id", "item_id")):
+    if any(not scope.get(key) or not other.get(key) for key in ("project_id", "block_id", "item_id")):
         return False
     if case.get("report_id") == context["report"]["id"]:
-        return False
-    if case.get("version_id") != context["report"]["version_id"] and case.get("compatible_versions") is not True:
         return False
     if stage == "CLUSTER":
         return case.get("confirmed") is True
@@ -74,7 +76,15 @@ def compatible(context, case, *, stage):
 
 
 def comparison(context, case):
-    return {"eco": {"current": context["scope"].get("eco"), "case": case["scope"].get("eco")},
+    attributes = (*SCOPE_KEYS, "eco")
+    differences = {key: {"current": context["scope"].get(key), "case": case["scope"].get(key)}
+                   for key in attributes}
+    current_version, source_version = context.get("version", {}), case.get("source_version", {})
+    differences.update({key: {"current": current_version.get(key), "case": source_version.get(key)}
+                        for key in ("net_ver", "revision")})
+    return {"attributes": differences,
+            "different_attributes": [key for key, values in differences.items() if values["current"] != values["case"]],
+            "eco": {"current": context["scope"].get("eco"), "case": case["scope"].get("eco")},
             "version": {"current": context["report"]["version_id"], "case": case["version_id"]},
             "compatible_versions_explicit": case.get("compatible_versions") is True,
             "automatic_rule_reuse_approved": case.get("reusable") is True}
@@ -82,8 +92,9 @@ def comparison(context, case):
 
 def rank_case(profile, case, *, matched_terms=None):
     if matched_terms is None:
-        matched_terms = set(words(" ".join(text_values({key: case.get(key) for key in
-            ("reason", "criteria", "conditions", "groups", "rationales", "records", "group_evidence")}))))
+        knowledge = shared_case(case)
+        matched_terms = set(words(" ".join(text_values({key: knowledge.get(key) for key in
+            ("reason", "criteria", "conditions", "exception", "groups", "group_snapshot", "rationales", "clustering_rationale", "scope", "report_rule")}))))
     weights = profile["weights"]
     total = sum(weights.values())
     return sum(weights[term] for term in set(matched_terms) if term in weights) / total if total else 0.0

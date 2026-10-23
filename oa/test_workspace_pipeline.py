@@ -88,6 +88,14 @@ class WorkspacePipelineTests(PgTestCase):
         self.assertFalse(draft["model_called"])
         self.assertEqual(3, len(draft["groups"]))
         self.assertCountEqual(["e-1", "e-2", "e-3", "e-4"], [key for group in draft["groups"] for key in group["record_ids"]])
+        group_url = BASE + "sample-0001/clustering/groups"
+        params = {"expected_revision": draft["revision"]}
+        groups = self.client.get(group_url, params=params).json()["items"]
+        self.assertEqual([1, 2, 3], [group["ordinal"] for group in groups])
+        second = self.client.get(group_url, params={**params, "offset": 1, "limit": 1}).json()["items"]
+        filtered = self.client.get(group_url, params={**params, "search": groups[1]["id"]}).json()["items"]
+        self.assertEqual([groups[1]], second)
+        self.assertEqual(second, filtered, "Group numbering must stay stable across pagination and search")
         confirmed = self.confirm()
         top = self.client_for("user01")
         self.assertEqual(confirmed, top.get(BASE + "sample-0001/clustering").json()["current"])

@@ -181,7 +181,7 @@ test('permission denial on administration keeps a usable authenticated welcome p
   await expect(page.getByText('SSO 로그인됨', { exact: true })).toBeVisible()
 })
 
-test('welcome and administrator use the existing green theme without mobile overflow', async ({ page }) => {
+test('welcome and administrator share the Studio neutral theme without mobile overflow', async ({ page }) => {
   await accessServer(page, true)
   await page.goto('/?page=welcome')
   await expect(page.getByRole('heading', { name: '권한 요청', exact: true })).toBeVisible()
@@ -189,7 +189,7 @@ test('welcome and administrator use the existing green theme without mobile over
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.getByRole('heading', { name: '권한 요청', exact: true })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
-  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#294f46')
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#272b35')
   await page.screenshot({ path: 'artifacts/rbac-welcome-mobile.png', fullPage: true, animations: 'disabled' })
   await page.getByRole('button', { name: '관리자', exact: true }).click()
   await expect(page.getByRole('heading', { name: '프로젝트·권한 관리', exact: true })).toBeVisible()

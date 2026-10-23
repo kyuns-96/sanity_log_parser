@@ -14,30 +14,47 @@
   src: url('/fonts/geist-mono-latin.woff2') format('woff2');
 }
 :root {
-  --font-sans: Geist, Pretendard, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', sans-serif;
+  --font-sans: "Pretendard Variable", Pretendard, Geist, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', sans-serif;
   --font-mono: 'Geist Mono', 'SF Mono', Consolas, monospace;
-  --canvas: #f5f4f0;
+  --canvas: #f5f6f8;
   --surface: #fff;
-  --surface-soft: #f7f7f3;
-  --sidebar-surface: #eeeee7;
-  --ink: #252c28;
-  --text-secondary: #526057;
-  --text-muted: #687168;
-  --line: #dedfd7;
-  --line-soft: #e9eae3;
-  --accent: #294f46;
-  --accent-soft: #e8eee8;
-  --accent-line: #b8cbbd;
-  --focus: #547b68;
-  --success: #326348;
-  --success-soft: #edf3ed;
-  --success-line: #ccdfcf;
-  --warning: #89621d;
-  --warning-soft: #f8f2e4;
-  --warning-line: #e6d9b8;
-  --danger: #a14539;
-  --danger-soft: #faf0ec;
-  --danger-line: #e9cfc6;
+  --surface-soft: #f7f8fa;
+  --sidebar-surface: #fafbfc;
+  --ink: #252932;
+  --text-secondary: #525d6d;
+  --text-muted: #6c7788;
+  --line: #e2e6ec;
+  --line-soft: #edf0f4;
+  --accent: #272b35;
+  --accent-soft: #eef0f4;
+  --accent-line: #cbd1dc;
+  --focus: #75839b;
+  --success: #217865;
+  --success-soft: #edf7f3;
+  --success-line: #c9e6db;
+  --warning: #946514;
+  --warning-soft: #fff8e9;
+  --warning-line: #f1e1b7;
+  --danger: #b3463d;
+  --danger-soft: #fff1ef;
+  --danger-line: #f2d4cf;
+  --surface-recessed: #f0f2f5;
+  --source: #fafbfc;
+  --code: #44516a;
+  --brand: var(--accent);
+  --brand-soft: var(--accent-soft);
+  --brand-line: var(--accent-line);
+  --radius: .625rem;
+  --primary-foreground: #fff;
+  --secondary: var(--surface-soft);
+  --secondary-foreground: var(--ink);
+  --accent-foreground: var(--ink);
+  --card-foreground: var(--ink);
+  --popover: var(--surface);
+  --popover-foreground: var(--ink);
+  --input: var(--line);
+  --ring: var(--focus);
+  --destructive: var(--danger);
   --background: var(--surface);
   --foreground: var(--ink);
   --card: var(--surface);
@@ -51,7 +68,7 @@
   background: var(--canvas);
   font-variant-numeric: tabular-nums;
 }
-body { font-size: 14px; line-height: 1.6; }
+body { font-size: 14px; line-height: 1.6; font-family: var(--font-sans); background: var(--canvas); }
 ::selection { color: var(--ink); background: var(--accent-line); }
 a { color: inherit; }
 button, a, input, textarea, select { transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease; }

@@ -86,7 +86,7 @@ class WorkspaceGroupReviewStore(WorkspaceReviewStore):
             if case["report_id"] not in valid_sources:
                 cluster, _ = self.clustering.current(case["report_id"])
                 valid_sources[case["report_id"]] = (cluster["id"] if cluster and cluster["confirmed"] and complete(cluster)
-                    and self.clustering.references_current(cluster, exclude_report=context["report"]["id"]) else None)
+                    and self.clustering.references_current(cluster, exclude_report=context["report"]["id"], context=context) else None)
             if valid_sources[case["report_id"]] == case["cluster_event_id"]:
                 result.append(case)
         return result

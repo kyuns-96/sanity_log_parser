@@ -118,6 +118,21 @@ class WorkspaceStore:
             raise ReviewError("STATE_CORRUPT", "Workspace scope mismatch")
         return block, project
 
+    def case_reference_scopes(self, user_id):
+        """Shared confirmed knowledge catalog; this grants no source access."""
+        self.user(user_id)
+        return self.registered_case_scopes()
+
+    def registered_case_scopes(self):
+        projects = {row["workspace_key"]: row for row in self.rows("WS_PROJECT")}
+        result = []
+        for block in self.rows("WS_BLOCK"):
+            project = projects.get(block["payload"].get("project_id"))
+            if project is None or block["workspace_project_ref"] != project["record_id"]:
+                raise ReviewError("STATE_CORRUPT", "Workspace scope mismatch")
+            result.append({"project_id": project["workspace_key"], "block_id": block["workspace_key"]})
+        return result
+
     def can_write(self, user_id, block):
         self.access(user_id, block["workspace_key"])
         return user_id in block["payload"]["owners"]
@@ -231,7 +246,7 @@ class WorkspaceStore:
         from oa.sanity_workspace_review import review_summaries
         from oa.sanity_workspace_clustering import pipeline_summaries
         reviews = review_summaries(self.db, [row["item"]["id"] for row in rows])
-        pipelines = pipeline_summaries(self.db, [row["item"]["id"] for row in rows], compact=True)
+        pipelines = pipeline_summaries(self.db, [row["item"]["id"] for row in rows], compact=True, ws=self, user_id=user_id)
         for row in rows:
             if row['item'].get('source_storage') == 'PARTS_V2':
                 from oa.sanity_workspace_sources import delivery_status

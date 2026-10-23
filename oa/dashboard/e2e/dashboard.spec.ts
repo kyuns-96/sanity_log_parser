@@ -240,7 +240,7 @@ test('mobile layout has no viewport overflow, menu and dialog work', async ({ pa
   await page.getByRole('tab', { name: /검토 대장/ }).click()
   await page.getByRole('button', { name: '검토 의견 기록', exact: true }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
-  expect(await page.getByRole('dialog').boundingBox()).toMatchObject({ width: 358 })
+  expect(await page.getByRole('dialog').boundingBox()).toMatchObject({ x: 12, width: 366 })
 })
 
 test('bundle and failed unit-page changes never retain data from the old scope', async ({ page }) => {

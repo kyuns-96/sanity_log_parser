@@ -9,6 +9,7 @@ from unittest.mock import patch
 import httpx
 
 from common.sanity_ai_contracts import validate_review_v2
+from common.sanity_ai_knowledge import shared_case
 from common.sanity_common import ReviewError, canonical_json, digest
 from common.sanity_integration_examples import clustering_example, group_review_example
 from common.sanity_review_advice import validate_advice
@@ -154,7 +155,25 @@ class OAModelTests(unittest.TestCase):
         packet = self.packet
         return advisor.cluster(packet["context"], packet["cases"], packet["identity_fields"])
 
+    def assert_shared_history(self, cases):
+        forbidden = {"records", "raw", "fields", "raw_report", "record_ids", "evidence_ids", "command", "group_evidence"}
+
+        def verify(value):
+            if isinstance(value, dict):
+                self.assertFalse(forbidden.intersection(value))
+                for child in value.values():
+                    verify(child)
+            elif isinstance(value, list):
+                for child in value:
+                    verify(child)
+
+        verify(cases)
+        for case in cases:
+            self.assertEqual("SHARED_CONFIRMED_KNOWLEDGE", case["evidence_mode"])
+            self.assertFalse(case["example_complete"])
+
     def test_clustering_receives_all_records_human_corrections_and_korean_prompt(self):
+        self.packet["context"]["_actor_user_id"] = "synthetic-actor-private-to-server"
         captured = []
         def handler(request):
             captured.append(request)
@@ -166,9 +185,12 @@ class OAModelTests(unittest.TestCase):
             self.assertIn("한국어", body["messages"][0]["content"])
             self.assertIn("정확히 한 그룹", body["messages"][0]["content"])
             actual = json.loads(body["messages"][1]["content"])
+            self.assertNotIn("_actor_user_id", actual["context"])
+            self.assertNotIn("synthetic-actor-private-to-server", request.content.decode())
             self.assertEqual(self.packet["context"]["report"]["records"], actual["context"]["report"]["records"])
             self.assertNotIn("raw_report", actual["context"]["report"])
-            self.assertEqual(self.packet["cases"], actual["cases"])
+            self.assertEqual([shared_case(case) for case in self.packet["cases"]], actual["cases"])
+            self.assert_shared_history(actual["cases"])
             return httpx.Response(200, json=chat(self.packet["reply"], usage={"prompt_tokens": 100,
                                    "completion_tokens": 50, "total_tokens": 150, "private": "not exported"}))
         before = copy.deepcopy(self.packet)
@@ -180,17 +202,20 @@ class OAModelTests(unittest.TestCase):
         self.assertTrue(meta["model_called"])
         self.assertEqual(digest(json.loads(captured[0].content)), meta["input_sha256"])
         self.assertEqual({"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}, meta["usage"])
-        self.assertEqual("oa-semantic-clustering-v1", meta["prompt_version"])
+        self.assertEqual("oa-semantic-clustering-v2", meta["prompt_version"])
         self.assertNotIn("model.invalid", json.dumps(meta))
 
     def test_first_review_sends_only_complete_selected_group_and_approved_criteria(self):
         packet = group_review_example()
         context = packet["context"]
+        context["_actor_user_id"] = "synthetic-actor-private-to-server"
         criteria = [criterion(context)]
         reply = review_reply(context, criteria=[criteria[0]["id"]])
         def handler(request):
             body = json.loads(request.content)
             actual = json.loads(body["messages"][1]["content"])
+            self.assertNotIn("_actor_user_id", actual["context"])
+            self.assertNotIn("synthetic-actor-private-to-server", request.content.decode())
             self.assertEqual(context["group_evidence"], actual["context"]["group_evidence"])
             self.assertNotIn("records", actual["context"]["report"])
             self.assertNotIn("current-record-3", body["messages"][1]["content"])
@@ -199,7 +224,7 @@ class OAModelTests(unittest.TestCase):
             return httpx.Response(200, json=chat(reply))
         result = self.adapter(handler).review(context, [], criteria)
         self.assertEqual(reply, result["advice"])
-        self.assertEqual("oa-direct-evidence-review-v2", result["metadata"]["prompt_version"])
+        self.assertEqual("oa-direct-evidence-review-v4", result["metadata"]["prompt_version"])
 
     def test_no_history_or_criterion_reaches_model_for_explicit_deferral(self):
         packet = group_review_example()
@@ -211,6 +236,30 @@ class OAModelTests(unittest.TestCase):
         result = self.adapter(handler).review(packet["context"], [], [])
         self.assertEqual("DEFER", result["advice"]["conclusion"])
         self.assertEqual(1, len(calls))
+
+    def test_review_receives_structured_human_exception_and_condition_comparison_prompt(self):
+        packet = group_review_example(with_history=True)
+        annotation = {"rule": "CLK_MISSING", "reason": "합성 파생 클록의 정의가 별도 근거에서 확인됨",
+                      "conditions": "파생 클록과 외부 정의의 연결이 이번 실행에서도 확인된 경우"}
+        packet["cases"][0]["exception"] = annotation.copy()
+        before = copy.deepcopy(packet)
+        reply = review_reply(packet["context"], conclusion="PASS", references=[packet["cases"][0]["id"]])
+
+        def handler(request):
+            body = json.loads(request.content)
+            actual = json.loads(body["messages"][1]["content"])
+            self.assertEqual([shared_case(case) for case in packet["cases"]], actual["cases"])
+            self.assert_shared_history(actual["cases"])
+            self.assertEqual(annotation, actual["cases"][0]["exception"])
+            instruction = body["messages"][0]["content"]
+            self.assertIn("예외 사유·성립 조건", instruction)
+            self.assertIn("일반 PASS 규칙으로 확대하지", instruction)
+            self.assertIn("현재 사람 확정이 아닙니다", instruction)
+            return httpx.Response(200, json=chat(reply))
+
+        result = self.adapter(handler).review(packet["context"], packet["cases"], [])
+        self.assertEqual(reply, result["advice"])
+        self.assertEqual(before, packet)
 
     def test_responses_mode_preserves_complete_output_and_disables_storage(self):
         def handler(request):

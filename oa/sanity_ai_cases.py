@@ -1,18 +1,22 @@
 """Read-only human-case retrieval for OA model execution.
 
-The caller supplies an authorized, revision-pinned context. This module never
-widens its scope, grants access, executes rules or writes a human decision.
+The caller supplies an authorized, revision-pinned current-target context.
+Historical knowledge scope is derived from the registered server catalog,
+never model/browser lists. Internal source validation grants no original-source
+access to the actor; only shared confirmed knowledge leaves this module.
 """
 from collections import Counter
 from functools import wraps
 
 from common.sanity_ai_retrieval import (METHOD, SCOPE_KEYS, compatible, comparison,
     query_profile, rank_case, select_ranked, selection_key)
+from common.sanity_ai_knowledge import shared_case
 from common.sanity_clustering import check
 from common.sanity_clustering_advice import evidence, partition
 from common.sanity_common import ReviewError, canonical_json, digest
 from common.sanity_db import json_value
 from common.sanity_submission import source_digest
+from common.sanity_review_advice import validate_stored_review_exception
 import common.sanity_workspace_rationale as rationale
 from oa.sanity_workspace import WorkspaceStore, record_id
 from oa.sanity_workspace_review import WorkspaceReviewStore
@@ -22,7 +26,7 @@ def _validation_operation(method):
     """Keep graph validation memo strictly inside one public operation."""
     @wraps(method)
     def run(self, context, *args, **kwargs):
-        self._begin_validation(context["report"]["id"], kwargs.get("stage"))
+        self._begin_validation(context["report"]["id"], kwargs.get("stage"), context=context)
         try:
             return method(self, context, *args, **kwargs)
         finally:
@@ -32,6 +36,7 @@ def _validation_operation(method):
             self._validation_active.clear()
             self._validation_seen.clear()
             self._validation_target = None
+            self._validation_scopes = ()
     return run
 
 
@@ -45,13 +50,32 @@ class CaseRetriever:
     def __init__(self, db, workspace=None):
         self.db = db
         self.workspace = workspace if workspace is not None else WorkspaceStore(db)
-        self.reviews = WorkspaceReviewStore(db)
+        self.reviews = WorkspaceReviewStore(db, ws=self.workspace)
         self._case_read_budget = 1024 * 1024
 
-    def _begin_validation(self, target, stage):
+    def _begin_validation(self, target, stage, *, context=None):
         self._validation_target = (target, stage)
         self._validation_memo, self._validation_active, self._validation_seen = {}, set(), set()
         self._validation_work, self._validation_bytes = 0, 0
+        scope = (context or {}).get("scope", {})
+        actor = (context or {}).get("_actor_user_id")
+        # Missing authority is a narrow diagnostic, never a global read grant.
+        scopes = self.workspace.case_reference_scopes(actor) if actor and hasattr(self, "workspace") else [scope]
+        self._validation_scopes = tuple(sorted({(value["project_id"], value["block_id"])
+            for value in scopes if value.get("project_id") and value.get("block_id")}))
+
+    def _scope_clause(self, alias):
+        pairs = [(str(record_id("WS_PROJECT", project)), str(record_id("WS_BLOCK", block)))
+                 for project, block in self._validation_scopes]
+        return ("EXISTS (SELECT 1 FROM jsonb_array_elements(%s::jsonb) grant_scope "
+                "WHERE grant_scope->>0=" + alias + ".workspace_project_ref::text "
+                "AND grant_scope->>1=" + alias + ".workspace_block_ref::text)", (json_value(pairs),))
+
+    def _report_authorized(self, report_id):
+        """Internal registered-knowledge capability, not an actor raw grant."""
+        condition, parameters = self._scope_clause("r")
+        return self.db.execute("SELECT 1 FROM {oa} r WHERE r.record_type='WS_REPORT' "
+            "AND r.workspace_key=%s AND " + condition, (report_id, *parameters)).fetchone() is not None
 
     def _charge_work(self, units):
         self._validation_work += units
@@ -95,18 +119,41 @@ class CaseRetriever:
 
     def _bounded_row(self, kind, key):
         self._charge_work(2)
+        condition, parameters = self._scope_clause("r")
         size = self.db.execute("SELECT octet_length(payload::text)"
-            "+COALESCE((payload->>'rationale_bytes')::bigint,0) AS bytes FROM {oa} "
-            "WHERE record_type=%s AND workspace_key=%s", (kind, key)).fetchone()
-        if size:
-            check(size["bytes"] <= self._case_read_budget, "AI_CASE_BUDGET", "Complete example dependency exceeds the byte budget")
+            "+COALESCE((payload->>'rationale_bytes')::bigint,0)"
+            "+COALESCE((payload->>'source_bytes')::bigint,0) AS bytes FROM {oa} r "
+            "WHERE record_type=%s AND workspace_key=%s AND " + condition, (kind, key, *parameters)).fetchone()
+        if size is None:
+            return None
+        check(size["bytes"] <= self._case_read_budget, "AI_CASE_BUDGET", "Complete example dependency exceeds the byte budget")
         return self.reviews.row(kind, key)
+
+    def _source_version(self, event, source):
+        """Compare a case to its own immutable source, never to the target."""
+        check(source.get("id") == event["report_id"] and source.get("version_id") == event["version_id"]
+              and all(source.get(key) == event["scope"].get(key) for key in (*SCOPE_KEYS, "eco") if key != "layout"),
+              "STATE_CORRUPT")
+        check(all(key not in event or event[key] == source.get(key) for key in ("project_id", "block_id", "eco")),
+              "STATE_CORRUPT")
+        version = self._bounded_row("WS_VERSION", event["version_id"])
+        check(version and version["payload"]["id"] == event["version_id"]
+              and version["payload"]["block_id"] == source["block_id"]
+              and version["payload"]["project_id"] == source["project_id"]
+              and version["payload"]["layout"] == event["scope"]["layout"], "STATE_CORRUPT")
+        stored = event.get("source_version")
+        if stored is not None:
+            check(all(stored.get(key) == version["payload"].get(key)
+                      for key in ("id", "project_id", "block_id", "net_ver", "revision", "layout", "source_pre_id")),
+                  "STATE_CORRUPT")
+        return stored if stored is not None else version["payload"]
 
     def _scan(self, context, stage, profile):
         """Keyset-scan all eligible heads, returning only bounded metadata.
 
-        Source text is searched inside PostgreSQL, including referenced V2
-        parts. It is not transferred or materialized as Python report objects.
+        Only confirmed knowledge fields are searched, never original source
+        text or extracted fields. PostgreSQL handles ordinary event JSON;
+        compressed group rationales are unpacked one bounded event at a time.
         This first lexical implementation needs no new DB index or embedding
         service; large histories may require a later measured indexing change.
         """
@@ -116,8 +163,7 @@ class CaseRetriever:
         report_ref = "workspace_review_report_ref" if kind == "WS_REVIEW" else "workspace_pipeline_report_ref"
         scope = context["scope"]
         check(all(key in scope for key in SCOPE_KEYS), "INVALID_SCOPE")
-        scope_sql = " AND ".join("e.payload->'scope'->%s=%s::jsonb" for _ in SCOPE_KEYS)
-        scope_parameters = tuple(value for key in SCOPE_KEYS for value in (key, json_value(scope[key])))
+        scope_sql, scope_parameters = self._scope_clause("h")
         cursor = None
         while True:
             query = "SELECT e.created_at,e.workspace_key,e.record_id AS event_record_id," \
@@ -129,21 +175,25 @@ class CaseRetriever:
                 "'confirmed',e.payload->'confirmed','conclusion',e.payload->'conclusion'," \
                 "'group_id',e.payload->'group_id','compatible_versions',e.payload->'compatible_versions'," \
                 "'reusable',e.payload->'reusable','source_sha256',e.payload->'source_sha256') AS candidate," \
-                "octet_length(e.payload::text)+octet_length(s.payload::text)" \
-                "+COALESCE((e.payload->>'rationale_bytes')::bigint,0)" \
-                "+COALESCE((s.payload->>'source_bytes')::bigint,0)+2048 AS estimated_bytes," \
+                "e.payload->>'rationale_encoding' AS rationale_encoding," \
+                "CASE WHEN jsonb_typeof(s.payload->'rule')='string' THEN s.payload->'rule' END AS report_rule," \
+                "0 AS estimated_bytes," \
                 "ARRAY(SELECT term FROM unnest(%s::text[]) term WHERE " \
-                "strpos(lower(e.payload::text),term)>0 OR strpos(lower(s.payload::text),term)>0 OR EXISTS (" \
-                "SELECT 1 FROM jsonb_array_elements(COALESCE(s.payload->'source_parts','[]'::jsonb)) ref " \
-                "JOIN {oa} p ON p.record_type='WS_SOURCE_PART' AND p.workspace_key=ref->>'id' " \
-                "WHERE p.workspace_block_ref=h.workspace_block_ref AND strpos(lower(p.payload::text),term)>0)) AS matched_terms " \
+                "strpos(lower(jsonb_build_object('reason',e.payload->'reason','criteria',e.payload->'criteria'," \
+                "'scope',e.payload->'scope','report_rule',CASE WHEN jsonb_typeof(s.payload->'rule')='string' THEN s.payload->'rule' END," \
+                "'conditions',e.payload->'conditions','exception',e.payload->'exception'," \
+                "'group_labels',jsonb_path_query_array(e.payload,'$.groups[*].label')," \
+                "'group_reasons',jsonb_path_query_array(e.payload,'$.rationales.*.content.reason')," \
+                "'reference_reasons',jsonb_path_query_array(e.payload,'$.rationales.*.content.reference_groups[*].reason'))::text),term)>0) AS matched_terms " \
                 "FROM {oa} h JOIN {oa} e ON e.record_id=h." + event_ref + " " \
                 "JOIN {oa} s ON s.record_id=h." + report_ref + " " \
-                "WHERE h.record_type=%s AND h.workspace_block_ref=%s AND " + scope_sql + " " \
+                "WHERE h.record_type=%s AND " + scope_sql + " " \
+                "AND e.workspace_project_ref=h.workspace_project_ref AND e.workspace_block_ref=h.workspace_block_ref " \
+                "AND s.workspace_project_ref=h.workspace_project_ref AND s.workspace_block_ref=h.workspace_block_ref " \
                 "AND e.payload->>'report_id'<>%s AND " \
-                "(e.payload->>'version_id'=%s OR e.payload->>'compatible_versions'='true') "
-            parameters = (profile["terms"], kind, record_id("WS_BLOCK", scope["block_id"])) + scope_parameters + (
-                context["report"]["id"], context["report"]["version_id"])
+                "TRUE "
+            parameters = (profile["terms"], kind) + scope_parameters + (
+                context["report"]["id"],)
             query += "AND e.payload->>'confirmed'='true' " if stage == "CLUSTER" else \
                 "AND e.payload->>'conclusion' IN ('PASS','FAIL') "
             if cursor:
@@ -157,15 +207,30 @@ class CaseRetriever:
                 candidate = row["candidate"]
                 check(candidate["id"] == row["head_event_id"]
                       and candidate["revision"] == row["head_revision"], "STATE_CORRUPT")
+                score = rank_case(profile, candidate, matched_terms=row["matched_terms"])
+                over_budget = False
+                if row["rationale_encoding"]:
+                    # Compressed rationale strings are opaque to SQL lexical
+                    # matching. Unpack one bounded event at a time; raw source
+                    # reports/parts are still never scanned for relevance.
+                    try:
+                        packed = self._bounded_row("WS_CLUSTER_EVENT", candidate["id"])
+                        check(packed is not None, "STATE_CORRUPT")
+                        knowledge = shared_case({**rationale.unpack(packed["payload"]), "report_rule": row.get("report_rule")})
+                        score = rank_case(profile, knowledge)
+                    except ReviewError as error:
+                        if error.code != "AI_CASE_BUDGET":
+                            raise
+                        over_budget, score = True, 0.0
                 yield {"case": candidate, "bytes": row["estimated_bytes"],
-                       "score": rank_case(profile, candidate, matched_terms=row["matched_terms"]),
+                       "score": score, "over_budget": over_budget,
                        "active": row["task_status"] in ("PENDING", "RUNNING", "FAILED", "STALE")
                                  or row["job_status"] in ("RUNNING", "RESULT_READY")}
             cursor = (rows[-1]["created_at"], rows[-1]["workspace_key"])
 
     def _cluster(self, report_id, exclude_report, visited):
         """Validate current reference chains without using the all-case catalog."""
-        if report_id == exclude_report:
+        if report_id == exclude_report or not self._report_authorized(report_id):
             return None
         return self._validated(("CLUSTER", report_id), exclude_report,
                                lambda: self._validate_cluster(report_id, exclude_report))
@@ -189,14 +254,20 @@ class CaseRetriever:
             return None
         source = self._bounded_row("WS_REPORT", report_id)
         check(source is not None and source_digest(source["payload"]) == event["source_sha256"], "STATE_CORRUPT")
+        self._source_version(event, source["payload"])
+        original = source["payload"]
+        if original.get("source_storage") == "PARTS_V2":
+            from oa.sanity_workspace_sources import hydrate
+            original = hydrate(self.db, original)
+        partition(event["groups"], evidence({"report": original}))
+        del original
         del source
         dependencies = []
         for reference in event.get("references", []):
             current = self._cluster(reference["report_id"], exclude_report, None)
             if (not current or current["id"] != reference["id"]
                     or current["source_sha256"] != reference["source_sha256"]
-                    or any(current["scope"].get(key) != event["scope"].get(key) for key in SCOPE_KEYS)
-                    or current["version_id"] != event["version_id"] and current.get("compatible_versions") is not True):
+                    ):
                 return None
             dependencies.append(current)
         for group in event["groups"]:
@@ -204,7 +275,7 @@ class CaseRetriever:
         return event
 
     def _review(self, report_id, group_id, exclude_report, visited):
-        if report_id == exclude_report:
+        if report_id == exclude_report or not self._report_authorized(report_id):
             return None
         return self._validated(("REVIEW", report_id, group_id), exclude_report,
                                lambda: self._validate_review(report_id, group_id, exclude_report))
@@ -218,6 +289,7 @@ class CaseRetriever:
         row = self._bounded_row(kind + "_EVENT", head["state"].get("event_id"))
         check(row is not None, "STATE_CORRUPT")
         event = row["payload"]
+        validate_stored_review_exception(event)
         self._charge_event(event)
         ref = "workspace_pipeline_event_ref" if group_id else "workspace_review_event_ref"
         check(head[ref] == row["record_id"] and head["version"] == event["revision"]
@@ -227,6 +299,7 @@ class CaseRetriever:
             return None
         source = self._bounded_row("WS_REPORT", report_id)
         check(source and source_digest(source["payload"]) == event["source_sha256"], "STATE_CORRUPT")
+        self._source_version(event, source["payload"])
         del source
         if group_id:
             cluster = self._cluster(report_id, exclude_report, set())
@@ -246,14 +319,15 @@ class CaseRetriever:
                 current = self._review(reference["report_id"], reference.get("group_id"), exclude_report, None)
                 if (not current or current["id"] != reference["id"]
                         or current["source_sha256"] != reference["source_sha256"]
-                        or any(current["scope"].get(key) != event["scope"].get(key) for key in SCOPE_KEYS)
-                        or current["version_id"] != event["version_id"] and current.get("compatible_versions") is not True):
+                        ):
                     return None
         return event
 
     def _hydrate(self, candidate, context, stage):
         meta = candidate["case"]
         target_id, source_id = context["report"]["id"], meta["report_id"]
+        if not self._report_authorized(source_id):
+            return None
         if stage == "CLUSTER":
             event = self._cluster(source_id, target_id, set())
             if not event or event["id"] != meta["id"]:
@@ -270,7 +344,8 @@ class CaseRetriever:
         check(source_row is not None, "STATE_CORRUPT")
         source = source_row["payload"]
         check(source_digest(source) == event["source_sha256"], "STATE_CORRUPT")
-        check(all(source.get(key) == event["scope"].get(key) for key in SCOPE_KEYS if key != "layout"), "STATE_CORRUPT")
+        check(source.get("rule") is None or isinstance(source["rule"], str), "STATE_CORRUPT")
+        source_version = self._source_version(event, source)
         if source.get("source_storage") == "PARTS_V2":
             from oa.sanity_workspace_sources import hydrate
             source = hydrate(self.db, source)
@@ -282,15 +357,18 @@ class CaseRetriever:
             members = set(event["group_snapshot"]["record_ids"])
             records = [record for record in records if record["id"] in members]
             check(len(records) == len(members), "STATE_CORRUPT")
-        return {**event, "records": records, "report_rule": source.get("rule"),
-                "retrieval_comparison": comparison(context, event), "example_complete": True}
+        enriched = {**event, "source_version": source_version}
+        return shared_case({**enriched, "source_record_count": source["record_count"], "report_rule": source.get("rule"),
+                            "retrieval_comparison": comparison(context, enriched)})
 
     @_validation_operation
     def select(self, context, *, stage, limit=8, max_bytes=1024 * 1024):
         check(stage in ("CLUSTER", "REVIEW") and type(limit) is int and 1 <= limit <= 100
               and type(max_bytes) is int and 0 < max_bytes <= 128 * 1024 * 1024, "INVALID_REQUEST")
         profile = query_profile(context)
-        self._case_read_budget = max_bytes
+        # Validate full immutable sources internally, but only complete shared
+        # human knowledge counts toward the model/browser example budget.
+        self._case_read_budget = 128 * 1024 * 1024
         counts = Counter()
         selected, cursors, passes = [], {}, 0
         window_size = max(16, limit * 2)
@@ -301,6 +379,10 @@ class CaseRetriever:
             scanned = 0
             for row in self._scan(context, stage, profile):
                 scanned += 1
+                if row.get("over_budget"):
+                    if passes == 0:
+                        counts["over_budget"] += 1
+                    continue
                 if row["active"] or not compatible(context, row["case"], stage=stage):
                     if passes == 0:
                         counts["ineligible"] += 1
@@ -372,8 +454,12 @@ class CaseRetriever:
                     "omitted_query_features": profile["omitted_query_features"],
                     "source_record_count": profile["source_record_count"], "scope_keys": list(SCOPE_KEYS),
                     "eco_policy": "COMPARE_AS_EXECUTION_CONDITION",
-                    "version_policy": "SAME_VERSION_OR_EXPLICIT_COMPATIBLE_VERSIONS",
-                    "reference_policy": "HUMAN_CONFIRMED_INCLUDING_NON_REUSABLE",
+                    "version_policy": "COMPARE_ALL_VERSIONS_WITHOUT_OPT_IN",
+                    "reference_policy": "GLOBAL_REGISTERED_SHARED_HUMAN_CONFIRMED_KNOWLEDGE",
+                    "evidence_mode": "SHARED_CONFIRMED_KNOWLEDGE",
+                    "source_access_policy": "ORIGINAL_SOURCE_ENDPOINTS_KEEP_CURRENT_RBAC",
+                    "scope_policy": "GLOBAL_REGISTERED_PROJECTS_BLOCKS_COMPARE_METADATA",
+                    "search_fields": ["reason", "criteria", "conditions", "exception", "group_labels", "group_rationales", "scope", "report_rule"],
                     "validity_checked": "SELECTED_CASES_AND_REFERENCE_DEPENDENCIES",
                     "search_complete": True, "scan_passes": passes,
                     "counts": dict(counts), "limit": limit, "max_bytes": max_bytes,
@@ -419,18 +505,20 @@ class CaseRetriever:
         check(all(isinstance(ref, dict) and all(key in ref for key in
                   ("id", "report_id", "revision", "source_sha256")) for ref in references), "INVALID_REQUEST")
         check(len({ref["id"] for ref in references}) == len(references), "INVALID_REQUEST")
-        self._case_read_budget = max_bytes
+        self._case_read_budget = 128 * 1024 * 1024
         kind = "WS_CLUSTER_EVENT" if stage == "CLUSTER" else \
             "WS_GROUP_REVIEW_EVENT" if context.get("group_id") else "WS_REVIEW_EVENT"
         cases, stale, over_budget, used = [], [], [], 0
         for ref in references:
             # Check permitted scope using a small projection before materializing
             # a caller-specified event or following its historical dependencies.
+            condition, parameters = self._scope_clause("e")
             row = self.db.execute("SELECT jsonb_build_object('id',payload->'id','report_id',payload->'report_id',"
                 "'revision',payload->'revision','source_sha256',payload->'source_sha256','scope',payload->'scope',"
                 "'version_id',payload->'version_id','compatible_versions',payload->'compatible_versions',"
                 "'confirmed',payload->'confirmed','conclusion',payload->'conclusion','group_id',payload->'group_id') AS candidate "
-                "FROM {oa} WHERE record_type=%s AND workspace_key=%s", (kind, ref["id"])).fetchone()
+                "FROM {oa} e WHERE record_type=%s AND workspace_key=%s AND " + condition,
+                (kind, ref["id"], *parameters)).fetchone()
             if (not row or not compatible(context, row["candidate"], stage=stage)
                     or any(row["candidate"].get(key) != ref[key] for key in
                            ("id", "report_id", "revision", "source_sha256"))
