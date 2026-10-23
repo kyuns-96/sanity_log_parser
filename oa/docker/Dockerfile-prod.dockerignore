@@ -1,9 +1,16 @@
-# The build context is the repository root. Send only OA/common source.
+# The build context is the repository root. Include runtime sources only.
 **
 !common/
 !common/**
 !oa/
 !oa/**
+
+# Support a standalone root docker/ layout with only its runtime bootstrap.
+!docker/
+docker/**
+!docker/start.py
+!docker/nginx-main.conf
+!docker/nginx.conf
 
 # These exclusions also apply under the allowlisted directories.
 **/.env
@@ -29,6 +36,10 @@
 **/*.swo
 **/*~
 **/*.log
+**/artifacts/**
+**/reports/**
+**/snapshots/**
+**/fixtures/**
 **/test_*.py
 **/tests/**
 **/e2e/**

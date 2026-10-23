@@ -3,11 +3,16 @@ name: sanity-oa
 x-oa: &oa
   image: ${OA_IMAGE:-sanity-oa:local}
   build:
-    context: ../..
-    dockerfile: oa/docker/Dockerfile-prod
+    # Override these paths when this directory is deployed as root docker/.
+    context: ${OA_BUILD_CONTEXT:-../..}
+    dockerfile: ${OA_DOCKERFILE:-oa/docker/Dockerfile-prod}
     args:
-      OA_BASE_IMAGE: ${OA_BASE_IMAGE:?Set the approved company Python base image}
-      OA_NODE_IMAGE: ${OA_NODE_IMAGE:?Set the approved Node 20.18 build image}
+      OA_BASE_IMAGE: ${OA_BASE_IMAGE:?Set the Python runtime base image}
+      OA_NODE_IMAGE: ${OA_NODE_IMAGE:?Set the Node 20.18 build image}
+      OA_DOCKER_DIR: ${OA_DOCKER_DIR:-oa/docker}
+      OA_APT_MIRROR: ${OA_APT_MIRROR:-}
+      OA_NPM_REGISTRY: ${OA_NPM_REGISTRY:-https://registry.npmjs.org}
+      OA_PIP_INDEX: ${OA_PIP_INDEX:-https://pypi.org/simple}
   # raw preserves literal dollar signs in passwords. Requires Compose 2.30+.
   env_file:
     - path: ${OA_ENV_FILE:?Set an absolute path to the OA-only runtime env file}
