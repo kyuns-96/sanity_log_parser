@@ -138,6 +138,8 @@ docker run -d --name sanity-oa --init \
 
 비공개 npm/pip 설정은 `--secret id=npm_config,src=/path/to/npmrc`, `--secret id=pip_config,src=/path/to/pip.conf`로 주입한다. secret이 있으면 해당 설정을 공개 registry 인자보다 우선하며, 설정 파일은 이미지 레이어에 복사하지 않는다. TLS 검증을 해제하지 않는다. 실제 접속 주소·인증정보·로컬 경로는 소스, build 인자, 문서, 커밋 메시지에 기록하지 않는다.
 
+pip secret이 없으면 `PIP_CONFIG_FILE=/dev/null`로 베이스 이미지의 global/user/site pip 설정을 읽지 않고 `OA_PIP_INDEX`를 적용한다. 베이스의 `extra-index-url`이 함께 사용되는 것을 막는다. 필요한 비공개 pip 설정은 명시적인 BuildKit secret으로 전달한다. [pip 설정 계약](https://pip.pypa.io/en/stable/topics/configuration/#pip-config-file).
+
 `Dockerfile-prod.dockerignore`는 `.env`, 인증서, 편집기 복구 파일, 테스트·로컬 빌드 출력, 보고서·스냅샷·fixture와 VWP/devtools/DB 자료를 빌드 context에서 제외한다. 실제 접속값·비공개 SDK 자료·입력 원문을 외부 대화나 공개 Git으로 내보내지 않는다.
 
 ## 6. 개발 환경 검증

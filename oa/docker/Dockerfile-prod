@@ -38,8 +38,9 @@ RUN --mount=type=secret,id=pip_config,target=/run/secrets/pip.conf \
         PIP_CONFIG_FILE=/run/secrets/pip.conf \
             /opt/venv/bin/python -m pip install --no-cache-dir -r requirements.txt; \
     else \
-        /opt/venv/bin/python -m pip install --no-cache-dir \
-            --index-url "${OA_PIP_INDEX}" -r requirements.txt; \
+        PIP_CONFIG_FILE=/dev/null \
+            /opt/venv/bin/python -m pip install --no-cache-dir \
+                --index-url "${OA_PIP_INDEX}" -r requirements.txt; \
     fi
 
 FROM ${OA_BASE_IMAGE} AS runtime
