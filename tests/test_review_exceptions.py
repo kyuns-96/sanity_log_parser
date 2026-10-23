@@ -5,7 +5,7 @@ import uuid
 
 from pydantic import ValidationError
 
-from common.sanity_ai_retrieval import compatible, query_profile, rank_case
+from common.sanity_ai_retrieval import compatible, comparison, query_profile, rank_case
 from common.sanity_common import ReviewError
 from common.sanity_review_advice import (
     ApprovedCriteriaAdvisor,
@@ -103,13 +103,59 @@ class ReviewExceptionContractTests(unittest.TestCase):
                 case = {**base, "exception": {**EXCEPTION, field: "synchronizer"}}
                 self.assertGreater(rank_case(profile, case), 0)
 
-    def test_exception_cannot_expand_block_or_version_retrieval_scope(self):
+    @staticmethod
+    def retrieval_example():
         scope = {"project_id": "p", "block_id": "b", "item_id": "clock", "family": "GCA",
-                 "parser": "parser-1", "rule_version": "rules-1", "layout": "POST"}
-        context = {"scope": scope, "report": {"id": "new", "version_id": "v2"}}
-        case = {"scope": scope, "report_id": "old", "version_id": "v1", "conclusion": "PASS",
+                 "parser": "parser-1", "rule_version": "rules-1", "layout": "POST", "eco": "ECO-2"}
+        context = {"scope": scope, "report": {"id": "new", "version_id": "v2"},
+                   "version": {"net_ver": "NET-2", "revision": "REV-2"}}
+        case = {"scope": {**scope, "eco": "ECO-1"}, "report_id": "old", "version_id": "v1",
+                "source_version": {"net_ver": "NET-1", "revision": "REV-1"}, "conclusion": "PASS",
                 "reusable": False, "compatible_versions": False, "exception": EXCEPTION}
-        self.assertFalse(compatible(context, case, stage="REVIEW"))
-        self.assertTrue(compatible(context, {**case, "compatible_versions": True}, stage="REVIEW"))
-        self.assertFalse(compatible(context, {**case, "compatible_versions": True,
-                                             "scope": {**scope, "block_id": "another"}}, stage="REVIEW"))
+        return context, case
+
+    def test_exception_cases_are_globally_searchable_without_legacy_rule_approval(self):
+        context, original = self.retrieval_example()
+        sources = ({}, {"block_id": "another-block"},
+                   {"project_id": "another-project", "block_id": "another-block"},
+                   {"project_id": "another-project", "block_id": "another-block", "item_id": "another-check",
+                    "family": "VCLP", "parser": "parser-2", "rule_version": "rules-2", "layout": "PRE", "eco": None})
+        for source in sources:
+            for approved in (False, True):
+                for conclusion in ("PASS", "FAIL"):
+                    case = {**original, "scope": {**original["scope"], **source},
+                            "compatible_versions": approved, "conclusion": conclusion}
+                    with self.subTest(source=source, approved=approved, conclusion=conclusion):
+                        self.assertTrue(compatible(context, case, stage="REVIEW"))
+                        self.assertTrue(compatible(context, {**case, "exception": None}, stage="REVIEW"))
+                        details = comparison(context, case)
+                        self.assertEqual({"current": "v2", "case": "v1"}, details["version"])
+                        self.assertEqual({"current": "ECO-2", "case": case["scope"]["eco"]}, details["eco"])
+                        self.assertEqual({"current": "REV-2", "case": "REV-1"}, details["attributes"]["revision"])
+                        self.assertEqual(approved, details["compatible_versions_explicit"])
+                        self.assertFalse(details["automatic_rule_reuse_approved"])
+
+    def test_global_exception_search_keeps_self_deferred_and_review_granularity_guards(self):
+        context, case = self.retrieval_example()
+        for change in ({"report_id": "new"}, {"conclusion": "DEFER"}, {"conclusion": None},
+                       {"group_id": "past-group"}):
+            with self.subTest(change=change):
+                self.assertFalse(compatible(context, {**case, **change}, stage="REVIEW"))
+        group_context = {**context, "group_id": "current-group"}
+        self.assertFalse(compatible(group_context, case, stage="REVIEW"))
+        self.assertTrue(compatible(group_context, {**case, "group_id": "past-group"}, stage="REVIEW"))
+
+    def test_global_exception_search_still_requires_source_identity(self):
+        context, case = self.retrieval_example()
+        for side in ("context", "case"):
+            for key in ("project_id", "block_id", "item_id", "family", "parser", "rule_version", "layout"):
+                current, candidate = copy.deepcopy(context), copy.deepcopy(case)
+                (current if side == "context" else candidate)["scope"].pop(key)
+                with self.subTest(side=side, missing=key):
+                    self.assertFalse(compatible(current, candidate, stage="REVIEW"))
+            for key in ("project_id", "block_id", "item_id"):
+                for value in (None, ""):
+                    current, candidate = copy.deepcopy(context), copy.deepcopy(case)
+                    (current if side == "context" else candidate)["scope"][key] = value
+                    with self.subTest(side=side, blank=key, value=value):
+                        self.assertFalse(compatible(current, candidate, stage="REVIEW"))

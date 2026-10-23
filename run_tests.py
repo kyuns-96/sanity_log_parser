@@ -19,6 +19,7 @@ QUICK_TESTS = (
     "tests.test_scoped_dashboard.ScopedDashboardTests.test_admin_starts_without_business_grants_and_can_approve_own_top_request",
     "tests.test_scoped_dashboard.ScopedDashboardTests.test_response_id_alias_cannot_expose_another_blocks_evidence",
     "tests.test_schema", "tests.test_submission_contracts", "tests.test_normalization", "tests.test_integration_contracts",
+    "tests.test_review_exceptions",
     "tests.test_submission_database.SubmissionDatabaseTests.test_summary_numeric_plan_is_rejected_without_publication",
     "tests.test_submission_database.SubmissionDatabaseTests.test_invalid_utf8_is_private_and_public_unknown_evidence_is_masked",
     "tests.test_submission_database.SubmissionDatabaseTests.test_json_pointers_survive_the_full_roundtrip_and_records_api",
