@@ -8,6 +8,8 @@ import sys
 
 from common.sanity_common import ReviewError, digest, pack_json
 from common.sanity_db import Database, Queue, lock_key
+from common.sanity_parsers import validate_builtin_evaluation
+from common.sanity_privacy import SecretGuard
 from common.sanity_submission import (PART_BYTES, PROTOCOL, approved, check, message_id, submission_uuid,
     validate_packet)
 from common.sanity_submission_files import (copy_bundle, directory, fsync_dir, load_config, read_json_file,
@@ -107,14 +109,28 @@ class SubmissionWorker:
         fsync_dir(self.archive)
         return output
 
+    def publication_packet(self, sid, position):
+        outbox = self.store.get('SOURCE_OUTBOX',sid+'.'+str(position))
+        check(outbox,'SUBMISSION_OUTBOX_INCOMPLETE')
+        value = outbox['payload']
+        packet = validate_packet(value['packet'])
+        check(value['message_id'] == message_id(value['kind'],packet),'SUBMISSION_CONFLICT')
+        return value, packet
+
     def publish(self, sid):
         row = self.store.get('SUBMISSION',sid)
-        for position in range(row['state']['next_publish'],row['state']['message_count']):
-            outbox = self.store.get('SOURCE_OUTBOX',sid+'.'+str(position))
-            check(outbox,'SUBMISSION_OUTBOX_INCOMPLETE')
-            value = outbox['payload']
-            packet = validate_packet(value['packet'])
-            check(value['message_id'] == message_id(value['kind'],packet),'SUBMISSION_CONFLICT')
+        for unit in row['payload']['plan']['inventory']['units']:
+            if unit['applicable']:
+                validate_builtin_evaluation(unit.get('parser'),unit)
+        positions = range(row['state']['next_publish'],row['state']['message_count'])
+        guard = SecretGuard()
+        # Preflight all remaining immutable packets, including old outboxes,
+        # before publishing any of them. Keep memory bounded to one packet.
+        for position in positions:
+            _, packet = self.publication_packet(sid,position)
+            guard.ensure_public(packet)
+        for position in positions:
+            value, packet = self.publication_packet(sid,position)
             packed = pack_json(packet,max_bytes=PART_BYTES)
             with self.db.transaction():
                 Queue(self.db,'vwp_to_oa').enqueue({'message_id':value['message_id'],'message_type':value['kind'],
@@ -153,11 +169,11 @@ class SubmissionWorker:
         except ReviewError as exc:
             permanent = {'SOURCE_IDENTITY_CONFLICT','SOURCE_ORDER_CONFLICT','RECORD_TRANSFER_LIMIT','SOURCE_MESSAGE_LIMIT',
                 'SOURCE_COVERAGE_MISMATCH','FILE_INTEGRITY','SOURCE_CHANGED','SOURCE_SCOPE_MISMATCH','SENSITIVE_CONTENT',
-                'PARSER_SCOPE_MISMATCH','INVALID_SUBMISSION'}
+                'PARSER_SCOPE_MISMATCH','SUBMISSION_CONTRACT_MISMATCH','INVALID_SUBMISSION'}
             if exc.code in permanent or exc.code.startswith('PARSER_'):
                 with self.db.transaction():
                     row = self.store.get('SUBMISSION',sid,lock=True)
-                    if row and row['status'] in ('VWP_ACCEPTED','PARSING'):
+                    if row and row['status'] in ('VWP_ACCEPTED','PARSING','DB_QUEUED'):
                         row = self.store.state(sid,'REJECTED',{**row['state'],'blockers':[exc.code]})
                 if row:
                     self.write_receipt(row)

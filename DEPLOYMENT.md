@@ -4,12 +4,14 @@
 
 각 서버는 이 Git 저장소를 사용한다. 소스는 서버별 디렉터리로 나누고, 공통 계약은 `common/` 한 곳에서 관리한다. 모든 Python 명령은 **저장소 루트**에서 실행한다. 디렉터리를 다른 서버 폴더 안에 복사하거나 공통 파일을 중복 관리하지 않는다.
 
+2026-10-23 사용자 결정으로 **VWP 접수·원본 보관·파싱·검증·DB 전송은 중앙 수집 서비스로 운영**한다. 사용자 VWP 환경에는 제출 CLI와 회사 원천/신원 어댑터를 배치하고 DB·모델 계정을 주지 않는다. 중앙 서비스의 기존 Python 모듈 이름은 `vwp_bridge`이며, 기존 VWP 서버 안에서 서비스 계정·영속 저장 공간을 분리해 운영할 수 있다. 별도 서버 장비가 필수는 아니다. 이번 운영 경로의 AI 분류·판정은 OA가 담당하며 legacy VWP AI worker는 별도 선택 경로로 유지한다.
+
 ## 1. 서버와 코드 위치
 
 | 서버 / 개발 AI | 실행 코드 | 사내 구현 위치 | DB / 설정 예제 |
 |---|---|---|---|
 | VWP 원천 수집 | `vwp/` | `vwp/integration/` — plan·원천 SDK | 앱 DB·모델 계정 없음 |
-| VWP-bridge | `vwp_bridge/` | item parser·submission, 기존 VWP SDK는 해당 실행 경로 유지 시 사용 | VWP 제한 로그인 / [예제](vwp_bridge/.env.example) |
+| VWP 중앙 수집 서비스 (VWP-bridge) | `vwp_bridge/` | item parser·submission, 기존 VWP SDK는 해당 실행 경로 유지 시 사용 | VWP 제한 로그인 / [예제](vwp_bridge/.env.example) |
 | OA | `oa/`, `oa/dashboard/` | SSO·source 허용 어댑터, OA AI private 설정·승인 기준 catalog·현장 평가 | OA 제한 로그인 / [예제](oa/.env.example). 모델 설정·worker는 [AI 실행 계약](oa/AI_RUNTIME.md) |
 | 공통 | `common/` | 사내 AI는 읽기 전용 | 설정·DB·전송 계약·추상 타입·순수 검증 |
 | 개발 시험 | `devtools/`, `tools/`, `tests/` | 설계 담당 Codex 관리 | 합성 report·seed·외부 모델 mock·QA |
@@ -60,9 +62,17 @@ VWP-bridge/OA는 같은 논리 DB·스키마를 기본적으로 서로 다른 �
 
 사용자별 REVISION 제출에 PRE/POST의 여러 물리 루트가 포함될 때는 [분산 수집 설계](vwp/SOURCE_COLLECTION_DESIGN.md)를 따른다. 회사 launcher의 원본 불변 export는 VWP 내부 입력 준비이며, OA로 파일을 전달하지 않는다. 예상 범위 선언·원천 버전/실행의 V2 운영 연결은 현재 schema 1과 구분한다.
 
-### VWP-bridge
+### VWP 중앙 수집 서비스 (VWP-bridge)
 
 [담당 AI 지시문](vwp_bridge/INTERNAL_AI_TASK.md)을 읽는다. 회사 parser 등록은 `vwp_bridge/integration/corporate_parsers.py`다. 같은 폴더의 `corporate_clustering.py`, `corporate_review.py`는 기존 VWP 모델 경로를 사용할 때의 어댑터이며 OA 모델용 파일이 아니다. 전체 로그·원본 위치·조건을 DB로 전달하는 준비를 우선한다.
+
+OA AI 운영 경로의 중앙 서비스는 기존 V2 제출 worker를 실행한다. 실제 회사 어댑터·인증된 spool·영속 archive·DB 준비는 [제출 안내](vwp/SUBMISSION.md), Docker 운영 설정은 [중앙 수집 서비스 Docker 안내](vwp_bridge/docker/README.md#4-중앙-수집-서비스-실행--oa-ai-운영-경로)를 따른다. Docker의 `submission` profile은 VWP AI를 비활성화하고 `compose.submission.yaml`로 private JSON·spool/archive를 마운트한다.
+
+```bash
+.venv/bin/python -m vwp_bridge.submission_worker --config /etc/sanity/vwp-bridge-submit.json --interval 2
+```
+
+아래 명령은 기존 schema 1 snapshot 수동 분석과 legacy 분류/추가 근거 worker의 별도 진입점이다.
 
 ```bash
 .venv/bin/python -m vwp_bridge.corporate_analyze analyze --input SNAPSHOT_DIR/run.json

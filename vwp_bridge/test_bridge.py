@@ -101,7 +101,7 @@ class BridgeTests(PgTestCase):
         self.assertEqual("opaque report", payload["finding_groups"][0]["examples"][0]["raw"])
 
     def test_summary_total_mismatch_and_bad_status(self):
-        unit = {**self.unit, "parser": "summary_json_v1"}
+        unit = {**self.unit, "parser": "summary_json_v1", "evaluation": None}
         report = {"format_version": 1, "complete": True, "total": 2,
                   "results": [{"object": "A", "check_point": "P1", "mode": "M1", "code": "C",
                                "severity": "ERROR", "status": "MAYBE"}]}
@@ -110,7 +110,7 @@ class BridgeTests(PgTestCase):
         self.assertEqual(1, payload["review_units"][0]["unknown_count"])
 
     def test_summary_missing_required_fields_block_completion(self):
-        unit = {**self.unit, "parser": "summary_json_v1"}
+        unit = {**self.unit, "parser": "summary_json_v1", "evaluation": None}
         report = {"format_version": 1, "complete": True, "total": 1,
                   "results": [{"mode": "M1", "code": "C", "severity": "INFO", "status": "PASS"}]}
         payload, _ = self.run_analysis(json.dumps(report), unit=unit)
@@ -187,7 +187,7 @@ class BridgeTests(PgTestCase):
         self.assertEqual(b"", self.admin_query("SELECT raw_bytes FROM {vwp} WHERE record_type='EVIDENCE'").fetchone()[0])
 
     def test_invalid_typed_identity_records_are_isolated(self):
-        unit = {**self.unit, "parser": "summary_json_v1"}
+        unit = {**self.unit, "parser": "summary_json_v1", "evaluation": None}
         for value in (123, True, [], {"path": "A"}):
             with self.subTest(value=value):
                 record = {"object": value, "check_point": "P1", "mode": "M1", "code": "C",
@@ -228,11 +228,33 @@ class BridgeTests(PgTestCase):
         self.assertEqual("FILE_INTEGRITY", context.exception.code)
 
     def test_empty_results_and_invalid_exclusion_never_pass(self):
-        unit = {**self.unit, "parser": "summary_json_v1"}
+        unit = {**self.unit, "parser": "summary_json_v1", "evaluation": None}
         payload, _ = self.run_analysis('{"format_version":1,"complete":true,"total":0,"results":[]}', unit=unit)
         self.assertIn("EMPTY_REPORT", payload["review_units"][0]["blockers"])
         payload, _ = self.run_analysis(unit={**self.unit, "applicable": False})
         self.assertIn("INVALID_EXCLUSION", payload["review_units"][0]["blockers"])
+
+    def test_summary_numeric_scope_mismatch_stops_before_analysis_writes(self):
+        unit = {**self.unit, "parser": "summary_json_v1"}
+        body = json.dumps({"format_version": 1, "complete": True, "total": 1,
+            "results": [{"object": "A", "check_point": "P1", "mode": "M1", "code": "C",
+                         "severity": "INFO", "status": "PASS", "observed": "12", "unit": "ns"}]})
+        with self.assertRaises(ReviewError) as error:
+            self.run_analysis(body, unit=unit)
+        self.assertEqual("PARSER_SCOPE_MISMATCH", error.exception.code)
+        self.assertEqual(0, self.admin_query("SELECT count(*) FROM {vwp}").fetchone()[0])
+        self.assertEqual(0, self.admin_query("SELECT count(*) FROM {vwp_to_oa}").fetchone()[0])
+
+    def test_truncated_invalid_utf8_example_cannot_publish_reversible_credentials(self):
+        original = b'token=SYNTHETIC_TRUNCATED_ONLY ' + b'x' * 3000 + b'\xff\n'
+        self.report.parent.mkdir(parents=True)
+        self.report.write_bytes(original)
+        with self.assertRaises(ReviewError) as error:
+            self.run_analysis(unit={**self.unit,'parser':'unknown'})
+        self.assertEqual('SENSITIVE_CONTENT',error.exception.code)
+        self.assertEqual(0,self.admin_query('SELECT count(*) FROM {vwp_to_oa}').fetchone()[0])
+        private = self.admin_query("SELECT raw_bytes FROM {vwp} WHERE record_type='EVIDENCE'").fetchone()[0]
+        self.assertEqual(('hex:'+original.hex()).encode(),bytes(private))
 
     def test_exact_decimal_boundary_le_and_ge(self):
         rows = ["A,P1,M1,C-1,WARNING,10.0000000000000001,ns",

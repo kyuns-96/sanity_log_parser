@@ -32,6 +32,14 @@ class SecretGuard:
         self.known = sorted(set(known), key=len, reverse=True)
 
     def text(self, value):
+        # Invalid UTF-8 evidence is retained privately as reversible hex. Its
+        # bytes cannot be checked by the plaintext rules, so mask the whole raw.
+        if (value.startswith("hex:") and len(value) % 2 == 0
+                and re.fullmatch(r"[0-9a-fA-F]+", value[4:])):
+            try:
+                bytes.fromhex(value[4:]).decode("utf-8")
+            except UnicodeDecodeError:
+                return MASK
         for secret in self.known:
             value = value.replace(secret, MASK)
         value = PRIVATE_KEY.sub(MASK, value)
@@ -45,7 +53,13 @@ class SecretGuard:
         if isinstance(value, list):
             return [self.redact(v) for v in value]
         if isinstance(value, dict):
-            return {self.text(k): MASK if SECRET_KEY.search(k) and v else self.redact(v) for k, v in value.items()}
+            # A bounded legacy example may end before the invalid byte. The
+            # remaining hex prefix cannot establish that the full raw was text.
+            truncated_hex = (type(value.get("raw_omitted_chars")) is int and value["raw_omitted_chars"] > 0
+                             and isinstance(value.get("raw"), str)
+                             and re.fullmatch(r"hex:[0-9a-fA-F]+", value["raw"]) is not None)
+            return {self.text(k): MASK if (SECRET_KEY.search(k) and v) or (k == "raw" and truncated_hex)
+                    else self.redact(v) for k, v in value.items()}
         return value
 
     def ensure_public(self, value):
