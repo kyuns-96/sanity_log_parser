@@ -1,18 +1,21 @@
 """Focused PostgreSQL + mock HTTP checks of durable OA inference boundaries."""
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import timedelta
 import json
 from unittest.mock import patch
 from uuid import uuid4
 
 import httpx
+from cryptography.fernet import Fernet
 
 from common.sanity_common import ReviewError, canonical_json
 from common.sanity_db import Database, json_value
 from oa.sanity_access import access_lock
 from oa.sanity_ai_jobs import AIJobService, PREFIX, _now, run_once
 from oa.sanity_ai_model import OAAdvisor, OASettings
+from oa.sanity_ai_tokens import UserTokenStore
 from oa.sanity_workspace import WorkspaceStore, record_id
 from oa.sanity_workspace_clustering import WorkspaceClusteringStore
 from tests.support import PgTestCase
@@ -274,6 +277,42 @@ class AIJobDatabaseTests(PgTestCase):
         with self.service() as service:
             self.assert_code("AI_JOB_CORRUPT", lambda: service.status("owner", job["id"]))
 
+    def test_gateway_policy_change_invalidates_queued_work_before_http(self):
+        settings = replace(self.advisor.settings, client_api_key="synthetic-private-client-key",
+                           client_name="synthetic-private-client", client_version="synthetic-release-a",
+                           session_mode="per_request")
+        self.advisor = OAAdvisor(settings, transport=httpx.MockTransport(self.respond))
+        self.enqueue()
+        self.advisor = OAAdvisor(replace(settings, client_version="synthetic-release-b"),
+                                 transport=httpx.MockTransport(self.respond))
+        result = self.run_job()
+        self.assertEqual(("STALE", "AI_CONFIG_CHANGED"), (result["status"], result["error"]))
+        self.assertEqual([], self.requests)
+
+    def test_gateway_credentials_can_rotate_without_recalling_a_completed_job(self):
+        settings = replace(self.advisor.settings, client_api_key="synthetic-private-client-key",
+                           client_name="synthetic-private-client", client_version="synthetic-release-a",
+                           session_mode="per_request")
+        self.advisor = OAAdvisor(settings, transport=httpx.MockTransport(self.respond))
+        self.enqueue()
+        rotated = replace(settings, token="synthetic-rotated-jwt", client_api_key="synthetic-rotated-client-key")
+        self.advisor = OAAdvisor(rotated, transport=httpx.MockTransport(self.respond))
+
+        def check_gateway(request):
+            self.assertEqual("Bearer " + rotated.token, request.headers["authorization"])
+            self.assertEqual(rotated.client_api_key, request.headers["x-client-api-key"])
+            self.assertEqual(rotated.client_name, json.loads(request.content)["extraData"]["clientName"])
+        self.callback = check_gateway
+        self.assertEqual("COMPLETED", self.run_job()["status"])
+        self.assertIsNone(self.run_job())
+        self.assertEqual(1, len(self.requests))
+        with self.service() as service:
+            event, _ = WorkspaceClusteringStore(service.db, ws=service.ws).current("report")
+            serialized = json.dumps(event)
+            for value in (settings.client_api_key, rotated.client_api_key, rotated.token,
+                          rotated.client_name, rotated.client_version):
+                self.assertNotIn(value, serialized)
+
     def test_review_criteria_changes_during_http_make_saved_result_stale(self):
         self.enqueue()
         self.assertEqual("COMPLETED", self.run_job()["status"])
@@ -288,3 +327,89 @@ class AIJobDatabaseTests(PgTestCase):
         result = self.run_job()
         self.assertEqual(("STALE", "AI_CRITERIA_STALE"), (result["status"], result["error"]))
         self.assertEqual(0, self.admin_query("SELECT count(*) FROM {oa} WHERE record_type='WS_GROUP_REVIEW_PROPOSAL'").fetchone()[0])
+
+    def configure_personal_tokens(self):
+        settings = {"SANITY_OA_AI_TOKEN_SOURCE": "user", "SANITY_OA_AI_TOKEN_STORE_SECRET": Fernet.generate_key().decode()}
+        private = patch("oa.sanity_ai_tokens.load_environment", return_value=settings)
+        private.start(); self.addCleanup(private.stop)
+        self.advisor = OAAdvisor(replace(self.advisor.settings, token_source="user", token="",
+            client_api_key="synthetic-shared-client-key", client_name="synthetic-client", client_version="1",
+            session_mode="per_request"), transport=httpx.MockTransport(self.respond))
+
+    def save_personal_token(self, user_id, token, revision):
+        with Database("oa") as db, db.transaction():
+            return UserTokenStore(db).save(user_id, token, revision)
+
+    def test_each_requesting_user_uses_only_their_own_token(self):
+        self.configure_personal_tokens()
+        with Database("oa") as db, db.transaction():
+            SyntheticAIWorkspace(db).put("WS_USER", "other", {"id": "other", "name": "다른 합성 사용자",
+                "username": "other", "role": "OWNER"}, state={"active": True})
+        self.admin_query("UPDATE {oa} SET payload=jsonb_set(payload,'{{owners}}',%s) "
+                         "WHERE record_type='WS_BLOCK' AND workspace_key='block'", (json_value(["owner", "other"]),))
+        self.save_personal_token("owner", "synthetic-personal-owner-token", 0)
+        self.save_personal_token("other", "synthetic-personal-other-token", 0)
+        used = []
+        self.callback = lambda request: used.append(request.headers["authorization"])
+        self.enqueue()
+        self.assertEqual("COMPLETED", self.run_job()["status"])
+        with self.service() as service:
+            service.enqueue("other", "block", "version", "report", expected_revision=1, request_id=uuid4())
+        self.assertEqual("COMPLETED", self.run_job()["status"])
+        self.assertEqual(["Bearer synthetic-personal-owner-token", "Bearer synthetic-personal-other-token"], used)
+        self.assertEqual("", self.advisor.settings.token)
+        rows = self.admin_query("SELECT payload FROM {oa}").fetchall()
+        for token in ("synthetic-personal-owner-token", "synthetic-personal-other-token"):
+            self.assertNotIn(token, json.dumps(rows, default=str))
+
+    def test_missing_or_removed_personal_token_never_borrows_another_users_credential(self):
+        self.configure_personal_tokens()
+        self.save_personal_token("other", "synthetic-other-only-token", 0)
+        self.assert_code("AI_USER_TOKEN_REQUIRED", lambda: self.enqueue())
+        with self.service() as service:
+            capability = service.capability(*self.path)
+        self.assertFalse(capability["available"])
+        self.assertEqual("AI_USER_TOKEN_REQUIRED", capability["credential_error"])
+        self.save_personal_token("owner", "synthetic-owner-token", 0)
+        self.enqueue()
+        self.save_personal_token("owner", None, 1)
+        result = self.run_job()
+        self.assertEqual(("STALE", "AI_USER_TOKEN_REQUIRED"), (result["status"], result["error"]))
+        self.assertEqual([], self.requests)
+
+    def test_personal_token_change_during_http_prevents_late_result_publication(self):
+        self.configure_personal_tokens()
+        self.save_personal_token("owner", "synthetic-owner-original", 0)
+        self.enqueue()
+        def rotate(request):
+            self.save_personal_token("owner", "synthetic-owner-replaced", 1)
+        self.callback = rotate
+        result = self.run_job()
+        self.assertEqual(("STALE", "AI_CREDENTIAL_CHANGED"), (result["status"], result["error"]))
+        self.assertEqual(1, len(self.requests))
+        self.assertIsNone(self.run_job())
+        with self.service() as service:
+            self.assertEqual(0, WorkspaceClusteringStore(service.db, ws=service.ws).current("report")[1])
+
+    def test_personal_gateway_401_is_terminal_and_has_no_authentication_fallback(self):
+        self.configure_personal_tokens()
+        self.save_personal_token("owner", "synthetic-rejected-owner-token", 0)
+        self.enqueue()
+        self.callback = lambda request: httpx.Response(401, text="synthetic-rejected-owner-token")
+        result = self.run_job()
+        self.assertEqual(("FAILED", "AI_AUTH_FAILED"), (result["status"], result["error"]))
+        self.assertNotIn("synthetic-rejected-owner-token", json.dumps(result))
+        self.assertIsNone(self.run_job())
+        self.assertEqual(1, len(self.requests))
+
+    def test_saved_result_is_not_recovered_after_the_personal_token_is_removed(self):
+        self.configure_personal_tokens()
+        self.save_personal_token("owner", "synthetic-owner-token", 0)
+        self.enqueue()
+        with patch.object(AIJobService, "_apply", side_effect=RuntimeError("synthetic publication interruption")):
+            with self.assertRaises(RuntimeError):
+                self.run_job()
+        self.save_personal_token("owner", None, 1)
+        result = self.run_job()
+        self.assertEqual(("STALE", "AI_USER_TOKEN_REQUIRED"), (result["status"], result["error"]))
+        self.assertEqual(1, len(self.requests))

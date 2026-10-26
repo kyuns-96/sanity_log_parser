@@ -29,7 +29,7 @@ export type PipelineView = { current: ClusterEvent | null; revision: number; rea
 export type ClusterBrief = Omit<ClusterEvent, 'groups'> & { group_count: number; record_count: number; rationale_counts: Record<RationaleStatus, number> }
 export type PipelineTask = { id: string; status: 'PENDING' | 'RUNNING' | 'FAILED' | 'STALE' | 'CANCELLED' | 'COMPLETED'; record_count: number; processed: number; next_chunk: number; error: string | null; chunks: { index: number; start: number; stop: number; record_count: number; input_sha256: string; status: string }[] }
 export type CodexJob = { id: string; status: 'PENDING' | 'RUNNING' | 'RESULT_READY' | 'COMPLETED' | 'FAILED' | 'STALE' | 'UNKNOWN' | 'CANCELLED' | 'SAVE_FAILED'; error: string | null; model: string; created_at: string; finished_at?: string; expected_revision: number; input_case_count: number; event_id?: string }
-export type CodexCapability = { available: boolean; supported: boolean; enabled: boolean; model: string; remaining: number | null; job: CodexJob | null; provider?: string; synthetic_only?: boolean }
+export type CodexCapability = { available: boolean; supported: boolean; enabled: boolean; model: string; remaining: number | null; job: CodexJob | null; provider?: string; synthetic_only?: boolean; credential_required?: boolean; credential_ready?: boolean; credential_error?: string | null }
 export type WorkbenchView = { report: WorkspaceReport; version: WorkspaceVersion; current: ClusterBrief | null; revision: number; ready: boolean; can_edit: boolean; stale: boolean; task: PipelineTask | null; ai?: CodexCapability; record_count: number; raw_line_count: number; source_sha256: string; case_count: number; reusable_count: number; removed_count: number; corporate_ai_connected: boolean; summary: { confirmed: boolean; total: number; reviewed: number; pending: number; complete: boolean; rationale_counts: Record<RationaleStatus, number>; counts: Record<string, number> } }
 export type GroupBrief = { id: string; ordinal?: number; label: string; record_count: number; status: string; revision: number; example: Record<string, unknown>; rationale: { status: RationaleStatus; reason: string; reason_truncated: boolean; reason_omitted_chars: number; source: string | null; evidence_count: number } }
 export type PageResult<T> = { items: T[]; total: number; offset: number; limit: number }
@@ -57,6 +57,12 @@ const messages: Record<string, string> = {
   SOURCE_FILE_ON_VWP: '원본 report 파일은 VWP에 보관됩니다. 로그는 검토 화면에서 확인할 수 있습니다.',
   PROPOSAL_STALE: '판정 또는 참조 기준이 변경되었습니다. 최신 기준으로 제안을 다시 받아 주세요.',
   AI_NOT_CONFIGURED: '사내 AI 검토가 아직 연결되지 않았습니다.',
+  AI_USER_TOKEN_REQUIRED: '화면 상단의 개인 AI 토큰에서 본인의 토큰을 등록해 주세요.',
+  AI_USER_TOKEN_EXPIRED: '개인 AI 토큰이 만료됐습니다. 새 토큰으로 교체해 주세요.',
+  AI_AUTH_FAILED: 'AI 인증에 실패했습니다. 개인 토큰을 확인하고 계속 실패하면 운영 담당자에게 문의해 주세요.',
+  AI_TOKEN_STORE_NOT_CONFIGURED: '개인 AI 토큰 저장 설정이 준비되지 않았습니다. 운영 담당자에게 문의해 주세요.',
+  AI_TOKEN_UNAVAILABLE: '등록된 개인 AI 토큰을 사용할 수 없습니다. 운영 담당자에게 문의해 주세요.',
+  AI_CREDENTIAL_CHANGED: 'AI 호출 중 개인 토큰이 변경되어 결과를 적용하지 않았습니다.',
   AI_CONTEXT_LIMIT: '전체 로그 또는 참고 사례가 AI 입력 한도를 넘었습니다. 일부만 처리하지 않았습니다. 운영 담당자가 처리 한도를 확인해야 합니다.',
   AI_INPUT_LIMIT: '전체 AI 입력이 처리 한도를 넘었습니다. 로그를 생략하지 않았습니다. 운영 담당자에게 확인해 주세요.',
   AI_OUTPUT_LIMIT: 'AI 응답이 출력 한도를 넘었습니다. 전체 결과가 검증되지 않아 적용하지 않았습니다.',

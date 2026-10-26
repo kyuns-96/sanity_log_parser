@@ -35,6 +35,8 @@ flowchart TD
 | `SANITY_OA_AI_ENABLED` | 기본 `false`. 사용자가 승인한 사내 모델 연결에만 `true` |
 | `SANITY_OA_AI_URL` | API 메서드까지 포함한 전체 HTTPS URL. base URL만 입력하지 않음 |
 | `SANITY_OA_AI_TOKEN` | 해당 OA API의 Bearer 토큰 |
+| `SANITY_OA_AI_TOKEN_SOURCE` | 기본 `server`. `user`는 SSO 사용자별 등록 토큰을 사용하며 서버 공용 토큰을 무시 |
+| `SANITY_OA_AI_TOKEN_STORE_SECRET` | `user` 모드의 서버 전용 Fernet 암호화 키. 웹과 worker에 동일한 비공개 값 주입 |
 | `SANITY_OA_AI_MODEL` | 사내에서 확인한 모델 ID |
 | `SANITY_OA_AI_API` | `chat_completions`(기본) 또는 `responses`; 실제 지원 API를 선택 |
 | `SANITY_OA_AI_JSON_MODE` | 기본 `false`. JSON object 출력 옵션을 실제 지원할 때만 `true` |
@@ -46,7 +48,43 @@ flowchart TD
 
 입출력 바이트 설정은 각각 최대 64MiB의 자원 보호 한도이며 **모델의 토큰/context 한도와 같지 않다.** 실제 모델 한도에 맞게 설정한다. 요청에는 prompt·전체 현재 로그·선정 사례·점검 기준·JSON 포장 크기가 포함된다. 값만 높이는 것으로 대용량 AI 지원이 완료되지 않는다.
 
-공통 연결은 HTTPS·Bearer·단일 완료 JSON 응답을 사용한다. 응답 압축은 바이트 한도 검사 전에 대량 해제되는 것을 막기 위해 거부하며 `Accept-Encoding: identity`를 요청한다. 임의 인증 header, HTTP, stream, tool call이나 미지원 API 형식이 필요하면 설정으로 추정하지 말고 비식별 계약을 Codex에게 전달한다. TLS·오류/참조 검사를 해제하지 않는다.
+공통 연결은 HTTPS·Bearer·단일 완료 JSON 응답을 사용한다. 응답 압축은 바이트 한도 검사 전에 대량 해제되는 것을 막기 위해 거부하며 `Accept-Encoding: identity`를 요청한다. 아래 고정 게이트웨이 계약 이외의 임의 인증 header, HTTP, stream, tool call이나 미지원 API 형식이 필요하면 설정으로 추정하지 말고 비식별 계약을 Codex에게 전달한다. TLS·오류/참조 검사를 해제하지 않는다.
+
+### 2.1. 사내 게이트웨이의 추가 인증과 클라이언트 식별
+
+2026-10-26 비식별 현장 계약에 맞춰 **기존 Bearer + 고정 `x-client-api-key` 헤더**와 본문의 **`extraData={clientName,clientVersion,sessionId}`**를 선택적으로 지원한다. 기존 `messages`, `model`, `stream=false`, 선택형 `response_format`은 유지한다. 이 게이트웨이 경로는 확인된 `chat_completions`에서만 지원하며 `responses`와 함께 설정하면 `AI_CONFIG`다. 임의 헤더 이름이나 임의 JSON 본문을 받는 설정은 없다.
+
+| 추가 키 | 의미와 기본값 |
+|---|---|
+| `SANITY_OA_AI_CLIENT_API_KEY` | 고정 `x-client-api-key`의 값. 기본 빈 값. 공백/제어문자 없는 ASCII 1~8192자 |
+| `SANITY_OA_AI_CLIENT_NAME` | `extraData.clientName`. 기본 빈 값. 출력 가능한 1~200자, 앞뒤 공백 불가 |
+| `SANITY_OA_AI_CLIENT_VERSION` | `extraData.clientVersion`. 기본 빈 값. 출력 가능한 1~200자, 앞뒤 공백 불가 |
+| `SANITY_OA_AI_SESSION_MODE` | 기본 `disabled`. 게이트웨이 사용 시 `per_request` 또는 `fixed`를 명시적으로 선택 |
+| `SANITY_OA_AI_SESSION_ID` | `fixed`일 때만 필수인 정확한 `extraData.sessionId`. 출력 가능한 1~200자, 앞뒤 공백 불가 |
+
+게이트웨이를 사용하지 않으면 추가 값은 모두 비우고 mode는 `disabled`로 둔다. 기존 요청과 설정 지문은 그대로다. 모델이 활성화된 상태에서 추가 값 중 일부만 설정하거나 세션 방식을 선택하지 않으면 호출 전에 `AI_CONFIG`로 실패한다. 누락된 키를 생략한 Bearer 전용 요청으로 자동 전환하지 않는다. `clientName`, `clientVersion`과 세션 정책/고정 ID의 변경은 대기 작업의 기존 설정 지문 검사에 반영하고, Bearer/클라이언트 키 교체는 자격증명 회전으로 처리한다.
+
+- `per_request`: 실제 모델 호출마다 새 UUID v4를 `sessionId`로 생성한다. 고정 ID를 함께 설정하면 오류다. UUID는 게이트웨이의 중복 호출 방지 계약을 대신하지 않으며, 기존 결과 불명 자동 재호출 금지는 유지한다.
+- `fixed`: 현장에서 고정값 재사용이 허용됨을 확인한 경우에만 private `SESSION_ID`를 설정한다. 자동으로 사용자·report별 세션으로 해석하거나 분리하지 않는다.
+- **2026-10-26 현장 회신:** 같은 `sessionId`를 재사용해도 이전 대화가 포함되지 않는 stateless 동작과 요청별 UUID 허용을 확인했다. 이번 게이트웨이는 `per_request`를 선택한다. sessionId의 정확한 과금/통계 용도는 현장 회신에서도 추정이므로 확정 계약으로 표시하지 않는다.
+- JWT는 발급 후 1년 유효한 정적 토큰이며 refresh flow 없이 수동 재발급한다는 현장 회신을 반영한다. 기존 `server` 모드는 `SANITY_OA_AI_TOKEN`을 사용하고, 사용자별 입력 요구는 아래 `user` 모드로 연결한다. 브라우저의 SSO JWT를 모델 인증에 자동 전용하지 않는다. 401은 인증 실패로 끝내며 자동 갱신·재호출하지 않는다. 클라이언트 키도 401의 원인일 수 있으므로 개인 JWT만 잘못됐다고 단정하지 않는다.
+- 실제 키·클라이언트 값·고정 세션 ID는 private 설정에만 두며 공개 설정 예제에는 값을 쓰지 않는다. 설정 객체의 repr·공개 모델 메타데이터에 추가 값을 내보내지 않는다. 클라이언트 키는 기존 자격증명 보호에 포함해 입력/응답의 키 반사를 차단한다. `extraData`는 prompt의 메시지에 섞지 않고 별도 본문 필드로 전달하며 전체 입력 바이트 한도에 포함한다.
+- 회사 root CA가 기본 trust store에 설치돼 있으면 기존 기본 TLS 검증을 사용하고, 별도 파일이 필요하면 `SANITY_OA_AI_CA_PATH`를 설정한다. 게이트웨이 확장 때문에 TLS 검증이나 기존 압축·strict JSON·근거/개정 검사를 완화하지 않는다.
+
+웹과 AI worker에 같은 release와 private 게이트웨이 설정을 배치한다. 사내 AI는 위 지원 설정·현장 확인 결과만 준비하며 공통 클라이언트·설정 loader·기존 보호 코드를 직접 수정하지 않는다. 실제 API 연결과 판단 품질은 사내에서 별도 검증한다.
+
+### 2.2. SSO 사용자별 개인 JWT 등록
+
+이번 사내 배포에서 사용자별 호출을 사용할 때는 `SANITY_OA_AI_TOKEN_SOURCE=user`와 `SANITY_OA_AI_SESSION_MODE=per_request`를 설정한다. 운영 담당자가 `SANITY_OA_AI_TOKEN_STORE_SECRET`에 **URL-safe base64로 인코딩한 32바이트 Fernet 키**를 비공개로 발급·보관하고 웹/worker에 동일하게 주입한다. 기존 `cryptography` 의존성의 `Fernet.generate_key()`로 생성할 수 있다. 키는 DB·Git·로그·브라우저에 저장하지 않으며 재시작마다 재생성하지 않는다. 배포 시 기존 키를 보존해야 등록된 JWT를 복호화할 수 있다. [Fernet 키와 암호화 계약](https://cryptography.io/en/latest/fernet/).
+
+1. 운영 SSO 사용자는 포털 또는 workbench 상단의 **개인 AI 토큰**에서 게이트웨이가 본인에게 발급한 JWT를 등록·교체·연결 해제한다. `Bearer ` 접두어를 포함하지 않는다.
+2. `/api/ai/credentials`는 로그인한 활성 SSO 사용자 자신의 상태 조회/저장만 제공한다. `/remove`는 자신의 연결을 해제한다. 다른 사용자 ID·임의 헤더를 받지 않으며 변경 요청은 기존 Origin·클라이언트 표식 검사를 통과해야 한다. 토큰 값을 다시 조회하는 API는 없다.
+3. JWT는 OA private 테이블의 기존 `WS_CONFIG`에서 `oa-ai-user-token-v1` namespace의 암호문으로 보관한다. 암호문 내부에 사용자와 개정을 결합하며 다른 사용자의 행으로 복사한 암호문은 거부한다. **추가 테이블·DDL은 필요 없다.** 기존 불변 저장 계약 때문에 교체 전 암호문은 이력에 남고 연결 해제는 tombstone을 추가한다. 연결 해제가 게이트웨이의 토큰 자체를 폐기하는 것은 아니다.
+4. AI 작업자는 요청자의 서버 확정 `user_id`로 현재 토큰을 읽어 해당 호출에만 주입한다. 사용자 모드에서는 서버 공용 토큰이나 다른 사용자의 토큰으로 fallback하지 않는다. JWT는 AI 작업/판정 payload, 모델 prompt, 공개 메타데이터와 로그에 넣지 않는다. 클라이언트 키·clientName/version은 서버 공통 설정을 사용한다.
+5. 등록 누락·알려진 만료·복호화 실패는 모델 호출 전에 차단한다. 호출 중 교체/해제된 토큰으로 받은 결과는 현재 개정 검사에서 적용하지 않으며, 저장된 결과의 복구 때도 재확인한다. 이미 진행한 외부 호출 자체를 되돌렸다고 표시하지 않는다.
+6. 토큰의 `exp`를 해석할 수 있으면 개인 설정 화면에서 만료일·30일 이내 만료 경고를 표시한다. **서명 검증 전의 exp는 만료 참고 정보이며 인증 성공 근거가 아니다.** 실제 인증은 게이트웨이가 판단한다. 등록 성공도 게이트웨이 호출 성공을 뜻하지 않는다. 만료 시 본인이 새로 발급받아 교체한다.
+
+사용자별 JWT 선택은 호출 계정의 분리다. 실제 rate limit이 사용자 JWT·클라이언트 키·모델 중 무엇을 기준으로 하는지는 별도 현장 확인 항목이며 처리량 증가를 보장하지 않는다. 사용자 토큰 저장소 키가 없으면 `AI_TOKEN_STORE_NOT_CONFIGURED`, 개인 JWT가 없으면 `AI_USER_TOKEN_REQUIRED`, 만료되면 `AI_USER_TOKEN_EXPIRED`, 게이트웨이가 401을 반환하면 `AI_AUTH_FAILED`로 처리한다.
 
 ## 3. 최초 판정을 위한 확인된 점검 기준
 
@@ -146,7 +184,7 @@ OA 담당 개발 AI는 위 지원 환경변수, 승인된 비공개 기준 파�
 일상 `quick`에는 최초 직접 근거 판정과 A→B 순환의 대표 시험만 추가했다. 전체 100,000건 회귀를 매번 실행하지 않는다. HTTP/기준 파일/순수 계약만 확인할 때는 다음 전용 명령을 사용할 수 있다.
 
 ```bash
-.venv/bin/python -m unittest tests.test_ai_model tests.test_ai_criteria tests.test_ai_workbench_api -v
+.venv/bin/python -m unittest tests.test_ai_gateway tests.test_ai_model tests.test_ai_criteria tests.test_ai_workbench_api tests.test_ai_credentials.CredentialConfigurationTests tests.test_ai_credentials.CredentialApiTests -v
 ```
 
 일상 검증은 변경 전용 시험과 `quick`을 사용하고 실제 실행 수·skip을 보고한다. 현재 한도를 넘는 전체 모델 처리와 계층적 조각 통합은 COMMON-05 미완성으로 기록한다. 오류·보호 파일 변경 필요는 [비식별 문의 절차](../INTERNAL_AI_GUIDE.md#6-디버깅이-필요하면-codex에게-문의)로 전달한다. 실제 URL·토큰·report·기준 원문·사람 계정은 외부 자료에 포함하지 않는다.

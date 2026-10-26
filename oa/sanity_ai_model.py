@@ -6,7 +6,7 @@ returned in public metadata or error messages.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 import logging
 import os
@@ -15,6 +15,7 @@ import ssl
 import time
 from typing import Mapping
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 import httpx
 
@@ -85,6 +86,7 @@ class OASettings:
     enabled: bool = False
     endpoint: str = field(default="", repr=False)
     token: str = field(default="", repr=False)
+    token_source: str = "server"
     model: str = ""
     api: str = "chat_completions"
     json_mode: bool = False
@@ -92,15 +94,24 @@ class OASettings:
     max_input_bytes: int = 1024 * 1024
     max_output_bytes: int = 2 * 1024 * 1024
     ca_path: str = field(default="", repr=False)
+    client_api_key: str = field(default="", repr=False)
+    client_name: str = field(default="", repr=False)
+    client_version: str = field(default="", repr=False)
+    session_mode: str = field(default="disabled", repr=False)
+    session_id: str = field(default="", repr=False)
 
     def __post_init__(self):
         valid = (type(self.enabled) is bool and type(self.json_mode) is bool
+                 and self.token_source in ("server", "user")
                  and self.api in ("chat_completions", "responses")
                  and type(self.timeout) is int and 1 <= self.timeout <= 600
                  and type(self.max_input_bytes) is int and 1 <= self.max_input_bytes <= MAX_BYTES
                  and type(self.max_output_bytes) is int and 1 <= self.max_output_bytes <= MAX_BYTES
                  and isinstance(self.ca_path, str)
-                 and (not self.ca_path or Path(self.ca_path).is_absolute()))
+                 and (not self.ca_path or Path(self.ca_path).is_absolute())
+                 and self.session_mode in ("disabled", "per_request", "fixed")
+                 and all(isinstance(value, str) for value in
+                         (self.client_api_key, self.client_name, self.client_version, self.session_id)))
         check(valid, "AI_CONFIG", "Invalid OA AI settings")
         if not self.enabled:
             return
@@ -113,10 +124,27 @@ class OASettings:
         except (ValueError, TypeError, AttributeError):
             valid_url = False
         check(valid_url, "AI_CONFIG", "Configure a full HTTPS OA model endpoint")
-        check(isinstance(self.token, str) and self.token
+        check(isinstance(self.token, str) and (self.token or self.token_source == "user")
               and all(33 <= ord(ch) <= 126 for ch in self.token), "AI_CONFIG", "Invalid OA AI credentials")
         check(isinstance(self.model, str) and 1 <= len(self.model) <= 200
               and not any(ch.isspace() or ord(ch) < 32 for ch in self.model), "AI_CONFIG", "Invalid OA model ID")
+        gateway = any((self.client_api_key, self.client_name, self.client_version,
+                       self.session_id, self.session_mode != "disabled"))
+        if gateway:
+            check(self.api == "chat_completions", "AI_CONFIG", "OA gateway requires chat_completions")
+            check(1 <= len(self.client_api_key) <= 8192
+                  and all(33 <= ord(ch) <= 126 for ch in self.client_api_key),
+                  "AI_CONFIG", "Invalid OA gateway credentials")
+            check(all(1 <= len(value) <= 200 and value == value.strip() and value.isprintable()
+                      for value in (self.client_name, self.client_version)),
+                  "AI_CONFIG", "Configure OA gateway client name and version")
+            check(self.session_mode in ("per_request", "fixed"), "AI_CONFIG",
+                  "Choose the OA gateway session policy explicitly")
+            if self.session_mode == "fixed":
+                check(1 <= len(self.session_id) <= 200 and self.session_id == self.session_id.strip()
+                      and self.session_id.isprintable(), "AI_CONFIG", "Configure a fixed OA gateway session ID")
+            else:
+                check(not self.session_id, "AI_CONFIG", "Per-request OA gateway sessions cannot have a fixed ID")
 
     @classmethod
     def from_env(cls, env=None):
@@ -137,11 +165,18 @@ class OASettings:
                 raise ReviewError("AI_CONFIG", "Invalid OA AI integer setting") from None
 
         return cls(enabled=boolean("ENABLED", "false"), endpoint=env.get("SANITY_OA_AI_URL", ""),
-                   token=env.get("SANITY_OA_AI_TOKEN", ""), model=env.get("SANITY_OA_AI_MODEL", ""),
+                   token="" if env.get("SANITY_OA_AI_TOKEN_SOURCE", "server") == "user" else env.get("SANITY_OA_AI_TOKEN", ""),
+                   model=env.get("SANITY_OA_AI_MODEL", ""),
+                   token_source=env.get("SANITY_OA_AI_TOKEN_SOURCE", "server"),
                    api=env.get("SANITY_OA_AI_API", "chat_completions"), json_mode=boolean("JSON_MODE", "false"),
                    timeout=integer("TIMEOUT", 120), max_input_bytes=integer("MAX_INPUT_BYTES", 1024 * 1024),
                    max_output_bytes=integer("MAX_OUTPUT_BYTES", 2 * 1024 * 1024),
-                   ca_path=env.get("SANITY_OA_AI_CA_PATH", ""))
+                   ca_path=env.get("SANITY_OA_AI_CA_PATH", ""),
+                   client_api_key=env.get("SANITY_OA_AI_CLIENT_API_KEY", ""),
+                   client_name=env.get("SANITY_OA_AI_CLIENT_NAME", ""),
+                   client_version=env.get("SANITY_OA_AI_CLIENT_VERSION", ""),
+                   session_mode=env.get("SANITY_OA_AI_SESSION_MODE", "disabled"),
+                   session_id=env.get("SANITY_OA_AI_SESSION_ID", ""))
 
 
 def _strict_json(raw):
@@ -215,6 +250,7 @@ class OAAdvisor:
         check(self.settings.enabled, "AI_NOT_CONFIGURED", "OA AI is not enabled")
         self.transport = transport
         self._guard = SecretGuard({"SANITY_OA_AI_TOKEN": self.settings.token,
+                                   "SANITY_OA_AI_CLIENT_API_KEY": self.settings.client_api_key,
                                    "OA_ENDPOINT_SECRET": self.settings.endpoint})
         try:
             self._tls = ssl.create_default_context(cafile=self.settings.ca_path or None)
@@ -227,9 +263,21 @@ class OAAdvisor:
                   "json_mode": settings.json_mode, "timeout": settings.timeout,
                   "max_input_bytes": settings.max_input_bytes, "max_output_bytes": settings.max_output_bytes,
                   "prompt_versions": {"clustering": CLUSTER_PROMPT_VERSION, "review": REVIEW_PROMPT_VERSION}}
-        # Pin endpoint selection without exposing the endpoint or credential.
+        # Preserve existing pins without a gateway. Credentials may rotate;
+        # routing/session policy changes must invalidate queued model work.
+        config = {**public, "endpoint": settings.endpoint}
+        if settings.token_source == "user":
+            config["token_source"] = "user"
+        if settings.client_api_key:
+            config["gateway"] = {"client_name": settings.client_name, "client_version": settings.client_version,
+                                 "session_mode": settings.session_mode, "session_id": settings.session_id}
         self._guard.ensure_public(public)
-        return {**public, "config_sha256": digest({**public, "endpoint": settings.endpoint})}
+        return {**public, "config_sha256": digest(config)}
+
+    def with_user_token(self, token):
+        check(self.settings.token_source == "user", "AI_CONFIG")
+        check(isinstance(token, str) and bool(token), "AI_USER_TOKEN_REQUIRED")
+        return OAAdvisor(replace(self.settings, token=token), transport=self.transport)
 
     def cluster(self, context, cases, identity_fields):
         attempt = {"model_called": False}
@@ -268,6 +316,7 @@ class OAAdvisor:
 
     def _call(self, packet, instruction, prompt_version, attempt):
         settings = self.settings
+        check(bool(settings.token), "AI_USER_TOKEN_REQUIRED", "Register a personal AI token")
         self._guard.ensure_public(packet)
         messages = [{"role": "system", "content": instruction},
                     {"role": "user", "content": canonical_json(packet).decode("utf-8")}]
@@ -280,6 +329,14 @@ class OAAdvisor:
             body.update(input=messages, store=False)
             if settings.json_mode:
                 body["text"] = {"format": {"type": "json_object"}}
+        headers = {"Authorization": "Bearer " + settings.token,
+                   "Content-Type": "application/json", "Accept": "application/json",
+                   "Accept-Encoding": "identity"}
+        if settings.client_api_key:
+            headers["x-client-api-key"] = settings.client_api_key
+            body["extraData"] = {"clientName": settings.client_name, "clientVersion": settings.client_version,
+                                 "sessionId": str(uuid4()) if settings.session_mode == "per_request" else settings.session_id}
+            self._guard.ensure_public(body["extraData"])
         data = canonical_json(body)
         check(len(data) <= settings.max_input_bytes, "AI_INPUT_LIMIT",
               "Complete OA AI input exceeds the configured bound; no records were dropped")
@@ -293,9 +350,9 @@ class OAAdvisor:
                               verify=self._tls, transport=self.transport) as client:
                 attempt["model_called"] = True
                 with client.stream("POST", settings.endpoint, content=data,
-                                   headers={"Authorization": "Bearer " + settings.token,
-                                            "Content-Type": "application/json", "Accept": "application/json",
-                                            "Accept-Encoding": "identity"}) as response:
+                                   headers=headers) as response:
+                    if settings.token_source == "user" and response.status_code == 401:
+                        raise ReviewError("AI_AUTH_FAILED", "Check personal token and gateway authentication")
                     check(response.status_code == 200, "AI_CALL_FAILED", "OA AI call did not succeed")
                     # Never allocate an unbounded decompressed body before
                     # enforcing the configured output budget.

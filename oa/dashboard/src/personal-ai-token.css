@@ -1,0 +1,9 @@
+.personal-ai-token-dialog { max-width: min(520px, calc(100vw - 32px)); }
+.personal-ai-token-form { display: flex; flex-direction: column; gap: 12px; }
+.personal-ai-token-form label { font-size: 14px; font-weight: 600; }
+.personal-ai-token-form p { font-size: 13px; line-height: 1.65; margin: 0; }
+.personal-ai-token-status { display: flex; flex-direction: column; gap: 6px; padding-block: 8px; font-size: 14px; }
+@media (max-width: 640px) {
+  .personal-ai-token-trigger > span { display: none; }
+  .personal-ai-token-trigger { min-width: 32px; padding-inline: 8px; }
+}

@@ -208,7 +208,8 @@ def create_app(*, auth_mode: AuthMode | None = None,
                   403 if code in {"ACCOUNT_NOT_LINKED", "ACCOUNT_DISABLED", "FORBIDDEN"} else
                   404 if code.endswith("NOT_FOUND") else
                   413 if code in {"AI_INPUT_LIMIT", "AI_OUTPUT_LIMIT", "CLUSTER_LIMIT", "REPORT_LIMIT", "SOURCE_CONTEXT_LIMIT"} else
-                  503 if code in {"AI_NOT_CONFIGURED", "AI_CONFIG", "INVALID_AI_CRITERIA", "WORKSPACE_NOT_CONFIGURED"} else
+                  503 if code in {"AI_NOT_CONFIGURED", "AI_CONFIG", "INVALID_AI_CRITERIA", "WORKSPACE_NOT_CONFIGURED",
+                                  "AI_TOKEN_STORE_NOT_CONFIGURED", "AI_TOKEN_UNAVAILABLE"} else
                   503 if code.startswith(("DATABASE_", "DBAAS_", "DASHBOARD_", "AUTH_", "AUTHORIZATION_")) else
                   409 if code in {"REVISION_CONFLICT", "REQUEST_CONFLICT", "REVIEW_BLOCKED", "FAIL_CANNOT_PASS",
                                  "STATE_CORRUPT", "STATE_CONFLICT", "EVIDENCE_NOT_RECEIVED", "LEASE_LOST",
@@ -457,6 +458,8 @@ def create_app(*, auth_mode: AuthMode | None = None,
     app.include_router(create_access_router(authenticated))
     from oa.ai_workbench_api import create_workbench_router
     app.include_router(create_workbench_router(authorized_actor))
+    from oa.ai_tokens_api import create_ai_credentials_router
+    app.include_router(create_ai_credentials_router(authorized_actor))
 
     # Company login/callback/logout routes must precede the root static mount.
     if auth_router is not None:

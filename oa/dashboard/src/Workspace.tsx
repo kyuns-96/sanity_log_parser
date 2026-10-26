@@ -12,6 +12,7 @@ import type { ReviewCase, WorkspaceEvent, WorkspaceOverview, WorkspacePor, Works
 import WorkspaceReview from './WorkspaceReview'
 import WorkspaceWorkbench from './WorkspaceWorkbench'
 import WorkspaceDemoBanner from './WorkspaceDemoBanner'
+import PersonalAiToken from './PersonalAiToken'
 import './workspace.css'
 
 const n = (value: number) => value.toLocaleString('ko-KR')
@@ -256,7 +257,7 @@ function WorkspacePage({ session, onExpired, onLogout, onDemoAccount }: { sessio
       <header className={`ws-topbar ws-studio-topbar${reviewing ? ' ws-studio-workbench-topbar' : ''}`}>
         <div className="ws-studio-header-brand">{reviewing ? <WorkspaceBrand /> : <><button ref={triggerRef} className="ws-mobile-trigger" aria-label="메뉴 열기" aria-expanded={mobile} onClick={() => setMobile(true)}><Menu size={20} /></button><span>워크스페이스</span></>}</div>
         <nav className="ws-studio-breadcrumb" aria-label="현재 작업 경로"><button onClick={() => chooseProject(projectId)}>{project?.name || '내 프로젝트'}</button>{view !== 'overview' && block && <><ChevronRight size={12} /><button onClick={() => chooseBlock(block.id)}>{block.name}</button></>}{reviewing && version && <><ChevronRight size={12} /><span>{version.net_ver}</span><Badge variant="outline">{version.layout}</Badge></>}</nav>
-        <div className="ws-studio-header-user">{reviewing && <Button variant="ghost" size="sm" aria-label="검사 대장으로 돌아가기" onClick={() => { setWorkbenchId(''); setRefresh(value => value + 1) }}><ArrowLeft size={14} /><span>검사 대장</span></Button>}<span className="ws-connected"><i />{production ? 'SSO 연결' : demo ? '데모 환경' : '테스트 환경'}</span><span className="ws-avatar ws-avatar-small">{session.user.name.slice(-2)}</span><span className="ws-studio-user-name">{session.user.name}</span></div>
+        <div className="ws-studio-header-user">{production && <PersonalAiToken key={session.user.id} />}{reviewing && <Button variant="ghost" size="sm" aria-label="검사 대장으로 돌아가기" onClick={() => { setWorkbenchId(''); setRefresh(value => value + 1) }}><ArrowLeft size={14} /><span>검사 대장</span></Button>}<span className="ws-connected"><i />{production ? 'SSO 연결' : demo ? '데모 환경' : '테스트 환경'}</span><span className="ws-avatar ws-avatar-small">{session.user.name.slice(-2)}</span><span className="ws-studio-user-name">{session.user.name}</span></div>
       </header>
       <main id="ws-main" className={`ws-main${reviewing ? ' ws-main-reviewing' : ''}`} tabIndex={-1}>
         {demo && <WorkspaceDemoBanner session={session} onAccount={onDemoAccount} />}
