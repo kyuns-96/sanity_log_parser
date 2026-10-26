@@ -21,6 +21,7 @@ import { useDashboardAuth } from './useDashboardAuth'
 import { DashboardLogin } from './DashboardLogin'
 import AccessWelcome from './AccessWelcome'
 import AccessAdmin from './AccessAdmin'
+import PersonalAiToken from './PersonalAiToken'
 import type { AccessPage } from './accessApi'
 import type { Bundle, Detail, Evidence, EvidenceRequest, Group, Page, Session, Unit } from './types'
 
@@ -232,7 +233,7 @@ export default function App() {
       <button className="sidebar-toggle" onClick={() => setCollapsed(value => !value)} aria-expanded={!collapsed} aria-label={collapsed ? '메뉴 펼치기' : '메뉴 접기'}>{collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}<span>메뉴 접기</span></button>
       <div className="sidebar-footer"><div className="avatar">{session.reviewer.slice(0, 1)}</div><div><strong>{session.reviewer}</strong><small>{session.writable ? '검토자' : '읽기 전용'}</small></div><Button variant="ghost" size="icon-sm" aria-label="연결 종료" disabled={busy} onClick={logout}><LogOut size={17} /></Button></div>
     </aside>
-    <div className="main-shell" inert={isMobile && mobile} aria-hidden={isMobile && mobile}><header className="topbar"><div className="breadcrumb"><button ref={triggerRef} className="mobile-menu" aria-label="메뉴 열기" aria-expanded={mobile} aria-controls="workspace-menu" onClick={() => setMobile(true)}><Menu /></button><span>워크스페이스</span><ChevronRight size={13} /><strong>Sanity 검토</strong></div><div className="topbar-right"><span className="connection"><span className="online-dot" />{demo ? '데모 환경' : '연결됨'}</span><Separator orientation="vertical" /><span className="avatar avatar-small">{session.reviewer.slice(0, 1)}</span></div></header>
+    <div className="main-shell" inert={isMobile && mobile} aria-hidden={isMobile && mobile}><header className="topbar"><div className="breadcrumb"><button ref={triggerRef} className="mobile-menu" aria-label="메뉴 열기" aria-expanded={mobile} aria-controls="workspace-menu" onClick={() => setMobile(true)}><Menu /></button><span>워크스페이스</span><ChevronRight size={13} /><strong>Sanity 검토</strong></div><div className="topbar-right">{!demo && readySSO && <PersonalAiToken key={session.user_id} />}<span className="connection"><span className="online-dot" />{demo ? '데모 환경' : '연결됨'}</span><Separator orientation="vertical" /><span className="avatar avatar-small">{session.reviewer.slice(0, 1)}</span></div></header>
     <main className="workspace" id="workspace-main" tabIndex={-1}>
       {demo && <div className="demo-banner"><Sparkles size={15} /><span><strong>데모 모드</strong> · 예시 검사 결과를 보여줍니다. 변경은 현재 세션에만 적용됩니다.</span><nav className="demo-navigation" aria-label="데모 화면"><a className="demo-switch" href={gcaDemo ? "/?demo=1" : "/?demo=1&dataset=gca"}>{gcaDemo ? "기본 예시" : "GCA 예시 보기"}</a><a className="demo-switch" href="/?demo=1&flow=access">프로젝트·담당자 데모</a><a className="demo-switch" href="/?demo=1&flow=versions">버전·ECO·PoR 데모</a></nav><button onClick={logout}>데모 종료 <ArrowUpRight size={13} /></button></div>}
       {(!session.writable || readySSO && detail && !canReview) && <div className="notice-banner" role="status"><LockKeyhole size={16} />{readySSO ? '현재 결과는 조회만 가능합니다. 검토하려면 해당 블록의 OWNER 권한이 필요합니다.' : '읽기 전용 세션입니다. 검토와 수신 작업은 비활성화됩니다.'}</div>}

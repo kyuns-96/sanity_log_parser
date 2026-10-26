@@ -21,6 +21,7 @@ from common.sanity_config import load_environment
 from common.sanity_db import Database, lock_key, uuid_value
 from oa.sanity_access import access_lock
 from oa.sanity_ai_cases import CaseRetriever
+from oa.sanity_ai_tokens import UserTokenStore
 from oa.sanity_ai_model import OAAdvisor, OASettings, PROVIDER
 from oa.sanity_workspace import record_id
 from oa.sanity_workspace_clustering import WorkspaceClusteringStore
@@ -160,6 +161,12 @@ class AIJobService:
               and isinstance(value.get("config_sha256"), str), "AI_CONFIG")
         return value
 
+    def _personal_tokens(self):
+        return getattr(getattr(self.advisor, "settings", None), "token_source", "server") == "user"
+
+    def _user_token(self, user_id):
+        return UserTokenStore(self.db).get_token(user_id)
+
     def _store(self, command):
         if command.get("group_id") is not None:
             return WorkspaceGroupReviewStore(self.db, command["group_id"], command.get("expected_cluster_revision"),
@@ -250,9 +257,21 @@ class AIJobService:
         latest = self._latest(target=self._target(report_id, group_id))
         supported = bool(context["ready"] and context["can_review"] and
                          (context.get("group_evidence") if group_id is not None else evidence(context)))
-        return {"available": bool(model["enabled"] and supported), "supported": supported,
+        credential = {}
+        if self._personal_tokens():
+            error_code = None
+            try:
+                self._user_token(user_id)
+            except ReviewError as error:
+                if error.code not in {"AI_USER_TOKEN_REQUIRED", "AI_USER_TOKEN_EXPIRED", "AI_TOKEN_UNAVAILABLE",
+                                      "AI_TOKEN_STORE_NOT_CONFIGURED", "AI_PERSONAL_TOKEN_DISABLED"}:
+                    raise
+                error_code = error.code
+            credential = {"credential_required": True, "credential_ready": error_code is None,
+                          "credential_error": error_code}
+        return {"available": bool(model["enabled"] and supported and credential.get("credential_ready", True)), "supported": supported,
                 "enabled": model["enabled"], "model": model["model"], "remaining": None,
-                "provider": PROVIDER, "synthetic_only": False, "job": _public(latest) if latest else None}
+                "provider": PROVIDER, "synthetic_only": False, "job": _public(latest) if latest else None, **credential}
 
     def enqueue(self, user_id, block_id, version_id, report_id, *, expected_revision, request_id,
                 group_id=None, expected_cluster_revision=None):
@@ -272,6 +291,8 @@ class AIJobService:
             return _public(previous)
         model = self._description()
         check(model["enabled"], "AI_NOT_CONFIGURED")
+        if self._personal_tokens():
+            self._user_token(user_id)
         check(context["ready"] and context["can_review"], "CLUSTER_NOT_CONFIRMED" if group_id else "CLUSTER_BLOCKED")
         _, revision = store.current(report_id)
         check(revision == expected_revision, "REVISION_CONFLICT")
@@ -327,6 +348,11 @@ class AIJobService:
               _case_pins(selected["cases"]) == pins["cases"], "AI_CASES_STALE")
         criteria = self.criteria_provider(context) if command["group_id"] is not None else []
         check(digest(criteria) == pins["criteria_sha256"], "AI_CRITERIA_STALE")
+        if self._personal_tokens():
+            _, credential_revision = self._user_token(command["user_id"])
+            if "result" in data:
+                check(data["result"]["metadata"].get("credential_revision") == credential_revision,
+                      "AI_CREDENTIAL_CHANGED")
         return store, context, selected["cases"], criteria
 
     def _failed(self, event, error, *, status="STALE", called=_UNSET, now=None):
@@ -401,6 +427,10 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
             return _public(event)
         try:
             _, context, cases, criteria = service._inputs(event)
+            dispatch_advisor, credential_revision = advisor, None
+            if service._personal_tokens():
+                token, credential_revision = service._user_token(event["data"]["command"]["user_id"])
+                dispatch_advisor = advisor.with_user_token(token)
         except ReviewError as error:
             return _public(service._failed(event, error, now=now))
         started = now or _db_now(service.db)
@@ -408,20 +438,23 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
         event = service._append(event, "RUNNING", {**event["data"], "call_token": str(uuid4()),
                    "model_attempted": True, "model_called": None,
                    "started_at": started.isoformat(), "deadline": deadline.isoformat()}, now=started)
-        dispatch = {"event": event, "context": context, "cases": cases, "criteria": criteria}
+        dispatch = {"event": event, "context": context, "cases": cases, "criteria": criteria,
+                    "advisor": dispatch_advisor, "credential_revision": credential_revision}
     # All DB handles and transaction-level authorization/review locks are gone.
     try:
         event, context, cases, criteria = (dispatch[k] for k in ("event", "context", "cases", "criteria"))
         stage = event["data"]["pins"]["stage"]
         if stage == "CLUSTER":
-            result = advisor.cluster(context, cases, event["data"]["pins"]["identity_fields"])
+            result = dispatch["advisor"].cluster(context, cases, event["data"]["pins"]["identity_fields"])
             advice = validate_clustering_advice(result["advice"], context, cases, require_rationales=True)
         else:
-            result = advisor.review(context, cases, criteria)
+            result = dispatch["advisor"].review(context, cases, criteria)
             advice = validate_review_v2(result["advice"], context, cases, criteria)
         check(isinstance(result["metadata"], dict) and result["metadata"].get("model_called") is True
               and result["metadata"].get("provider") == PROVIDER, "INVALID_AI_RESPONSE")
         result = {"advice": advice, "metadata": result["metadata"]}
+        if dispatch["credential_revision"] is not None:
+            result["metadata"] = {**result["metadata"], "credential_revision": dispatch["credential_revision"]}
         failure = None
     except Exception as error:
         result, failure = None, error
@@ -442,6 +475,9 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
             return _public(service._failed(current, failure, status="UNKNOWN" if unknown else "FAILED", called=called))
         try:
             service._inputs(current)
+            if dispatch["credential_revision"] is not None:
+                _, revision = service._user_token(event["data"]["command"]["user_id"])
+                check(revision == dispatch["credential_revision"], "AI_CREDENTIAL_CHANGED")
         except ReviewError as error:
             return _public(service._failed(current, error, called=True))
         try:

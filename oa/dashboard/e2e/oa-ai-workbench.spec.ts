@@ -15,7 +15,7 @@ const base = '/api/workbench/blocks/b1/versions/v1/reports/report-a'
 const url = '/?page=workbench&project=p1&block=b1&version=v1&eco=ECO-2&item=synthetic_check&tab=reports&review=report-a'
 const emptyPage = { items: [], total: 0, offset: 0, limit: 25 }
 
-type MockOptions = { configured?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
+type MockOptions = { configured?: boolean; personalToken?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
 
 async function mockOA(page: Page, options: MockOptions = {}) {
   const actor = options.readOnly ? { ...user, role: 'TOP' } : user
@@ -27,10 +27,12 @@ async function mockOA(page: Page, options: MockOptions = {}) {
   const currentReport = { ...report, record_count: sourceRecords.length }
   const state = { revision: options.initialRevision || 0, confirmed: options.confirmed || false, reviewRevision: 0, clusterJob: options.initialJob || null as CodexJob | null, reviewJob: null as CodexJob | null, clusterReads: 0, reviewReads: 0, current: null as ReviewCase | null, proposal: null as ReviewProposal | null, writes: [] as { path: string; body: Record<string, unknown>; marker: string | undefined }[], unexpected: [] as string[], calls: [] as string[], recordRequests: [] as { offset: number; limit: number; search: string; group: string | null; revision: string | null }[], recordPause: null as { offset: number; promise: Promise<void> } | null, recordFailure: null as { offset: number; remaining: number } | null }
   const reviewHistory = options.currentCase ? [options.currentCase] : []
+  let credentialReady = false
+  let credentialRevision = 0
   state.current = options.currentCase || null
   state.reviewRevision = options.currentCase?.revision || 0
   state.proposal = options.proposal || null
-  const capability = (job: CodexJob | null) => ({ available: options.configured !== false, supported: true, enabled: options.configured !== false, model: model.model, remaining: null, provider: 'OA_OPENAI_COMPATIBLE', synthetic_only: false, job })
+  const capability = (job: CodexJob | null) => ({ available: options.configured !== false && (!options.personalToken || credentialReady), supported: true, enabled: options.configured !== false, model: model.model, remaining: null, provider: 'OA_OPENAI_COMPATIBLE', synthetic_only: false, job, ...(options.personalToken ? { credential_required: true, credential_ready: credentialReady, credential_error: credentialReady ? null : 'AI_USER_TOKEN_REQUIRED' } : {}) })
   const cluster = () => state.revision ? { id: `cluster-${state.revision}`, report_id: report.id, revision: state.revision, action: state.confirmed ? 'CONFIRM' : 'PROPOSE', confirmed: state.confirmed, reusable: false, compatible_versions: false, criteria: '', reason: '전체 로그의 검토 의도에 따라 묶었습니다.', identity_fields: ['mode'], group_count: 1, record_count: sourceRecords.length, at, actor, references: [], advisor: 'OA_OPENAI_COMPATIBLE', model_called: true, model_metadata: model, rationale_counts: { MISSING: 0, DRAFT: Number(!state.confirmed), CONFIRMED: Number(state.confirmed), STALE: 0 } } : null
   const group = () => ({ id: 'g1', label: '확인이 필요한 합성 대상', record_count: sourceRecords.length, check_status: 'FAIL', status: state.current?.conclusion || 'PENDING', revision: state.reviewRevision, example: {}, rationale: { status: state.confirmed ? 'CONFIRMED' : 'DRAFT', reason: '같은 조건의 확인 대상입니다.', reason_truncated: false, reason_omitted_chars: 0, source: 'AI', evidence_count: 1 } })
   const finish = (job: CodexJob) => {
@@ -45,6 +47,10 @@ async function mockOA(page: Page, options: MockOptions = {}) {
       if (options.readOnly) return route.fulfill({ status: 403, json: { code: 'FORBIDDEN' } })
     }
     if (path.startsWith('/workspace/api/')) { state.unexpected.push(path); return route.fulfill({ status: 404, json: { code: 'NOT_FOUND' } }) }
+    if (path === '/api/ai/credentials' && options.personalToken) {
+      if (body) { expect(body.expected_revision).toBe(credentialRevision); credentialReady = true; credentialRevision++ }
+      return route.fulfill({ json: { enabled: true, registered: credentialReady, revision: credentialRevision, expires_at: null, expired: false, expires_soon: false } })
+    }
     if (path === '/api/workbench/session') return route.fulfill(options.auth ? { status: options.auth, json: { code: 'UNAUTHORIZED' } } : { json: { user: actor, csrf: '', expires_at: '', environment: 'PRODUCTION_SSO' } })
     if (path === '/api/workbench/overview') return route.fulfill({ json: { user: actor, data_origin: 'PRODUCTION', projects: [{ id: 'p1', name: '합성 프로젝트', description: '', tops: [], blocks: [{ id: 'b1', project_id: 'p1', name: '합성 블록', owners: options.readOnly ? [] : [actor], can_assign_por: !options.readOnly, por: { revision: 0, version: null, assigned_by: null, assigned_at: null }, report_version: version, counts: { FAIL: 1 }, total: 1 }] }] } })
     if (path === '/api/workbench/blocks/b1/versions') return route.fulfill({ json: { items: [version], can_assign_por: !options.readOnly, por: { revision: 0, version: null, assigned_by: null, assigned_at: null } } })
@@ -641,4 +647,30 @@ test('memory review adapter validates and persists explicit exceptions with lega
   const view = await request<ReportReview>(reviewPath)
   expect(view.current).toMatchObject({ exception: null, compatible_versions: true, reusable: false, revision: 2 })
   expect(view.history[1]).toMatchObject({ exception: exceptionFields, revision: 1 })
+})
+
+
+test('personal token registration enables AI judgment without discarding the human draft', async ({ page }) => {
+  const state = await mockOA(page, { personalToken: true, initialRevision: 1, confirmed: true })
+  await page.goto(url)
+  await page.getByRole('button', { name: '그룹 판정 계속', exact: true }).click()
+  const review = page.locator('.ws-judgment-workspace')
+  await expect(review.getByRole('button', { name: 'AI 판정 받기', exact: true })).toBeDisabled()
+  const reason = review.getByRole('textbox', { name: '판정 근거', exact: true })
+  await reason.fill('개인 토큰 등록 중에도 보존할 사람의 검토 근거')
+  await page.getByRole('button', { name: '개인 AI 토큰', exact: true }).click()
+  await page.getByLabel('JWT 토큰', { exact: true }).fill('synthetic-personal-token')
+  await page.getByRole('button', { name: '토큰 저장', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText('토큰을 저장했습니다')
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(review.getByRole('button', { name: 'AI 판정 받기', exact: true })).toBeEnabled()
+  await expect(reason).toHaveValue('개인 토큰 등록 중에도 보존할 사람의 검토 근거')
+  await review.getByRole('button', { name: 'AI 판정 받기', exact: true }).click()
+  await expect(review.locator('.ws-review-proposal')).toContainText('AI 모델 · synthetic-oa-model')
+  await expect(reason).toHaveValue('개인 토큰 등록 중에도 보존할 사람의 검토 근거')
+  const request = state.writes.find(write => write.path.endsWith('/review/ai'))!
+  expect(request.body).not.toHaveProperty('token')
+  expect(JSON.stringify(request.body)).not.toContain('synthetic-personal-token')
+  expect(state.unexpected).toEqual([])
 })

@@ -75,6 +75,16 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
     return value
   }
   useEffect(() => {
+    if (!production) return
+    let pending: AbortController | undefined
+    const changed = () => {
+      pending?.abort(); pending = new AbortController()
+      reload(false, pending.signal).catch(fail)
+    }
+    window.addEventListener('sanity-ai-token-changed', changed)
+    return () => { pending?.abort(); window.removeEventListener('sanity-ai-token-changed', changed) }
+  }, [base, group?.cluster_revision, production])
+  useEffect(() => {
     if (!production || !aiRunning || pollPaused) return
     const id = data!.ai!.job!.id
     if (polls.current.id !== id) polls.current = { id, count: 0 }
@@ -144,6 +154,7 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
         <Button variant="outline" size="sm" onClick={propose} disabled={demo || !!busy || !data.can_review || production && (!group || !data.ai?.available || aiRunning)}><RefreshCw size={14} className={aiRunning ? 'ws-spin' : undefined} />{production ? aiRunning || busy === 'proposal' ? 'AI 판정 중…' : 'AI 판정 받기' : busy === 'proposal' ? '기준 확인 중…' : '판정 제안 받기'}</Button>
       </header>
       {production && data.can_review && data.ai?.enabled && !data.ai.supported && <p className="ws-notice">분류 확정과 전체 로그·필수 근거의 준비 상태를 확인해 주세요.</p>}
+      {production && data.ai?.credential_required && !data.ai.credential_ready && <p className="ws-notice" role="status">화면 상단의 ‘개인 AI 토큰’에서 본인의 토큰을 등록하거나 교체해 주세요.</p>}
       {production && data.ai?.job && <div className="ws-studio-ai-job"><p role="status" className={['FAILED', 'STALE', 'UNKNOWN'].includes(data.ai.job.status) ? 'ws-error' : 'ws-muted'}>{aiJobMessage(data.ai.job)}{aiRunning && pollPaused && ' 상태 자동 조회를 멈췄습니다. 아래 버튼으로 확인을 이어갈 수 있습니다.'}</p><Button variant="ghost" size="sm" disabled={!!busy} onClick={() => { polls.current.count = 0; setPollPaused(false); reload().catch(fail) }}>AI 판정 상태 다시 조회</Button></div>}
       {proposal ? <div className="ws-review-proposal ws-studio-ai-result">
         <div className="ws-studio-ai-verdict"><Badge variant="outline" className={`ws-status ws-status-${proposal.conclusion.toLowerCase()}`}>제안 {labels[proposal.conclusion]}</Badge><span>{proposal.model_called ? `AI 모델 · ${proposal.model_metadata?.model || proposal.advisor}` : '확정 기준 참고 엔진'} · {time(proposal.at)}</span></div>

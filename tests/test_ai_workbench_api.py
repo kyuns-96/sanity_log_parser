@@ -121,7 +121,9 @@ class ProductionWorkbenchApiTests(unittest.TestCase):
         body = {"request_id": str(uuid4()), "expected_revision": 3}
         invalid = [dict(body, user_id="other"), dict(body, mode="CRITERIA"),
                    dict(body, model="caller-model"), dict(body, expected_revision=True),
-                   dict(body, expected_revision="3")]
+                   dict(body, expected_revision="3"), dict(body, extraData={"clientName": "forged"}),
+                   dict(body, client_api_key="forged-key"), dict(body, session_id="forged-session"),
+                   dict(body, headers={"x-client-api-key": "forged-key"})]
         for value in invalid:
             response = self.client.post(BASE + "/clustering/ai", headers=HEADERS, json=value)
             self.assertEqual({"code": "INVALID_REQUEST"}, response.json())
