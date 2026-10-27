@@ -7,9 +7,13 @@ export function useWorkspaceNavigation(open: boolean, close: () => void, active:
   const sidebarRef = useRef<HTMLElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
 
+  // A retained screen must return with its drawer closed and body unlocked.
+  useEffect(() => () => close(), [close])
+
   useEffect(() => {
     const query = window.matchMedia(mobileQuery)
     const update = () => { setIsMobile(query.matches); if (!query.matches) close() }
+    update()
     query.addEventListener('change', update)
     return () => query.removeEventListener('change', update)
   }, [close])

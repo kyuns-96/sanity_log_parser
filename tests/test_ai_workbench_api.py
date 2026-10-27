@@ -27,6 +27,7 @@ class ProductionWorkbenchApiTests(unittest.TestCase):
         self.access = SimpleNamespace(db=self.db)
         self.actor = SimpleNamespace(user_id=TARGET[0], auth_method="sso", access=self.access)
         self.ws = Mock(db=self.db)
+        self.ws.authorization.is_admin.return_value = False
         self.ws.user.return_value = {"id": TARGET[0], "name": "합성 사용자", "username": TARGET[0], "role": "OWNER"}
         self.service = Mock()
         self.capability = {"available": True, "supported": True, "enabled": True,
@@ -91,9 +92,17 @@ class ProductionWorkbenchApiTests(unittest.TestCase):
         response = self.client.get("/api/workbench/session")
         self.assertEqual(200, response.status_code)
         self.assertEqual({"user": self.ws.user.return_value, "csrf": "", "expires_at": "",
-                          "environment": "PRODUCTION_SSO"}, response.json())
+                          "environment": "PRODUCTION_SSO", "is_admin": False}, response.json())
         self.ws.user.assert_called_once_with(TARGET[0])
         self.factories["ProductionWorkspaceStore"].assert_called_once_with(self.db, self.access)
+
+    def test_session_exposes_only_the_server_administrator_flag_for_the_same_user(self):
+        self.ws.authorization.is_admin.return_value = True
+        response = self.client.get("/api/workbench/session?is_admin=false&user_id=someone-else")
+        self.assertEqual(200, response.status_code)
+        self.assertTrue(response.json()["is_admin"])
+        self.ws.authorization.is_admin.assert_called_once_with(TARGET[0])
+        self.assertEqual("OWNER", response.json()["user"]["role"])
 
     def test_mutation_keeps_outer_origin_and_client_request_guards(self):
         body = {"request_id": str(uuid4()), "expected_revision": 3}

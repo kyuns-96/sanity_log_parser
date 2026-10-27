@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Download, FileSearch, FolderKanban, History, Layers3, LogOut, Menu, RefreshCw, Search, X } from 'lucide-react'
 import { Button } from './studio/components/ui/button'
 import { Input } from './studio/components/ui/input'
@@ -7,6 +7,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './studio/components/ui/tabs'
 import { WorkspaceBrand } from './components/WorkspaceBrand'
 import { ColorModeControl } from './components/ColorModeControl'
+import { SidebarModeSwitch } from './components/SidebarModeSwitch'
+import { modeUrl, useDashboardNavigation, useDashboardSidebarState } from './dashboardMode'
 import { useWorkspaceNavigation } from './useWorkspaceNavigation'
 import { productionWorkbench, WorkspaceError, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
 import type { ReviewCase, WorkspaceEvent, WorkspaceOverview, WorkspacePor, WorkspaceReport, WorkspaceReports, WorkspaceSession, WorkspaceVersions } from './workspaceApi'
@@ -23,10 +25,10 @@ const itemName = (id: string) => itemNames[id] || id || '항목 미분류'
 function Status({ value }: { value: string }) { return <Badge variant="outline" className={`ws-status ws-status-${value.toLowerCase()}`}><i />{labels[value] || value}</Badge> }
 function Loading({ lines = 3 }: { lines?: number }) { return <div className="ws-skeleton" aria-label="불러오는 중" role="status">{Array.from({ length: lines }, (_, i) => <span key={i} />)}</div> }
 
-export default function Workspace() {
+export default function Workspace({ routeSearch, initialSession }: { routeSearch?: string; initialSession?: WorkspaceSession } = {}) {
   const production = productionWorkbench()
-  const [session, setSession] = useState<WorkspaceSession | null>(null)
-  const [checking, setChecking] = useState(true)
+  const [session, setSession] = useState<WorkspaceSession | null>(initialSession ?? null)
+  const [checking, setChecking] = useState(!initialSession)
   const [username, setUsername] = useState('user04')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -45,7 +47,7 @@ export default function Workspace() {
     finally { setBusy(false) }
   }
   if (checking) return <div className="ws-session-loading ws-studio-session"><WorkspaceBrand /><Loading /></div>
-  if (session) return <WorkspacePage key={session.user.id} session={session} onDemoAccount={async username => {
+  if (session) return <WorkspacePage key={session.user.id} session={session} routeSearch={routeSearch} onDemoAccount={async username => {
     const value = await request<WorkspaceSession>('/demo/account', { body: { username } })
     history.replaceState(null, '', `${location.pathname}?demo=1`)
     setSession(value)
@@ -57,10 +59,11 @@ export default function Workspace() {
   </div>
 }
 
-function WorkspacePage({ session, onExpired, onLogout, onDemoAccount }: { session: WorkspaceSession; onExpired: () => void; onLogout: () => void; onDemoAccount: (username: string) => Promise<void> }) {
+function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccount }: { session: WorkspaceSession; routeSearch?: string; onExpired: () => void; onLogout: () => void; onDemoAccount: (username: string) => Promise<void> }) {
+  const navigateDashboard = useDashboardNavigation()
   const demo = session.environment === 'MEMORY_DEMO'
   const production = session.environment === 'PRODUCTION_SSO'
-  const initial = useRef(new URLSearchParams(location.search))
+  const initial = useRef(new URLSearchParams(routeSearch ?? location.search))
   const [overview, setOverview] = useState<WorkspaceOverview | null>(null)
   const [projectId, setProjectId] = useState(initial.current.get('project') || '')
   const [blockId, setBlockId] = useState(initial.current.get('block') || '')
@@ -90,11 +93,12 @@ function WorkspacePage({ session, onExpired, onLogout, onDemoAccount }: { sessio
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [mobile, setMobile] = useState(false)
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useDashboardSidebarState()
   const closeMobile = useCallback(() => setMobile(false), [])
   const { isMobile, sidebarRef, triggerRef } = useWorkspaceNavigation(mobile, closeMobile, !reviewing)
   const requestId = useRef<string | null>(null)
   const detailRequest = useRef(0)
+  const loadedBlock = useRef(blockId)
   const project = overview?.projects.find(project => project.id === projectId)
   const block = project?.blocks.find(block => block.id === blockId)
   const version = versions?.items.find(version => version.id === versionId)
@@ -106,6 +110,25 @@ function WorkspacePage({ session, onExpired, onLogout, onDemoAccount }: { sessio
     if (e instanceof WorkspaceError && e.code === 'UNAUTHORIZED') { onExpired(); return }
     setError(e instanceof Error ? e.message : '요청을 완료하지 못했습니다.')
   }, [onExpired])
+
+  useLayoutEffect(() => {
+    if (routeSearch === undefined) return
+    const params = new URLSearchParams(routeSearch)
+    const nextProject = params.get('project') || projectId
+    const nextBlock = params.get('block') || blockId
+    const nextVersion = params.get('version') || versionId
+    const nextEco = params.get('eco') || ''
+    const nextItem = params.get('item')
+    const scopeChanged = nextProject !== projectId || nextBlock !== blockId || nextVersion !== versionId || nextEco !== eco || nextItem !== itemId
+    if (scopeChanged) {
+      resetSelection(); setReports(null)
+      if (nextBlock !== blockId) setVersions(null)
+      setProjectId(nextProject); setBlockId(nextBlock); setVersionId(nextVersion); setEco(nextEco); setItemId(nextItem)
+    }
+    const nextView = params.get('tab')
+    setView(nextView && ['overview', 'reports', 'history'].includes(nextView) ? nextView : params.has('block') ? 'reports' : 'overview')
+    setWorkbenchId(params.get('review') || '')
+  }, [routeSearch])
 
   useEffect(() => {
     let active = true
@@ -123,7 +146,10 @@ function WorkspacePage({ session, onExpired, onLogout, onDemoAccount }: { sessio
   useEffect(() => {
     if (!blockId || !block) return
     const controller = new AbortController()
-    setVersions(null); setReports(null); setEvents([]); setSelectedReport(null)
+    if (loadedBlock.current !== blockId) {
+      setVersions(null); setReports(null); setEvents([]); setSelectedReport(null)
+      loadedBlock.current = blockId
+    }
     request<WorkspaceVersions>(`/blocks/${blockId}/versions`, { signal: controller.signal }).then(value => {
       if (controller.signal.aborted) return
       setVersions(value)
@@ -236,11 +262,12 @@ function WorkspacePage({ session, onExpired, onLogout, onDemoAccount }: { sessio
   }
   const totals = project?.blocks.reduce((total, block) => ({ total: total.total + block.total, fail: total.fail + (block.counts.FAIL || 0), unknown: total.unknown + (block.counts.UNKNOWN || 0), por: total.por + Number(!!block.por.version) }), { total: 0, fail: 0, unknown: 0, por: 0 })
 
-  return <div className={`ws-app ws-studio-workspace ${collapsed && !reviewing ? 'ws-collapsed' : ''}${reviewing ? ' ws-studio-workbench-open' : ''}`}>
+  return <div className={`ws-app ws-studio-workspace ${collapsed && !reviewing ? 'ws-collapsed' : ''}${reviewing ? ' ws-studio-workbench-open' : ''}${production && session.is_admin === true ? ' ws-mode-enabled' : ''}`}>
     <a className="skip-link" href="#ws-main">본문으로 건너뛰기</a>
     {!reviewing && mobile && isMobile && <button className="ws-backdrop" aria-label="메뉴 닫기" onClick={closeMobile} />}
     {!reviewing && <aside ref={sidebarRef} className={`ws-sidebar ${mobile ? 'ws-open' : ''}`} aria-label="워크스페이스 메뉴" role={mobile && isMobile ? 'dialog' : undefined} aria-modal={mobile && isMobile || undefined} inert={isMobile && !mobile}>
       <div className="ws-studio-sidebar-header"><WorkspaceBrand /><button className="ws-mobile-close" aria-label="메뉴 닫기" onClick={closeMobile}><X size={19} /></button></div>
+      {production && session.is_admin === true && <SidebarModeSwitch mode="user" onChange={mode => { closeMobile(); return navigateDashboard(modeUrl(mode, true), session.user.id) }} />}
       <span className="ws-sidebar-caption">워크스페이스</span>
       <nav className="ws-studio-task-nav" aria-label="작업 메뉴">{[{ id: 'overview', label: '프로젝트 현황', icon: Layers3 }, { id: 'reports', label: '버전·검사 대장', icon: ClipboardList }, { id: 'history', label: 'PoR 변경 이력', icon: History }].map(({ id, label, icon: Icon }) => <button key={id} aria-label={label} aria-current={view === id ? 'page' : undefined} onClick={() => { setView(id); closeMobile() }}><Icon size={16} /><span>{label}</span></button>)}</nav>
       <div className="ws-sidebar-divider" />

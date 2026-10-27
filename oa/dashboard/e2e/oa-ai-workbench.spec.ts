@@ -55,6 +55,12 @@ async function mockOA(page: Page, options: MockOptions = {}) {
     if (path === '/api/workbench/overview') return route.fulfill({ json: { user: actor, data_origin: 'PRODUCTION', projects: [{ id: 'p1', name: '합성 프로젝트', description: '', tops: [], blocks: [{ id: 'b1', project_id: 'p1', name: '합성 블록', owners: options.readOnly ? [] : [actor], can_assign_por: !options.readOnly, por: { revision: 0, version: null, assigned_by: null, assigned_at: null }, report_version: version, counts: { FAIL: 1 }, total: 1 }] }] } })
     if (path === '/api/workbench/blocks/b1/versions') return route.fulfill({ json: { items: [version], can_assign_por: !options.readOnly, por: { revision: 0, version: null, assigned_by: null, assigned_at: null } } })
     if (path === '/api/workbench/blocks/b1/history') return route.fulfill({ json: { items: [] } })
+    if (path === '/api/workbench/blocks/b1/intake' && req.method() === 'GET') {
+      const params = new URL(req.url()).searchParams
+      expect(params.get('offset')).toBe('0')
+      expect(params.get('limit')).toBe('25')
+      return route.fulfill({ json: { items: [], total: 0, can_confirm: !options.readOnly } })
+    }
     if (path === '/api/workbench/blocks/b1/versions/v1/reports') return route.fulfill({ json: { items: [currentReport], total: 1, offset: 0, limit: 25, counts: { FAIL: 1 }, groups: [{ item_id: report.item_id, total: 1, counts: { FAIL: 1 }, parse_counts: { COMPLETE: 1 }, families: ['GCA'] }], version } })
     if (path === base) return route.fulfill({ json: currentReport })
     if (path === base+'/clustering/ai' && body) {

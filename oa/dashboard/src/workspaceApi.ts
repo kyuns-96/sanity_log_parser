@@ -1,5 +1,5 @@
 export type WorkspaceUser = { id: string; name: string; username: string; role: string }
-export type WorkspaceSession = { user: WorkspaceUser; csrf: string; expires_at: string; environment: string }
+export type WorkspaceSession = { user: WorkspaceUser; csrf: string; expires_at: string; environment: string; is_admin?: boolean }
 export type WorkspaceVersion = { id: string; project_id: string; block_id: string; net_ver: string; revision: string; layout: 'PRE' | 'POST'; source_pre_id: string | null; ecos: (string | null)[] }
 export type WorkspacePor = { revision: number; version: WorkspaceVersion | null; assigned_by: WorkspaceUser | null; assigned_at: string | null }
 export type WorkspaceBlock = { id: string; project_id: string; name: string; owners: WorkspaceUser[]; can_assign_por: boolean; por: WorkspacePor; report_version: WorkspaceVersion | null; counts: Record<string, number>; total: number }
@@ -93,7 +93,12 @@ export class WorkspaceError extends Error {
   constructor(code: string) { super(messages[code] || '요청을 완료하지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해 주세요.'); this.code = code }
 }
 
-export const productionWorkbench = () => location.pathname === '/' && new URLSearchParams(location.search).get('page') === 'workbench'
+// Keep the server boundary fixed for this document: an in-app visit to the
+// administrator must never redirect a retained workbench to the test API.
+// Importing the fixture in Node does not select any browser environment.
+const productionDocument = typeof location !== 'undefined' && location.pathname === '/'
+  && (new URLSearchParams(location.search).get('page') === 'workbench' || new URLSearchParams(location.search).get('demo') !== '1')
+export const productionWorkbench = () => productionDocument
 export const workspaceApiBase = () => productionWorkbench() ? '/api/workbench' : '/workspace/api'
 export const aiJobActive = (job?: CodexJob | null) => !!job && ['PENDING', 'RUNNING', 'RESULT_READY'].includes(job.status)
 export const aiJobMessage = (job: CodexJob) => {
