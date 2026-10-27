@@ -3,11 +3,12 @@ import type { Page } from '@playwright/test'
 
 const actor = { id: 'synthetic-self', name: '합성 사용자', username: 'synthetic-self', role: 'OWNER' }
 const token = 'synthetic.personal.jwt-for-browser-test'
+const issuanceUrl = 'https://identity.example.test/ai/tokens?app=sanity'
 
-async function setup(page: Page, options: { registered?: boolean; expired?: boolean; soon?: boolean; disabled?: boolean; failSave?: boolean } = {}) {
+async function setup(page: Page, options: { registered?: boolean; expired?: boolean; soon?: boolean; disabled?: boolean; failSave?: boolean; issuanceUrl?: string } = {}) {
   const state = { revision: options.registered ? 1 : 0, registered: !!options.registered, writes: [] as { path: string; body: Record<string, unknown> }[], unexpected: [] as string[] }
   const status = () => ({ enabled: !options.disabled, registered: state.registered, revision: state.revision,
-    expires_at: state.registered ? new Date(Date.now() + (options.expired ? -1 : options.soon ? 10 : 365) * 86400000).toISOString() : null, expired: !!options.expired, expires_soon: !!options.soon })
+    expires_at: state.registered ? new Date(Date.now() + (options.expired ? -1 : options.soon ? 10 : 365) * 86400000).toISOString() : null, expired: !!options.expired, expires_soon: !!options.soon, issuance_url: options.issuanceUrl ?? null })
   await page.route('**/api/**', async route => {
     const request = route.request()
     const path = new URL(request.url()).pathname
@@ -52,11 +53,12 @@ test('personal JWT is masked, saved only for self, and never retained in browser
 })
 
 test('replacement and removal use current revisions without returning saved tokens', async ({ page }) => {
-  const state = await setup(page, { registered: true })
+  const state = await setup(page, { registered: true, issuanceUrl })
   await expect(page.getByLabel('교체할 JWT 토큰')).toHaveValue('')
   await page.getByLabel('교체할 JWT 토큰').fill(token)
   await page.getByRole('button', { name: '토큰 교체', exact: true }).click()
   await expect(page.getByRole('status')).toContainText('토큰을 저장했습니다')
+  await expect(page.getByRole('link', { name: 'JWT 토큰 발급받기' })).toHaveAttribute('href', issuanceUrl)
   await page.getByRole('button', { name: '연결 해제', exact: true }).click()
   await expect(page.getByRole('status')).toContainText('연결을 해제했습니다')
   await expect(page.getByLabel('AI 토큰 등록 상태')).toContainText('미등록')
@@ -64,6 +66,7 @@ test('replacement and removal use current revisions without returning saved toke
   expect(state.writes.map(write => write.body.expected_revision)).toEqual([1, 2])
   expect(state.writes[1].body).not.toHaveProperty('token')
   expect(state.registered).toBe(false)
+  await expect(page.getByRole('link', { name: 'JWT 토큰 발급받기' })).toHaveAttribute('href', issuanceUrl)
 })
 
 test('near-expiry and expired tokens give explicit renewal guidance', async ({ page }) => {
@@ -96,10 +99,43 @@ test('personal credentials are not entered when the service uses server credenti
 
 test('personal token dialog fits a small mobile screen', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
-  await setup(page)
+  await setup(page, { issuanceUrl })
+  await expect(page.getByRole('link', { name: 'JWT 토큰 발급받기' })).toBeVisible()
   await expect(page.getByLabel('JWT 토큰', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '토큰 저장', exact: true })).toBeVisible()
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)
   expect(overflow).toBe(false)
   await page.screenshot({ path: test.info().outputPath('personal-token-mobile.png') })
 })
+
+test('issuance link opens the configured page in a new tab without sending the entered token', async ({ page }) => {
+  const state = await setup(page, { issuanceUrl })
+  await page.getByLabel('JWT 토큰', { exact: true }).fill(token)
+  const link = page.getByRole('link', { name: 'JWT 토큰 발급받기' })
+  await expect(link).toHaveAttribute('href', issuanceUrl)
+  await expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+  await expect(link).toHaveAttribute('referrerpolicy', 'no-referrer')
+  const requests: { url: string; referrer?: string; authorization?: string; body: string | null }[] = []
+  await page.context().route(issuanceUrl, route => {
+    const request = route.request()
+    requests.push({ url: request.url(), referrer: request.headers().referer, authorization: request.headers().authorization, body: request.postData() })
+    return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Synthetic issuance page</title>' })
+  })
+  const [popup] = await Promise.all([page.waitForEvent('popup'), link.click()])
+  await popup.waitForLoadState()
+  await expect(popup).toHaveURL(issuanceUrl)
+  expect(await popup.evaluate(() => window.opener)).toBeNull()
+  expect(requests).toEqual([{ url: issuanceUrl, referrer: undefined, authorization: undefined, body: null }])
+  await expect(page.getByLabel('JWT 토큰', { exact: true })).toHaveValue(token)
+  expect(state.writes).toEqual([])
+  await popup.close()
+  await page.screenshot({ path: test.info().outputPath('personal-token-issue-link.png') })
+})
+
+for (const url of [undefined, 'javascript:alert(1)', 'http://identity.example.test/tokens', '/tokens', 'https://user:password@identity.example.test/tokens']) {
+  test(`issuance link is hidden for ${url ?? 'an unset address'}`, async ({ page }) => {
+    await setup(page, { issuanceUrl: url })
+    await expect(page.getByRole('link', { name: 'JWT 토큰 발급받기' })).toHaveCount(0)
+    await expect(page.getByLabel('JWT 토큰', { exact: true })).toBeVisible()
+  })
+}
