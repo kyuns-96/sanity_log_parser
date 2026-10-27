@@ -2,7 +2,9 @@
 
 **원본 DB 보관:** 009 이후 [010_raw_sources.sql](010_raw_sources.sql)이 기존 VWP private 테이블에 엄격한 원본 명세/파일/1MiB byte 조각 규약을 추가한다. 새 테이블/권한은 없다. [실행·이관 안내](../vwp/DB_ORIGINALS.md)를 따른다. 운영 적용은 DBA가 관리하며 앱이 DDL을 실행하지 않는다.
 
-사용자 제출의 추가 저장 계약은 [제출 실행 안내](../vwp/SUBMISSION.md)와 [DB 인계 7절](CONNECTION_HANDOFF.md#7-사용자-제출의-저장-경로)을 따른다. CLI·분할 송수신/원자 반영·receipt와 [008_submissions.sql](008_submissions.sql)을 제공했다. VWP 내부 파일 인계→bridge 영속 원본/private DB→공유 큐→OA staging/private DB→역방향 응답이며 네 테이블/제한 로그인은 유지한다. **실제 회사 SDK·인프라·운영 DB 적용은 미완료**다. 증분 SQL은 007 이후 사용자/DBA 검토 절차로 적용한다.
+**010 적용 = 기존 `sanity_vwp_data`의 v4 CHECK 6개와 인덱스 3개로 확인하며 새 테이블을 신청하지 않는다.** 모드 선택, `public` 이외 스키마용 SQL 사본 생성, 오류 코드별 읽기 전용 진단과 실제 010 확인 SQL은 [DB 설치 점검](INSTALLATION_CHECKS.md)에 있다. 공통 접속 `check` 성공만으로 010 적용을 판정하지 않는다.
+
+현재 사용자 제출은 [토큰 없는 HTTPS 접수](../vwp/HTTPS_SUBMISSION.md)와 [DB 인계 7절](CONNECTION_HANDOFF.md#7-사용자-제출의-저장-경로)을 따른다. VWP CLI→bridge HTTPS API→VWP private DB 원본→파싱/source 큐→OA staging/OWNER 범위 확정→역방향 응답이며 네 테이블을 유지한다. [008](008_submissions.sql) 이후 009/010의 해당 계약이 필요하고, 기존 [폴더 제출](../vwp/SUBMISSION.md)은 호환 경로다. 실제 회사 인프라·운영 적용 상태는 현장에서 확인하며 증분 SQL은 사용자/DBA 검토 절차로 적용한다.
 
 **기존 `db/form/`으로 테이블 신청을 완료한 상태**다. 신청 원본 4개와 `002`·`003`은 그대로 보존한다.
 이후 기능 추가는 별도 증분 변경 SQL로 적용한다. 테이블을 재신청·재생성하거나 기존 데이터를 삭제하지 않는다.
@@ -13,7 +15,7 @@ OA 브라우저의 로컬 API 접속은 브리지 간 통신과 별개다.
 설치·환경변수 접속 설정·실행·통합 테스트는 [루트 README](../README.md)를 따른다.
 세 개발 AI의 DB 역할·기존 설정 키·서버별 읽기 전용 확인·비공개 접속 기록 양식은 [연결 인계](CONNECTION_HANDOFF.md)를 따른다. 각 서버는 [소스 구조·실행 안내](../DEPLOYMENT.md)에 따라 자기 모듈만 실행한다. 이 폴더의 SQL/fixture는 앱 시작과 함께 실행하지 않는다.
 
-기본은 별도 제한 로그인·`003`의 역할/컬럼 권한 계약이다. 별도 계정을 확보할 수 없는 환경에는 **명시적 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`**의 [단일 계정 계약](CONNECTION_HANDOFF.md#31-단일-계정-모드)을 제공한다. 이 모드는 네 테이블 전체 컬럼의 유효 SELECT/INSERT/UPDATE와 선택적 DELETE를 허용하며 DB의 private/큐 컬럼 격리를 제공하지 않는다. 관리자·소유·앱/public 스키마 CREATE·TRUNCATE/REFERENCES/TRIGGER 금지와 테이블/필수 UNIQUE 검사는 유지한다. 이 경우 `003` 역할 생성을 요구하지 않고 원본 SQL/포털 계획을 수정하거나 완료 DDL을 재실행하지 않는다. 아래 역할/권한 설치 설명은 기본 모드 기준이며 구조 증분 `002`, `004`~`009`의 기능별 필요 조건은 두 모드에 동일하다.
+기본은 별도 제한 로그인·`003`의 역할/컬럼 권한 계약이다. 별도 계정을 확보할 수 없는 환경에는 **명시적 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`**의 [단일 계정 계약](CONNECTION_HANDOFF.md#31-단일-계정-모드)을 제공한다. 이 모드는 네 테이블 전체 컬럼의 유효 SELECT/INSERT/UPDATE와 선택적 DELETE를 허용하며 DB의 private/큐 컬럼 격리를 제공하지 않는다. 관리자·소유·앱/public 스키마 CREATE·TRUNCATE/REFERENCES/TRIGGER 금지와 테이블/필수 UNIQUE 검사는 유지한다. 이 경우 `003` 역할 생성을 요구하지 않고 원본 SQL/포털 계획을 수정하거나 완료 DDL을 재실행하지 않는다. 아래 역할/권한 설치 설명은 기본 모드 기준이며 구조 증분 `002`, `004`~`010`의 기능별 필요 조건은 두 모드에 동일하다.
 접속 안내 [공개용 설정 문서](../dbaccess.example.md)의 DBaaS HTTP API는 **임시 읽기 전용**이다.
 사용자가 psycopg2 직접 PostgreSQL 접속 가능함을 확인했으며 이 방식을 기본으로 사용한다.
 4개 테이블 설계·신청 원본·기존 SQL은 변경하지 않는다. HTTP 인증·조회 클라이언트와 PostgreSQL 저장 어댑터는 별개다.
@@ -35,10 +37,12 @@ OA 브라우저의 로컬 API 접속은 브리지 간 통신과 별개다.
 | [007_workspace_pipeline.sql](007_workspace_pipeline.sql) | OA 분류 개정·그룹 판정/제안, 확정 분류 event 참조 FK | `006` 적용 후 두 단계 그룹 검토를 도입할 때 owner/DBA가 한 번 실행 |
 | [008_submissions.sql](008_submissions.sql) | V2 SUBMISSION/SOURCE_RUN/OUTBOX·OA staging, SOURCE 큐 종류·중복/실행 순서·범위 제약 | `007` 적용 후 새 제출 경로 도입 시 owner/DBA가 검토해 한 번 실행. 앱 자동 적용 없음 |
 | [009_sso_identity.sql](009_sso_identity.sql) | OA `SSO_IDENTITY` kind/scope·엄격한 계정 JSON·기존 UNIQUE 재사용 | `008` 이후 검토·적용. 포털은 생성된 55번 단일 ALTER 사용. 실제 SSO/JIT 앱 구현·업무 권한 연결은 별도 |
+| [010_raw_sources.sql](010_raw_sources.sql) | 기존 VWP private의 `RAW_SUBMISSION/RAW_FILE/RAW_CHUNK`, v4 CHECK 6개·인덱스 3개 | `009` 이후 원본 DB 보관 도입 시 DBA 검토·적용. 새 테이블/역할/GRANT 없음. 빈 초기 포털은 raw 계획의 56~59 단계 |
 
 기본 모드의 전체 준비 순서는 **신청한 `form`으로 생성 → `002` → 역할 준비 → `003` → `004`**다. 단일 모드는 역할 준비/`003` 대신 위 단일 계정 계약을 확인한다.
 이미 완료한 단계는 반복하지 않는다. 생성·`002`·`003`까지 완료했다면 **`004`만 실행**한다.
 workspace에는 이어서 `005 → 006 → 007`을 적용한다. 각 증분은 직전의 검증된 kind/scope 제약을 확인하고 기존 행·테이블·권한을 보존한다.
+현재 HTTPS 원본 DB 보관까지는 이어서 `008 → 009 → 010`이 필요하다. 이미 009까지 준비됐다면 010만 검토하며 앞 단계를 반복하지 않는다. 적용 증거는 [010 확인 기준](INSTALLATION_CHECKS.md#4-010-적용의-확인-기준)을 따른다.
 OA에 `WS_REVIEW`, `WS_REVIEW_EVENT`, `WS_REVIEW_PROPOSAL`을 추가하며, 사례/제안은 state/version/갱신 시각을 고정한다.
 `007`은 `WS_CLUSTER`, `WS_CLUSTER_EVENT`, `WS_GROUP_REVIEW`, `WS_GROUP_REVIEW_EVENT`, `WS_GROUP_REVIEW_PROPOSAL`을 추가한다.
 새 행은 원본 보고서/버전과 분류 event를 FK로 참조한다. 분류/판정 event·제안은 추가 전용이며 head만 갱신한다.
@@ -69,10 +73,10 @@ PostgreSQL 12.1+ 서버 바이너리가 필요하며, 별도 로컬 소켓 DB �
    예: `CREATE ROLE sanity_vwp_app NOLOGIN;` / `CREATE ROLE sanity_oa_app NOLOGIN;`.
    기존 역할이 있다면 새로 만들지 말고 구성을 검토한다. 실제 로그인에 해당 역할 하나만 연결한다.
 5. 아래 변경 안내에 따라 owner/DBA가 `004_clustering.sql`을 한 번 적용한다.
-6. 양쪽 환경의 실제 앱 계정으로 PING 전달을 확인하고 승인된 접속 방식으로 합성 분석/수신을 확인한다.
+6. 먼저 양쪽 환경의 실제 앱 계정으로 [읽기 전용 설치 점검](INSTALLATION_CHECKS.md)을 수행한다. PING·합성 분석/수신은 별도 승인된 송수신 시험에서 확인한다.
 
-SQL의 대상 스키마는 `public`이다. 다른 스키마에 신청했다면 실행할 `002`/`003`/`004`의 모든 `public.` 참조와
-`GRANT USAGE ON SCHEMA public`, 앱 설정을 **같은 실제 스키마로** 맞춘다.
+SQL의 대상 스키마는 `public`이다. 다른 스키마에 신청했다면 실행할 `002`~`010`의 모든 `public.` 참조와
+`003`의 `GRANT USAGE ON SCHEMA public`, 앱 설정을 **같은 실제 스키마로** 맞춘다. [공식 사본 생성 절차](INSTALLATION_CHECKS.md#3-public-이외-스키마에-원본-sql-대응)로 원본 hash를 보존하고, 데이터가 없는 포털 경로는 기존 `--schema` 도구를 사용한다.
 기존 DB가 이미 준비되어 있다면 재생성하거나 `002`를 다시 실행하지 않는다.
 앱은 필수 UNIQUE 인덱스를 이름이 아닌 대상 테이블·키·조건으로 확인한다.
 
@@ -193,7 +197,7 @@ Jira 호출·게시·DB 시뮬레이터는 현재 실행 범위에 없으며 운
 
 ## 5. 연결 테스트와 회귀 검사
 
-권한 설정 후 VWP 앱 계정에서 작은 합성 PING을 등록한다. 재실행 시 새로운 message_id를 사용한다.
+일반 접속 확인은 [읽기 전용 설치 점검](INSTALLATION_CHECKS.md)으로 수행한다. 아래 PING은 사용자/DBA가 승인한 **별도 송수신 시험**에서만 VWP 앱 계정으로 등록한다. 재실행 시 새로운 message_id를 사용한다.
 
 ```sql
 INSERT INTO public.sanity_vwp_to_oa(message_id, project, run_id, payload)

@@ -2,6 +2,8 @@
 
 이 문서는 **기존 PostgreSQL 연결 구현과 권한 계약**을 세 담당자에게 전달한다. 실제 접속값은 기입하지 않았다. [공통 작업 지침](../INTERNAL_AI_GUIDE.md)과 [DB 설치/증분 안내](README.md)를 함께 따른다. 이 문서가 운영 DB 쓰기·SQL 적용 권한을 부여하지 않는다.
 
+배포 시의 모드 선택, 오류 코드별 읽기 전용 진단, `public` 이외 스키마용 SQL 사본과 010 확인은 [설치 점검](INSTALLATION_CHECKS.md)을 따른다. 현재 기본 경로는 토큰 없는 HTTPS 접수·원본 DB 보관이며 7절에 정리했다.
+
 DB의 핵심 목적에는 **사람이 확정한 분류·판정·근거와 정정 이력을 축적해 다음 AI 판단에 제공하는 것**이 포함된다. 최신 목표는 [AI 판단 설계](../AI_DECISION_DESIGN.md)를 따른다. 이번 연동은 OA의 사내 OpenAI 호환 API를 우선 사용하며 OA 프로그램이 자기 범위의 로그·사례를 조회하고 결과를 검증·저장한다. 모델에 DB 계정을 주거나 VWP private 접근 권한을 추가하지 않는다. OA 모델 작업은 기존 `sanity_oa_data`의 `WS_CONFIG` 불변 ledger와 namespace `oa-ai-v1`에 저장하고 검증된 결과는 기존 분류/그룹 판정 event와 FK로 연결한다. 이번 한도 내 첫 판단 순환에 새 테이블·DDL·GRANT를 추가하지 않는다. 작업/사례가 누적될 때의 큐 인덱스·처리 성능은 별도 검토 대상이며 현재 구조가 무제한 처리 보장은 아니다. 설정·실행은 [OA AI 실행 안내](../oa/AI_RUNTIME.md)를 따른다.
 
 코드 위치와 실행은 [서버별 소스 안내](../DEPLOYMENT.md)를 따른다. [VWP-bridge 설정 예제](../vwp_bridge/.env.example)와 [OA 설정 예제](../oa/.env.example)의 키를 각 서버의 **저장소 루트 `.env`**에 설정한다. 예제 파일은 자동으로 읽거나 덮어쓰지 않는다.
@@ -20,12 +22,12 @@ DB의 핵심 목적에는 **사람이 확정한 분류·판정·근거와 정정
 
 ```mermaid
 flowchart LR
-    S[VWP 원천 수집 · DB 계정 없음] -->|VWP 내부 snapshot| B[VWP-bridge · VWP 로그인]
+    S[VWP 원천 수집 · DB 계정 없음] -->|토큰 없는 HTTPS| B[VWP-bridge · VWP 로그인]
     B <-->|기존 DB 계약| D[(동일 PostgreSQL · 네 테이블)]
     O[OA · OA 로그인] <-->|기존 DB 계약| D
 ```
 
-원본 수집→bridge의 로컬 입력과 VWP↔OA 경계를 구분한다. 두 bridge 사이에 HTTP/RPC·공유 파일·별도 DB를 추가하지 않는다. OA 회사 계정 조회용 저장소는 이 DB와 같다고 가정하지 않는다.
+VWP 원천→bridge의 HTTPS 제출과 VWP-bridge↔OA의 기존 DB 경계를 구분한다. 두 bridge 사이에 HTTP/RPC·공유 파일·별도 DB를 추가하지 않는다. OA 회사 계정 조회용 저장소는 이 DB와 같다고 가정하지 않는다.
 
 ## 2. 현장에서 받아야 할 접속 정보
 
@@ -103,7 +105,9 @@ DB 버전 조건은 PostgreSQL 12.1 이상·UTF-8이며 실검증 버전은 12.1
 
 `Database._check_contract`가 공통 관리자/소유/스키마/인덱스 검사와 모드별 ACL을 검사한다. 이 검사는 **DB 수준의 private 테이블 격리와 송수신 컬럼 분리를 단일 모드에서 보장하지 않는다.** 공유 계정으로 다른 SQL을 실행하면 상대 private 읽기·쓰기, 큐 내용·상태 수정, DELETE가 가능할 수 있다. 정상 앱 경로의 서버별 사용 범위, 송신 필드 제한·불변값 충돌 검사·상태 전이·트랜잭션·lease는 유지되지만 DB 권한 분리를 대신하지 않는다. 삭제 API/작업자도 추가하지 않는다.
 
-이 모드는 기존 공유 계정의 실측 권한을 검사하는 별도 계약이다. 새 GRANT·역할·테이블·증분 SQL이 필요하지 않으며, 기본 제한 계정용 `003_grants.sql`이나 포털 계획을 변경·실행해 우회하지 않는다. 테이블 구조용 `002`, `004`~`009`의 해당 기능별 설치 조건은 그대로다. 기존 완료 DDL을 반복하지 않는다.
+이 모드는 기존 공유 계정의 실측 권한을 검사하는 별도 계약이다. 모드 선택 자체가 새 GRANT·역할·테이블·증분 SQL을 요구하지 않으며, 기본 제한 계정용 `003_grants.sql`이나 포털 계획을 변경·실행해 우회하지 않는다. 테이블 구조용 `002`, `004`~`010`의 해당 기능별 설치 조건은 그대로다. 기존 완료 DDL을 반복하지 않는다.
+
+**공용 서버이면 restricted만 가능하다는 기준은 없다.** 공유 서버라도 별도 DB면 그 DB의 권한으로 판단한다. 같은 DB의 `public` CREATE를 유지해야 하는 환경은 앱 스키마를 분리한 제한 계정 구성이 가능한지 확인한다. 앱 테이블도 `public`이고 유효 CREATE를 없앨 수 없다면 두 모드 모두 맞지 않는다. [모드 선택 표](INSTALLATION_CHECKS.md#1-restricted--single_account-선택)에서 로그인·스키마·PUBLIC/상속 권한을 함께 대조한다.
 
 설정·DB 공통 코드·기존 테스트·명세 변경은 Codex 담당이다. 내부 AI는 제공된 수정본과 자기 서버 설정으로 아래 읽기 전용 check를 준비하고 비식별 결과를 인계한다. 회사 어댑터 변경 범위, SSO 검증·업무 권한·`AUTHORIZATION_NOT_IMPLEMENTED`는 확대하거나 해제하지 않는다.
 
@@ -123,6 +127,8 @@ DB 버전 조건은 PostgreSQL 12.1 이상·UTF-8이며 실검증 버전은 12.1
 
 두 명령은 읽기 전용으로 **연결·설치 스키마·선택한 모드의 유효 권한**을 검사한다. 기본 모드 성공은 `status=CONNECTED backend=POSTGRESQL driver=psycopg2 side=vwp checks=schema,permissions privilege_mode=restricted db_isolation=enforced`이며 OA는 같은 형식의 `side=oa`다. 단일 모드에서는 `privilege_mode=single_account db_isolation=not_enforced`를 출력한다. `checks=schema,permissions`만으로 제한 계정 격리가 통과했다고 보고하지 않는다. 실패 시 고정 `code=...`와 종료 코드 2를 보고한다. 연결 성공은 실제 송수신/사내 SSO/모델/새 workspace 운영 완료를 뜻하지 않는다.
 
+`DATABASE_UNAVAILABLE`은 망 접속 실패뿐 아니라 초기화/계약 검사 중 psycopg2 오류도 포함한다. `restricted`에서 역할이 없는 채 `pg_has_role`을 호출한 경우도 이 코드가 될 수 있다. [읽기 전용 진단 순서와 코드 표](INSTALLATION_CHECKS.md#2-오류를-좁히는-순서)로 접속·스키마·역할 존재·네 테이블·유효 GRANT·제약을 구분한다. 공통 check 성공은 010 검증을 포함하지 않으므로 [원본 저장 계약 검사](INSTALLATION_CHECKS.md#4-010-적용의-확인-기준)를 별도로 수행한다.
+
 접속 점검에서는 PING INSERT, 분석/수신/worker 실행, queue 상태 수정, fixture/전체 DB 시험을 하지 않는다. 쓰기·잠금·재수신·중복 방지의 전체 검증은 별도 승인된 점검 환경/절차에서 수행한다. `db/tests/run_mock.py`, `db/tests/create_fixture.sh`, `run_tests.py --require-db`는 일반 접속 점검 명령이 아니며 실제 운영 DB에 실행하지 않는다.
 
 예상 밖 접속/권한/스키마 오류는 [가이드 6절](../INTERNAL_AI_GUIDE.md#6-디버깅이-필요하면-codex에게-문의)에 따라 `WAITING_FOR_CODEX`로 남긴다. 실패한 요청을 반복하거나 TLS·권한·로그인·SQL을 임의 변경하지 않는다. 비밀값 대신 설정 키의 존재 여부, side, 비식별 오류 코드·발생 횟수와 설치 버전을 인계한다.
@@ -139,8 +145,10 @@ DB 버전 조건은 PostgreSQL 12.1 이상·UTF-8이며 실검증 버전은 12.1
 | `006_workspace_reviews.sql` | 사용자 판정/사례/제안 |
 | `007_workspace_pipeline.sql` | 두 단계 분류/그룹 판정과 불변 event 연결 |
 | `008_submissions.sql` | V2 제출/실행/outbox·OA staging과 SOURCE 메시지·원천 순서/중복 제약 |
+| `009_sso_identity.sql` | OA SSO identity의 kind/scope·계정 JSON 계약 |
+| `010_raw_sources.sql` | 기존 VWP private의 원본 DB 보관. v4 CHECK 6개와 인덱스 3개, 새 테이블/GRANT 없음 |
 
-사내 실제 적용 상태는 **미확인**이다. 합성 테스트 DB의 `008` 적용 기록으로 대체하지 않는다. 앱은 DDL/자동 migration을 하지 않는다. 비공개 스키마를 쓰면 SQL 대상과 `SANITY_DB_SCHEMA`가 일치해야 한다. 불일치는 DBA/Codex 검토로 해결하며 내부 AI가 SQL을 수정/적용하지 않는다.
+사내 실제 적용 상태는 **미확인**이다. 합성 테스트 DB의 적용 기록으로 대체하지 않는다. 앱은 DDL/자동 migration을 하지 않는다. 비공개 스키마는 `002`~`010`의 `public.`과 `003`의 schema USAGE 대상을 실행 사본에서 함께 대응하고 `SANITY_DB_SCHEMA`와 맞춘다. [공식 사본 생성 절차](INSTALLATION_CHECKS.md#3-public-이외-스키마에-원본-sql-대응)를 사용하며 원본 SQL/포털 계획은 수정하지 않는다. 실제 적용은 사용자/DBA가 관리한다.
 
 사용자가 2026-10-21 확인한 포털의 단일 문장 DDL/FK 경로에는 [포털 초기 설치 안내](portal/README.md)를 사용한다. 네 테이블이 모두 빈 상태에서 기존 읽기 전용 접속으로 catalog JSON을 사내에 저장하고 오프라인 도구로 실제 스키마/제약 이름에 맞는 실행본을 만든다. 원본 form/002~008은 보존하며 005를 생략하지 않는다. 앱에 DDL 권한을 주지 않고, 포털 적용은 사용자/승인 운영 담당자가 수행한다. 기본 모드에서는 003의 별도 역할·컬럼 권한 완료가 필요하며, 단일 모드는 3.1절을 따른다. 두 모드 모두 양쪽 서버의 읽기 전용 검사가 필수다. 생성된 catalog·실제 스키마·SQL bundle은 공개 저장소나 외부 대화에 올리지 않는다.
 
@@ -159,7 +167,8 @@ DB host / port / name / schema: [사내에만 기입]
 비밀 주입 경로 / 회전 담당자: [사내 참조, 비밀번호 자체 제외]
 TLS 정책 / 신뢰 CA의 사내 배포 경로:
 side DSN 사용 여부 / 필드 방식 전환 여부:
-설치 확인: form·002·003·004·005·006·007·008·009 각각 적용/미적용/미확인 (단일 모드의 003은 해당 없음)
+설치 확인: form·002·003·004·005·006·007·008·009·010 각각 적용/미적용/미확인 (단일 모드의 003은 해당 없음)
+010 증거: v4 CHECK 6개·인덱스 3개 정의/유효 상태와 원본 저장 계약 검사 결과의 사내 참조
 읽기 전용 check: 미실행/성공/실패, side·일시·종료 코드·비식별 오류 코드
 실제 쓰기/송수신 시험: 미실시 또는 별도 승인/실행 기록의 사내 참조
 남은 의존성 / 다음 담당자 / WAITING_FOR_CODEX 문의 ID:
@@ -171,24 +180,24 @@ side DSN 사용 여부 / 필드 방식 전환 여부:
 
 운영 `/api/workbench/*`는 기존 SSO 인증 후 현재 프로젝트/블록 권한을 검사한다. 작업 등록과 결과 반영도 같은 권한·원본·분류/판정 개정 및 선정 사례의 현재 유효성을 다시 확인한다. `WS_CONFIG` job에는 명령/입력 고정값·검색/모델 provenance·상태 변화를 불변 이벤트로 보존하고, 네트워크 호출 동안 DB 트랜잭션/권한 잠금을 유지하지 않는다.
 
-사람 확정 기록은 기존 `WS_CLUSTER_EVENT`, `WS_GROUP_REVIEW_EVENT`에서 조회한다. 현재 head에 연결된 완전한 사례를 선정하며 미확정/철회/정정 전·자기 정답·다른 블록을 제외한다. 별도 `reusable` 체크는 AI 참고 후보의 조건이 아니며 다른 버전은 기존 `compatible_versions` 승인이 필요하다. ECO 차이는 모델 입력에 명시한다. 검색은 현재 lexical 방식으로, 새 vector DB나 모델용 DB 계정을 요구하지 않는다.
+사람 확정 기록은 기존 `WS_CLUSTER_EVENT`, `WS_GROUP_REVIEW_EVENT`에서 조회한다. [AI 판단 설계](../AI_DECISION_DESIGN.md)에 따라 모든 프로젝트·블록·revision·ECO의 현재 유효한 확정 지식을 공유 후보로 삼고 출처/조건 차이를 모델 입력에 명시한다. `reusable`/`compatible_versions`는 후보 제한 조건이 아니며 미확정·철회·정정 전·자기 정답은 제외한다. 과거 원문/파싱 필드와 현재 판단 대상의 전체 로그를 구분하고 원문 조회·수정의 기존 블록 권한은 유지한다. 검색은 현재 lexical 방식으로, 새 vector DB나 모델용 DB 계정을 요구하지 않는다.
 
 상태와 복구·기준 파일·사내 검증 절차는 [AI_RUNTIME.md](../oa/AI_RUNTIME.md)를 따른다. 현재 앱은 전체 입력이 모델 한도에 맞는 순환을 제공한다. 대량 모델 분할/통합·큐 누적 성능·실제 판단 품질은 남은 검증/구현 범위다.
 
 ## 7. 사용자 제출의 저장 경로
 
-[제출 실행 안내](../vwp/SUBMISSION.md)의 CLI·양쪽 source 작업자와 `008_submissions.sql`을 제공한다. **실제 회사 SDK·mount/ACL·운영 DB/배포는 미연결**이며 사용자/DBA가 준비·검토한다. 사용자 CLI의 root 소유 JSON 설정은 DB 자격증명이 없는 별도 계약이다.
+[토큰 없는 HTTPS 제출](../vwp/HTTPS_SUBMISSION.md)의 CLI·bridge API/worker·OA source receiver와 기존 `008/009/010`을 사용한다. 실제 회사 provider/parser·DB/TLS/망·SSO/OWNER·운영 배포는 현장에서 확인한다. 사용자 CLI의 root 소유 JSON에는 DB 자격증명이 없다. TLS 종료 위치와 bridge가 관측하는 peer CIDR은 HTTPS 안내 2.1·2.2절을 따른다.
 
 | 단계 | 쓰기 주체 / 위치 |
 |---|---|
-| `sanity submit` 인계 | 사용자 VWP → `/srv/sanity/vwp-submit/inbox/<principal-key>/<submission-id>.ready/`. 사용자 DB 계정 없음 |
-| 검증된 원본 보관 | bridge service → `/var/lib/sanity/vwp-bridge/submissions/<submission-id>/`. OA에는 제공하지 않음 |
-| 접수·전체 근거 | VWP 제한 로그인 → `sanity_vwp_data`. 기존 분석/근거와 구분되는 제출/원천 참조 필요 |
+| `sanity submit` 인계 | 사용자 VWP → bridge HTTPS API. 제출용 토큰/공유 폴더/사용자 DB 계정 없음 |
+| 검증된 원본 보관 | VWP 앱 로그인 → `sanity_vwp_data`의 `RAW_SUBMISSION/RAW_FILE/RAW_CHUNK`. byte 조각 최대 1MiB, 전체 크기/SHA256 확인 |
+| 파싱과 전체 근거 | bridge worker가 DB 원본을 실행 중에만 임시 복원·전체 파싱하고 같은 VWP private에 제출/원천 참조와 근거 저장 |
 | 범위/분석 전달 | VWP 제한 로그인 → `sanity_vwp_to_oa`. SOURCE_MANIFEST/PART/COMMIT; envelope 포함 압축 전/후 각 4MiB, data part당 1,000건 이하 |
-| staging/최종 업무 반영 | OA 제한 로그인 → `sanity_oa_data`. 전체 scope/해시/조각 검증 전 일반 검토 노출 없음 |
+| staging/최종 업무 반영 | OA 앱 로그인 → `sanity_oa_data`. 전체 scope/해시/조각 검증과 현재 OWNER의 정확한 예상 범위 확정 전 일반 검토/AI 입력 노출 없음 |
 | OA 저장/거부 결과 | OA 제한 로그인 → `sanity_oa_to_vwp`. SOURCE_RECEIPT. OA 반영/응답 등록을 같은 트랜잭션으로 확정 |
-| 사용자 상태 | bridge service → `/srv/sanity/vwp-submit/receipts/<principal-key>/<submission-id>.json`. 검증한 DB 상태/응답만 반영 |
+| 사용자 상태 | CLI의 HTTPS 상태 조회로 원본/제출 DB 상태와 검증한 OA 응답을 확인. OWNER 대기/최종 상태를 구분 |
 
-`008_submissions.sql`이 같은 네 테이블 안에서 신규 종류·scope·불변성/중복·실행 순서를 추가한다. 기존 legacy run 필수/제약과 선택한 모드의 권한 계약을 유지하며 추가 로그인·새 테이블·광범위 GRANT가 필요하지 않다. 앱은 008 미적용 시 실패하고 fake run/bundle ID·기존 PING/ANALYSIS_BUNDLE로 우회하지 않는다. 원본 byte 동일 파일은 VWP 영속 volume, 개별 raw 근거는 VWP private DB에 유지하며 OA의 정상 앱 경로는 상대 private 테이블을 읽지 않는다. 단일 계정 모드에서는 이 경계를 DB가 강제하지 못한다.
+`008`이 같은 네 테이블 안에서 신규 종류·scope·불변성/중복·실행 순서를 추가하고 `010`이 원본 byte DB 보관을 확장한다. 기존 legacy run 필수/제약과 선택한 모드의 권한 계약을 유지하며 추가 로그인·새 테이블·광범위 GRANT가 필요하지 않다. 앱은 필요한 migration이 없으면 실패하고 fake run/bundle ID·기존 PING/ANALYSIS_BUNDLE로 우회하지 않는다. OA의 정상 앱 경로는 상대 private 테이블의 원본을 읽지 않으며 단일 계정 모드에서는 이 경계를 DB가 강제하지 못한다.
 
-사내 비공개 인계에는 기존 DB 접속 기록과 함께 제출 마운트의 신원/ACL·실제 위치·용량/rename 검증, bridge 영속 volume/백업, 신원→블록 배정 검증 경로, release/설정 대응과 원본/DB 보존 정책의 담당자를 남긴다. 실제 인프라가 미구비면 접수를 차단하며 새 HTTP/SCP·별도 DB로 대체하지 않는다.
+사내 비공개 인계에는 DB 접속 기록, 010 적용 증거, TLS/peer CIDR 근거, parser 프로필, 임시 파싱 공간/정리, DB 용량·WAL·백업, OA SSO/현재 OWNER·범위 확정과 보존 정책의 담당자를 남긴다. 이전 폴더/영속 archive/receipt는 [filesystem 호환 제출](../vwp/SUBMISSION.md)의 별도 배치다. 현재 HTTPS 원본 DB 보관의 필수 공유 폴더로 해석하지 않는다. 준비되지 않은 인프라는 다른 전송/저장 방식으로 자동 대체하지 않는다.

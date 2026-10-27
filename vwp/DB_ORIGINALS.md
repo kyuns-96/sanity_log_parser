@@ -42,6 +42,8 @@ python3 db/portal/runbook.py verify --snapshot /private/after-010.json \
 
 010은 기존 RUN/근거/제출·원문 크기/해시·불변성·부모/FK 제약과 제한 계정 격리를 유지하며 새 종류에만 엄격한 규약을 추가한다. 이미 실행한 migration을 재실행하지 않는다.
 
+**적용 확인:** 기존 `sanity_vwp_data`의 v4 CHECK 6개와 인덱스 3개로 확인한다. 새 테이블은 없으며 공통 DB 접속 check만으로 010을 검증하지 않는다. [실제 정의 조회·원본 저장 계약 검사·스키마 대응](../db/INSTALLATION_CHECKS.md)을 따른다.
+
 ## 임시 파싱 공간과 Docker
 
 `temp_root=null`이면 시스템 임시 공간을 사용한다. 선택한 임시 디렉터리는 존재하는 절대 경로여야 하며 parser가 복원하는 제출 전체를 담을 수 있어야 한다. 실행 전 여유 공간을 확인하고 부족하면 `SUBMISSION_TEMP_LIMIT`로 중단한다. DB 원본/진행 기록은 보존되므로 공간을 준비한 뒤 같은 제출을 재개한다. 저장된 자료를 잘라서 분석하지 않는다.
