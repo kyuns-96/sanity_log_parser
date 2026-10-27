@@ -25,12 +25,19 @@ x-vwp-bridge: &vwp-bridge
   stop_grace_period: 20s
 
 services:
+  vwp-submission-api:
+    <<: *vwp-bridge
+    profiles: [https]
+    environment:
+      SANITY_AI_MODE: disabled
+    command: [python, -m, vwp_bridge.submission_api, --tls-cert, /run/submission-tls/server.crt, --tls-key, /run/submission-tls/server.key]
+
   # One-shot CLI. Its default command only prints usage and exits successfully.
   vwp-bridge:
     <<: *vwp-bridge
 
-  # Central VWP intake for the OA AI workflow. Add compose.submission.yaml for
-  # the private config, shared submission spool and persistent source archive.
+  # Central VWP intake for the OA AI workflow. Add compose.https.yaml for DB
+  # originals, or compose.submission.yaml for the legacy filesystem intake.
   vwp-submission-worker:
     <<: *vwp-bridge
     profiles: [submission]

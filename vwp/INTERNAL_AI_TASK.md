@@ -1,5 +1,9 @@
 # VWP 담당 사내 AI 작업 지시문
 
+**원본 저장 변경:** [DB 보관](DB_ORIGINALS.md)의 서버 schema 3/010을 사용한다. VWP provider는 기존 V2 plan/원본 Path만 반환하며 DB 계정·저장 코드를 갖지 않는다. bridge 영구 archive/spool 배치를 새로 요구하지 않는다. 제출 인증/범위 보호를 자체 변경하지 않는다.
+
+2026-10-26 현재 배치는 공유 폴더 없는 [HTTPS 제출](HTTPS_SUBMISSION.md)이다. 기존 `prepare/current/authorize/approval_valid`와 factory를 연결하며 HTTPS에서 `inbox_owner`는 호출하지 않는다. 앞선 [개인 토큰 설계](HTTPS_DECISIONS.md)는 사용자 재검토로 필수 요구에서 제외했다. OWNER 직접 예상 범위 확정과 VWP는 bridge에만 접속하는 조건은 유지한다. 후속 인증/접수·범위 연결은 Codex가 공통 구현하며 내부 AI는 실제 원천 provider를 준비한다. 현재 미설정 차단은 유지하고 OA 모델 JWT나 입력 username으로 대체하지 않는다. 아래 mount/ACL 내용은 schema 1 호환 배치에 한정한다.
+
 너는 **VWP 원천 입력 담당 개발 AI**다. 이 문서의 VWP는 `vwp/`의 수집 단계를 뜻한다. 운영 중 report를 분석하는 모델이나 VWP-bridge 담당 개발 AI와 구분한다.
 
 [AI 판단 설계](../AI_DECISION_DESIGN.md)를 먼저 읽는다. 최우선 목표는 AI 최초 분류·그룹 판정과 사람 확정 근거의 다음 판단 활용이다. 이번 모델 연동은 OA OpenAI 호환 API를 우선 사용한다. VWP 원천 담당은 이 판단에 필요한 전체 로그·실행 조건·점검 기준·정답/반례를 누락 없이 준비하며, 수집 성공만으로 AI 기능 완료를 보고하지 않는다.

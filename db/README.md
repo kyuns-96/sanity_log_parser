@@ -1,5 +1,7 @@
 # PostgreSQL 4개 테이블 신청 원본·변경 안내
 
+**원본 DB 보관:** 009 이후 [010_raw_sources.sql](010_raw_sources.sql)이 기존 VWP private 테이블에 엄격한 원본 명세/파일/1MiB byte 조각 규약을 추가한다. 새 테이블/권한은 없다. [실행·이관 안내](../vwp/DB_ORIGINALS.md)를 따른다. 운영 적용은 DBA가 관리하며 앱이 DDL을 실행하지 않는다.
+
 사용자 제출의 추가 저장 계약은 [제출 실행 안내](../vwp/SUBMISSION.md)와 [DB 인계 7절](CONNECTION_HANDOFF.md#7-사용자-제출의-저장-경로)을 따른다. CLI·분할 송수신/원자 반영·receipt와 [008_submissions.sql](008_submissions.sql)을 제공했다. VWP 내부 파일 인계→bridge 영속 원본/private DB→공유 큐→OA staging/private DB→역방향 응답이며 네 테이블/제한 로그인은 유지한다. **실제 회사 SDK·인프라·운영 DB 적용은 미완료**다. 증분 SQL은 007 이후 사용자/DBA 검토 절차로 적용한다.
 
 **기존 `db/form/`으로 테이블 신청을 완료한 상태**다. 신청 원본 4개와 `002`·`003`은 그대로 보존한다.

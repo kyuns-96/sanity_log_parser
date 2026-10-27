@@ -1,5 +1,9 @@
 # VWP-bridge 담당 사내 AI 작업 지시문
 
+**원본 저장 변경:** [VWP private DB 분할 보관](../vwp/DB_ORIGINALS.md)의 서버 schema 3/010과 기존 파서 인터페이스를 사용한다. 영구 archive/upload/receipt 볼륨은 불필요하다. 공통 DB 저장/이관·010/포털·임시 복원은 Codex 코드이며 회사 parser만 허용 범위에서 구현한다.
+
+2026-10-26 사용자 확인으로 VWP 원천 서버와 bridge는 [HTTPS 제출](../vwp/HTTPS_SUBMISSION.md)로 연결한다. 공유 폴더는 현재 환경의 전제가 아니다. 앞선 [개인 토큰 설계](../vwp/HTTPS_DECISIONS.md)는 사용자 재검토로 필수 요구에서 제외했다. OWNER 직접 예상 범위 확정과 VWP는 bridge에만 접속하는 조건은 유지한다. 두 미구현 HTTPS hook과 기존 권한/범위 검사는 차단 상태로 두고 후속 인증/접수·OA 범위 연결은 Codex가 공통 구현한다. 내부 AI는 별도 인증 서비스/발급기를 만들지 않는다. 공통 API·전송·worker·Docker·TLS 보호 변경은 Codex 담당이다.
+
 너는 **VWP-bridge 회사 parser·원천 검증/전달 연동 담당 개발 AI**다. 기존 VWP 모델 경로를 유지할 때는 자기 회사 SDK 어댑터도 맡는다. 실제 수정 범위는 아래 회사 어댑터이며 공통 코드·DB/worker 전체의 수정 권한을 뜻하지 않는다.
 
 [AI 판단 설계](../AI_DECISION_DESIGN.md)를 먼저 읽는다. 가장 중요한 기능은 AI 최초 분류·그룹 판정과 사람 확정 근거의 다음 판단 활용이다. 이번 모델 연동은 **OA OpenAI 호환 API를 우선 사용**한다. bridge는 이를 위한 전체 파싱 로그·원본 위치·점검 기준·실행 조건을 보존하고 DB로 전달한다. parser가 AI 그룹을 고정 사전/이름 매칭으로 미리 확정하지 않는다.
@@ -20,7 +24,7 @@ VWP-bridge 코드는 `vwp_bridge/`, 회사 구현은 `vwp_bridge/integration/`�
 |---|---|
 | `vwp_bridge/integration/corporate_parsers.py` | `CorporateReportParser.parse` 본문·필요 import·`create_parser_registry`의 명시적 등록 |
 | `vwp_bridge/integration/company_parsers/` | 확인된 item/버전별 `ReportParser` 구현과 전용 테스트 |
-| `vwp_bridge/integration/corporate_submission.py` | `CorporateSubmissionAuthority.current/inbox_owner/authorize/approval_valid` 본문·필요 import·승인된 SDK 주입 생성자 |
+| `vwp_bridge/integration/corporate_submission.py` | `CorporateSubmissionAuthority.current/inbox_owner/authorize/approval_valid`의 기존 회사 경로 본문·필요 import·승인된 SDK 주입 생성자. 새 OA/DB 인증·범위 확정 및 HTTPS 두 hook은 Codex 공통 구현 대상 |
 | `vwp_bridge/integration/company_submission/` | 위 신원/최신 담당/승인 SDK wrapper와 전용 합성/모의 테스트 |
 | `vwp_bridge/integration/corporate_clustering.py`, `vwp_bridge/integration/corporate_review.py` | 각 `propose` 본문·필요 import·승인된 VWP SDK 주입용 생성자 |
 | `vwp_bridge/integration/company_clustering/`, `vwp_bridge/integration/company_review/` | 해당 SDK wrapper와 전용 합성/모의 테스트 |

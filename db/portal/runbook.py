@@ -13,7 +13,7 @@ PLAN = Path(__file__).with_name('plan.json')
 TABLES = ('sanity_vwp_data', 'sanity_oa_data', 'sanity_oa_to_vwp', 'sanity_vwp_to_oa')
 PHASES = {'002': '002_indexes.sql', '004': '004_clustering.sql', '005': '005_workspace.sql',
           '006': '006_workspace_reviews.sql', '007': '007_workspace_pipeline.sql', '008': '008_submissions.sql',
-          '009': '009_sso_identity.sql'}
+          '009': '009_sso_identity.sql', '010':'010_raw_sources.sql'}
 
 
 class PortalError(ValueError):
@@ -101,8 +101,8 @@ def read_json(path):
     return json.loads(path.read_text(encoding='utf-8'))
 
 
-def load_plan():
-    plan = read_json(PLAN)
+def load_plan(*, raw_sources=False):
+    plan = read_json(PLAN.with_name('raw-plan.json') if raw_sources else PLAN)
     for name, expected in plan['sources'].items():
         if hashlib.sha256((ROOT / name).read_bytes()).hexdigest() != expected:
             raise PortalError('PORTAL_REFERENCE_STALE')
@@ -280,8 +280,10 @@ def prepare(snapshot, output, plan=None):
 
 
 def verify(snapshot, bundle, step_number=None, when='after'):
-    plan = load_plan()
     manifest = read_json(bundle / 'manifest.json')
+    plan = load_plan()
+    if manifest.get('plan_sha256') != sha(canonical(plan)):
+        plan = load_plan(raw_sources=True)
     expected_manifest, files = contents(read_json(bundle / 'start-snapshot.json'), plan)
     if manifest != expected_manifest or snapshot['schema'] != manifest['schema']:
         raise PortalError('PORTAL_BUNDLE_MISMATCH')
@@ -307,6 +309,7 @@ def main(argv=None):
     build = commands.add_parser('prepare')
     build.add_argument('--snapshot', type=Path, required=True)
     build.add_argument('--out', type=Path, required=True)
+    build.add_argument('--raw-sources',action='store_true',help='prepare the opt-in 010 DB original-file storage steps')
     check = commands.add_parser('verify')
     check.add_argument('--snapshot', type=Path, required=True)
     check.add_argument('--bundle', type=Path, required=True)
@@ -319,7 +322,7 @@ def main(argv=None):
                 stream.write(inspection_sql(args.schema))
             print('status=INSPECTION_SQL_CREATED database_access=NONE')
         elif args.command == 'prepare':
-            manifest = prepare(read_json(args.snapshot), args.out)
+            manifest = prepare(read_json(args.snapshot), args.out,load_plan(raw_sources=args.raw_sources))
             print(f'status=PREPARED checkpoint={manifest["start_checkpoint"]} remaining={len(manifest["steps"])} operational_ready=false')
         else:
             verify(read_json(args.snapshot), args.bundle, args.step, args.when)

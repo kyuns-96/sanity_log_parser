@@ -10,7 +10,8 @@ from common.sanity_common import ReviewError, digest, pack_json
 from common.sanity_db import Database, Queue, lock_key
 from common.sanity_parsers import validate_builtin_evaluation
 from common.sanity_privacy import SecretGuard
-from common.sanity_submission import (PART_BYTES, PROTOCOL, approved, check, message_id, submission_uuid,
+from common.sanity_submission import (PART_BYTES, PROTOCOL, VerifiedRemoteSubmitter, approved, check, message_id, submission_uuid,
+    submission_receipt,
     validate_packet)
 from common.sanity_submission_files import (copy_bundle, directory, fsync_dir, load_config, read_json_file,
     remove_own_partial, storage, verify_bundle, verify_snapshot, write_json_file)
@@ -22,7 +23,18 @@ class SubmissionWorker:
     def __init__(self, db, config, authority, registry):
         self.db, self.config, self.authority, self.registry = db, config, authority, registry
         self.store = SubmissionStore(db)
-        self.root = storage(config)
+        self.https = config.get('transport') == 'https'
+        self.database_storage = config.get('storage') == 'postgresql'
+        if self.database_storage:
+            from common.sanity_raw_sources import RawSourceStore
+            self.raw = RawSourceStore(db,config['node_id'],temp_root=config['temp_root'])
+            return
+        if self.https:
+            from vwp_bridge.submission_uploads import UploadStore
+            self.uploads = UploadStore(config)
+            self.root = self.uploads.root
+        else:
+            self.root = storage(config)
         self.archive = directory(config['archive_root'])
         check(os.geteuid() == config['service_uid'] and self.archive.stat().st_uid == config['service_uid']
               and self.archive.stat().st_mode & 0o077 == 0, 'SUBMISSION_STORAGE_NOT_CONFIGURED')
@@ -32,20 +44,21 @@ class SubmissionWorker:
         submission, state = row['payload'], row['state']
         actor = submission['actor']
         key = digest([actor['issuer'],actor['subject']])
-        receipts = directory(self.root/'receipts'/key)
-        value = {'schema_version':1,'submission_id':submission['submission_id'],'actor_key':key,
-                 'delivery_state':row['status'],'state_revision':row['version'],
-                 'updated_at':row['updated_at'].isoformat(), 'verified_oa_state':bool(state.get('oa_receipt')),
-                 'review_readiness':state.get('oa_receipt',{}).get('review_readiness','BLOCKED'),
-                 'blockers':state.get('oa_receipt',{}).get('blockers',state.get('blockers',[])),
-                 'workspace_links':state.get('oa_receipt',{}).get('workspace_links',[])}
-        write_json_file(receipts/(submission['submission_id']+'.json'),value,mode=0o640)
+        value = submission_receipt(row)
+        if self.database_storage:
+            return value
+        receipts = directory(self.root/submission['submission_id'] if self.https else self.root/'receipts'/key)
+        write_json_file(receipts/('receipt.json' if self.https else submission['submission_id']+'.json'),value,
+                        mode=0o600 if self.https else 0o640)
         return value
 
     def refresh_receipt(self, row):
+        if self.database_storage:
+            return
         actor = row['payload']['actor']
         key = digest([actor['issuer'],actor['subject']])
-        path = self.root/'receipts'/key/(row['payload']['submission_id']+'.json')
+        path = (self.root/row['payload']['submission_id']/'receipt.json' if self.https else
+                self.root/'receipts'/key/(row['payload']['submission_id']+'.json'))
         if path.exists() or path.is_symlink():
             old = read_json_file(path,65536)
             if (old.get('submission_id')==row['payload']['submission_id'] and old.get('actor_key')==key
@@ -59,6 +72,13 @@ class SubmissionWorker:
         check(inbox.name==actor.key and inbox.stat().st_uid==actor.os_uid
               and inbox.stat().st_mode & 0o007==0,'FORBIDDEN')
         return actor
+
+    def stored_actor(self, actor):
+        if self.https:
+            verified = self.authority.resolve_actor(actor)
+            check(isinstance(verified,VerifiedRemoteSubmitter) and verified.actor == actor,'FORBIDDEN')
+            return verified
+        return self.inbox_actor(self.root/'inbox'/digest([actor['issuer'],actor['subject']]))
 
     def receive_receipt(self):
         queue = Queue(self.db,'oa_to_vwp')
@@ -141,8 +161,8 @@ class SubmissionWorker:
                 self.store.state(sid,'DB_QUEUED',{**current['state'],'next_publish':position+1})
         return self.store.get('SUBMISSION',sid)
 
-    def process(self, ready, actor):
-        sid = submission_uuid(ready.name.removesuffix('.ready'))
+    def process(self, ready, actor, *, submission_id=None):
+        sid = submission_uuid(submission_id or ready.name.removesuffix('.ready'))
         token = lock_key('submission-v2-'+sid)
         locked = self.db.conn.execute('SELECT pg_try_advisory_lock(%s) AS locked',(token,)).fetchone()['locked']
         if not locked:
@@ -152,7 +172,7 @@ class SubmissionWorker:
             check(incoming['submission_id'] == sid and incoming['actor'] == actor.actor,'FORBIDDEN')
             self.authority.authorize(actor,incoming['plan']['collection'])
             confirmed = approved(incoming['plan'],self.authority)
-            output = self.archive_bundle(ready,incoming)
+            output = ready if self.database_storage else self.archive_bundle(ready,incoming)
             with self.db.transaction():
                 row = self.store.accept(incoming,node_id=self.config['node_id'])
             self.write_receipt(row)
@@ -160,7 +180,8 @@ class SubmissionWorker:
                 return False
             if row['status'] in ('VWP_ACCEPTED','PARSING'):
                 with self.db.transaction():
-                    self.store.state(sid,'PARSING',{})
+                    row = self.store.state(sid,'PARSING',{})
+                self.write_receipt(row)
                 build_transfer(self.db,self.store,incoming,manifest,output/'snapshot',confirmed=confirmed,registry=self.registry)
                 verify_snapshot(output/'snapshot')
             row = self.publish(sid)
@@ -186,6 +207,22 @@ class SubmissionWorker:
         receipts = 0
         while receipts < 100 and self.receive_receipt():
             receipts += 1
+        if self.database_storage:
+            rows = self.db.execute("SELECT r.entity_key,r.payload#>'{{request,submission,actor}}' AS actor "
+                "FROM {vwp} r LEFT JOIN {vwp} s ON s.record_type='SUBMISSION' "
+                "AND s.entity_key=substring(r.entity_key from 6) WHERE r.record_type='RAW_SUBMISSION' "
+                "AND r.status='VWP_UPLOADED' AND r.payload->>'node_id'=%s AND (s.record_id IS NULL "
+                "OR s.status IN ('VWP_ACCEPTED','PARSING') OR (s.status='DB_QUEUED' "
+                "AND (s.state->>'next_publish')::int < (s.state->>'message_count')::int)) "
+                "ORDER BY r.created_at,r.entity_key LIMIT %s",(self.config['node_id'],limit)).fetchall()
+            processed = 0
+            for row in rows:
+                sid = submission_uuid(row['entity_key'][5:])
+                actor = self.stored_actor(row['actor'])
+                with self.raw.materialize(sid) as bundle:
+                    processed += bool(self.process(bundle,actor,submission_id=sid))
+            return {'status':'SUBMISSIONS_PROCESSED' if processed or receipts else 'NO_MESSAGE',
+                    'processed':processed,'receipts':receipts}
         processed = 0
         # Progress and final receipt repair must survive removal of a user's
         # shared .ready copy. Do not materialize every registered plan here.
@@ -201,8 +238,7 @@ class SubmissionWorker:
             pending = (row['status'] in ('VWP_ACCEPTED','PARSING') or row['status']=='DB_QUEUED'
                        and row['state']['next_publish'] < row['state']['message_count'])
             if pending and processed < limit:
-                key = digest([row['payload']['actor']['issuer'],row['payload']['actor']['subject']])
-                actor = self.inbox_actor(self.root/'inbox'/key)
+                actor = self.stored_actor(row['payload']['actor'])
                 check(actor.actor==row['payload']['actor'],'FORBIDDEN')
                 processed += bool(self.process(self.archive/sid,actor))
         # A crash between the durable archive rename and DB registration leaves
@@ -216,11 +252,10 @@ class SubmissionWorker:
             if sid in known or self.store.get('SUBMISSION',sid):
                 continue
             incoming = read_json_file(archived/'submission.json')
-            key = digest([incoming['actor']['issuer'],incoming['actor']['subject']])
-            actor = self.inbox_actor(self.root/'inbox'/key)
+            actor = self.stored_actor(incoming['actor'])
             processed += bool(self.process(archived,actor))
             known.add(sid)
-        for inbox in sorted((self.root/'inbox').iterdir()):
+        for inbox in ([] if self.https else sorted((self.root/'inbox').iterdir())):
             actor = self.inbox_actor(inbox)
             for ready in sorted(inbox.iterdir()):
                 if ready.name.startswith('.') or not ready.name.endswith('.ready'):

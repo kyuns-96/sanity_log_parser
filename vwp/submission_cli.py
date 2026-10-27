@@ -15,14 +15,20 @@ from common.sanity_submission_files import (copy_bundle, directory, fsync_dir, l
 
 
 class SubmissionClient:
-    def __init__(self, config, provider, authority, *, state_root=None):
+    def __init__(self, config, provider, authority, *, state_root=None, transport=None):
         self.config, self.provider, self.authority = config, provider, authority
+        self.transport = transport
+        if config.get('transport') == 'https' and transport is None:
+            from vwp.submission_https import HttpsTransport
+            self.transport = HttpsTransport(config)
         state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
         self.state_root = Path(state_root) if state_root is not None else state / "sanity/submissions"
 
     def actor_storage(self):
         actor = self.authority.current()
         check(isinstance(actor,VerifiedSubmitter) and actor.os_uid==os.geteuid(),'SUBMISSION_IDENTITY_MISMATCH')
+        if self.transport is not None:
+            return actor, None, None
         root = storage(self.config)
         inbox = directory(root / "inbox" / actor.key)
         receipts = directory(root / "receipts" / actor.key)
@@ -86,6 +92,8 @@ class SubmissionClient:
         value, _ = verify_bundle(local)
         check(value["actor"] == actor.actor and value["submission_id"] == sid, "FORBIDDEN")
         self.authority.authorize(actor, value["plan"]["collection"])
+        if self.transport is not None:
+            return self.transport.enqueue(local,sid,actor)
         ready, partial = inbox / (sid + ".ready"), inbox / ("." + sid + ".partial")
         if ready.exists():
             existing, _ = verify_bundle(ready)
@@ -102,6 +110,8 @@ class SubmissionClient:
     def status(self, sid):
         sid = submission_uuid(sid)
         actor, inbox, receipts = self.actor_storage()
+        if self.transport is not None:
+            return self.transport.status(sid,actor)
         path = receipts / (sid + ".json")
         if path.exists() or path.is_symlink():
             check(path.stat().st_uid == self.config["service_uid"], "UNTRUSTED_RECEIPT")
@@ -123,7 +133,7 @@ class SubmissionClient:
             if exc.code != "NOT_FOUND":
                 raise
         else:
-            if value["delivery_state"] != "LOCAL_QUEUED":
+            if value["delivery_state"] not in ("LOCAL_QUEUED", "UPLOADING"):
                 return value
         return self.enqueue(sid)
 
@@ -194,6 +204,8 @@ def main(argv=None, *, provider=None, authority=None, state_root=None):
         from common.sanity_common import canonical_json
         if value.get('delivery_state')=='LOCAL_QUEUED':
             print(f"VWP 인계 완료 · OA 반영 전입니다. sanity status {value['submission_id']}로 확인하세요.")
+        elif value.get('delivery_state')=='VWP_UPLOADED':
+            print(f"VWP 서버 업로드 완료 · 분석·OA 반영 상태는 sanity status {value['submission_id']}로 확인하세요.")
         print(canonical_json(value).decode())
         return 2 if value.get("delivery_state") == "REJECTED" else 0
     except (EOFError, KeyboardInterrupt):

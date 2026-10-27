@@ -1,5 +1,7 @@
 # report 제출 실행·연동 안내
 
+**2026-10-26 현재 환경:** VWP와 bridge는 다른 서버이고 공유 폴더가 없으며 HTTPS 접속이 가능하다. [HTTPS 제출](HTTPS_SUBMISSION.md)의 schema 2 설정과 API/worker를 사용한다. 원본은 [VWP private DB 보관](DB_ORIGINALS.md)으로 변경했다. 서버 schema 3/010 migration을 사용하며 bridge 영구 파일 보관은 불필요하다. 파싱 임시 공간과 기존 인증/권한·범위 차단은 유지한다. 아래 파일시스템 설치 내용은 schema 1 호환 경로이며 장애 시 자동 전환하지 않는다.
+
 사용자 CLI, VWP 내부 snapshot 인계/영속 보관, V2 분할 송수신, OA source 페이지와 접수 응답을 구현했다. **실제 회사 신원·예상 범위/승인·report 경로 SDK와 사내 파일시스템/운영 DB는 연결하지 않았다.** 아래 일반 실행은 그 준비와 승인된 배포 후 사용한다. SSO 업무 API와 CORPORATE 모델의 기존 차단은 유지한다.
 
 2026-10-23 사용자 결정으로 접수·원본 보관·파싱·검증·DB 전송은 **VWP 중앙 수집 서비스**가 맡는다. 사용자 CLI에는 DB·모델 계정이 없고 AI 분류·판정은 OA에서 실행한다. 중앙 서비스는 기존 `vwp_bridge.submission_worker`를 사용하며 별도 장비가 필수는 아니다. [Docker 운영 설정](../vwp_bridge/docker/README.md#4-중앙-수집-서비스-실행--oa-ai-운영-경로)은 `submission` profile과 private JSON·spool/archive 마운트를 제공한다.
@@ -54,7 +56,7 @@ sanity retry 11111111-1111-4111-8111-111111111111
 |---|---|---|
 | VWP | [corporate_submission.py](integration/corporate_submission.py)의 `CorporateSubmissionInput.prepare` | `target → SubmissionInput(plan, reports)` 반환. plan은 V2, reports는 `reports/... → 사내 원본 Path` 대응. 예상 목록과 실제 파일 발견을 분리하고 예상 밖 파일도 보존. 원본/DB 쓰기 없음 |
 | VWP | 같은 파일의 `CorporateSubmissionAuthority.current/inbox_owner/authorize/approval_valid`와 명시적 factory | 실제 caller/마운트 신원→`VerifiedSubmitter`; 최신 블록 담당 확인; 실제 승인 참조/approver/범위 digest 검증. CLI 확인을 승인으로 바꾸지 않음 |
-| VWP-bridge | [corporate_submission.py](../vwp_bridge/integration/corporate_submission.py)의 `CorporateSubmissionAuthority.inbox_owner/authorize/approval_valid` | 인증된 마운트 신원과 UID/디렉터리 대응, 최신 블록 담당/승인 확인. 폴더명·파일의 actor 문자열만 신뢰하지 않음 |
+| VWP-bridge | [corporate_submission.py](../vwp_bridge/integration/corporate_submission.py)의 `authenticate_bearer/resolve_actor/authorize/approval_valid` (HTTPS), 기존 `inbox_owner` (폴더 경로) | HTTPS 자격증명 검증·최신 계정 대응, 또는 인증된 마운트 신원. 최신 블록 담당/승인 확인. 입력 actor나 디렉터리명만 신뢰하지 않음 |
 | OA | [corporate_submission.py](../oa/integration/corporate_submission.py)의 `CorporateSourceIdentity.resolve` | 신뢰한 VWP assertion의 issuer/subject를 OA SSO와 같은 영속 사용자 ID로 대응. importer가 현재 활성/블록 담당을 다시 검사 |
 
 필요 import·승인된 SDK client 주입 생성자와 자기 역할의 전용 wrapper/모의 테스트만 허용한다. VWP는 `company_plan/`, bridge 신원 wrapper는 `company_submission/`, OA는 `company_sso/`에 둔다. parser는 기존 별도 회사 registry 계약을 따른다. 허용 범위 밖 공통 파일·SQL·worker·API/UI를 내부 AI가 수정하지 않는다.

@@ -1,5 +1,32 @@
 # 프로토타입 구현 검토 기록
 
+## 2026-10-26 원본 report DB 보관·임시 파싱 구현
+
+- 사용자 결정으로 HTTPS 원본의 영구 보관을 기존 VWP private DB로 옮겼다. `RAW_SUBMISSION/RAW_FILE/RAW_CHUNK`에 제출 명세·파일 순서·최대 1MiB 원본 byte 조각을 저장한다. 전체 파일 크기/SHA256와 모든 파일을 확인해야 저장 완료이며 미완성 입력은 분석하지 않는다. 같은 UUID 충돌·내용 조각 중복 제거·전송 중단 후 재전송을 검증했다. 이전 항목의 bridge 영속 archive 설명은 schema 1/2 호환 경로의 기록이다.
+- DB 상태에서 receipt를 만들고 worker가 파싱 중에만 파일을 복원한다. 정상 종료·파서 예외의 scratch 정리, 중단 후 재처리, 컨테이너 재생성 후 원본/`OA_STORED` 조회, 공간 부족 시 원본 보존을 확인했다. 기존 archive의 UUID·원문·원본 파일을 보존하는 명시적 import CLI도 제공한다. 강제 종료 때 남는 scratch의 정리는 OS/컨테이너 수명 주기로 관리한다.
+- `010_raw_sources.sql`은 009 이후의 DBA 전용 증분이며 새 테이블/계정/GRANT/DELETE나 인증 메시지는 추가하지 않는다. 기존 form/원본 SQL·55단계 `plan.json`은 변경하지 않았다. 선택형 `raw-plan.json`에 단계 56~59를 추가했고 59단계 전체와 원본 SQL의 catalog 일치·GUI 제약 이름·테이블 OID·ACL 보존 및 migration 재적용/드리프트 rollback을 검증했다.
+- PostgreSQL **16.15**에서 제출/HTTPS/원본/DB/포털/SSO 전용 **107/107**, 이후 추가한 포털 59단계 전체 재현 **1/1**을 통과했다. PostgreSQL **12.1**에서도 원본/010/포털 전용 **20/20**을 통과했다. 모두 실패·오류·skip 0이며 서로 겹치는 시험을 합산해 고유 시나리오 수로 표시하지 않는다. 원본 시험에는 **65MiB+6byte 파일의 66개 조각**과 전체 hash 대조가 포함된다.
+- 최종 비동기 API의 DB 파일 조회를 thread pool로 옮긴 뒤 PostgreSQL 16.15 **quick 230/230**, 실패·오류·skip 0을 확인했다. 합성 저장 probe는 **100 records/10 groups**다. 전수 프로필·무관한 10만 건·실제 모델/회사 자료 검사는 실행하지 않았다. 모든 fixture는 socket/SCRAM 전용이며 종료했고 PostgreSQL 12.1 컨테이너도 제거했다.
+- DB 보관 Docker 검증 **7개 시나리오**에서 UID 10001·읽기 전용 root·원본 volume 없음·DB 업로드/파싱/OA 수신·컨테이너 재생성·회사 인증 미설정 차단을 확인했다. worker tmpfs는 중복 mount 없이 512MiB 하나다. 마지막 API 수정 후 production 이미지 `sanity-vwp-bridge:db-originals-final-20261026`을 다시 빌드하고 네트워크 없는 컨테이너에서 진입점 import와 API 소스 hash 일치를 확인했다. 임시 합성 검증기는 운영 factory에 포함하지 않는다.
+- 첫 원본 전용 시험의 SQL 포맷 중괄호 오류 1건은 신규 시험을 매개변수 SQL로 고쳤다. 첫 quick의 기존 migration 파일 허용 목록 실패 1건은 승인된 010만 정확한 집합에 추가했다. 이전 해시·입력·기대값·권한 검사는 유지하며 첫 실패 로그를 보존했다.
+- 사용자가 재검토한 수동 개인 토큰 발급은 필수 요구로 추진하지 않는다. 이번 저장 변경은 익명 개발 접수·OA 확정 연결이나 토큰 발급 기능의 완료를 뜻하지 않으며, 미설정 인증·기존 SSO/RBAC·OWNER 범위 보호는 유지한다. 실제 회사 인증/범위·parser·모델 판단 품질과 운영 적용은 별도 연결/검증 대상이다.
+- 적용·임시 공간·이관 안내는 [DB 원본 보관](vwp/DB_ORIGINALS.md), 현재 전송 안내는 [HTTPS 제출](vwp/HTTPS_SUBMISSION.md)을 따른다. 증거는 `/tmp/sanity-db-original-final-20261026-zidojuh2/`, 최종 quick은 `/tmp/sanity-mock-pg-tjoqgit4/summary.json`에 보존한다. 사내 운영 DB/DDL·원문·서비스는 변경하지 않았다.
+
+## 2026-10-26 HTTPS 제출 인증·범위 정책 확정
+
+- 사용자 선택은 OA SSO 본인 제출 토큰 발급/폐기, 현재 블록 OWNER의 직접 예상 범위 선언/확정, VWP → bridge HTTPS만 허용이다. [결정 기록](vwp/HTTPS_DECISIONS.md)에 반영했다. 초기 운영 기본값은 제출 토큰 8시간/동시 5개·원본 자동 삭제 없음이며 회사 강제 규정이 확인되면 별도 검토한다.
+- VWP → OA 통로를 추가하지 않고 기존 DB 경계로 인증/권한·범위 확인을 요청한다. 기존 DB CHECK가 새 메시지를 허용하지 않으므로 별도 후속 migration·포털 단계가 필요하다. 기존 메시지 재해석·private 테이블 직접 읽기·공유 로그인 전환으로 우회하지 않는다. 아직 해당 SQL/메시지/발급 UI·범위 확정은 미구현이다.
+- 이번 정책 반영은 문서/인계 지침 변경이며 실행 코드를 변경하지 않았다. 기존 전송 검증 222건을 이 후속 인증 기능의 검증으로 보고하지 않는다. 미구현 보호를 유지하며 신규 공통 코드는 Codex가 담당한다.
+
+## 2026-10-26 공유 폴더 없는 VWP → bridge HTTPS 제출
+
+- 사용자 확인으로 서로 다른 VWP/bridge 서버 사이의 공유 폴더 전제를 제거하고 명시적 schema 2 HTTPS 설정·제출 API·표준 라이브러리 CLI 전송을 추가했다. 원본은 bridge 전용 service 소유 archive에 보관하며 기존 파서·원천 ID·V2 분할/DB/OA 수신·승인/RBAC 계약을 유지한다. 새 테이블/DDL은 없다. schema 1 폴더 제출은 호환 경로로 남고 자동 전환하지 않는다.
+- 사내 제출 인증 수단은 미정이다. `authenticate_bearer`·`resolve_actor` 연결 지점을 제공하되 `SUBMISSION_AUTH_NOT_CONFIGURED`를 유지한다. 테스트의 모의 검증기는 명시적으로 주입하며 운영 factory가 선택하지 않는다. OA 모델 JWT를 제출 인증으로 재사용하지 않는다.
+- 전용 제출/DB/서버 분리/연동 계약 **86건**이 실패/오류/skip 0으로 통과했다. 이후 HTTP 오류 코드 보존 검사를 추가해 HTTPS 전용 **21건**을 최종 재검증했다. 최종 `quick`은 **222/222, 실패/오류/skip 0**이다. 별도 PostgreSQL **16.15**, UNIX socket/SCRAM fixture만 사용했고 종료했다. 저장 probe는 **100 records/10 groups**이며 전수·10만 건·운영 성능/AI 판단 검증을 실행한 것이 아니다.
+- 실제 TLS 업로드 → 원본 hash/byte 대조 → source worker → 제한 계정 DB 큐 → OA 저장 → HTTPS의 검증된 `OA_STORED` 응답을 확인했다. 전송 중단·commit 응답 유실·파일/명세 충돌·타인 조회·권한/자격증명 폐기·부분 분석 후 재시작·불완전/잘린/압축 입력·인증 미설정 차단을 시험했다. 첫 quick에서 분석 시작 상태 파일이 이전 접수 상태에 머문 실패 1건을 발견해 실제 `PARSING` 전환 시 receipt를 작성하도록 수정했다. 기존 검사/기대값은 완화하지 않았다.
+- production Dockerfile로 `sanity-vwp-bridge:https-submit-20261026`을 빌드했다. Compose 설정, UID 10001/읽기 전용 root에서 업로드·hash 검증·commit/회사 인증 차단, 컨테이너 재생성 후 원본·상태 보존, 실제 production TLS 진입점의 미설정 인증 503, 익명 401, DB 미설정 worker 차단의 **6개 시나리오**를 통과했다. 동일 부모의 단일 bind mount로 staging→archive atomic rename을 검증했고 컨테이너/네트워크를 정리했다. 초기 외부 검증 스크립트의 import 경로 오류는 스크립트에서 수정했으며 실패 로그를 보존했다.
+- 설정·실행·회사 연결 지점은 [HTTPS 제출 안내](vwp/HTTPS_SUBMISSION.md)에 정리했다. 실제 사내 인증 발급/검증·인증서·네트워크·report 경로/완료 의미·범위 승인·parser 정확성·모델 판단 품질은 사내 연결/검증 대상으로 남는다. 결과와 초기 실패/수정 로그는 `/tmp/sanity-https-final-20261026-z1h2jmam/`, 최종 quick 결과는 `/tmp/sanity-mock-pg-0a4motgi/summary.json`에 보존한다.
+
 ## 2026-10-19 PR #8 Docker 구성과 제출 기능 통합 검증
 
 - [PR #8](https://github.com/kyuns-96/sanity_log_parser/pull/8)의 고정 head `7c112387b2e1fcd8be076e6594c1f1b0dd616460`을 검토했다. VWP-bridge의 Docker/Compose·설정 예제·문서 8개 파일이며 기존 업무 코드/SQL/권한을 변경하지 않는다. 별도 worktree에 기존 제출 기능과 문서 53개를 함께 반영해 검증했다.

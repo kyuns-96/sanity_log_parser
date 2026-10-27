@@ -1,5 +1,7 @@
 # VWP 원천 수집
 
+공유 폴더가 없는 현재 배치는 [VWP → bridge HTTPS 제출](HTTPS_SUBMISSION.md)을 사용합니다. 원본 snapshot과 재전송 UUID는 유지하며 [원본을 VWP private DB에 영구 보관](DB_ORIGINALS.md)합니다. bridge의 영구 파일 볼륨은 필요 없으며 파싱 때만 임시 복원합니다. VWP는 bridge에만 접속하고 기존 인증·권한/범위 차단은 유지합니다. 아래 mount/ACL 설명은 기존 schema 1 호환 배치입니다.
+
 VWP 원천 수집 코드는 이 디렉터리, 회사 입력 어댑터는 `integration/`에 있습니다. [VWP 지시문](INTERNAL_AI_TASK.md)과 [서버별 소스·실행 안내](../DEPLOYMENT.md)를 따릅니다. 저장소 루트에서 `python -m vwp.main`으로 실행합니다.
 
 분산 운영의 PRE/POST·예상 범위 승인·버전/실행·중복 기준은 [Q1 반영 설계](SOURCE_COLLECTION_DESIGN.md)에 정리했습니다. 기존 schema 1과 별도 V2 제출/분할 전달·workspace import를 제공하며 실제 회사 SDK/인프라는 미연결입니다.
