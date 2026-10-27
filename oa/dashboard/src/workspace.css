@@ -155,7 +155,7 @@
 .ws-record-dragged { opacity: .45; }
 .ws-workbench .ws-log-drop-active { background: var(--accent-soft); border: 1px solid var(--accent); outline: 2px solid var(--accent-line); outline-offset: -3px; }
 .ws-workbench .ws-log-drop-active strong { color: var(--accent); }
-.ws-log-drag-preview { position: fixed; z-index: 80; width: 230px; max-width: calc(100vw - 16px); display: flex; align-items: center; gap: 10px; padding: 12px 14px; pointer-events: none; background: var(--accent); color: white; border-radius: 6px; box-shadow: 0 5px 18px #252c2826; }
+.ws-log-drag-preview { position: fixed; z-index: 80; width: 230px; max-width: calc(100vw - 16px); display: flex; align-items: center; gap: 10px; padding: 12px 14px; pointer-events: none; background: var(--accent); color: var(--primary-foreground); border-radius: 6px; box-shadow: 0 5px 18px #252c2826; }
 .ws-log-drag-preview strong { display: block; font-size: 12px; }
 .ws-log-drag-preview span { display: block; font-size: 10px; margin-top: 2px; opacity: .85; }
 .ws-log-keyboard-preview { bottom: 18px; left: 50%; transform: translateX(-50%); width: auto; }
@@ -356,36 +356,36 @@
 @media (max-width: 720px) {
   .ws-app { --ws-sidebar-width: 0px; }.ws-sidebar { width: min(310px, 86vw); transform: translateX(-100%); transition: transform 180ms ease; padding: 25px 18px 17px; }.ws-sidebar.ws-open { transform: translateX(0); }.ws-main { padding: 24px 16px 15px; }.ws-topbar { height: 57px; padding-inline: 16px; }.ws-topbar > div { gap: 8px; font-size: 10px; }.ws-topbar > div > span:first-of-type { display: none; }.ws-connected { display: none; }.ws-mobile-trigger, .ws-mobile-close { display: grid; place-items: center; background: none; border: 0; color: var(--text-secondary); min-height: 42px; min-width: 36px; }.ws-mobile-close { position: absolute; top: 24px; right: 13px; }.ws-backdrop { display: block; position: fixed; inset: 0; background: #252c2873; border: 0; z-index: 25; }.ws-collapse { display: none; }.ws-heading { gap: 10px; align-items: flex-start; }.ws-heading h1 { font-size: 25px; letter-spacing: -.8px; }.ws-heading p { font-size: 11px; }.ws-heading > button { font-size: 10px; margin-top: 28px; padding-inline: 10px; }.ws-heading > div { min-width: 0; }.ws-statistics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.ws-statistics section { padding: 18px; border-bottom: 1px solid var(--line-soft); }.ws-statistics section:nth-child(2n) { border-right: 0; }.ws-statistics section:nth-child(n+3) { border-bottom: 0; }.ws-statistics strong { font-size: 28px; }.ws-panel-header { padding: 18px; flex-direction: column; align-items: flex-start; gap: 8px; }.ws-block-strip { gap: 6px; }.ws-block-strip button { flex: 1; justify-content: center; padding: 10px; font-size: 11px; }.ws-block-strip button span { display: none; }.ws-por-summary { grid-template-columns: 1fr; gap: 15px; padding: 18px; }.ws-por-summary-label { display: flex; align-items: center; }.ws-por-summary-label small { margin-left: auto; }.ws-por-assignee { display: flex; align-items: center; gap: 12px; text-align: left; }.ws-por-assignee small { margin: 0; }.ws-version-bar { flex-wrap: wrap; gap: 12px; }.ws-version-bar label:nth-child(2) { flex-basis: 100%; order: 3; }.ws-version-bar label:last-child { flex: 1; }.ws-version-context { flex-direction: column; align-items: flex-start; padding: 18px; }.ws-version-context > button { width: 100%; margin-top: 3px; }.ws-readonly { max-width: none; text-align: left; }.ws-report-counts { gap: 18px; flex-wrap: wrap; font-size: 10px; }.ws-report-toolbar { padding: 17px; gap: 15px; }.ws-report-filters { flex-wrap: wrap; }.ws-search { flex-basis: 100%; }.ws-report-filters select { flex: 1; }.ws-pagination { padding-inline: 15px; }.ws-footer { flex-direction: column; gap: 7px; font-size: 8px; }.ws-history { padding-inline: 17px; }.ws-history li { grid-template-columns: 23px minmax(0, 1fr); gap: 12px; }.ws-history header { flex-direction: column; gap: 3px; }.ws-history p { font-size: 11px; }.ws-change-preview { grid-template-columns: 1fr; gap: 14px; }.ws-change-preview > svg { transform: rotate(90deg); }.ws-confirm { padding: 21px !important; }.ws-dialog-actions { flex-wrap: wrap; }.ws-evidence dl { grid-template-columns: 1fr; }.ws-report-dialog { padding: 18px !important; }.ws-report-dialog-scroll h3 { font-size: 13px; }.ws-login { grid-template-columns: 1fr; }.ws-login-story { padding: 24px; border-right: 0; border-bottom: 1px solid var(--line); }.ws-login-story > div:nth-child(2), .ws-login-story > small { display: none; }.ws-login-main { padding: 43px 26px 70px; }.ws-login-form h2 { font-size: 25px; }.ws-login-main > footer { bottom: 20px; }.ws-overview-foot p:first-child { align-items: flex-start; line-height: 1.9; }.ws-overview-foot p:first-child svg { flex-shrink: 0; margin-top: 4px; }
 }
-.ws-rationale-progress { display:flex; align-items:center; flex-wrap:wrap; gap:8px 20px; padding:10px 0 14px; font-size:12px; color:var(--ws-muted, #64756e); border-bottom:1px solid var(--ws-line, #dce5df); }
-.ws-rationale-progress strong { color:var(--ws-ink, #244238); margin-left:4px; font-variant-numeric:tabular-nums; }
-.ws-rationale { padding:20px 22px; border-bottom:1px solid var(--ws-line, #dce5df); background:var(--ws-surface, #fff); min-width:0; }
+.ws-rationale-progress { display:flex; align-items:center; flex-wrap:wrap; gap:8px 20px; padding:10px 0 14px; font-size:12px; color:var(--text-muted); border-bottom:1px solid var(--line); }
+.ws-rationale-progress strong { color:var(--ink); margin-left:4px; font-variant-numeric:tabular-nums; }
+.ws-rationale { padding:20px 22px; border-bottom:1px solid var(--line); background:var(--surface); min-width:0; }
 .ws-rationale-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
 .ws-rationale-heading h4 { font-size:14px; font-weight:650; margin:0; }
-.ws-rationale-state, .ws-group-rationale { font-size:11px; white-space:nowrap; color:#60776c; }
-.ws-rationale-state { border:1px solid #d6e1d9; border-radius:4px; padding:3px 7px; }
-.ws-rationale-confirmed { color:#30644b; }
-.ws-rationale-stale, .ws-rationale-missing { color:#8b653a; }
+.ws-rationale-state, .ws-group-rationale { font-size:11px; white-space:nowrap; color:var(--text-secondary); }
+.ws-rationale-state { border:1px solid var(--line); border-radius:4px; padding:3px 7px; }
+.ws-rationale-confirmed { color:var(--success); }
+.ws-rationale-stale, .ws-rationale-missing { color:var(--warning); }
 .ws-rationale-text { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.8; font-size:13px; margin:0 0 10px; }
-.ws-rationale-meta { color:#728078; font-size:11px; margin:7px 0 12px; }
-.ws-rationale-warning { color:#896338; font-size:12px; line-height:1.7; margin:8px 0; }
+.ws-rationale-meta { color:var(--text-muted); font-size:11px; margin:7px 0 12px; }
+.ws-rationale-warning { color:var(--warning); font-size:12px; line-height:1.7; margin:8px 0; }
 .ws-rationale-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:14px; }
 .ws-rationale-samples { margin-top:12px; font-size:11px; }
-.ws-rationale-samples details { border-bottom:1px solid #e9ede9; }
+.ws-rationale-samples details { border-bottom:1px solid var(--line-soft); }
 .ws-rationale-samples summary { cursor:pointer; padding:8px 0; overflow-wrap:anywhere; }
-.ws-rationale-samples pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:11px; background:#f4f7f3; padding:10px; max-height:180px; overflow:auto; }
-.ws-rationale-samples > button { color:#32654d; padding:8px 0; cursor:pointer; }
+.ws-rationale-samples pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:11px; background:var(--surface-soft); padding:10px; max-height:180px; overflow:auto; }
+.ws-rationale-samples > button { color:var(--success); padding:8px 0; cursor:pointer; }
 .ws-rationale-editor { display:grid; gap:14px; }
 .ws-rationale-editor label { display:grid; gap:7px; font-size:12px; font-weight:550; }
-.ws-rationale-editor textarea { min-height:90px; width:100%; border:1px solid #cdd9d0; border-radius:5px; padding:10px 12px; resize:vertical; font-size:13px; line-height:1.7; background:#fff; }
-.ws-rationale-editor textarea:focus { outline:2px solid #84a991; outline-offset:2px; }
+.ws-rationale-editor textarea { min-height:90px; width:100%; border:1px solid var(--line); border-radius:5px; padding:10px 12px; resize:vertical; font-size:13px; line-height:1.7; background:var(--surface); }
+.ws-rationale-editor textarea:focus { outline:2px solid var(--focus); outline-offset:2px; }
 .ws-rationale-evidence { display:flex; flex-wrap:wrap; gap:5px; margin-top:10px; }
-.ws-rationale-evidence button { border:1px solid #d6e1d9; border-radius:3px; padding:3px 6px; font-size:11px; overflow-wrap:anywhere; max-width:100%; }
-.ws-rationale-disclosure { font-size:12px; border-top:1px solid #e9ede9; margin-top:14px; padding-top:10px; }
-.ws-rationale-disclosure > summary { cursor:pointer; color:#65786b; }
-.ws-rationale-disclosure article { padding:12px 0; border-bottom:1px solid #e9ede9; }
-.ws-rationale-disclosure small { display:block; font-size:10px; color:#7a857c; overflow-wrap:anywhere; margin:4px 0; }
+.ws-rationale-evidence button { border:1px solid var(--line); border-radius:3px; padding:3px 6px; font-size:11px; overflow-wrap:anywhere; max-width:100%; }
+.ws-rationale-disclosure { font-size:12px; border-top:1px solid var(--line-soft); margin-top:14px; padding-top:10px; }
+.ws-rationale-disclosure > summary { cursor:pointer; color:var(--text-secondary); }
+.ws-rationale-disclosure article { padding:12px 0; border-bottom:1px solid var(--line-soft); }
+.ws-rationale-disclosure small { display:block; font-size:10px; color:var(--text-muted); overflow-wrap:anywhere; margin:4px 0; }
 .ws-rationale-disclosure article p { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.7; }
-.ws-group-rationale-preview { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:235px; color:#79857c; font-size:11px; margin-top:3px; }
+.ws-group-rationale-preview { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:235px; color:var(--text-muted); font-size:11px; margin-top:3px; }
 
 /* Review workbench: compact context, one primary action, aligned working panes. */
 .ws-workbench { padding: 22px; overflow: visible; font-size: 13px; }

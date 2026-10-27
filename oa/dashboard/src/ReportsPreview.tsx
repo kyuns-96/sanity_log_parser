@@ -3,6 +3,7 @@ import { ArrowDownToLine, ArrowUpRight, Check, ChevronLeft, ChevronRight, Databa
 import { Button } from './studio/components/ui/button'
 import { Badge } from './studio/components/ui/badge'
 import { WorkspaceBrand } from './components/WorkspaceBrand'
+import { ColorModeControl } from './components/ColorModeControl'
 import { Input } from './studio/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './components/ui/dialog'
 import './reportsPreview.css'
@@ -84,7 +85,7 @@ export default function ReportsPreview() {
       <div className="rp-sidebar-note"><ShieldCheck size={21} /><strong>가상 사용자 10명</strong><p>TOP 3명과 블록 담당자 7명으로 구성했습니다. 계정 전환은 실제 SSO 인증이 아닌 예시 탐색 기능입니다.</p></div>
       <div className="rp-sidebar-links"><a href="/?demo=1&flow=versions">버전·PoR 데모 <ArrowUpRight size={13} /></a><a href="/?demo=1&flow=access">프로젝트 배정 데모 <ArrowUpRight size={13} /></a><a href="/?demo=1">기본 검토 대장 <ArrowUpRight size={13} /></a></div>
     </aside>
-    <div className="main-shell"><header className="topbar"><div className="breadcrumb"><span>공개 형식 예시</span><ChevronRight size={13} /><strong>{project?.name || '미배정'}</strong></div><span className="rp-readonly"><Database size={14} />파싱·DB 저장 검증 완료</span></header>
+    <div className="main-shell"><header className="topbar"><div className="breadcrumb"><span>공개 형식 예시</span><ChevronRight size={13} /><strong>{project?.name || '미배정'}</strong></div><div className="color-mode-actions"><ColorModeControl /><span className="rp-readonly"><Database size={14} />파싱·DB 저장 검증 완료</span></div></header>
       <main className="workspace rp-workspace">
         <div className="rp-banner"><ShieldCheck size={17} /><span><strong>합성 데이터 미리보기</strong> · 공개 문서의 형식을 참고한 보고서입니다. 실제 EDA 도구·사내 AI 실행 결과가 아닙니다.</span></div>
         <div className="page-heading"><div><h1>검사 결과 워크스페이스</h1><p>GCA · VC LP · SpyGlass 원문과 초기 파서의 추출 결과를 함께 확인하세요.</p></div><span className="rp-library-total">전체 예시 <strong>{number(data.summary.items)}</strong> 항목</span></div>

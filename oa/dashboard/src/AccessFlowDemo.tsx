@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ArrowLeft, ArrowRight, ArrowUpRight, Boxes, Check, CheckCircle2, ChevronRight, CircleHelp, ClipboardList, FolderKanban, History, LockKeyhole, Plus, RotateCcw, ShieldCheck, Sparkles, Trash2, UserRound, Users, X } from 'lucide-react'
 import { Button } from './components/ui/button'
 import { WorkspaceBrand } from './components/WorkspaceBrand'
+import { ColorModeControl } from './components/ColorModeControl'
 import { Input } from './components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog'
 import { canManageProject, checkLabels, checkTemplates, createDemoProject, demoUsers, initialAccessState, newProjectDraft, person, roleLabel, saveDemoGrants, validateProject, visibleBlocks, visibleProjects } from './accessDemoModel'
@@ -88,7 +89,7 @@ export default function AccessFlowDemo() {
         <div className="af-current-user"><Avatar user={user} /><div><strong>{user.name}</strong><span>{label}</span></div></div>
       </aside>
       <div className="af-main-shell">
-        <header className="af-topbar"><div>워크스페이스 <ChevronRight size={13} /><strong>{view === 'members' ? '담당자 배정' : view === 'history' ? '변경 이력' : '프로젝트'}</strong></div><span><i />데모 데이터 · 새로고침 시 초기화</span></header>
+        <header className="af-topbar"><div>워크스페이스 <ChevronRight size={13} /><strong>{view === 'members' ? '담당자 배정' : view === 'history' ? '변경 이력' : '프로젝트'}</strong></div><div className="color-mode-actions"><ColorModeControl /><span><i />데모 데이터 · 새로고침 시 초기화</span></div></header>
         <main className="af-main" id="workspace-main" tabIndex={-1}>
           <div className="af-page-heading"><div><div className="af-eyebrow">PROJECT & PEOPLE</div><h1>{view === 'members' ? '담당자를 연결하세요' : view === 'history' ? '배정의 변화를 한눈에' : user.admin ? '프로젝트, 사람, 그리고 담당 범위' : `${user.name}님의 프로젝트`}</h1><p>{view === 'members' ? '계정을 선택하고, 그 사람이 맡을 프로젝트와 블록을 지정합니다.' : view === 'history' ? '프로젝트 생성과 담당 범위의 변경을 기록합니다.' : user.admin ? '프로젝트를 만들고 담당자를 연결하면, 각자의 작업 공간이 완성됩니다.' : '배정받은 범위의 블록과 sanity 결과를 확인하세요.'}</p></div><div className="af-heading-actions"><Button variant="outline" size="sm" aria-expanded={showHelp} onClick={() => setShowHelp(!showHelp)}><CircleHelp />흐름 안내</Button>{user.admin && <Button onClick={() => setCreating(true)}><Plus />프로젝트 만들기</Button>}</div></div>
 
