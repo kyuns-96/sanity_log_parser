@@ -1,11 +1,16 @@
-"""Bridge identity/assignment hooks, separate from VWP workstation SDK setup."""
+"""Legacy identity hooks; internal_network intake never calls this authority.
+
+Token-free deployments need the company parser and infrastructure settings.
+OA's authenticated current OWNER confirms the submitted scope in workbench.
+Keep these fail-closed hooks for explicitly selected legacy configurations.
+"""
 from common.sanity_common import ReviewError
 from common.sanity_submission import SubmissionAuthority
 
 
 class CorporateSubmissionAuthority(SubmissionAuthority):
     def authenticate_bearer(self, token):
-        # Connect the approved company submission-token verifier here.
+        # Legacy Bearer mode only; do not implement for internal_network intake.
         raise ReviewError('SUBMISSION_AUTH_NOT_CONFIGURED', 'HTTPS submission authentication is not connected')
 
     def resolve_actor(self, actor):

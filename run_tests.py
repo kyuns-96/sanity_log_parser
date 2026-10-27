@@ -13,6 +13,12 @@ PROFILES = ("quick", "full")
 # A short regression set for everyday edits. Keep expensive datasets and the
 # complete portal migration replay in full, with their original assertions.
 QUICK_TESTS = (
+    "tests.test_submission_tokenless.InternalIntakeContracts",
+    "tests.test_submission_tokenless.TokenlessSubmissionTests.test_real_tls_without_token_reaches_pending_then_sso_owner_publishes",
+    "tests.test_submission_tokenless.TokenlessSubmissionTests.test_only_current_owner_can_confirm_and_digest_revision_and_request_are_bound",
+    "tests.test_submission_tokenless.TokenlessSubmissionTests.test_owner_revocation_and_unconfigured_sso_do_not_allow_confirmation",
+    "tests.test_submission_tokenless.TokenlessSubmissionTests.test_tokenless_routes_cannot_read_or_modify_a_legacy_authenticated_upload",
+    "tests.test_submission_tokenless.TokenlessSubmissionTests.test_confirmation_revalidates_staged_parts_and_rolls_back_partial_publication",
     "tests.test_auth", "tests.test_db_config", "tests.test_db_single_account", "tests.test_common", "tests.test_parsers",
     "tests.test_scope_contract", "tests.test_access_store.AccessConfigurationTests", "tests.test_access_api.AccessApiBoundaryTests",
     "tests.test_access_store.AccessStoreTests.test_top_and_owner_have_sql_scoped_lists_and_exact_bundle_permissions",

@@ -13,13 +13,22 @@ HTTP_STATES = {'UPLOADING', 'VWP_UPLOADED', 'VWP_ACCEPTED', 'PARSING', 'DB_QUEUE
 
 
 def validate_https_config(value, *, bridge=False):
-    database = bridge and isinstance(value,dict) and value.get('schema_version') == 3
+    internal = isinstance(value,dict) and value.get('schema_version') == (4 if bridge else 3)
+    database = bridge and isinstance(value,dict) and value.get('schema_version') in (3,4)
     keys = ({'service_uid','storage','node_id','allowed_hosts','temp_root'} if database else
             {'service_uid', 'archive_root', 'upload_root', 'node_id', 'allowed_hosts'} if bridge else
             {'endpoint', 'ca_file', 'timeout_seconds', 'default_profile'})
+    if internal:
+        keys = keys | {'submission_auth'} | ({'allowed_client_networks'} if bridge else set())
     check(isinstance(value,dict) and set(value) == keys | {'schema_version','transport'}
-          and type(value['schema_version']) is int and value['schema_version'] == (3 if database else 2)
+          and type(value['schema_version']) is int
+          and value['schema_version'] == (4 if bridge and internal else 3 if internal or database else 2)
           and value['transport'] == 'https', 'SUBMISSION_CONFIG')
+    if internal:
+        from common.sanity_submission_intake import networks
+        check(value['submission_auth'] == 'internal_network','SUBMISSION_CONFIG')
+        if bridge:
+            networks(value['allowed_client_networks'])
     if bridge:
         check(type(value['service_uid']) is int and value['service_uid'] >= 0, 'SUBMISSION_CONFIG')
         if database:

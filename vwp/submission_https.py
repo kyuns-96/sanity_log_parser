@@ -10,6 +10,7 @@ from common.sanity_common import ReviewError, _decode_json, canonical_json
 from common.sanity_submission import check, submission_uuid
 from common.sanity_submission_files import regular, verify_bundle
 from common.sanity_submission_https import API, MAX_RESPONSE, bearer, validate_http_receipt, validate_https_config
+from common.sanity_submission_intake import tokenless
 
 
 class HttpsTransport:
@@ -20,11 +21,12 @@ class HttpsTransport:
         self.context.minimum_version = ssl.TLSVersion.TLSv1_2
 
     def request(self, method, path, body=None, *, length=None, content_type='application/json'):
-        token = bearer(os.environ.get('SANITY_VWP_SUBMIT_TOKEN',''))
+        headers = {'Accept':'application/json','Accept-Encoding':'identity'}
+        if not tokenless(self.config):
+            headers['Authorization'] = 'Bearer '+bearer(os.environ.get('SANITY_VWP_SUBMIT_TOKEN',''))
         connection = http.client.HTTPSConnection(self.url.hostname,self.url.port,
             timeout=self.config['timeout_seconds'],context=self.context)
         try:
-            headers = {'Authorization':'Bearer '+token,'Accept':'application/json','Accept-Encoding':'identity'}
             if body is not None:
                 headers.update({'Content-Type':content_type,'Content-Length':str(length if length is not None else len(body))})
             connection.request(method,path,body=body,headers=headers)

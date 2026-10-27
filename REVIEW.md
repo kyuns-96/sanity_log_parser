@@ -1,5 +1,16 @@
 # 프로토타입 구현 검토 기록
 
+## 2026-10-27 VWP 제출 토큰 제거·OA OWNER 범위 확정
+
+- 사용자 결정에 맞춰 새 기본 예제를 CLI schema 3·bridge schema 4의 `submission_auth=internal_network`로 바꿨다. CLI는 제출 토큰 환경변수를 읽거나 Authorization을 전송하지 않으며 VWP/bridge의 회사 신원·권한·승인 hook을 호출하지 않는다. 실제 소켓 출발 IP/CIDR·직접 TLS·Host를 검사하고 forwarded 헤더는 신뢰하지 않는다. 기존 Bearer/폴더 설정의 보호와 테스트는 호환 경로로 유지하며 자동 fallback하지 않는다.
+- 제출 OS 계정은 `UnverifiedSubmitter`와 예약 namespace의 미확인 표시로 기록한다. 회사 계정·OWNER로 매핑하지 않으며 기존 제출 목록도 `submitted_by=null`·`submitter_verified=false`로 구분한다. 사용자 입력의 confirmed/approval은 미확정으로 정규화한다. 원본 DB/전체 hash·임시 파싱·재시작 복구는 유지하고, 미확인 자료가 검증된 SOURCE_RUN 실행 키를 선점하지 않게 했다.
+- OA는 기존 WS_SUBMISSION/WS_SOURCE_PART에 전체 자료를 받고 `AWAITING_CONFIRMATION`으로 둔다. 현재 SSO OWNER의 명시적인 범위 확인 전에는 WS_REPORT/WS_VERSION을 공개하지 않는다. 새 workbench의 **VWP 제출 확인**에서 전체 범위·누락·제외·실행/도구 조건을 페이지로 확인하고 확정/반려한다. TOP은 조회만 가능하며 현재 계정/권한·변경 요청 보호를 재검사한다. 확정자·scope/manifest/content hash·개정·시각·사유·요청 ID를 보존한다. 같은 요청 재시도·부분 공개 rollback·늦은 대기 receipt를 처리하고 기존 PoR·사람 판정/분류는 변경하지 않는다.
+- PostgreSQL 16.15의 토큰 없는 접수/기존 제출·HTTPS·원본·workbench/SSO 전용 **104/104**, PostgreSQL 12.1의 새 접수 전용 **14/14**, 최종 PostgreSQL 16.15 **quick 237/237**이 실패·오류·skip 0으로 통과했다. 마지막 제출자 표시 보정은 최종 quick에서 재검증했다. 저장 probe는 **100 records/10 groups**이며 전수/10만 건·실제 회사 데이터/모델 시험은 실행하지 않았다. SQL·포털 계획은 변경하지 않았다.
+- 실제 독립 DB/SSO fixture와 빌드된 화면으로 브라우저 **7개 시나리오**를 확인했다. 첫 보고서가 없는 상태의 접수 확인, 체크/사유 필수, 서버 확정 응답 유실 후 동일 요청 재시도, TOP 조회 전용, 390px 모바일 반려/가로 넘침 없음, 53개 범위 페이지/누락 표시, 다른 창의 선행 결정을 덮어쓰지 않는 동작과 uncaught error 없음이다. 각 증거의 시나리오 이름·스크린샷을 보존했다.
+- production bridge 이미지의 미구현 회사 authority를 그대로 둔 상태에서 **토큰 없는 실제 TLS 업로드 → UID 10001/read-only root에서 DB 파싱/임시 정리 → OA OWNER 확정 → 컨테이너 재생성 후 OA_STORED/READY 조회**의 4개 시나리오를 확인했다. 원본용 영속 volume과 개인 토큰 없이 성공했다. bridge/OA production 이미지 및 TypeScript/프런트엔드 빌드가 통과했다. OA 이미지의 첫 빌드는 검증용 node_modules symlink가 build context에 들어가 실패했고, 그 로컬 symlink만 제거해 재빌드했다. Dockerfile/검사 조건을 완화하지 않았다.
+- 초기 11개 전용 시험과 이후 추가한 보호/rollback 검증 결과를 보존했다. 모든 DB fixture와 검증 컨테이너는 종료했다. 증거는 `/tmp/sanity-tokenless-20261027/`, 최종 quick은 `/tmp/sanity-mock-pg-7qyr3z5e/summary.json`이다. 기존 UI 작업은 별도 worktree에서 보존했고 사내 DB/서비스에는 접속하거나 배포하지 않았다.
+- [현재 HTTPS 안내](vwp/HTTPS_SUBMISSION.md), [정책](vwp/HTTPS_DECISIONS.md), VWP/bridge/OA 인계와 공통 가이드를 실제 구현에 맞췄다. **OA receiver/API/UI를 먼저 갱신한 뒤** 새 CLI/bridge 설정을 적용한다. 기존 010 이후 추가 SQL/계정/GRANT는 없으며 실제 회사 provider/parser·SSO/OWNER·DB/TLS·출발 IP·모델 판단 품질은 사내 연결/검증 대상이다.
+
 ## 2026-10-26 원본 report DB 보관·임시 파싱 구현
 
 - 사용자 결정으로 HTTPS 원본의 영구 보관을 기존 VWP private DB로 옮겼다. `RAW_SUBMISSION/RAW_FILE/RAW_CHUNK`에 제출 명세·파일 순서·최대 1MiB 원본 byte 조각을 저장한다. 전체 파일 크기/SHA256와 모든 파일을 확인해야 저장 완료이며 미완성 입력은 분석하지 않는다. 같은 UUID 충돌·내용 조각 중복 제거·전송 중단 후 재전송을 검증했다. 이전 항목의 bridge 영속 archive 설명은 schema 1/2 호환 경로의 기록이다.

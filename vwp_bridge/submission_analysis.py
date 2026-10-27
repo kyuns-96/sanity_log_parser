@@ -11,6 +11,7 @@ from common.sanity_privacy import SecretGuard
 from common.sanity_submission import (MAX_PARTS, PART_BYTES, PART_RECORDS, check, packet_base, source_execution,
     source_unit, source_version, validate_packet)
 from common.sanity_submission_files import regular
+from common.sanity_submission_intake import unverified
 from vwp_bridge.main import analyze_unit
 from vwp_bridge.sanity_evidence import PgEvidence
 
@@ -50,10 +51,10 @@ class SourceEvidence(PgEvidence):
                 self.set_state(self.analysis_id,state,'SEALED')
 
 
-def analyze_source(db, store, collection, original, file, snapshot_root, *, confirmed, registry):
+def analyze_source(db, store, collection, original, file, snapshot_root, *, confirmed, registry, record_execution=True):
     uid, execution = source_unit(collection,original), source_execution(collection,original)
     raw_sha = file['sha256'] if file else None
-    if file:
+    if file and record_execution:
         with db.transaction():
             db.execute('SELECT pg_advisory_xact_lock(%s)',(lock_key(execution),))
             store.immutable('SOURCE_RUN',execution,{'execution_id':execution,'unit_key':uid,
@@ -151,7 +152,8 @@ def build_transfer(db, store, submission, manifest, root, *, confirmed, registry
     check(not conflict,'SUBMISSION_CONTRACT_MISMATCH')
     base = packet_base(submission,collection_id)
     for unit in submission['plan']['inventory']['units']:
-        value = analyze_source(db,store,collection,unit,files.get(unit['report']),root,confirmed=confirmed,registry=registry)
+        value = analyze_source(db,store,collection,unit,files.get(unit['report']),root,confirmed=confirmed,
+                               registry=registry,record_execution=not unverified(submission['actor']))
         rid = 'sr-'+digest([value['execution_id'],value['raw_sha256'],value['analysis_id']])
         header = {**value,'report_id':rid,'parts':[],'record_bytes':0}
         for part in record_parts(public_records(db,value['analysis_id'],guard),rid):

@@ -1,4 +1,9 @@
-"""Company VWP submission hooks. SDK methods fail closed until implemented."""
+"""Company report input plus legacy identity hooks.
+
+For internal_network (CLI schema 3), implement prepare and its explicit factory
+injection only. The CLI never calls the identity/authorization hooks below in
+that mode; SSO OWNER scope confirmation happens on OA after intake.
+"""
 from common.sanity_common import ReviewError
 from common.sanity_submission import SubmissionAuthority, SubmissionInputProvider
 

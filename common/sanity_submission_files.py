@@ -240,7 +240,7 @@ def load_config(path, *, bridge=False):
     value = read_json_file(path, 16384)
     info = Path(path).stat()
     check(info.st_uid == 0 and info.st_mode & 0o022 == 0, "UNTRUSTED_SUBMISSION_CONFIG")
-    if value.get('schema_version') in (2,3):
+    if value.get('schema_version') in (2,3,4):
         from common.sanity_submission_https import validate_https_config
         return validate_https_config(value, bridge=bridge)
     keys = {"schema_version", "spool_root", "storage_id", "service_uid", "default_profile"}

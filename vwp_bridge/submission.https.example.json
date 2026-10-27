@@ -1,6 +1,8 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "transport": "https",
+  "submission_auth": "internal_network",
+  "allowed_client_networks": ["192.0.2.10/32"],
   "storage": "postgresql",
   "service_uid": 10001,
   "temp_root": null,

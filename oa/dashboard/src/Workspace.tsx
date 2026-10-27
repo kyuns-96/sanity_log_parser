@@ -13,6 +13,7 @@ import WorkspaceReview from './WorkspaceReview'
 import WorkspaceWorkbench from './WorkspaceWorkbench'
 import WorkspaceDemoBanner from './WorkspaceDemoBanner'
 import PersonalAiToken from './PersonalAiToken'
+import SubmissionIntake from './SubmissionIntake'
 import './workspace.css'
 
 const n = (value: number) => value.toLocaleString('ko-KR')
@@ -271,6 +272,7 @@ function WorkspacePage({ session, onExpired, onLogout, onDemoAccount }: { sessio
             <div className="ws-overview-foot"><p><Layers3 size={16} />PoR은 블록 담당자가 지정합니다. TOP 권한은 프로젝트 전체의 조회 범위입니다.</p><p>{production ? '수신된 검사 결과' : '수신된 예시 검사 결과'} · PoR 변경은 검사 판정과 기존 근거를 바꾸지 않습니다.</p></div>
           </> : <>
             {!reviewing && <div className="ws-block-strip" aria-label="담당 블록 선택">{project.blocks.map(item => <button key={item.id} aria-pressed={blockId === item.id} onClick={() => chooseBlock(item.id)}><Layers3 size={15} />{item.name}<span>{item.owners.map(owner => owner.name).join(', ')}</span></button>)}</div>}
+            {production && view === 'reports' && !reviewing && blockId && <SubmissionIntake key={blockId} blockId={blockId} refresh={refresh} onComplete={() => setRefresh(value => value + 1)} />}
             {!versions || !block ? <Loading lines={4} /> : !version ? <div className="ws-empty"><FileSearch /><h3>수신된 버전이 아직 없습니다.</h3><p>VWP에서 보고서를 제출하면 버전과 검사 항목이 표시됩니다.</p></div> : <>
               {!reviewing && <PorSummary por={versions.por} canAssign={versions.can_assign_por} />}
               {view === 'history' ? <section className="ws-panel"><header className="ws-panel-header"><div><h2>{block.name} · 변경 기록</h2><p>{demo ? '현재 탭에 저장된 데모 지정 이력' : '최신 50건 · 서버에 저장된 지정 이력'}</p></div><span className="ws-caption">현재 개정 {por?.revision}</span></header>{events.length ? <ol className="ws-history">{events.map(event => <li key={event.id}><div className="ws-history-marker"><Check size={13} /></div><div><header><strong>{event.actor.name}</strong><span>{time(event.at)} · 개정 {event.revision}</span></header><h3>{event.version.net_ver}<span>{event.version.layout}</span></h3><code>{event.version.revision}</code><p>{event.reason}</p></div></li>)}</ol> : <div className="ws-empty"><History /><h3>아직 PoR 지정 이력이 없습니다.</h3><p>블록 담당자가 버전을 지정하면 이곳에 기록됩니다.</p><Button variant="outline" onClick={() => setView('reports')}>버전 목록 보기<ArrowRight size={14} /></Button></div>}</section> : <>

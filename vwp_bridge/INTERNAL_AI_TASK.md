@@ -1,8 +1,8 @@
 # VWP-bridge 담당 사내 AI 작업 지시문
 
-**원본 저장 변경:** [VWP private DB 분할 보관](../vwp/DB_ORIGINALS.md)의 서버 schema 3/010과 기존 파서 인터페이스를 사용한다. 영구 archive/upload/receipt 볼륨은 불필요하다. 공통 DB 저장/이관·010/포털·임시 복원은 Codex 코드이며 회사 parser만 허용 범위에서 구현한다.
+**현재 배포:** [토큰 없는 HTTPS 접수](../vwp/HTTPS_SUBMISSION.md)의 서버 schema 4/CLI schema 3과 기존 010 DB 원본 보관을 사용한다. 허용된 VWP 출발 IP에서 토큰 없이 받고, OS 계정은 미확인 표시로 보존한다. 회사 `authenticate_bearer/resolve_actor/authorize/approval_valid`는 새 모드에서 호출하지 않는다. 토큰 발급/검증 SDK를 구현하거나 기존 hook 보호를 해제하지 마라.
 
-2026-10-26 사용자 확인으로 VWP 원천 서버와 bridge는 [HTTPS 제출](../vwp/HTTPS_SUBMISSION.md)로 연결한다. 공유 폴더는 현재 환경의 전제가 아니다. 앞선 [개인 토큰 설계](../vwp/HTTPS_DECISIONS.md)는 사용자 재검토로 필수 요구에서 제외했다. OWNER 직접 예상 범위 확정과 VWP는 bridge에만 접속하는 조건은 유지한다. 두 미구현 HTTPS hook과 기존 권한/범위 검사는 차단 상태로 두고 후속 인증/접수·OA 범위 연결은 Codex가 공통 구현한다. 내부 AI는 별도 인증 서비스/발급기를 만들지 않는다. 공통 API·전송·worker·Docker·TLS 보호 변경은 Codex 담당이다.
+원본의 DB 저장·임시 복원·source 전송·OA 접수 대기 및 SSO OWNER의 범위 확정 API/UI는 Codex가 제공했다. 네 우선 작업은 회사 parser/명시적 registry와 실제 DB/TLS/출발 IP·임시 공간 검증이다. VWP는 bridge에만 접속하며 bridge↔OA는 기존 DB 경계다. 아래 인증된 mount/신원·승인 SDK 항목은 legacy 폴더/Bearer 배치에 한정한다.
 
 너는 **VWP-bridge 회사 parser·원천 검증/전달 연동 담당 개발 AI**다. 기존 VWP 모델 경로를 유지할 때는 자기 회사 SDK 어댑터도 맡는다. 실제 수정 범위는 아래 회사 어댑터이며 공통 코드·DB/worker 전체의 수정 권한을 뜻하지 않는다.
 
@@ -14,7 +14,7 @@ VWP-bridge 코드는 `vwp_bridge/`, 회사 구현은 `vwp_bridge/integration/`�
 
 [AGENTS.md](../AGENTS.md) → [INTERNAL_AI_GUIDE.md](../INTERNAL_AI_GUIDE.md) 전체 → [통합 인계 명세](../INTERNAL_AI_HANDOFF.md) → 이 문서를 읽는다. 작업별로 [PARSER_INTEGRATION.md](PARSER_INTEGRATION.md), [CLUSTERING_INTEGRATION.md](CLUSTERING_INTEGRATION.md), [REVIEW_INTEGRATION.md](REVIEW_INTEGRATION.md), [DB 연결 인계](../db/CONNECTION_HANDOFF.md)를 읽는다.
 
-[제출 실행 안내](../vwp/SUBMISSION.md)의 VWP 내부 spool 접수·`/var/lib/sanity/vwp-bridge/submissions/` 영속 보관·DB 송신/OA 결과·receipt 작업자는 제공했다. 기존 `work`와 별도인 `vwp_bridge.submission_worker`를 사용한다. 실제 인증된 mount/ACL·권한/승인 SDK·운영 DB는 미연결이다. 사내 담당자는 허용 어댑터와 현장 검증만 맡고 감시 service·전송/receipt·SQL을 재구현하지 않는다.
+[HTTPS 제출 안내](../vwp/HTTPS_SUBMISSION.md)의 API와 별도 `vwp_bridge.submission_worker`를 사용한다. 영구 archive/upload/receipt 폴더는 필요 없으며 원본은 DB에 보관한다. 회사 parser와 비공개 배포 설정을 연결하고 공통 저장/전송/확정 코드를 재구현하지 않는다.
 
 ## 2. 맡을 작업과 수정 소유권
 
@@ -24,7 +24,7 @@ VWP-bridge 코드는 `vwp_bridge/`, 회사 구현은 `vwp_bridge/integration/`�
 |---|---|
 | `vwp_bridge/integration/corporate_parsers.py` | `CorporateReportParser.parse` 본문·필요 import·`create_parser_registry`의 명시적 등록 |
 | `vwp_bridge/integration/company_parsers/` | 확인된 item/버전별 `ReportParser` 구현과 전용 테스트 |
-| `vwp_bridge/integration/corporate_submission.py` | `CorporateSubmissionAuthority.current/inbox_owner/authorize/approval_valid`의 기존 회사 경로 본문·필요 import·승인된 SDK 주입 생성자. 새 OA/DB 인증·범위 확정 및 HTTPS 두 hook은 Codex 공통 구현 대상 |
+| `vwp_bridge/integration/corporate_submission.py` | `CorporateSubmissionAuthority.current/inbox_owner/authorize/approval_valid`의 기존 회사 경로 본문·필요 import·승인된 SDK 주입 생성자. 토큰 없는 접수/범위 확정은 제공된 Codex 공통 코드, HTTPS 두 hook은 legacy 전용 |
 | `vwp_bridge/integration/company_submission/` | 위 신원/최신 담당/승인 SDK wrapper와 전용 합성/모의 테스트 |
 | `vwp_bridge/integration/corporate_clustering.py`, `vwp_bridge/integration/corporate_review.py` | 각 `propose` 본문·필요 import·승인된 VWP SDK 주입용 생성자 |
 | `vwp_bridge/integration/company_clustering/`, `vwp_bridge/integration/company_review/` | 해당 SDK wrapper와 전용 합성/모의 테스트 |
@@ -41,7 +41,7 @@ VWP-bridge 코드는 `vwp_bridge/`, 회사 구현은 `vwp_bridge/integration/`�
 4. **기존 VWP 모델 경로를 사용할 경우에만** 승인된 SDK의 입출력·timeout·한도에 맞춰 1단계 `propose(context, cases, identity_fields)`를 구현한다. 응답은 `groups`, `reason`, `reference_ids`, `group_rationales` 네 키다. 사례 0건의 초기 그룹과 사람 정정의 참고, 전체 ID 단일 배정과 `require_rationales=True` 검증을 지킨다. OA 기본 실행의 선행 조건으로 VWP SDK 완성을 요구하지 않는다.
 5. 같은 VWP 경로의 현재 2단계 `propose(context, cases)`는 선택 그룹 전체의 `conclusion`, `reason`, `reference_ids`를 반환한다. 현재 PASS/FAIL은 사람 사례 참조가 필요하지만 **목표는 사례 없는 최초 직접 근거 판정도 포함**한다. 이 차이는 COMMON-04 공통 확장으로 해결하며 가짜 참조·검사 삭제로 우회하지 않는다.
 6. SDK의 실제 입력/출력 한도, 토큰·동시성·timeout/결과 불명·요청 조회/취소 기능을 확인해 COMMON-03~05 설계 자료로 제출한다. 평균 10,000건·100,000건 이상을 wrapper 안에서 임의 절단/요약하고 전체 처리로 표시하거나 자체 worker/DB/운영 재시도 루프를 만들지 않는다.
-7. source 접수용 회사 authority는 인증된 mount 계정/UID와 inbox 소유자의 안정 신원을 검증하고 현재 블록 담당·정확한 scope 승인 참조를 조회한다. 디렉터리명이나 사용자 작성 `actor`로 인증을 대체하지 않는다. 실제 storage ID·UID·ACL/상속·rename/flush·영속 volume 조건을 현장 확인해 배포 담당자에게 인계한다.
+7. 현재 토큰 없는 배포는 정확한 HTTPS Host·TLS·허용 출발 IP와 010 DB 설정·파싱 임시 용량을 확인한다. source 접수용 회사 authority는 legacy 경로를 유지할 때만 인증된 mount 계정/UID와 inbox 소유자의 안정 신원·블록 담당·승인을 연결한다. 디렉터리명이나 사용자 작성 `actor`로 인증을 대체하지 않는다. 실제 storage ID·UID·ACL/상속·rename/flush·영속 volume 조건을 현장 확인해 배포 담당자에게 인계한다.
 
 현재 두 SDK 파일은 VWP 실행 위치의 어댑터다. OA 모델용 코드는 Codex가 OA 지점에 제공할 예정이며 VWP 어댑터를 복사하거나 망 간 OA API 호출로 바꾸지 않는다. OA 사용은 새 목표이며 기존 파일의 위치·보호 검사를 우회하는 지시가 아니다. SDK 작성 완료와 새 AI 판단/사례 검색·운영 연결 완료를 구분하고 `CORPORATE` 차단은 공통 구현 전까지 유지한다.
 
@@ -85,4 +85,4 @@ Q1의 [분산 수집 설계](../vwp/SOURCE_COLLECTION_DESIGN.md)는 제출 묶�
 
 ## 7. 그대로 전달할 시작 명령
 
-> 너는 VWP-bridge 회사 parser·원천 검증/전달 담당이다. AI_DECISION_DESIGN.md, AGENTS.md, INTERNAL_AI_GUIDE.md 전체와 vwp_bridge/INTERNAL_AI_TASK.md, vwp/SUBMISSION.md를 읽어라. AI 최초 분류·그룹 판정과 확정 근거의 다음 판단 활용이 최우선이며 이번 모델은 OA API 연동을 우선한다. INT-03의 허용 parser/명시적 등록, corporate_submission의 허용 신원·권한·승인 메서드와 자기 company_* 테스트만 구현하라. 전체 로그·원본 위치·실행 조건·점검 기준·정답/반례를 보존해 OA 판단 입력으로 인계하라. 기존 VWP SDK는 그 경로를 유지할 때만 자기 허용 범위에서 구현하고 OA 실행의 선행 조건으로 삼지 말라. DB 점검은 4절을 따르고 공통 bridge·DB SQL·전송·worker·UI·기존 테스트·보호 장치를 수정하지 말라. 예상 밖 오류는 WAITING_FOR_CODEX로 문의하며 파싱/접속·모의 SDK 검증과 실제 AI 판단 순환 완료를 구분하라.
+> 너는 VWP-bridge 회사 parser·원천 검증/전달 담당이다. AI_DECISION_DESIGN.md, AGENTS.md, INTERNAL_AI_GUIDE.md 전체와 vwp_bridge/INTERNAL_AI_TASK.md, vwp/SUBMISSION.md를 읽어라. AI 최초 분류·그룹 판정과 확정 근거의 다음 판단 활용이 최우선이며 이번 모델은 OA API 연동을 우선한다. INT-03의 허용 parser/명시적 등록과 company_parsers/ 테스트를 구현하라. 새 토큰 없는 경로에는 제출 토큰/신원 SDK가 필요 없다. corporate_submission의 신원·권한·승인 메서드는 해당 legacy 경로를 유지할 때만 자기 허용 범위에서 연결하라. 전체 로그·원본 위치·실행 조건·점검 기준·정답/반례를 보존해 OA 판단 입력으로 인계하라. 기존 VWP SDK는 그 경로를 유지할 때만 자기 허용 범위에서 구현하고 OA 실행의 선행 조건으로 삼지 말라. DB 점검은 4절을 따르고 공통 bridge·DB SQL·전송·worker·UI·기존 테스트·보호 장치를 수정하지 말라. 예상 밖 오류는 WAITING_FOR_CODEX로 문의하며 파싱/접속·모의 SDK 검증과 실제 AI 판단 순환 완료를 구분하라.

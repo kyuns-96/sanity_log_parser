@@ -10,7 +10,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
-from pydantic import Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
 from common.sanity_clustering import check
 from common.sanity_ai_knowledge import shared_case_views
@@ -25,6 +25,18 @@ from oa.workspace_api import (ID, ClusterChange, ClusterEdit, CodexProposal,
 
 class GroupAIProposal(CodexProposal):
     expected_cluster_revision: Annotated[StrictInt, Field(ge=1)]
+
+
+class IntakeDecision(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    decision: Literal['CONFIRM','REJECT']
+    expected_revision: Annotated[StrictInt, Field(ge=0)]
+    request_id: UUID
+    reason: str = Field(min_length=1,max_length=2000)
+    content_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    manifest_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    scope_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    confirmed_scope: StrictBool
 
 
 @dataclass(frozen=True)
@@ -74,6 +86,23 @@ def create_workbench_router(authorized_actor):
     @router.get("/blocks/{block_id}/history")
     def history(block_id: ID, scope=Depends(workspace)):
         return scope.ws.history(scope.user_id, block_id)
+
+    @router.get('/blocks/{block_id}/intake')
+    def intake_list(block_id: ID, offset: Annotated[int,Query(ge=0)]=0,
+                    limit: Annotated[int,Query(ge=1,le=100)]=25, scope=Depends(workspace)):
+        from oa.sanity_submission_intake import SubmissionIntake
+        return SubmissionIntake(scope.ws).list(scope.user_id,block_id,offset=offset,limit=limit)
+
+    @router.get('/blocks/{block_id}/intake/{sid}')
+    def intake_detail(block_id: ID, sid: UUID, offset: Annotated[int,Query(ge=0)]=0,
+                      limit: Annotated[int,Query(ge=1,le=100)]=50, scope=Depends(workspace)):
+        from oa.sanity_submission_intake import SubmissionIntake
+        return SubmissionIntake(scope.ws).detail(scope.user_id,block_id,str(sid),offset=offset,limit=limit)
+
+    @router.post('/blocks/{block_id}/intake/{sid}')
+    def intake_decide(block_id: ID, sid: UUID, body: IntakeDecision, scope=Depends(workspace)):
+        from oa.sanity_submission_intake import SubmissionIntake
+        return SubmissionIntake(scope.ws).decide(scope.user_id,block_id,str(sid),**body.model_dump())
 
     @router.get("/blocks/{block_id}/por")
     def current_por(block_id: ID, scope=Depends(workspace)):

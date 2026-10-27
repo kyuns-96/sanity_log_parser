@@ -80,11 +80,15 @@ def submissions(db, user_id, block_id, *, offset=0, limit=25, workspace=None):
     check(type(offset) is int and offset>=0 and type(limit) is int and 1<=limit<=100,'INVALID_REQUEST')
     total = db.execute("SELECT count(*) AS n FROM {oa} WHERE record_type='WS_SUBMISSION' AND workspace_block_ref=%s",
                        (record_id('WS_BLOCK',block_id),)).fetchone()['n']
-    rows = db.execute("SELECT workspace_key,payload->'scope' AS scope,payload->'actor'->>'user_id' AS submitted_by,"
+    rows = db.execute("SELECT workspace_key,payload->'scope' AS scope,payload->'actor' AS actor,"
         "state->>'delivery_state' AS delivery_state,state->'receipt' AS receipt,created_at,updated_at "
         "FROM {oa} WHERE record_type='WS_SUBMISSION' AND workspace_block_ref=%s "
         "ORDER BY created_at DESC,workspace_key LIMIT %s OFFSET %s",(record_id('WS_BLOCK',block_id),limit,offset)).fetchall()
-    return {'items':[{'id':r['workspace_key'],'scope':r['scope'],'submitted_by':r['submitted_by'],
+    from common.sanity_submission_intake import unverified
+    return {'items':[{'id':r['workspace_key'],'scope':r['scope'],
+        'submitted_by':None if unverified(r['actor']) else r['actor']['user_id'],
+        'submitter_verified':not unverified(r['actor']),
+        'reported_by':r['actor']['subject'] if unverified(r['actor']) else None,
         'delivery_state':r['delivery_state'],'review_readiness':(r['receipt'] or {}).get('review_readiness','BLOCKED'),
         'blockers':(r['receipt'] or {}).get('blockers',[]),'workspace_links':(r['receipt'] or {}).get('workspace_links',[]),
         'created_at':r['created_at'].isoformat(),'updated_at':r['updated_at'].isoformat()} for r in rows],

@@ -19,6 +19,7 @@ from common.sanity_db import Database, json_value, lock_key, stable_uuid
 from common.sanity_submission import HEX, check, submission_receipt, submission_uuid
 from common.sanity_submission_files import (directory, validate_submission, verify_bundle, write_json_file)
 from common.sanity_submission_https import validate_https_config
+from common.sanity_submission_intake import PENDING_BLOCKER, unverified
 
 RAW_PROTOCOL = 'raw-source-v1'
 CHUNK_BYTES = 1024 * 1024
@@ -176,7 +177,8 @@ class RawSourceStore:
         if row['status'] == 'VWP_UPLOADED':
             check(len(received) == len(value['manifest']['files']),'RAW_SOURCE_CORRUPT')
         result = {'schema_version':1,'submission_id':sid,'actor_key':actor.key,'delivery_state':row['status'],
-                  'verified_oa_state':False,'review_readiness':'BLOCKED','blockers':[],'workspace_links':[]}
+                  'verified_oa_state':False,'review_readiness':'BLOCKED',
+                  'blockers':[PENDING_BLOCKER] if unverified(value['submission']['actor']) else [],'workspace_links':[]}
         saved = self.db.execute("SELECT * FROM {vwp} WHERE record_type='SUBMISSION' AND entity_key=%s",(sid,)).fetchone()
         if saved:
             check(saved['payload'] == {**value['submission'],'node_id':self.node_id},'RAW_SOURCE_CORRUPT')

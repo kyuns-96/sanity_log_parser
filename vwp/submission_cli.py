@@ -10,6 +10,7 @@ import uuid
 
 from common.sanity_common import ReviewError, digest
 from common.sanity_submission import SubmissionInput, VerifiedSubmitter, approved, check, submission_uuid, validate_target
+from common.sanity_submission_intake import local_label, pending_plan, tokenless, unverified
 from common.sanity_submission_files import (copy_bundle, directory, fsync_dir, load_config, read_json_file,
     remove_own_partial, snapshot, storage, verify_bundle, write_json_file)
 
@@ -25,6 +26,8 @@ class SubmissionClient:
         self.state_root = Path(state_root) if state_root is not None else state / "sanity/submissions"
 
     def actor_storage(self):
+        if tokenless(self.config):
+            return local_label(), None, None
         actor = self.authority.current()
         check(isinstance(actor,VerifiedSubmitter) and actor.os_uid==os.geteuid(),'SUBMISSION_IDENTITY_MISMATCH')
         if self.transport is not None:
@@ -43,8 +46,12 @@ class SubmissionClient:
         prepared = self.provider.prepare(dict(target))
         check(isinstance(prepared,SubmissionInput),'INVALID_SUBMISSION_INPUT')
         validate_target(target, prepared.plan)
-        self.authority.authorize(actor, prepared.plan["collection"])
-        confirmed = approved(prepared.plan, self.authority)
+        if tokenless(self.config):
+            prepared = SubmissionInput(pending_plan(prepared.plan),prepared.reports)
+            confirmed = False
+        else:
+            self.authority.authorize(actor, prepared.plan["collection"])
+            confirmed = approved(prepared.plan, self.authority)
         expected = {unit["report"] for unit in prepared.plan["inventory"]["units"]}
         found = set(prepared.reports)
         summary = {"actor": actor.actor, "target": dict(target), "scope_sha256": prepared.plan["approval"]["scope_sha256"]
@@ -70,7 +77,8 @@ class SubmissionClient:
             return {"delivery_state": "DRY_RUN", "summary": summary}
         check(confirm(summary) is True, "SUBMISSION_CANCELLED", "Submission cancelled")
         # Recheck rights after user interaction; inspection is not authorization.
-        self.authority.authorize(actor, prepared.plan["collection"])
+        if not tokenless(self.config):
+            self.authority.authorize(actor, prepared.plan["collection"])
         directory(self.state_root, create=True)
         sid = str(uuid.uuid4())
         local = self.state_root / sid
@@ -91,7 +99,8 @@ class SubmissionClient:
         local = self.state_root / sid / "bundle"
         value, _ = verify_bundle(local)
         check(value["actor"] == actor.actor and value["submission_id"] == sid, "FORBIDDEN")
-        self.authority.authorize(actor, value["plan"]["collection"])
+        if not tokenless(self.config):
+            self.authority.authorize(actor, value["plan"]["collection"])
         if self.transport is not None:
             return self.transport.enqueue(local,sid,actor)
         ready, partial = inbox / (sid + ".ready"), inbox / ("." + sid + ".partial")
@@ -140,13 +149,16 @@ class SubmissionClient:
 
 def display_preview(value):
     target = value["target"]
-    print('계정: '+value['actor']['user_id'])
+    print(('제출자 표시(신원 미확인): '+value['actor']['subject']) if unverified(value['actor'])
+          else '계정: '+value['actor']['user_id'])
     print(f"{target['project']} / {target['block']} / {target['net_ver']} / {target['revision']} / {target['layout']}")
     print(f"프로필: {value['profile_id']} @ {value['profile_version']} · 연결 PRE: {value['pre_revision'] or '없음'}")
     print(f"대상 ECO: {target['eco'] or '없음'} · 예상 {value['expected']} · 발견 {value['found']} · 누락 {value['missing']}"
           f" · 실행 미완료 {value['incomplete']} · 예상 밖 {value['unexpected']} · {value['bytes']} bytes")
     print("범위 승인: " + ("검증됨" if value["inventory_confirmed"] else "미승인 — 수신 후 검토 차단")
           + ' · 참조: '+(value['approval_reference'] or '없음'))
+    if unverified(value['actor']):
+        print('제출 토큰 없이 접수합니다. OA에 로그인한 블록 담당자가 검사 범위를 확인한 뒤 공개됩니다.')
     for unit in value["units"]:
         print(f"  {unit['layout']} {unit['revision']} {unit['eco'] or '-'} / {unit['mode']} / {unit['item']}"
               f" [{unit['execution_status']}, {'파일 발견' if unit['found'] else '파일 누락'}]"

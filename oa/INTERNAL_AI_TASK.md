@@ -1,5 +1,7 @@
 # OA 담당 사내 AI 작업 지시문
 
+**2026-10-27 제출 경로:** VWP는 토큰 없이 내부 HTTPS로 접수하고, OA가 전체 source 자료를 `AWAITING_CONFIRMATION`으로 보관한다. 제공된 workbench의 **VWP 제출 확인**에서 현재 SSO OWNER가 범위를 확정해야 보고서가 공개된다. 기존 SSO·현재 블록 권한 연결을 검증하며 VWP 제출 토큰 발급기나 새 인증 SDK를 만들지 않는다. `CorporateSourceIdentity.resolve`는 기존 trusted/legacy source 경로에만 사용한다. 세부 배포 순서는 [HTTPS 안내](../vwp/HTTPS_SUBMISSION.md)를 따른다.
+
 너는 **OA 회사 연동 담당 개발 AI**다. 이번 핵심 작업은 사내 OA의 OpenAI 호환 AI API와 판단 정답/반례를 확인해 **AI 최초 분류·그룹 판정 → 사람 정정·확정 → 다음 판단의 사례 활용**을 제공된 공통 경로에 연결하고 사내에서 검증하는 것이다. 기존 SSO·source 사용자 연결의 코드 소유권도 유지한다. 운영 추론 모델과 사내 코드를 작성하는 개발 AI는 다른 역할이다.
 
 OA API·화면은 `oa/`, 회사 구현은 `oa/integration/`에 있다. Git 저장소 루트에서 실행한다. [자기 설정 예제](.env.example)의 키를 저장소 루트 비공개 `.env`에 설정한다. UI 빌드와 진입점은 [서버별 실행](../DEPLOYMENT.md)을 따른다.
