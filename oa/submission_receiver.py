@@ -18,6 +18,7 @@ from common.sanity_privacy import SecretGuard
 from common.sanity_submission import (HEX, PART_BYTES, PART_RECORDS, PROTOCOL, SOURCE_TYPES, check,
     message_id, scope_digest, source_execution, source_unit, source_version, validate_packet, validate_plan)
 from common.sanity_submission_store import require_schema
+from common.sanity_submission_intake import UnverifiedSubmitter, PENDING_BLOCKER, require_pending_plan, unverified
 from oa.sanity_workspace import WorkspaceStore, record_id
 from oa.sanity_production_workspace import ProductionWorkspaceStore
 
@@ -73,6 +74,16 @@ class SourceReceiver:
 
     def authorize(self, packet):
         actor, scope = packet['actor'], packet['scope']
+        if unverified(actor):
+            UnverifiedSubmitter(**actor)
+            # Service-to-service staging is not a user authorization assertion.
+            if isinstance(self.ws,ProductionWorkspaceStore):
+                self.ws.authorization.require_ready()
+            block = self.ws.get('WS_BLOCK',scope['block_key'])
+            project = self.ws.get('WS_PROJECT',scope['project_key'])
+            check(block['payload']['project_id']==scope['project_key']
+                  and block['workspace_project_ref']==project['record_id'],'SOURCE_SCOPE_MISMATCH')
+            return None
         local_id = self.identity.resolve(actor)
         check(local_id==actor['user_id'],'SOURCE_IDENTITY_MISMATCH')
         block, project = self.ws.access(local_id,scope['block_key'],write=True)
@@ -150,6 +161,9 @@ class SourceReceiver:
         output = packet['body']
         check(set(output)=={'plan','inventory_confirmed','global_blockers','reports','producer'},'INVALID_SOURCE_MANIFEST')
         validate_plan(output['plan'])
+        if unverified(packet['actor']):
+            require_pending_plan(output['plan'])
+            check(output['inventory_confirmed'] is False,'SOURCE_APPROVAL_MISMATCH')
         check(output['plan']['collection']==packet['scope'] and type(output['inventory_confirmed']) is bool
               and isinstance(output['global_blockers'],list)
               and set(output['global_blockers'])<={'INVENTORY_UNCONFIRMED','UNEXPECTED_REPORTS'},'SOURCE_SCOPE_MISMATCH')
@@ -222,12 +236,26 @@ class SourceReceiver:
                 blockers.add(result['parse_status'])
             report_ids.append(value['report_id'])
         check(len(blockers)<=256,'SOURCE_BLOCKER_LIMIT')
+        confirmation = state.get('intake_decision')
+        if unverified(packet['actor']):
+            if confirmation is None:
+                link = ('/?page=workbench&' if isinstance(self.ws,ProductionWorkspaceStore) else '/workspace?')
+                link += urlencode({'project':packet['scope']['project_key'],'block':packet['scope']['block_key'],
+                                   'tab':'reports'})
+                receipt = state.get('receipt') or self.receipt(packet,'DB_QUEUED',[PENDING_BLOCKER],[link])
+                return {**state,'delivery_state':'AWAITING_CONFIRMATION','receipt':receipt}
+            check(confirmation['decision']=='CONFIRM'
+                  and confirmation['content_sha256']==packet['content_sha256']
+                  and confirmation['manifest_sha256']==digest(output)
+                  and confirmation['scope_sha256']==scope_digest(output['plan']),'SOURCE_APPROVAL_MISMATCH')
+            blockers.discard('INVENTORY_UNCONFIRMED')
+        confirmed = output['inventory_confirmed'] or unverified(packet['actor']) and confirmation is not None
         # PRE must exist before a POST points to it. Version metadata never changes.
         for value in sorted(output['reports'],key=lambda r:r['source']['layout']!='PRE'):
             self.save_version(packet['scope'],value)
         links = []
         for value in output['reports']:
-            self.save_report(packet['scope'],value,output['inventory_confirmed'])
+            self.save_report(packet['scope'],value,confirmed)
             if value['source']['layout']==packet['scope']['layout'] and value['source']['eco']==packet['scope']['target_eco']:
                 params = {'project':packet['scope']['project_key'],'block':packet['scope']['block_key'],
                     'version':value['version_id'],'tab':'reports'}
@@ -239,8 +267,10 @@ class SourceReceiver:
                     links.append(link)
         receipt = self.receipt(packet,'OA_STORED',sorted(blockers),links)
         return {**state,'delivery_state':'OA_STORED','receipt':receipt,'reports':report_ids,
-                'manifest':None,'commit':None,'seen_parts':state['seen_parts'],
-                'collection_blockers':output['global_blockers']}
+                'manifest':output if unverified(packet['actor']) else None,
+                'commit':state['commit'] if unverified(packet['actor']) else None,'seen_parts':state['seen_parts'],
+                'collection_blockers':[b for b in output['global_blockers']
+                                       if b!='INVENTORY_UNCONFIRMED' or not confirmed]}
 
     def save_version(self, collection, value):
         s, vid = value['source'], value['version_id']
@@ -335,7 +365,7 @@ class SourceReceiver:
                     row = self.existing('WS_SUBMISSION',packet['submission_id'])
                     if not row:
                         self.receipt(packet,'REJECTED',[code],[])
-                    elif row['payload']=={k:v for k,v in packet.items() if k!='body'} and row['state']['delivery_state']=='IMPORTING':
+                    elif row['payload']=={k:v for k,v in packet.items() if k!='body'} and row['state']['delivery_state'] in ('IMPORTING','AWAITING_CONFIRMATION'):
                         receipt = self.receipt(packet,'REJECTED',[code],[])
                         self.update(row,{**row['state'],'delivery_state':'REJECTED','receipt':receipt})
                 queue.finish(message,'REJECTED',code)

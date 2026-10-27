@@ -27,7 +27,7 @@ flowchart LR
 
 1. 양 서버의 새 공통 코드는 기존 008/009와 호환된다. 이전 설정으로 배포/검토한 뒤 DBA가 [010_raw_sources.sql](../db/010_raw_sources.sql)을 009 이후 검토·적용한다. 앱이 DDL을 실행하지 않는다.
 2. 포털 설치는 기존 `plan.json`의 **55단계를 그대로 유지**하고 `raw-plan.json`의 010 단계 **56~59**를 명시적으로 선택한다. 빈 초기 DB의 전체 경로는 59단계다. 009까지 완료된 DB에는 나머지 4개 단일 문장만 준비한다. 기존 포털 도구의 0행/쓰기 중지·catalog 대조 조건은 유지한다. 데이터가 있는 DB는 DBA의 원본 migration 경로를 사용한다.
-3. bridge 설정을 [schema 3 HTTPS 예제](../vwp_bridge/submission.https.example.json)로 바꾼다. `storage=postgresql`, `node_id`, `service_uid`, `allowed_hosts`, `temp_root`만 사용하며 `archive_root/upload_root`는 없다. 파일/HTTP 내용의 V2 schema는 바꾸지 않는다. **사용자 CLI 설정은 기존 schema 2**를 유지한다.
+3. 토큰 없는 배포는 [서버 schema 4 예제](../vwp_bridge/submission.https.example.json)와 CLI schema 3을 사용한다. `submission_auth=internal_network`와 실제 VWP 출발 IP의 `allowed_client_networks`를 지정한다. 원본 저장은 `storage=postgresql`이며 `archive_root/upload_root`는 없다. 기존 서버 schema 3/CLI schema 2는 Bearer 호환 경로다. 상세 접수·OA OWNER 확정은 [HTTPS 안내](HTTPS_SUBMISSION.md)를 따른다.
 4. 기존과 같이 API·`submission_worker`·OA `submission_receiver`를 별도 관리 프로세스로 실행한다. DB migration이 없거나 private 권한 계약이 맞지 않으면 실패하며 filesystem으로 fallback하지 않는다.
 
 포털 예시(실제 catalog/스키마/주소는 사내에서 관리):
@@ -70,7 +70,7 @@ DBA가 010을 적용한 뒤 검토된 service 계정에서 기존 private archiv
 
 ## 범위와 남은 연동
 
-이번 변경은 원본의 DB 영구 보관·임시 파싱·재처리·상태 복구다. **제출 인증/신원·OWNER 범위 확정·SSO/RBAC 보호를 해제하지 않는다.** 개인 토큰을 필수로 하지 않는 개발용 접수 논의와 원본 저장은 구분한다. 사용자 이름만으로 검증된 제출자라고 기록하거나 미확정 입력을 OA 사람 확정/정답 사례로 공개하지 않는다.
+원본 보관에 더해 2026-10-27 [토큰 없는 내부 접수와 OA OWNER 범위 확정](HTTPS_SUBMISSION.md)을 연결했다. 제출자 표시는 미확인 상태로 보존하고, OA의 현재 권한·정확한 범위 확인 후에만 보고서를 공개한다. 이는 사람의 최종 분류/판정이나 정답 사례 확정과 별도다. 기존 SSO/RBAC 보호를 유지하며 추가 DB migration은 없다.
 
 실제 회사 SDK·report 형식/완료 의미·SSO/범위 연결·운영 DB 배포·모델 판단 품질은 사내 검증 대상이다. VWP private에 저장했다고 OA에 원본 직접 조회/다운로드 권한을 자동 부여하지 않는다. 기존 V2 원본 다운로드 API의 경계도 별도 구현 전까지 유지한다.
 

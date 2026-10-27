@@ -4,7 +4,7 @@
 
 현재 목표·실행 구조·사례 검색·품질 수용 기준은 [AI 판단 설계](AI_DECISION_DESIGN.md)를 먼저 읽습니다. 흐름은 **전체 로그 + 관련 확정 사례 → AI 초기 분류 → 사람 확정 → AI 그룹 판정 → 사람 확정 → DB 사례 축적 → 다음 판단**입니다. 첫 report도 기존 사례 없이 AI가 제안할 수 있어야 합니다.
 
-이번 연동은 **사내 OA의 OpenAI 호환 AI API를 우선 사용**합니다. 기존 OA 프로그램이 DB에서 로그·사례를 조회해 모델을 호출하고 결과를 검증·저장하는 구조이며, AI용 HTTP 서버나 새 서버 장비를 필수로 추가하지 않습니다. VWP-bridge와 OA는 **같은 PostgreSQL DB의 4개 테이블로만 통신**합니다. OA의 자기 모델 API 호출은 이 브리지 간 경계와 구분합니다. 공유 폴더가 없는 VWP 사용자 환경에서 bridge로의 제출은 [HTTPS 경로](vwp/HTTPS_SUBMISSION.md)를 사용합니다. 원본은 [VWP 전용 DB에 분할 보관](vwp/DB_ORIGINALS.md)하고 파서 실행 때만 임시 파일로 복원합니다. bridge의 영구 원본/receipt 볼륨은 필요 없습니다. 제출자 인증·OA의 권한/범위 확정은 별도 경계이며 이번 저장 변경으로 보호를 해제하지 않습니다.
+이번 연동은 **사내 OA의 OpenAI 호환 AI API를 우선 사용**합니다. 기존 OA 프로그램이 DB에서 로그·사례를 조회해 모델을 호출하고 결과를 검증·저장하는 구조이며, AI용 HTTP 서버나 새 서버 장비를 필수로 추가하지 않습니다. VWP-bridge와 OA는 **같은 PostgreSQL DB의 4개 테이블로만 통신**합니다. OA의 자기 모델 API 호출은 이 브리지 간 경계와 구분합니다. 공유 폴더가 없는 VWP 사용자 환경에서 bridge로의 제출은 [HTTPS 경로](vwp/HTTPS_SUBMISSION.md)를 사용합니다. 원본은 [VWP 전용 DB에 분할 보관](vwp/DB_ORIGINALS.md)하고 파서 실행 때만 임시 파일로 복원합니다. bridge의 영구 원본/receipt 볼륨은 필요 없습니다. VWP 제출용 토큰은 사용하지 않습니다. 허용된 내부 IP에서 미확인 제출로 받고, OA에 로그인한 현재 블록 OWNER가 범위를 확정해야 보고서를 공개합니다. [현재 설정과 처리 흐름](vwp/HTTPS_SUBMISSION.md)을 따릅니다.
 
 **현재 제공 범위:** OA OpenAI 호환 호출·영속 작업·현재 사람 확정 사례 검색·직접 근거 판정 V2와 운영 SSO/V2 검토 연결을 구현했습니다. 운영 진입점은 `/?page=workbench`, API는 `/api/workbench/*`입니다. 첫 순환은 **전체 report 또는 선택 그룹이 설정한 모델 입출력 한도에 들어가는 경우**를 처리합니다. 실제 사내 API·자료의 정확도/성능은 미검증이며, 10,000건·100,000건 이상의 실제 모델 분할·그룹 통합은 COMMON-05 후속입니다. 설정·실행·한계는 [OA AI 실행 안내](oa/AI_RUNTIME.md)를 따릅니다.
 
@@ -20,7 +20,7 @@
 
 사내 Q1 검토의 [분산 수집·PRE/POST 인계 설계](vwp/SOURCE_COLLECTION_DESIGN.md)에 사용자별 REVISION 제출, 여러 원천 루트, 예상 범위 승인, 버전/실행/원문 중복 기준을 정리했습니다. 기존 schema 1 collector와 별도 V2 제출 경로를 제공합니다.
 
-[사용자 제출 실행 안내](vwp/SUBMISSION.md)의 `bin/sanity submit/status/retry`, VWP 내부 제출/영속 원본 보관, DB 분할 송수신·OA 페이지/접수 응답을 구현했습니다. **회사 입력·신원/승인 SDK와 실제 마운트/운영 DB는 미연결**입니다. schema 1의 `collect`는 유지하며 사용자 DB 계정이나 OA report 파일 복사로 대체하지 않습니다. 신규 DB 계약은 `db/008_submissions.sql`, 설계 근거는 [제출 명세](vwp/SUBMISSION_DESIGN.md)입니다.
+[현재 HTTPS 안내](vwp/HTTPS_SUBMISSION.md)의 `bin/sanity submit/status/retry`, DB 원본 보관·분할 송수신과 OA OWNER 접수 확정 화면/API를 구현했습니다. **회사 입력/parser·실제 SSO/OWNER 설정·운영 DB/TLS 연결은 사내에서 검증**합니다. 새 모드에는 VWP 제출 토큰이나 인증 SDK·공유 폴더가 필요하지 않습니다. schema 1의 `collect`와 기존 제출 설정은 호환 경로이며 DB 원본 보관은 `db/010_raw_sources.sql`까지 적용합니다.
 
 AI와 사람이 함께 만드는 분류 루프, 대량 report 처리, 그룹별 evidence 추가의 **확장 설계**는
 [요구사항 14절](requirement.md#ai-clustering)에 정리했습니다. 알려진 두 report 형식에 대해 AI 규칙 제안·전체 시험·사람 확정 루프를 구현했습니다.

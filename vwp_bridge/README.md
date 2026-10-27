@@ -10,7 +10,7 @@ Docker 이미지 빌드·비공개 설정·CA/분석 입력 마운트와 worker 
 OA에 전달할 압축 번들은 `sanity_vwp_to_oa`에 등록합니다.
 SQLite·OA 파일 복사·직접 통신은 사용하지 않습니다.
 
-현재 `sanity submit`은 공유 폴더 없이 [HTTPS API](../vwp/HTTPS_SUBMISSION.md)로 접수해 [VWP private DB에 원본을 분할 저장](../vwp/DB_ORIGINALS.md)합니다. 서버 schema 3 설정에는 영구 archive/upload/receipt 경로가 없고 파서는 실행 중에만 임시 복원합니다. `vwp_bridge.submission_api`가 업로드·상태 조회를, 별도 `vwp_bridge.submission_worker`가 파싱·V2 분할 전달·OA 응답/receipt를 처리합니다. VWP는 OA에 접속하지 않습니다. 제출 인증과 OWNER 범위 확정의 기존 보호는 이번 저장 변경으로 해제하지 않습니다. 기존 schema 1 인증·ACL 폴더 제출은 호환 경로로 유지합니다. 실제 회사 어댑터·운영 DB 검증과 기존 `work`는 이 두 프로세스와 구분합니다.
+현재 `sanity submit`은 공유 폴더 없이 [HTTPS API](../vwp/HTTPS_SUBMISSION.md)로 접수해 [VWP private DB에 원본을 분할 저장](../vwp/DB_ORIGINALS.md)합니다. 토큰 없는 서버 schema 4 설정에는 영구 archive/upload/receipt 경로가 없고 파서는 실행 중에만 임시 복원합니다. `vwp_bridge.submission_api`가 업로드·상태 조회를, 별도 `vwp_bridge.submission_worker`가 파싱·V2 분할 전달·OA 응답/receipt를 처리합니다. VWP는 OA에 접속하지 않습니다. 제출 토큰은 사용하지 않고 내부 출발 IP를 확인합니다. 미확인 제출은 OA SSO OWNER가 범위를 확정할 때까지 공개하지 않습니다. 기존 schema 1 인증·ACL 폴더 제출은 호환 경로로 유지합니다. 실제 회사 어댑터·운영 DB 검증과 기존 `work`는 이 두 프로세스와 구분합니다.
 
 설치·DB 구성·공통 모듈 배포는 [루트 안내](../README.md)를 따릅니다.
 VWP 서버의 비공개 `.env`에 `SANITY_DB_HOST/PORT/NAME/USER_NAME/PASSWORD`와 `SANITY_DB_SCHEMA`,

@@ -1,0 +1,14 @@
+.submission-intake { margin-block: 1rem; padding: 1rem 1.25rem; }
+.submission-intake > details > summary { display: flex; align-items: center; justify-content: space-between; cursor: pointer; gap: 1rem; }
+.submission-intake p, .submission-intake-dialog p { margin-block: .75rem; line-height: 1.6; }
+.submission-intake table, .submission-intake-dialog table { width: 100%; border-collapse: collapse; text-align: left; }
+.submission-intake td, .submission-intake th, .submission-intake-dialog td, .submission-intake-dialog th { padding: .65rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+.submission-intake small, .submission-intake-dialog small { display: block; }
+.submission-intake-dialog { width: min(60rem, calc(100vw - 2rem)); max-width: 60rem; max-height: calc(100dvh - 2rem); overflow-y: auto; }
+.submission-intake-units { max-height: 21rem; overflow: auto; }
+.submission-intake-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 25rem; }
+.submission-intake-actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; justify-content: flex-end; margin-block: 1rem; }
+.submission-intake-confirm { display: flex; gap: .6rem; align-items: flex-start; margin-block: 1rem; }
+.submission-intake-confirm input { margin-top: .25rem; flex-shrink: 0; }
+.submission-intake-dialog textarea { width: 100%; min-height: 5rem; }
+@media (max-width: 640px) { .submission-intake-dialog { padding: 1rem; } .submission-intake th, .submission-intake td { min-width: 7rem; } }

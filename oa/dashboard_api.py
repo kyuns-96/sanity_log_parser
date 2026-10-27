@@ -216,7 +216,8 @@ def create_app(*, auth_mode: AuthMode | None = None,
                                  "CLUSTER_NOT_READY", "CLUSTER_BLOCKED", "STALE_REFERENCE", "CANDIDATES_UNRESOLVED",
                                  "POR_UNCHANGED", "PROPOSAL_STALE", "CLUSTER_NOT_CONFIRMED", "CLUSTER_TASK_ACTIVE",
                                  "RATIONALE_REQUIRED", "RATIONALE_STALE", "SOURCE_FILE_ON_VWP", "AI_BUSY",
-                                 "AI_JOB_ACTIVE", "AI_INPUT_STALE", "AI_CASES_STALE", "AI_CRITERIA_STALE", "AI_CONFIG_CHANGED"} else 400)
+                                 "AI_JOB_ACTIVE", "AI_INPUT_STALE", "AI_CASES_STALE", "AI_CRITERIA_STALE", "AI_CONFIG_CHANGED",
+                                 "SOURCE_INTAKE_NOT_READY", "SOURCE_SCOPE_CONFIRMATION_REQUIRED"} else 400)
         return JSONResponse({"code": code}, status, headers={"Cache-Control": "no-store"})
 
     @app.exception_handler(RequestValidationError)

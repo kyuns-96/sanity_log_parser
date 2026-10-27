@@ -1,6 +1,6 @@
 # 서버별 소스 구조와 실행
 
-2026-10-26 확인된 배치는 **VWP 사용자 환경 → HTTPS → 중앙 VWP-bridge → PostgreSQL → OA**다. 공유 폴더는 요구하지 않는다. [HTTPS 제출 설정](vwp/HTTPS_SUBMISSION.md)과 `vwp_bridge/docker/compose.https.yaml`을 사용한다. 원본은 [VWP private DB에 보관](vwp/DB_ORIGINALS.md)하며 bridge의 영구 archive/upload/receipt 디렉터리를 요구하지 않는다. 서버 설정 schema 3과 010 migration을 사용하고 파싱에만 임시 공간을 쓴다. 기존 SSO·권한/범위 차단은 유지한다. 아래 공유 파일시스템 schema 1 배치는 호환 경로다.
+2026-10-26 확인된 배치는 **VWP 사용자 환경 → HTTPS → 중앙 VWP-bridge → PostgreSQL → OA**다. 공유 폴더는 요구하지 않는다. [HTTPS 제출 설정](vwp/HTTPS_SUBMISSION.md)과 `vwp_bridge/docker/compose.https.yaml`을 사용한다. 원본은 [VWP private DB에 보관](vwp/DB_ORIGINALS.md)하며 bridge의 영구 archive/upload/receipt 디렉터리를 요구하지 않는다. 토큰 없는 CLI schema 3·서버 schema 4와 기존 010 migration을 사용하고 파싱에만 임시 공간을 쓴다. OA의 SSO/OWNER가 정확한 범위를 확정한 뒤 보고서를 공개한다. 아래 공유 파일시스템 schema 1 배치는 호환 경로다.
 
 [AI 판단 설계](AI_DECISION_DESIGN.md)의 **최초 AI 분류·그룹 판정과 확정 근거 검색·피드백**이 최우선 목표다. 이번 모델 연동은 사내 OA OpenAI 호환 API를 우선 사용한다. OA 모델 실행·사례 검색·직접 근거 판정·운영 workbench의 공통 경로는 [OA 실행 계약](oa/AI_RUNTIME.md)을 따른다. 전체 입력이 설정 한도에 들어가는 첫 판단 순환을 제공하며, 대량 모델 분할과 사내 실제 품질 검증은 별도다. 새 AI용 HTTP 서버는 필수가 아니고 OA 배포 환경의 별도 관리 worker가 실행한다.
 
@@ -68,7 +68,7 @@ VWP-bridge/OA는 같은 논리 DB·스키마를 기본적으로 서로 다른 �
 
 [담당 AI 지시문](vwp_bridge/INTERNAL_AI_TASK.md)을 읽는다. 회사 parser 등록은 `vwp_bridge/integration/corporate_parsers.py`다. 같은 폴더의 `corporate_clustering.py`, `corporate_review.py`는 기존 VWP 모델 경로를 사용할 때의 어댑터이며 OA 모델용 파일이 아니다. 전체 로그·원본 위치·조건을 DB로 전달하는 준비를 우선한다.
 
-OA AI 운영 경로의 중앙 서비스는 기존 V2 제출 worker를 실행한다. 실제 회사 어댑터·인증된 spool·영속 archive·DB 준비는 [제출 안내](vwp/SUBMISSION.md), Docker 운영 설정은 [중앙 수집 서비스 Docker 안내](vwp_bridge/docker/README.md#4-중앙-수집-서비스-실행--oa-ai-운영-경로)를 따른다. Docker의 `submission` profile은 VWP AI를 비활성화하고 `compose.submission.yaml`로 private JSON·spool/archive를 마운트한다.
+OA AI 운영 경로의 중앙 서비스는 V2 제출 API와 별도 source worker를 실행한다. 현재 [토큰 없는 HTTPS 안내](vwp/HTTPS_SUBMISSION.md)에 따라 회사 parser·DB/TLS·허용 출발 IP를 연결하고, `compose.https.yaml`과 `https/submission` profile로 설정/TLS·파싱 임시 공간을 제공한다. 원본은 DB에 보관한다. OA receiver/API/UI를 먼저 갱신해 현재 OWNER의 범위 확정 화면을 제공한다. `compose.submission.yaml`의 spool/archive 마운트는 legacy 폴더 배치다.
 
 ```bash
 .venv/bin/python -m vwp_bridge.submission_worker --config /etc/sanity/vwp-bridge-submit.json --interval 2

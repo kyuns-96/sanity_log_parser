@@ -1,6 +1,6 @@
 # report 제출 실행·연동 안내
 
-**2026-10-26 현재 환경:** VWP와 bridge는 다른 서버이고 공유 폴더가 없으며 HTTPS 접속이 가능하다. [HTTPS 제출](HTTPS_SUBMISSION.md)의 schema 2 설정과 API/worker를 사용한다. 원본은 [VWP private DB 보관](DB_ORIGINALS.md)으로 변경했다. 서버 schema 3/010 migration을 사용하며 bridge 영구 파일 보관은 불필요하다. 파싱 임시 공간과 기존 인증/권한·범위 차단은 유지한다. 아래 파일시스템 설치 내용은 schema 1 호환 경로이며 장애 시 자동 전환하지 않는다.
+**2026-10-27 현재 환경:** 공유 폴더 없이 [토큰 없는 HTTPS 제출](HTTPS_SUBMISSION.md)을 사용한다. CLI schema 3·bridge schema 4, 원본은 010 이후 VWP private DB 보관이며 파싱할 때만 임시 복원한다. 제출용 토큰이나 회사 인증 SDK를 준비하지 않는다. OA에 로그인한 현재 OWNER가 범위를 확정한 뒤 보고서를 공개한다. 아래 파일시스템·신원/승인 어댑터 설치는 기존 schema 1/Bearer 호환 배치 설명이다.
 
 사용자 CLI, VWP 내부 snapshot 인계/영속 보관, V2 분할 송수신, OA source 페이지와 접수 응답을 구현했다. **실제 회사 신원·예상 범위/승인·report 경로 SDK와 사내 파일시스템/운영 DB는 연결하지 않았다.** 아래 일반 실행은 그 준비와 승인된 배포 후 사용한다. SSO 업무 API와 CORPORATE 모델의 기존 차단은 유지한다.
 

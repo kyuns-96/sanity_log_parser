@@ -16,6 +16,8 @@ from common.sanity_submission import (PART_BYTES, PROTOCOL, VerifiedRemoteSubmit
 from common.sanity_submission_files import (copy_bundle, directory, fsync_dir, load_config, read_json_file,
     remove_own_partial, storage, verify_bundle, verify_snapshot, write_json_file)
 from common.sanity_submission_store import SubmissionStore
+from common.sanity_submission_intake import (UnverifiedSubmitter, PENDING_BLOCKER,
+    require_pending_plan, tokenless, unverified)
 from vwp_bridge.submission_analysis import build_transfer
 
 
@@ -74,6 +76,9 @@ class SubmissionWorker:
         return actor
 
     def stored_actor(self, actor):
+        if unverified(actor):
+            check(tokenless(self.config),'SUBMISSION_CONFIG')
+            return UnverifiedSubmitter(**actor)
         if self.https:
             verified = self.authority.resolve_actor(actor)
             check(isinstance(verified,VerifiedRemoteSubmitter) and verified.actor == actor,'FORBIDDEN')
@@ -90,7 +95,7 @@ class SubmissionWorker:
             check(set(value) == {'schema_version','protocol','submission_id','content_sha256','collection_id',
                 'actor_key','delivery_state','review_readiness','blockers','workspace_links'},'INVALID_SOURCE_RECEIPT')
             check(value['schema_version'] == 2 and value['protocol'] == PROTOCOL
-                  and value['delivery_state'] in ('OA_STORED','REJECTED')
+                  and value['delivery_state'] in ('OA_STORED','REJECTED','DB_QUEUED')
                   and value['review_readiness'] in ('READY','BLOCKED')
                   and isinstance(value['blockers'],list) and isinstance(value['workspace_links'],list),'INVALID_SOURCE_RECEIPT')
             sid = submission_uuid(value['submission_id'])
@@ -104,6 +109,13 @@ class SubmissionWorker:
                       and digest([row['payload']['actor']['issuer'],row['payload']['actor']['subject']]) == value['actor_key'],
                       'INVALID_SOURCE_RECEIPT')
                 state = {**row['state'],'oa_receipt':value}
+                if value['delivery_state'] == 'DB_QUEUED':
+                    check(unverified(row['payload']['actor']) and value['review_readiness']=='BLOCKED'
+                          and value['blockers']==[PENDING_BLOCKER],'INVALID_SOURCE_RECEIPT')
+                    # A delayed staging receipt must never overwrite an OA decision.
+                    if row['status'] in ('OA_STORED','REJECTED'):
+                        queue.finish(message)
+                        return True
                 row = self.store.state(sid,value['delivery_state'],state)
                 queue.finish(message)
             self.write_receipt(row)
@@ -170,8 +182,13 @@ class SubmissionWorker:
         try:
             incoming, manifest = verify_bundle(ready)
             check(incoming['submission_id'] == sid and incoming['actor'] == actor.actor,'FORBIDDEN')
-            self.authority.authorize(actor,incoming['plan']['collection'])
-            confirmed = approved(incoming['plan'],self.authority)
+            if unverified(incoming['actor']):
+                check(tokenless(self.config) and isinstance(actor,UnverifiedSubmitter),'FORBIDDEN')
+                require_pending_plan(incoming['plan'])
+                confirmed = False
+            else:
+                self.authority.authorize(actor,incoming['plan']['collection'])
+                confirmed = approved(incoming['plan'],self.authority)
             output = ready if self.database_storage else self.archive_bundle(ready,incoming)
             with self.db.transaction():
                 row = self.store.accept(incoming,node_id=self.config['node_id'])

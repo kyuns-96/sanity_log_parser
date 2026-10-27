@@ -1,6 +1,7 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "transport": "https",
+  "submission_auth": "internal_network",
   "endpoint": "https://bridge.example.invalid:8443",
   "ca_file": null,
   "timeout_seconds": 60,
