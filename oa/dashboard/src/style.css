@@ -41,7 +41,7 @@ button svg { flex-shrink: 0; }
 .online-dot { background: var(--success); width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .nav-label { font-size: 11px; color: var(--text-muted); padding-left: 12px; font-weight: 600; letter-spacing: 1.3px; margin-bottom: 12px; }
 .sidebar nav { display: flex; flex-direction: column; gap: 7px; }
-.sidebar nav button { border: 0; background: transparent; display: flex; align-items: center; gap: 12px; text-align: left; color: var(--text-muted); padding: 12px; font-size: 12px; border-radius: 6px; }
+.sidebar nav button { border: 0; background: transparent; display: flex; align-items: center; justify-content: flex-start; gap: 12px; text-align: left; color: var(--text-muted); padding: 12px; font-size: 12px; border-radius: 6px; }
 .sidebar nav button:hover { background: var(--sidebar-surface); }
 .sidebar nav button.nav-active { background: var(--text-secondary); color: var(--surface-soft); box-shadow: inset 3px 0 var(--accent-line); }
 .sidebar nav button .nav-count { margin-left: auto; font-size: 11px; border-radius: 4px; padding: 1px 5px; background: var(--text-secondary); }
