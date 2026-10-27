@@ -153,7 +153,7 @@ test('login, SSO welcome and administration share the selected appearance', asyn
   await page.goto('/?page=welcome')
   await expect(page.getByRole('heading', { name: '권한 요청', exact: true })).toBeVisible()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
-  await page.getByRole('button', { name: '관리자', exact: true }).click()
+  await page.getByRole('button', { name: '관리자 모드', exact: true }).click()
   await expect(page.getByRole('heading', { name: '프로젝트·권한 관리', exact: true })).toBeVisible()
   await expect(page.locator('.am-panel').first()).toHaveCSS('background-color', 'rgb(27, 32, 41)')
   await page.setViewportSize({ width: 390, height: 844 })

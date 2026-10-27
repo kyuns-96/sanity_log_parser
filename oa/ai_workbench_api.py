@@ -68,7 +68,7 @@ def create_workbench_router(authorized_actor):
     @router.get("/session")
     def session(scope=Depends(workspace)):
         return {"user": scope.ws.user(scope.user_id), "csrf": "", "expires_at": "",
-                "environment": "PRODUCTION_SSO"}
+                "environment": "PRODUCTION_SSO", "is_admin": scope.ws.authorization.is_admin(scope.user_id)}
 
     @router.get("/overview")
     def overview(scope=Depends(workspace)):

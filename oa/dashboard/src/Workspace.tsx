@@ -7,6 +7,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './studio/components/ui/tabs'
 import { WorkspaceBrand } from './components/WorkspaceBrand'
 import { ColorModeControl } from './components/ColorModeControl'
+import { SidebarModeSwitch } from './components/SidebarModeSwitch'
+import { modeUrl } from './dashboardMode'
 import { useWorkspaceNavigation } from './useWorkspaceNavigation'
 import { productionWorkbench, WorkspaceError, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
 import type { ReviewCase, WorkspaceEvent, WorkspaceOverview, WorkspacePor, WorkspaceReport, WorkspaceReports, WorkspaceSession, WorkspaceVersions } from './workspaceApi'
@@ -236,11 +238,12 @@ function WorkspacePage({ session, onExpired, onLogout, onDemoAccount }: { sessio
   }
   const totals = project?.blocks.reduce((total, block) => ({ total: total.total + block.total, fail: total.fail + (block.counts.FAIL || 0), unknown: total.unknown + (block.counts.UNKNOWN || 0), por: total.por + Number(!!block.por.version) }), { total: 0, fail: 0, unknown: 0, por: 0 })
 
-  return <div className={`ws-app ws-studio-workspace ${collapsed && !reviewing ? 'ws-collapsed' : ''}${reviewing ? ' ws-studio-workbench-open' : ''}`}>
+  return <div className={`ws-app ws-studio-workspace ${collapsed && !reviewing ? 'ws-collapsed' : ''}${reviewing ? ' ws-studio-workbench-open' : ''}${production && session.is_admin === true ? ' ws-mode-enabled' : ''}`}>
     <a className="skip-link" href="#ws-main">본문으로 건너뛰기</a>
     {!reviewing && mobile && isMobile && <button className="ws-backdrop" aria-label="메뉴 닫기" onClick={closeMobile} />}
     {!reviewing && <aside ref={sidebarRef} className={`ws-sidebar ${mobile ? 'ws-open' : ''}`} aria-label="워크스페이스 메뉴" role={mobile && isMobile ? 'dialog' : undefined} aria-modal={mobile && isMobile || undefined} inert={isMobile && !mobile}>
       <div className="ws-studio-sidebar-header"><WorkspaceBrand /><button className="ws-mobile-close" aria-label="메뉴 닫기" onClick={closeMobile}><X size={19} /></button></div>
+      {production && session.is_admin === true && <SidebarModeSwitch mode="user" onChange={mode => location.assign(modeUrl(mode, true))} />}
       <span className="ws-sidebar-caption">워크스페이스</span>
       <nav className="ws-studio-task-nav" aria-label="작업 메뉴">{[{ id: 'overview', label: '프로젝트 현황', icon: Layers3 }, { id: 'reports', label: '버전·검사 대장', icon: ClipboardList }, { id: 'history', label: 'PoR 변경 이력', icon: History }].map(({ id, label, icon: Icon }) => <button key={id} aria-label={label} aria-current={view === id ? 'page' : undefined} onClick={() => { setView(id); closeMobile() }}><Icon size={16} /><span>{label}</span></button>)}</nav>
       <div className="ws-sidebar-divider" />

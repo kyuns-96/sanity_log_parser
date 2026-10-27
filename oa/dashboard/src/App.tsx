@@ -17,6 +17,8 @@ import { ClusterPanel } from './ClusterPanel'
 import { RawEvidence } from './RawEvidence'
 import { WorkspaceBrand } from './components/WorkspaceBrand'
 import { ColorModeControl } from './components/ColorModeControl'
+import { SidebarModeSwitch } from './components/SidebarModeSwitch'
+import { modeUrl } from './dashboardMode'
 import { useWorkspaceNavigation } from './useWorkspaceNavigation'
 import { useDashboardAuth } from './useDashboardAuth'
 import { DashboardLogin } from './DashboardLogin'
@@ -222,13 +224,14 @@ export default function App() {
     <aside id="workspace-menu" ref={sidebarRef} className={`sidebar ${mobile ? 'sidebar-open' : ''}`} aria-label="워크스페이스 메뉴" role={isMobile && mobile ? 'dialog' : undefined} aria-modal={isMobile && mobile ? true : undefined} inert={isMobile && !mobile} aria-hidden={isMobile && !mobile}>
       <WorkspaceBrand />
       <button className="sidebar-close" aria-label="메뉴 닫기" onClick={closeMobile}><X size={18} /></button>
+      {readySSO && session.is_admin === true && <SidebarModeSwitch mode="user" onChange={mode => location.assign(modeUrl(mode, session.can_read_business === true))} />}
       <div className="portal-sidebar-context"><span className="workspace-icon"><Layers3 size={18} /></span><div><strong>검토 워크스페이스</strong><small>{demo ? '합성 데이터 · 데모' : '결과 · 근거 · 변경 이력'}</small></div></div>
       <div className="nav-label">워크스페이스</div>
       <nav aria-label="검토 메뉴">
         {readySSO && <Button variant="ghost" aria-label="AI 분류·판정" onClick={() => location.assign('/?page=workbench')}><Layers3 size={18} /><span className="nav-text">AI 분류·판정</span></Button>}
         {[{ id: 'ledger', icon: ClipboardCheck, title: '검토 대장' }, { id: 'evidence', icon: FileSearch, title: '추가 근거 요청' }, { id: 'history', icon: Activity, title: '활동 이력' }].map(({ id, icon: Icon, title }) => <Button variant="ghost" key={id} aria-label={title} aria-current={tab === id ? 'page' : undefined} className={tab === id ? 'nav-active' : ''} onClick={() => { setTab(id); closeMobile() }}><Icon size={18} /><span className="nav-text">{title}</span>{id === 'evidence' && requests.total > 0 && <Badge variant="secondary" className="nav-count">{requests.total}</Badge>}</Button>)}
       </nav>
-      {readySSO && <><div className="nav-label">계정 관리</div><nav aria-label="계정 메뉴"><Button variant="ghost" aria-label="내 프로젝트·권한" onClick={() => navigate('welcome')}><ShieldCheck size={18} /><span className="nav-text">내 프로젝트·권한</span></Button>{session.is_admin === true && <Button variant="ghost" aria-label="관리자" onClick={() => navigate('admin')}><LockKeyhole size={18} /><span className="nav-text">관리자</span></Button>}</nav></>}
+      {readySSO && <><div className="nav-label">계정 관리</div><nav aria-label="계정 메뉴"><Button variant="ghost" aria-label="내 프로젝트·권한" onClick={() => navigate('welcome')}><ShieldCheck size={18} /><span className="nav-text">내 프로젝트·권한</span></Button></nav></>}
       <div className="sidebar-spacer" />
       <div className="portal-sidebar-note"><ShieldCheck size={15} /><span>모든 판정에 근거와 변경 이력을 남깁니다.</span></div>
       <button className="sidebar-toggle" onClick={() => setCollapsed(value => !value)} aria-expanded={!collapsed} aria-label={collapsed ? '메뉴 펼치기' : '메뉴 접기'}>{collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}<span>메뉴 접기</span></button>

@@ -1,0 +1,20 @@
+.sidebar-mode-switch { flex-shrink: 0; margin: 22px 0 18px; }
+.ws-studio-workspace.ws-mode-enabled .ws-studio-sidebar-header { margin-bottom: 0; }
+@media (min-width: 721px) { .ws-studio-workspace.ws-mode-enabled:not(.ws-collapsed):not(.ws-studio-workbench-open) { --ws-sidebar-width: var(--sidebar-width); } }
+.sidebar-mode-expanded { position: relative; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); isolation: isolate; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-recessed); }
+.sidebar-mode-expanded button { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-width: 0; min-height: 38px; padding: 8px 4px; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted); font: inherit; font-size: 12px; font-weight: 550; transition: color 180ms ease; }
+.sidebar-mode-expanded button[aria-pressed='true'] { color: var(--ink); }
+.sidebar-mode-expanded button:hover { color: var(--ink); }
+.sidebar-mode-thumb { position: absolute; z-index: 0; inset: 4px auto 4px 4px; width: calc((100% - 8px) / 2); border: 1px solid var(--line); border-radius: 5px; background: var(--surface); box-shadow: 0 1px 3px #0000000a; transform: translateX(0); transition: transform 220ms cubic-bezier(.2,.8,.2,1); pointer-events: none; }
+.sidebar-mode-switch[data-mode='admin'] .sidebar-mode-thumb { transform: translateX(100%); }
+.sidebar-mode-compact { display: none; width: 44px; height: 44px; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: var(--surface); }
+.sidebar-mode-compact:hover { background: var(--accent-soft); }
+.sidebar-is-collapsed .sidebar-mode-expanded, .ws-collapsed .sidebar-mode-expanded { display: none; }
+.sidebar-is-collapsed .sidebar-mode-compact, .ws-collapsed .sidebar-mode-compact { display: inline-flex; }
+.sidebar-is-collapsed .sidebar-mode-switch, .ws-collapsed .sidebar-mode-switch { margin-block: 20px 12px; }
+.sidebar-mode-user-enter { animation: sidebar-user-enter 220ms ease-out both; }
+.sidebar-mode-admin-enter { animation: sidebar-admin-enter 220ms ease-out both; }
+@keyframes sidebar-user-enter { from { opacity: .45; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes sidebar-admin-enter { from { opacity: .45; transform: translateX(8px); } to { opacity: 1; transform: translateX(0); } }
+@media (pointer: coarse) { .sidebar-mode-expanded button { min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) { .sidebar-mode-thumb, .sidebar-mode-expanded button { transition: none; } .sidebar-mode-user-enter, .sidebar-mode-admin-enter { animation: none; } }

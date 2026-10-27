@@ -83,6 +83,22 @@ class ScopedDashboardTests(PgTestCase):
             self.success(self.post(ADMIN, "/api/admin/projects/" + project + "/blocks", {
                 "request_id": str(uuid.uuid4()), "block_id": block, "name": "합성 " + block}))
 
+    def test_workbench_administrator_flag_does_not_grant_business_access(self):
+        admin = self.success(self.clients[ADMIN].get('/api/workbench/session'))
+        self.assertTrue(admin['is_admin'])
+        self.assertEqual('USER', admin['user']['role'])
+        self.assertEqual([], self.success(self.clients[ADMIN].get('/api/workbench/overview'))['projects'])
+        self.assertFalse(self.success(self.clients[OWNER].get('/api/workbench/session'))['is_admin'])
+        self.register()
+        self.grant(ADMIN, 'OWNER', block='block-a1')
+        self.grant(OWNER, 'OWNER', block='block-a1')
+        for user, is_admin in ((ADMIN, True), (OWNER, False)):
+            value = self.success(self.clients[user].get('/api/workbench/session?is_admin=true&user_id=someone-else'))
+            self.assertIs(is_admin, value['is_admin'])
+            self.assertEqual(user, value['user']['id'])
+            self.assertEqual('OWNER', value['user']['role'])
+        self.assertEqual(403, self.clients[OWNER].get('/api/admin/access').status_code)
+
     def grant(self, user, role, project="project-a", block=None):
         request_id = str(uuid.uuid4())
         value = self.success(self.post(user, "/api/access/requests", {
