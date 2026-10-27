@@ -9,7 +9,7 @@ import stat
 import tempfile
 
 from common.sanity_common import _decode_json, canonical_json, digest
-from common.sanity_submission import MAX_METADATA, actor_value, check, relative_report, submission_uuid, text, validate_plan
+from common.sanity_submission import HEX, MAX_METADATA, actor_value, check, relative_report, submission_uuid, text, validate_plan
 
 DEFAULT_TOTAL_BYTES = 16 * 1024**3
 DEFAULT_FILES = 10000
@@ -140,9 +140,8 @@ def snapshot(prepared, output, *, max_bytes=DEFAULT_TOTAL_BYTES, max_files=DEFAU
     return manifest
 
 
-def verify_snapshot(root, *, max_bytes=DEFAULT_TOTAL_BYTES, max_files=DEFAULT_FILES):
-    root = directory(root)
-    manifest = read_json_file(root / "collection.json")
+def validate_manifest(manifest, *, max_bytes=DEFAULT_TOTAL_BYTES, max_files=DEFAULT_FILES):
+    check(isinstance(manifest, dict))
     check(set(manifest) == {"schema_version", "plan", "files", "unexpected_files"} and manifest["schema_version"] == 2)
     validate_plan(manifest["plan"])
     files = manifest["files"]
@@ -152,6 +151,30 @@ def verify_snapshot(root, *, max_bytes=DEFAULT_TOTAL_BYTES, max_files=DEFAULT_FI
         check(isinstance(record, dict) and set(record) == {"path", "size_bytes", "sha256"})
         relative = relative_report(record["path"])
         check(relative not in by_path and type(record["size_bytes"]) is int and record["size_bytes"] >= 0)
+        check(isinstance(record['sha256'],str) and HEX.fullmatch(record['sha256']))
+        by_path[relative] = record
+        total += record['size_bytes']
+        check(total <= max_bytes, 'SUBMISSION_LIMIT')
+    expected = {u['report'] for u in manifest['plan']['inventory']['units']}
+    check(manifest['unexpected_files'] == sorted(set(by_path) - expected))
+    return manifest
+
+
+def validate_submission(value, manifest):
+    check(isinstance(value,dict) and set(value) == {"schema_version", "submission_id", "actor", "content_sha256", "plan"}
+          and value['schema_version'] == 2)
+    submission_uuid(value['submission_id']); actor_value(value['actor'])
+    validate_manifest(manifest)
+    check(value['content_sha256'] == digest(manifest) and value['plan'] == manifest['plan'], 'FILE_INTEGRITY')
+    return value
+
+
+def verify_snapshot(root, *, max_bytes=DEFAULT_TOTAL_BYTES, max_files=DEFAULT_FILES):
+    root = directory(root)
+    manifest = validate_manifest(read_json_file(root / "collection.json"), max_bytes=max_bytes, max_files=max_files)
+    by_path, total = {}, 0
+    for record in manifest['files']:
+        relative = record['path']
         stream, info = regular(root / relative, max_bytes - total)
         value = hashlib.sha256()
         with stream:
@@ -178,10 +201,8 @@ def verify_bundle(root, **limits):
     root = directory(root)
     check({p.name for p in root.iterdir()} == {"submission.json", "snapshot"}, "FILE_INTEGRITY")
     value = read_json_file(root / "submission.json")
-    check(set(value) == {"schema_version", "submission_id", "actor", "content_sha256", "plan"} and value["schema_version"] == 2)
-    submission_uuid(value["submission_id"]); actor_value(value["actor"])
     manifest = verify_snapshot(root / "snapshot", **limits)
-    check(value["content_sha256"] == digest(manifest) and value["plan"] == manifest["plan"], "FILE_INTEGRITY")
+    validate_submission(value, manifest)
     return value, manifest
 
 
@@ -219,6 +240,9 @@ def load_config(path, *, bridge=False):
     value = read_json_file(path, 16384)
     info = Path(path).stat()
     check(info.st_uid == 0 and info.st_mode & 0o022 == 0, "UNTRUSTED_SUBMISSION_CONFIG")
+    if value.get('schema_version') in (2,3):
+        from common.sanity_submission_https import validate_https_config
+        return validate_https_config(value, bridge=bridge)
     keys = {"schema_version", "spool_root", "storage_id", "service_uid", "default_profile"}
     if bridge:
         keys |= {"archive_root", "node_id"}

@@ -58,6 +58,10 @@ def check_sources(source, before, phase):
             elif phase == '009' and match[1] == 'sanity_oa_workspace_scope_v7':
                 old = next(c['definition'] for c in table_at(before, 'sanity_oa_data')['constraints']
                            if c['name'] == 'sanity_oa_workspace_scope_v6')
+            elif phase == '010' and match[1] in ('sanity_vwp_status_v4','sanity_vwp_submission_parent_v4'):
+                name = {'sanity_vwp_status_v4':'sanity_vwp_status_v3',
+                        'sanity_vwp_submission_parent_v4':'sanity_vwp_submission_parent_v3'}[match[1]]
+                old = next(c['definition'] for c in table_at(before,'sanity_vwp_data')['constraints'] if c['name'] == name)
             else:
                 raise ValueError('Unrecognized format in pinned CHECK')
             expression = expression.replace('%s', old)
@@ -123,7 +127,7 @@ def derive_steps(before, after, phase):
     return steps
 
 
-def capture(connection, schema='portal_reference'):
+def capture(connection, schema='portal_reference', *, raw_sources=False):
     with connection.cursor() as cursor:
         cursor.execute('SELECT current_database()')
         if not cursor.fetchone()[0].startswith('sanity_test_'):
@@ -132,7 +136,8 @@ def capture(connection, schema='portal_reference'):
     initial = snapshot(connection, schema)
     state = deepcopy(initial)
     steps = []
-    for filename in MIGRATIONS:
+    migrations = MIGRATIONS + (('010_raw_sources.sql',) if raw_sources else ())
+    for filename in migrations:
         source = (ROOT / 'db' / filename).read_text(encoding='utf-8')
         expressions = check_sources(source, state, filename[:3])
         generations = {m[1]: parenthesized(source, m.end() - 1) for m in re.finditer(
@@ -149,7 +154,7 @@ def capture(connection, schema='portal_reference'):
         if fingerprint(state) != fingerprint(after):
             raise ValueError('Reference diff does not cover the entire catalog')
     sources = [*(f'db/form/{name}.columns.sql' for name in TABLES),
-               *(f'db/{name}' for name in MIGRATIONS), 'db/003_grants.sql']
+               *(f'db/{name}' for name in migrations), 'db/003_grants.sql']
     return {'format': 1, 'sources': {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in sources},
             'initial': initial, 'steps': steps}
 
@@ -158,6 +163,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--pg-bin')
     parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--raw-sources',action='store_true',help='include the opt-in 010 raw-storage extension')
     args = parser.parse_args()
     import psycopg2
     from db.tests.run_mock import MockDatabase, pg_binaries
@@ -168,7 +174,7 @@ def main():
         connection = psycopg2.connect(**database.parameters('admin'))
         connection.autocommit = True
         try:
-            plan = capture(connection)
+            plan = capture(connection,raw_sources=args.raw_sources)
         finally:
             connection.close()
         with args.out.open('x', encoding='utf-8') as stream:

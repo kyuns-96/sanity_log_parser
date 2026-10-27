@@ -1,5 +1,9 @@
 # 사용자 report 제출 명령과 저장 경로
 
+**현재 저장 결정:** 원본은 [VWP private DB](DB_ORIGINALS.md)에 보관하고 파서 실행에만 임시 복원한다. 아래 공유 파일시스템/영구 archive 배치는 기존 호환 경로다. 기본 HTTPS 서버 설정은 schema 3, 후속 DB 변경은 010이다.
+
+**2026-10-26 변경:** 사용자 환경에는 공유 제출 저장소가 없고 VWP → bridge HTTPS 접속이 가능하다. 현재 운영 대상은 [HTTPS 제출 계약](HTTPS_SUBMISSION.md)이다. 이 문서의 공용 파일시스템·inbox/receipt ACL 경로는 schema 1 호환 배치로 한정한다. HTTPS API가 service 전용 staging/archive를 만들고 상태를 응답한다. 인증/범위는 [OA SSO 본인 제출 토큰·OWNER 직접 확정](HTTPS_DECISIONS.md)으로 결정했다. 해당 후속 구현 전 차단과 원천 ID·전체 파싱·기존 source DB/OA 계약을 유지한다.
+
 기준: 2026-10-16. 사용자가 VWP에서 직접 호출하는 명령, VWP-bridge 접수, PostgreSQL 저장, OA 반영을 정한다. **공통 CLI·접수/보관·V2 분할 송수신·OA 조회를 구현했다.** 실제 회사 SDK/신원·승인·report 경로, 제출 파일시스템과 운영 DB 적용은 사내에서 연결·검증해야 한다. 실행 코드·설정·회사 메서드·시험 방법은 [SUBMISSION.md](SUBMISSION.md)를 따른다.
 
 원천 버전·실행·PRE 재사용·예상 범위 승인 정책은 [SOURCE_COLLECTION_DESIGN.md](SOURCE_COLLECTION_DESIGN.md)를 따른다. 이 문서는 그 설계의 사용자 진입점과 운영 저장 경로를 보완한다. schema 1의 `collect`/`analyze`와 SSO·CORPORATE 보호 상태를 유지하고 네 테이블의 확장은 새 `008_submissions.sql`로 제공한다. 사내 실경로·계정·report는 이 공개 문서에 기입하지 않는다.

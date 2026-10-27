@@ -68,16 +68,14 @@ def actor_value(value):
 
 
 @dataclass(frozen=True)
-class VerifiedSubmitter:
-    """Construct only after company authentication / authenticated mount lookup."""
+class VerifiedRemoteSubmitter:
+    """Identity verified by the bridge's company authentication service."""
     issuer: str
     subject: str
     user_id: str
-    os_uid: int
 
     def __post_init__(self):
         actor_value(self.actor)
-        check(type(self.os_uid) is int and self.os_uid >= 0)
 
     @property
     def actor(self):
@@ -86,6 +84,16 @@ class VerifiedSubmitter:
     @property
     def key(self):
         return digest([self.issuer, self.subject])
+
+
+@dataclass(frozen=True)
+class VerifiedSubmitter(VerifiedRemoteSubmitter):
+    """A verified local caller / authenticated mount owner, including OS UID."""
+    os_uid: int
+
+    def __post_init__(self):
+        super().__post_init__()
+        check(type(self.os_uid) is int and self.os_uid >= 0)
 
 
 @dataclass(frozen=True)
@@ -102,6 +110,18 @@ class SubmissionInputProvider(ABC):
 
 
 class SubmissionAuthority(ABC):
+    def authenticate_bearer(self, token: str) -> VerifiedRemoteSubmitter:
+        """Verify a submission credential, including issuer/audience/expiry/revocation.
+
+        Never decode an unsigned JWT or trust actor/forwarded identity headers.
+        This is a submission credential, not the OA model API JWT.
+        """
+        raise ReviewError('SUBMISSION_AUTH_NOT_CONFIGURED', 'HTTPS submission authentication is not connected')
+
+    def resolve_actor(self, actor: dict) -> VerifiedRemoteSubmitter:
+        """Revalidate a service-stored identity against the current company directory."""
+        raise ReviewError('SUBMISSION_AUTH_NOT_CONFIGURED', 'HTTPS submitter lookup is not connected')
+
     @abstractmethod
     def current(self) -> VerifiedSubmitter:
         """Authenticate the actual caller. Never use an input username as proof."""
@@ -123,6 +143,19 @@ class SourceIdentityResolver(ABC):
     @abstractmethod
     def resolve(self, actor: dict) -> str:
         """OA: map a trusted VWP assertion's issuer/subject to an active local ID."""
+
+
+def submission_receipt(row):
+    """Project the durable submission state without relying on a receipt file."""
+    submission, state = row['payload'], row['state']
+    actor = submission['actor']
+    return {'schema_version':1,'submission_id':submission['submission_id'],
+            'actor_key':digest([actor['issuer'],actor['subject']]),
+            'delivery_state':row['status'],'state_revision':row['version'],
+            'updated_at':row['updated_at'].isoformat(),'verified_oa_state':bool(state.get('oa_receipt')),
+            'review_readiness':state.get('oa_receipt',{}).get('review_readiness','BLOCKED'),
+            'blockers':state.get('oa_receipt',{}).get('blockers',state.get('blockers',[])),
+            'workspace_links':state.get('oa_receipt',{}).get('workspace_links',[])}
 
 
 def source_version(collection, source):

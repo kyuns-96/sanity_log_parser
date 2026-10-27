@@ -1,0 +1,9 @@
+{
+  "schema_version": 3,
+  "transport": "https",
+  "storage": "postgresql",
+  "service_uid": 10001,
+  "temp_root": null,
+  "node_id": "SET_BY_DEPLOYMENT",
+  "allowed_hosts": ["bridge.example.invalid"]
+}

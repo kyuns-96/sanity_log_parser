@@ -69,7 +69,7 @@ OA는 사람의 검토·제어와 함께 **사례 검색·사내 OA AI 호출·�
 | `vwp/integration/corporate_submission.py` | `CorporateSubmissionInput.prepare`, `CorporateSubmissionAuthority.current/inbox_owner/authorize/approval_valid` 본문, 필요한 import·승인 SDK 주입 생성자, `create_submission_adapters`의 명시적 주입 | 서명/모델·V2 schema 변경, 파일/DB 쓰기·실행, 자동 승인, 사용자명만으로 인증, CLI/상태/권한 우회 |
 | `vwp/integration/company_plan/` — 신규 작업용 위치 | schema 1/V2 입력·원천/제출 신원/담당·승인 SDK wrapper, 기존 plan 작성·VWP 내부 byte 동일 export/collector 호출용 별도 launcher·전용 합성/모의 테스트 | 파일 목록으로 예상 unit 누락 은폐·자동 승인, 새 전송/DB 계약·worker 연결, 원본 report/설계 파일 변경 |
 | `vwp_bridge/integration/corporate_parsers.py` | `CorporateReportParser.parse` 본문, 필요한 import, `create_parser_registry`의 명시적 회사 파서 등록 | 메서드/함수 서명·반환 계약 변경, 자동 import/발견, 내장 파서 교체, 공통 판정 우회 |
-| `vwp_bridge/integration/corporate_submission.py` | `CorporateSubmissionAuthority.current/inbox_owner/authorize/approval_valid` 본문, 필요한 import·승인 SDK 주입 생성자 | 디렉터리명/파일 actor만으로 인증, 자동 승인, 공통 archive/spool/DB·worker 변경 |
+| `vwp_bridge/integration/corporate_submission.py` | `CorporateSubmissionAuthority.current/inbox_owner/authorize/approval_valid`의 기존 회사 경로 본문, 필요한 import·승인 SDK 주입 생성자. 확정된 OA/DB 인증·범위 확정 및 HTTPS 두 hook은 Codex 공통 구현 대상 | 디렉터리명/파일 actor만으로 인증, 자동 승인, 공통 API/archive/spool/DB·worker 변경 |
 | `vwp_bridge/integration/company_submission/` — 신규 작업용 위치 | 위 bridge 신원·배정·승인 어댑터의 승인 SDK wrapper·합성/모의 SDK 전용 테스트 | 독자 접수/전송 worker, DB 직접 쓰기, 권한/실패 우회, 실제 사내 자료 하드코딩 |
 | `vwp_bridge/integration/company_parsers/` — 신규 작업용 위치 | 확인된 형식의 `ReportParser` 하위 클래스·전용 테스트 추가 | DB/AI/네트워크/shell 호출, 다른 report 읽기, 공통 모듈 monkey patch, 원문/객체명/비밀값 하드코딩 |
 | `vwp_bridge/integration/corporate_review.py` | `CorporateReviewAdvisor.propose` 본문, 필요한 import, 승인된 VWP AI SDK 주입용 생성자 | 메서드/출력 계약 변경, OA 모델 호출, DB/전송/worker 연결 변경, 판정/재사용 기준 자동 확정 |
@@ -140,6 +140,14 @@ OA 담당자는 사용자 허용 하에 비공개 `SANITY_ADMIN_USER_ID`에 정�
 현재 실행은 설정 한도 안의 전체 report/그룹만 처리한다. 로그·사례를 자르거나 API timeout을 자동 재호출하지 않는다. 평균 10,000건·100,000건 이상을 위한 모델 분할/통합은 COMMON-05, 실제 판단 품질 실측은 COMMON-06으로 남는다. `reusable=false` 확정 기록도 모델 참고 후보가 되지만 자동 규칙 적용 승인을 뜻하지 않는다. 다른 버전은 명시적 호환 승인 안에서 검색한다.
 
 `oa/sanity_ai_*.py`, `oa/ai_worker.py`, `common/sanity_ai_*.py`, 운영 권한 연결·API/화면·설정 예제·기존 테스트는 Codex 보호 코드다. `company_sso/`에 모델 호출/사례 조회를 끼워 넣거나 VWP 어댑터를 복사하지 않는다. 기존 SSO/source 허용 메서드만 현장 구현하며, 공통 실행의 오류는 수정/재시도를 멈추고 비식별 문의로 인계한다.
+
+### 3.7. 공유 폴더 없는 HTTPS 제출 — 2026-10-26
+
+사용자는 VWP와 bridge가 다른 서버이며 공유 폴더가 없고 VWP → bridge HTTPS 접속이 가능하다고 확인했다. [HTTPS 제출](vwp/HTTPS_SUBMISSION.md)의 CLI schema 2·서버 schema 3 설정으로 API·기존 worker를 연결한다. bridge↔OA는 기존 네 DB 테이블을 유지하며 원본 report는 [VWP private DB에 분할 보관](vwp/DB_ORIGINALS.md)한다. 010 이후에는 영구 archive/upload/receipt 경로 없이 파싱 임시 파일만 사용한다. 기존 schema 1 폴더·schema 2 서버 파일 보관은 호환용이고 자동 fallback하지 않는다.
+
+사용자는 앞선 [개인 토큰 설계](vwp/HTTPS_DECISIONS.md)를 재검토했으며 수동 개인 토큰 발급은 현재 필수 요구가 아니다. OWNER 직접 예상 범위 선언·확정과 VWP는 bridge에만 접속하는 조건은 유지한다. 이번 DB 보관 변경은 익명 개발 접수·OA 확정이나 토큰 발급을 구현하지 않았으며, 두 HTTPS hook의 `SUBMISSION_AUTH_NOT_CONFIGURED`와 기존 권한/범위 검사를 유지한다. 후속 인증/접수·범위 연결은 Codex 공통 구현 대상이다. 내부 AI가 자체 발급기/인증 서비스/새 프로토콜을 만들거나 OA 모델 JWT·이름·header decode로 신원을 확정하지 않는다. VWP는 기존 허용 provider의 원천 정보를 준비한다. 010/포털 단계는 원본 보관 전용이며 운영 적용은 DBA가 관리한다.
+
+`common/sanity_submission_https.py`, `common/sanity_raw_sources.py`, `vwp/submission_https.py`, `vwp_bridge/submission_api.py`, `submission_uploads.py`, `submission_archive.py`, 010/포털 reference·전송 설정·Docker·기존 테스트는 Codex 보호 공통 코드다. bridge의 FastAPI/uvicorn은 Codex가 기존 OA와 같은 pin으로 추가했으며 내부 AI의 임의 의존성 변경 허가는 아니다. 실제 사내 TLS·발급/만료/폐기·권한/승인·report·AI 품질 검증은 합성 전송 시험과 별개다.
 
 ## 4. 내부 AI가 절대 수정하지 않는 부분
 

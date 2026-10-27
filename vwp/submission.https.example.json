@@ -1,0 +1,8 @@
+{
+  "schema_version": 2,
+  "transport": "https",
+  "endpoint": "https://bridge.example.invalid:8443",
+  "ca_file": null,
+  "timeout_seconds": 60,
+  "default_profile": "SET_BY_COMPANY_PROFILE"
+}

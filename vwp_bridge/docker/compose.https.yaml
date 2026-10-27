@@ -1,0 +1,28 @@
+# Raw files and status are in PostgreSQL. Only configuration/TLS are mounted.
+services:
+  vwp-submission-api:
+    volumes:
+      - type: bind
+        source: ${VWP_SUBMISSION_CONFIG_FILE:?Set the private HTTPS submission JSON path}
+        target: /etc/sanity/vwp-bridge-submit.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${VWP_SUBMISSION_TLS_DIR:?Set the private server certificate directory}
+        target: /run/submission-tls
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - "${VWP_SUBMISSION_BIND_IP:?Set an approved bridge interface IP}:${VWP_SUBMISSION_HTTPS_PORT:-8443}:8443"
+  vwp-submission-worker:
+    tmpfs: !override
+      - /tmp:rw,noexec,nosuid,size=${VWP_SUBMISSION_TMP_SIZE:-512m}
+    volumes:
+      - type: bind
+        source: ${VWP_SUBMISSION_CONFIG_FILE:?Set the private HTTPS submission JSON path}
+        target: /etc/sanity/vwp-bridge-submit.json
+        read_only: true
+        bind:
+          create_host_path: false

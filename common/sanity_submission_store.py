@@ -6,7 +6,7 @@ from common.sanity_submission import check
 
 def require_schema(db):
     expected = {
-        'sanity_vwp_data': {'sanity_vwp_submission_parent_v3'},
+        'sanity_vwp_data': {'sanity_vwp_submission_parent_v3', 'sanity_vwp_submission_parent_v4'},
         'sanity_oa_data': {'sanity_oa_workspace_scope_v6', 'sanity_oa_workspace_scope_v7'},
         'sanity_vwp_to_oa': {'sanity_vwp_message_scope_v3'},
         'sanity_oa_to_vwp': {'sanity_oa_message_scope_v3'},

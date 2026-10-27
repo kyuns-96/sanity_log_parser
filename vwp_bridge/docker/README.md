@@ -1,8 +1,12 @@
 # 중앙 VWP 수집 서비스와 VWP-bridge Docker 실행
 
+**현재 기본 HTTPS 배치:** [원본 DB 보관](../../vwp/DB_ORIGINALS.md)을 사용한다. 서버 schema 3/010이 필요하며 `compose.https.yaml`은 설정/TLS만 마운트하고 worker 파싱 임시 `/tmp`를 제공한다. `VWP_SUBMISSION_STORAGE_DIR`와 영구 archive/upload/receipt 디렉터리는 필요 없다. 아래 filesystem 볼륨 설명은 이전 호환 배치다.
+
+**2026-10-26 현재 배치:** VWP 사용자 환경과 bridge 사이에는 공유 폴더가 없고 HTTPS를 사용한다. [HTTPS 제출 안내](../../vwp/HTTPS_SUBMISSION.md#5-docker)의 `compose.https.yaml`과 `vwp-submission-api`·`vwp-submission-worker`를 함께 사용한다. 4절의 `compose.submission.yaml`은 schema 1 공유 폴더 호환 배치다. 인증은 [OA SSO 본인 제출 토큰·OWNER 범위 확정](../../vwp/HTTPS_DECISIONS.md)으로 결정했으며 발급/DB 확인/범위 확정의 후속 공통 구현 전 운영 접수는 차단된다.
+
 2026-10-23 사용자 결정에 따라 VWP의 접수·원본 보관·item별 파싱·검증·DB 전송은 **중앙 수집 서비스**가 담당하고, AI 분류·판정은 OA에서 실행한다. 사용자 환경에는 DB·모델 계정 없이 제출 CLI와 원천/신원 어댑터를 배치한다. 중앙 서비스는 기존 VWP 서버에 운영할 수 있으며 별도 장비가 필수는 아니다. Python 모듈 이름 `vwp_bridge`와 기존 데이터/권한 계약은 유지한다.
 
-[OA Dockerfile](../../oa/docker/Dockerfile-prod)을 기준으로 저장소 루트를 build context로 사용하고, Python 의존성 설치와 실행 이미지를 분리한다. 같은 회사 베이스 이미지와 사내 PyPI 미러를 사용할 수 있으며 `/opt/venv`를 실행 단계로 복사한다. OA와의 통신은 PostgreSQL을 사용하며 수신 포트는 없다. OA AI 운영 경로는 아래 **4절의 `vwp-submission-worker`**를 사용한다. 기존 VWP AI worker는 별도 선택 경로다.
+[OA Dockerfile](../../oa/docker/Dockerfile-prod)을 기준으로 저장소 루트를 build context로 사용하고, Python 의존성 설치와 실행 이미지를 분리한다. 같은 회사 베이스 이미지와 사내 PyPI 미러를 사용할 수 있으며 `/opt/venv`를 실행 단계로 복사한다. OA와의 통신은 PostgreSQL을 사용한다. HTTPS 제출 API만 승인된 VWP 측 수신 포트를 열고 기존 CLI/DB worker는 포트를 열지 않는다. 기존 VWP AI worker는 별도 선택 경로다.
 
 ## 1. 이미지와 설정 준비
 
