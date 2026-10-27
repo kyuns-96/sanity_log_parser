@@ -5,6 +5,7 @@ import { Button } from './studio/components/ui/button'
 import { Badge } from './studio/components/ui/badge'
 import { Textarea } from './studio/components/ui/textarea'
 import { WorkspaceBrand } from './components/WorkspaceBrand'
+import { ColorModeControl } from './components/ColorModeControl'
 import { useWorkspaceNavigation } from './useWorkspaceNavigation'
 import type { Session } from './types'
 import { accessError, requestStatus, roleLabel, scopeName } from './accessApi'
@@ -44,7 +45,7 @@ export function AccessLayout({ session, page, title, description, onNavigate, on
       <div className="sidebar-footer"><div className="avatar">{session.reviewer.slice(0, 1)}</div><div><strong>{session.reviewer}</strong><small>{session.is_admin ? '관리자' : '회사 계정'}</small></div><Button variant="ghost" size="icon-sm" aria-label="로그아웃" disabled={signingOut} onClick={() => void onLogout()}><LogOut size={16} /></Button></div>
     </aside>
     <div className="main-shell" inert={isMobile && mobile} aria-hidden={isMobile && mobile}>
-      <header className="topbar"><div className="breadcrumb"><button ref={triggerRef} className="mobile-menu" aria-label="메뉴 열기" aria-expanded={mobile} aria-controls="access-menu" onClick={() => setMobile(true)}><Menu /></button><span>워크스페이스</span><ChevronRight size={13} /><strong>{page === 'admin' ? '관리자' : '내 프로젝트·권한'}</strong></div><Badge variant="outline" className="access-session-badge"><ShieldCheck size={13} />SSO 로그인됨</Badge></header>
+      <header className="topbar"><div className="breadcrumb"><button ref={triggerRef} className="mobile-menu" aria-label="메뉴 열기" aria-expanded={mobile} aria-controls="access-menu" onClick={() => setMobile(true)}><Menu /></button><span>워크스페이스</span><ChevronRight size={13} /><strong>{page === 'admin' ? '관리자' : '내 프로젝트·권한'}</strong></div><div className="color-mode-actions"><ColorModeControl /><Badge variant="outline" className="access-session-badge"><ShieldCheck size={13} />SSO 로그인됨</Badge></div></header>
       <nav className="access-mobile-navigation" aria-label="계정 메뉴"><Button variant="ghost" aria-current={page === 'welcome' ? 'page' : undefined} onClick={() => navigate('welcome')}>내 프로젝트·권한</Button>{session.can_read_business === true && <Button variant="ghost" onClick={() => navigate('review')}>검토 대장</Button>}{session.is_admin === true && <Button variant="ghost" aria-current={page === 'admin' ? 'page' : undefined} onClick={() => navigate('admin')}>관리자</Button>}</nav>
       <main id="access-main" className="am-main" tabIndex={-1}><div className="am-heading"><h1>{title}</h1><p>{description}</p></div>{children}</main>
     </div>

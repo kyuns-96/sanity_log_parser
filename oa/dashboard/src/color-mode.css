@@ -1,0 +1,55 @@
+:root { color-scheme: light; --form-footer-shadow: #ffffffed; }
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --canvas: #13161d;
+  --surface: #1b2029;
+  --surface-soft: #202631;
+  --sidebar-surface: #171b23;
+  --surface-recessed: #151a22;
+  --source: #151a22;
+  --ink: #e8ecf3;
+  --text-secondary: #bac4d3;
+  --text-muted: #94a1b5;
+  --line: #343e4f;
+  --line-soft: #2a3240;
+  --accent: #dbe2ee;
+  --accent-soft: #2a3343;
+  --accent-line: #4c5b73;
+  --focus: #a8bbdf;
+  --code: #bdcbe2;
+  --primary-foreground: #1b2029;
+  --success: #7ed7b2;
+  --success-soft: #18362c;
+  --success-line: #2b6350;
+  --warning: #ebc27b;
+  --warning-soft: #3a2d18;
+  --warning-line: #74552a;
+  --danger: #f39a93;
+  --danger-soft: #3b2427;
+  --danger-line: #79454b;
+  --form-footer-shadow: #1b2029ed;
+}
+
+.color-mode-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+}
+.color-mode-trigger:hover, .color-mode-trigger[data-state='open'] { background: var(--surface-recessed); color: var(--ink); }
+.color-mode-menu { z-index: 70; min-width: 174px; padding: 5px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--ink); box-shadow: 0 8px 28px #0003; font-family: var(--font-sans); }
+.color-mode-label { padding: 7px 9px; font-size: 11px; color: var(--text-muted); }
+.color-mode-option { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 8px 9px; border-radius: 5px; font-size: 12px; cursor: pointer; outline: none; user-select: none; }
+.color-mode-option[data-highlighted] { background: var(--accent-soft); }
+.color-mode-option[data-state='checked'] { color: var(--ink); font-weight: 600; }
+.color-mode-selected { margin-left: auto; display: flex; }
+.color-mode-login { position: absolute; top: 18px; right: 22px; }
+.color-mode-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+@media (pointer: coarse) { .color-mode-trigger { flex-basis: 44px; width: 44px; height: 44px; } .color-mode-option { min-height: 44px; } }

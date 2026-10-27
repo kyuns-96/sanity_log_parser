@@ -5,14 +5,17 @@ import AccessFlowDemo from './AccessFlowDemo'
 import VersionFlowDemo from './VersionFlowDemo'
 import ReportsPreview from './ReportsPreview'
 import Workspace from './Workspace'
+import { initializeColorMode } from './colorMode'
 import 'pretendard/dist/web/variable/pretendardvariable.css'
 import './style.css'
 import './theme.css'
 import './studio-system.css'
 import './live-workbench.css'
 import './button-motion.css'
+import './color-mode.css'
 
 document.documentElement.classList.add('studio-system')
+initializeColorMode()
 
 const params = new URLSearchParams(location.search)
 const accessDemo = params.get('demo') === '1' && params.get('flow') === 'access'

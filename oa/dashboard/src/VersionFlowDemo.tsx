@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ArrowUpRight, Check, CheckCircle2, ChevronRight, ClipboardCheck, Layers3, RotateCcw, Sparkles, X } from 'lucide-react'
 import { Button } from './components/ui/button'
 import { WorkspaceBrand } from './components/WorkspaceBrand'
+import { ColorModeControl } from './components/ColorModeControl'
 import { assignPor, blockOwners, canAssignPor, initialVersionState, latestRun, porOf, reviewLatest, revisionSetOf, snapshotsFor, versionItems, versionUsers, visibleVersionBlocks } from './versionDemoModel'
 import type { DemoResult, DesignSnapshot, LayoutStage, RevisionSet, VersionBlock, VersionItem, VersionState } from './versionDemoModel'
 import './versionFlow.css'
@@ -64,7 +65,7 @@ export default function VersionFlowDemo() {
         <div className="vf-sidebar-note"><strong>블록 → NET_VER + REVISION</strong><p>각 블록 담당자가 PoR을 정합니다.<br />ECO는 해당 세트 아래에서 관리합니다.</p></div>
       </aside>
       <div className="vf-main-shell">
-        <header className="vf-topbar"><div>Atlas <ChevronRight size={13} /><strong>블록별 PoR·sanity 현황</strong></div><span>새로고침 시 데모 초기화</span></header>
+        <header className="vf-topbar"><div>Atlas <ChevronRight size={13} /><strong>블록별 PoR·sanity 현황</strong></div><div className="color-mode-actions"><ColorModeControl /><span>새로고침 시 데모 초기화</span></div></header>
         <main className="vf-main" id="workspace-main" tabIndex={-1}>
           <div className="vf-page-title"><div className="vf-eyebrow">BLOCK VERSION WORKSPACE</div><h1>블록별 PoR·sanity 현황</h1><p>블록마다 NET_VER·REVISION을 따로 관리하고, 해당 블록 담당자가 PoR을 지정합니다.</p></div>
           <div className="vf-user-toolbar"><label>데모 사용자<select aria-label="데모 사용자" value={userId} onChange={event => chooseUser(event.target.value)}>{versionUsers.map(user => <option key={user.id} value={user.id}>{user.name} · {user.id === 'u-lee' ? 'Atlas TOP' : user.id === 'u-kim' ? 'CPU 담당자' : 'GPU·DDR 담당자'}</option>)}</select></label><p>{userId === 'u-lee' ? 'TOP은 모든 블록의 PoR과 검사 결과를 조회합니다.' : '담당 블록의 버전을 조회하고 PoR을 지정할 수 있습니다.'}</p></div>

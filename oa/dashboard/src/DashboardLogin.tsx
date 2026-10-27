@@ -4,6 +4,7 @@ import { Button } from './studio/components/ui/button'
 import { Badge } from './studio/components/ui/badge'
 import { Input } from './studio/components/ui/input'
 import { WorkspaceBrand } from './components/WorkspaceBrand'
+import { ColorModeControl } from './components/ColorModeControl'
 import type { AuthConfig, Session } from './types'
 
 type Props = {
@@ -30,6 +31,7 @@ export function DashboardLogin({ config, session, checking, signingOut, error, a
       <span>Sanity Console · AI review workspace</span>
     </div>
     <main className="login-main" id="workspace-main" tabIndex={-1}>
+      <div className="color-mode-login"><ColorModeControl /></div>
       <div className="login-box">
         <div className="login-mark"><LockKeyhole size={24} /></div>
         <h2>{session ? 'SSO 연결 확인' : '검토 공간에 연결'}</h2>

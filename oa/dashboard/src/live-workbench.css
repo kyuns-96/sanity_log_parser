@@ -342,7 +342,7 @@
   .ws-studio-workbench .ws-studio-decision { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
   .ws-studio-workbench .ws-studio-human-form { display: contents; }
   .ws-studio-workbench .ws-studio-human-form > .ws-studio-form-heading { padding-top: 16px; }
-  .ws-studio-workbench .ws-human-review-actions.ws-studio-form-footer { position: sticky; bottom: -1px; z-index: 3; grid-template-columns: minmax(0, .7fr) minmax(0, 1.3fr); align-items: center; gap: 9px; padding: 9px 0 10px; background: var(--surface); box-shadow: 0 -7px 10px #ffffffed; }
+  .ws-studio-workbench .ws-human-review-actions.ws-studio-form-footer { position: sticky; bottom: -1px; z-index: 3; grid-template-columns: minmax(0, .7fr) minmax(0, 1.3fr); align-items: center; gap: 9px; padding: 9px 0 10px; background: var(--surface); box-shadow: 0 -7px 10px var(--form-footer-shadow); }
   .ws-studio-workbench .ws-studio-form-footer > span { overflow-wrap: anywhere; font-size: 9px; }
   .ws-studio-workbench .ws-workbench-support[open] { max-height: 220px; overflow-y: auto; }
 }
