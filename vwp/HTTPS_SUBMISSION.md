@@ -30,15 +30,43 @@ OA의 블록별 **버전·검사 대장 → VWP 제출 확인 → 범위 확인*
 | 담당 | 준비할 내용 |
 |---|---|
 | VWP | 허용된 `CorporateSubmissionInput.prepare`와 명시적 factory, V2 plan/원본 Path, 정확한 HTTPS origin·CA·프로필 |
-| bridge | 회사 parser/명시적 registry, 제한 DB 설정, TLS 인증서, 정확한 allowed_hosts, node_id·임시 공간, 실제 VWP 출발 IP의 allowed_client_networks |
+| bridge | 회사 parser/명시적 registry, 제한 DB 설정, TLS 인증서, 정확한 allowed_hosts, node_id·임시 공간, bridge 소켓에서 관측할 peer IP/CIDR의 allowed_client_networks |
 | OA | 기존 SSO·영속 사용자·프로젝트/블록/OWNER 설정, 새 source receiver/API/UI 배포 |
 | DBA | 기존 009 이후 010 원본 DB 보관 적용. 이번 토큰 없는 접수에는 추가 SQL/계정/권한이 없음 |
 
-`allowed_client_networks`는 실제 접속 소켓의 출발 IP/CIDR를 확인한다. 예제 `192.0.2.10/32`는 문서용 주소이므로 실제 VWP 출발 주소로 바꾼다. 비어 있거나 모든 주소를 허용하는 `/0`은 거부한다. NAT가 있으면 bridge가 실제 관측하는 출발 주소를 운영 담당자가 확인한다. 사용자별 토큰·인증서를 배포하는 방식이 아니다.
+`allowed_client_networks`는 실제 접속 소켓의 peer IP/CIDR를 확인한다. 예제 `192.0.2.10/32`는 문서용 주소이므로 현장 값으로 바꾼다. NAT/LB가 있으면 VWP 호스트의 원래 IP와 bridge가 보는 peer가 다를 수 있다. 비어 있거나 모든 주소를 허용하는 `/0`은 거부한다. 사용자별 토큰·인증서를 배포하는 방식이 아니다. 주소를 확정하는 절차는 2.2절을 따른다.
 
-TLS 1.2 이상과 서버 인증서/호스트명 검증을 유지한다. API는 직접 TLS로 실행하며 forwarded identity/IP/protocol 헤더를 신뢰하지 않는다. Origin·Cookie·Authorization이 있는 요청은 토큰 없는 endpoint에서 거부한다. 프록시에서 TLS를 끝내는 배치는 현재 계약에 포함하지 않는다.
+TLS 1.2 이상과 서버 인증서/호스트명 검증을 유지한다. API는 직접 TLS로 실행하며 forwarded identity/IP/protocol 헤더를 신뢰하지 않는다. Origin·Cookie·Authorization이 있는 요청은 토큰 없는 endpoint에서 거부한다. TLS 종료 위치별 판단은 다음 표를 따른다.
 
 `SANITY_VWP_SUBMIT_TOKEN`은 이 새 설정에서 읽지도 전송하지도 않는다. 제출 인증 SDK와 개인 토큰 발급 UI를 사내 AI가 구현할 필요가 없다. OA 모델 API의 개인 AI JWT는 별도 모델 연결 설정이며 이번 VWP 제출 변경의 대상이 아니다.
+
+### 2.1. TLS 종료·패스스루·인그레스
+
+현재 제공한 API 진입점은 `--tls-cert/--tls-key`가 필수이고 Uvicorn에 `proxy_headers=False`를 고정한다. HTTP 요청의 실제 scheme가 `https`가 아니면 `SUBMISSION_HTTPS_REQUIRED`로 거부한다. `X-Forwarded-Proto: https`나 `X-Forwarded-For`를 추가해 이 검사를 대신할 수 없다.
+
+| 경로 | TLS가 끝나는 위치 / 현재 판단 |
+|---|---|
+| `VWP --TLS--> bridge API` | bridge에서 종료. 현재 기본 배치. CLI는 bridge 인증서 체인과 endpoint 호스트명을 검증한다. |
+| `VWP --TLS--> L4 TCP 패스스루 --동일 TLS--> bridge API` | TLS는 bridge에서 종료. TLS 바이트를 바꾸지 않고 별도 PROXY protocol 헤더를 붙이지 않는 구성은 기존 직접 TLS 계약으로 배치할 수 있다. peer/Host·방화벽 조건은 현장에서 확인한다. |
+| `VWP --TLS--> L7 인그레스 --HTTP--> bridge` | 인그레스에서 종료하고 뒷단은 평문 HTTP. **현재 계약에서 지원하지 않는다.** 같은 서버/사내망이어도 예외가 아니며 인증서·scheme 검사를 해제하지 않는다. |
+| `VWP --TLS--> L7 인그레스 --별도 TLS--> bridge API` | 양쪽에서 별도로 TLS 종료. 구성별 추가 검토/검증 대상이며, 현재 검증된 배치로 간주하지 않는다. 아래 조건을 인프라 담당자가 확인해 Codex에 전달한다. |
+
+TLS 재암호화가 필요하면 CLI→인그레스의 인증서/호스트 검증과 인그레스→bridge의 **서버 인증서/CA·호스트 검증**을 모두 확인한다. bridge는 이 경우 인그레스의 소켓 IP를 보므로 전용 출발 경로·허용 VWP 범위·backend 직접 접속 차단을 함께 검토한다. 원래 사용자 IP를 forwarded 헤더에서 복원해 권한으로 사용하지 않는다.
+
+또한 Host와 `/v1/submissions/...` 경로, 정확한 Content-Length, 원본 bytes/해시, 업로드 크기·timeout이 보존되는지 확인한다. 인그레스의 chunked 전환·자동 압축/해제·redirect·인증 Cookie/Authorization 주입이 현재 요청 계약과 충돌할 수 있다. 제품명이 아니라 실제 frontend/backend protocol·인증서 검증·SNAT 동작을 기준으로 판단한다. HTTP backend만 제공하는 플랫폼에는 현재 API를 그대로 배치할 수 없으며 L4 패스스루/직접 HTTPS 경로를 확보하거나 별도 공통 설계 검토가 필요하다. 이 문서가 HTTP backend나 헤더 신뢰를 새로 허용하지 않는다.
+
+### 2.2. 배포 전 peer IP/CIDR 확정
+
+`allowed_hosts`는 HTTP Host 허용 목록이고 `allowed_client_networks`는 bridge가 보는 소켓 peer의 허용 목록이다. 서로 대신하지 않는다. 애플리케이션 access log는 기본 `access_log=False`이므로 **API 로그에 원래 VWP IP가 찍힐 것이라고 가정하지 않는다.**
+
+1. 인프라 담당자에게 VWP→bridge의 실제 경로, NAT/SNAT 유무, LB의 backend 출발 IP/풀, IPv4/IPv6 및 장애 전환 시 사용 범위를 확인받는다. 배포 전에는 플랫폼의 네트워크 설정/예약 주소가 근거가 된다.
+2. 관측 확인이 필요하면 승인된 VWP 호스트에서 내용 없는 TCP 연결 시도를 하고, 담당자가 bridge 측 방화벽/LB flow 기록이나 승인된 연결 메타데이터에서 peer를 대조한다. 앱을 열기 전에도 망의 연결 시도 기록으로 확인할 수 있다. 플랫폼상 별도 진단 수신이 필요하면 담당자가 실제 제출 API/DB와 분리해 좁은 방화벽 범위로 준비한다. report·토큰·요청 본문을 기록하지 않는다.
+3. 단일 관측 IP만으로 전체 풀을 추정하지 않는다. 가능한 backend 출발 주소 전체와 범위의 관리 담당자를 확인해 `/32`·`/128` 또는 필요한 최소 CIDR을 설정한다. LB/NAT의 공용 egress를 여러 서비스가 공유하면 그 IP만으로 VWP를 구분할 수 없으므로 앞단 허용 범위와 backend 격리도 함께 확인한다.
+4. 담당자가 root 소유 bridge JSON, 방화벽/LB 규칙, `allowed_hosts`, 인증서/CA를 대응한 뒤 API를 시작한다. peer를 모르면 배포 준비가 끝난 것이 아니며 문서 예제 주소를 운영 값으로 사용하지 않는다.
+5. 실제 경로에서 TLS 검증을 유지한 **TLS handshake까지만** 수행해 인증서와 peer를 재확인할 수 있다. HTTP 제출을 보내지 않으면 원본/DB 접수는 발생하지 않는다. handshake 성공은 HTTP 허용 목록·DB·업무 처리 성공을 뜻하지 않는다. 이후 승인된 합성 제출로 별도 수용 검증한다.
+6. 최종 경로·peer 풀·CIDR·관측 근거·TLS 종료 위치·확인일/담당자를 사내 배포 기록에 남긴다. 외부 문의에는 실제 주소/인프라 로그를 제거하고 경로 유형과 검사 결과만 전달한다.
+
+`10.0.0.0/8`처럼 넓은 대역은 현재 설정 문법상 `/0`이 아니므로 입력될 수 있지만, 이를 **임시 기본 허용값이나 자동 승인 절차로 제공하지 않는다.** 토큰 없는 접수에서 허용 peer의 범위 자체가 접수 경계이기 때문이다. 전체 사내망을 먼저 열고 나중에 줄이는 방식 대신 위의 배포 전 확인을 따른다. 필요한 범위를 확정할 수 없거나 보호 방식 변경이 필요하면 기존 범위 변경/문의 절차로 인계한다.
 
 ## 3. 실행과 상태
 

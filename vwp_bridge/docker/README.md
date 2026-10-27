@@ -2,7 +2,9 @@
 
 **현재 기본 HTTPS 배치:** [원본 DB 보관](../../vwp/DB_ORIGINALS.md)을 사용한다. 토큰 없는 서버 schema 4와 기존 010이 필요하며 `compose.https.yaml`은 설정/TLS만 마운트하고 worker 파싱 임시 `/tmp`를 제공한다. `VWP_SUBMISSION_STORAGE_DIR`와 영구 archive/upload/receipt 디렉터리는 필요 없다. 아래 filesystem 볼륨 설명은 이전 호환 배치다.
 
-**2026-10-26 현재 배치:** VWP 사용자 환경과 bridge 사이에는 공유 폴더가 없고 HTTPS를 사용한다. [HTTPS 제출 안내](../../vwp/HTTPS_SUBMISSION.md#5-docker)의 `compose.https.yaml`과 `vwp-submission-api`·`vwp-submission-worker`를 함께 사용한다. 4절의 `compose.submission.yaml`은 schema 1 공유 폴더 호환 배치다. 현재 [토큰 없는 접수 정책](../../vwp/HTTPS_DECISIONS.md)에 따라 실제 VWP 출발 IP를 허용 목록에 설정한다. OA에 로그인한 OWNER의 범위 확정 전에는 보고서를 공개하지 않는다. 제출용 토큰/인증 SDK를 준비하지 않는다.
+**2026-10-27 현재 배치:** VWP 사용자 환경과 bridge 사이에는 공유 폴더가 없고 HTTPS를 사용한다. [HTTPS 제출 안내](../../vwp/HTTPS_SUBMISSION.md#5-docker)의 `compose.https.yaml`과 `vwp-submission-api`·`vwp-submission-worker`를 함께 사용한다. 4절의 `compose.submission.yaml`은 schema 1 공유 폴더 호환 배치다. 현재 [토큰 없는 접수 정책](../../vwp/HTTPS_DECISIONS.md)에 따라 bridge 소켓이 관측하는 승인된 peer IP/CIDR를 허용 목록에 설정한다. OA에 로그인한 OWNER의 범위 확정 전에는 보고서를 공개하지 않는다. 제출용 토큰/인증 SDK를 준비하지 않는다.
+
+배포 전에는 [HTTPS 안내 2.1·2.2절](../../vwp/HTTPS_SUBMISSION.md)의 TLS 종료 위치와 peer CIDR 확인 절차를 먼저 따른다. 현재 Compose는 API 자체 TLS를 사용한다. L7 인그레스에서 TLS를 종료한 뒤 HTTP로 전달하는 구성은 지원하지 않는다. L4 패스스루는 TLS를 bridge까지 보존하고 NAT/LB peer를 확인하며, L7 재암호화는 구성별 별도 검토 대상이다. API access log를 근거로 출발 IP를 추정하거나 `10.0.0.0/8`을 임시 기본값으로 열지 않는다.
 
 2026-10-23 사용자 결정에 따라 VWP의 접수·원본 보관·item별 파싱·검증·DB 전송은 **중앙 수집 서비스**가 담당하고, AI 분류·판정은 OA에서 실행한다. 사용자 환경에는 DB·모델 계정 없이 제출 CLI와 원천/신원 어댑터를 배치한다. 중앙 서비스는 기존 VWP 서버에 운영할 수 있으며 별도 장비가 필수는 아니다. Python 모듈 이름 `vwp_bridge`와 기존 데이터/권한 계약은 유지한다.
 
@@ -51,6 +53,8 @@ docker compose --env-file vwp_bridge/docker/.env \
 컨테이너는 UID/GID **10001:10001**, 읽기 전용 root filesystem과 쓰기 가능한 `/tmp`로 실행한다. `init: true`로 종료 신호와 자식 프로세스를 관리하며 베이스의 기존 entrypoint/HTTP healthcheck는 사용하지 않는다. HTTP healthcheck나 DB polling을 상태 확인용으로 실행하지 않는다. `ps`의 실행 상태는 DB·모델 연결이나 업무 처리가 성공했다는 뜻이 아니다.
 
 ## 3. 사내 CA와 읽기 전용 DB 점검
+
+모드 선택·설치 오류 진단·비공개 스키마 대응·010 확인은 [DB 설치 점검](../../db/INSTALLATION_CHECKS.md)을 따른다. 공용 서버라도 DB/스키마/로그인의 실제 권한에 따라 판단하며, 공통 `check` 성공만으로 010 적용까지 확인된 것은 아니다.
 
 사내 DB/모델 CA가 필요하면 `VWP_BRIDGE_CA_DIR`에 비공개 CA 디렉터리의 절대 경로를 설정한다. 실행 설정의 `SANITY_DB_SSLROOTCERT`, `SANITY_AI_CA_PATH`는 각각 `/run/sanity-ca/<CA 파일명>`으로 지정한다. TLS 검증은 기존 계약을 따른다. 디렉터리와 파일은 UID 10001이 읽을 수 있어야 한다.
 
