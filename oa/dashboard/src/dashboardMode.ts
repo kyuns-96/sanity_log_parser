@@ -1,4 +1,15 @@
+import { createContext, useContext, useState } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import type { DashboardMode } from './components/SidebarModeSwitch'
+
+export type DashboardNavigate = (href: string, sourceUser?: string, reset?: boolean) => Promise<void>
+export const DashboardNavigationContext = createContext<DashboardNavigate>(async href => { location.assign(href) })
+export const useDashboardNavigation = () => useContext(DashboardNavigationContext)
+export const DashboardSidebarContext = createContext<[boolean, Dispatch<SetStateAction<boolean>>] | null>(null)
+export function useDashboardSidebarState() {
+  const local = useState(false)
+  return useContext(DashboardSidebarContext) ?? local
+}
 
 const returnKey = 'user_view'
 const userPages = new Set(['workbench', 'welcome', 'review'])

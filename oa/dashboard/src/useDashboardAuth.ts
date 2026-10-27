@@ -36,7 +36,7 @@ async function result<T>(response: Response, plain = false): Promise<T> {
   return plain ? await response.text() as T : await response.json() as T
 }
 
-function validConfig(value: AuthConfig): boolean {
+export function validAuthConfig(value: AuthConfig): boolean {
   return !!value && (value.mode === 'local_token' || value.mode === 'sso')
     && (value.login_url === null || value.login_url === '/auth/login')
     && (value.logout_url === null ? value.logout_method === null : value.logout_url === '/auth/logout' && value.logout_method === 'POST')
@@ -46,11 +46,12 @@ function validConfig(value: AuthConfig): boolean {
 const message = (error: unknown) => error instanceof DashboardRequestError ? error.message : '서버에 연결할 수 없습니다. 연결 상태를 확인하고 다시 시도해 주세요.'
 
 /** Browser credentials stay in cookies or tab memory; the server selects one mode. */
-export function useDashboardAuth(enabled: boolean) {
-  const [config, setConfig] = useState<AuthConfig | null>(null)
-  const [session, setSession] = useState<Session | null>(null)
+export type DashboardAuthSnapshot = { config: AuthConfig; session: Session }
+export function useDashboardAuth(enabled: boolean, initial?: DashboardAuthSnapshot) {
+  const [config, setConfig] = useState<AuthConfig | null>(() => initial && validAuthConfig(initial.config) && initial.session.auth_method === initial.config.mode ? initial.config : null)
+  const [session, setSession] = useState<Session | null>(() => config ? initial?.session ?? null : null)
   const [token, setToken] = useState('')
-  const [checking, setChecking] = useState(enabled)
+  const [checking, setChecking] = useState(enabled && !session)
   const [signingOut, setSigningOut] = useState(false)
   const [error, setError] = useState('')
   const [accountProblem, setAccountProblem] = useState(false)
@@ -74,7 +75,7 @@ export function useDashboardAuth(enabled: boolean) {
       .then(response => result<AuthConfig>(response))
       .then(value => {
         if (controller.signal.aborted) return
-        if (!validConfig(value)) throw new DashboardRequestError('AUTH_CONFIG', 503)
+        if (!validAuthConfig(value)) throw new DashboardRequestError('AUTH_CONFIG', 503)
         setConfig(value)
       })
       .catch(error => { if (!controller.signal.aborted) { setError(message(error)); setChecking(false) } })

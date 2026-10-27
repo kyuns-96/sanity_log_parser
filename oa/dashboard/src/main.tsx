@@ -5,6 +5,7 @@ import AccessFlowDemo from './AccessFlowDemo'
 import VersionFlowDemo from './VersionFlowDemo'
 import ReportsPreview from './ReportsPreview'
 import Workspace from './Workspace'
+import DashboardNavigation from './DashboardNavigation'
 import { initializeColorMode } from './colorMode'
 import 'pretendard/dist/web/variable/pretendardvariable.css'
 import './style.css'
@@ -24,7 +25,8 @@ const reportsPreview = params.get('demo') === '1' && params.get('dataset') === '
 const workspaceDemo = params.get('demo') === '1' && !params.has('flow') && !params.has('dataset')
 const productionWorkbench = location.pathname === '/' && params.get('page') === 'workbench'
 const workspace = productionWorkbench || location.pathname === '/workspace' || location.pathname === '/workspace/' || workspaceDemo
+const dashboard = location.pathname === '/' && (productionWorkbench || params.get('demo') !== '1')
 if (workspace) document.title = `${productionWorkbench ? 'AI 검토 워크스페이스' : params.get('demo') === '1' ? '워크스페이스 데모' : '내 워크스페이스'} | Sanity Console`
 if (versionDemo) document.title = 'PRE · POST · ECO · PoR | Sanity Demo'
 if (reportsPreview) document.title = 'GCA · VC LP · SpyGlass | Sanity Preview'
-ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode>{workspace ? <Workspace /> : reportsPreview ? <ReportsPreview /> : versionDemo ? <VersionFlowDemo /> : accessDemo ? <AccessFlowDemo /> : <App />}</React.StrictMode>)
+ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode>{dashboard ? <DashboardNavigation /> : workspace ? <Workspace /> : reportsPreview ? <ReportsPreview /> : versionDemo ? <VersionFlowDemo /> : accessDemo ? <AccessFlowDemo /> : <App />}</React.StrictMode>)
