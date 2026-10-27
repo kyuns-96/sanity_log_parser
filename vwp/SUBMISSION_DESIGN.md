@@ -139,7 +139,7 @@ OA 반영 전입니다. sanity status <submission_id>로 확인하세요.
 
 VWP 원천 CLI에는 DB 접속 정보가 없고, 사용자가 SQL을 실행하지 않는다. 두 서버의 로그인·TLS·스키마는 [DB 연결 인계](../db/CONNECTION_HANDOFF.md)의 기존 지원 키를 사용한다. 실제 endpoint/schema·비밀번호·마운트 주소는 현장 비공개 설정으로 남긴다.
 
-현재 private EVIDENCE의 `raw_bytes` 저장은 유지한다. 원본 report의 전체 byte 동일 파일과 추출/디코딩된 개별 근거 raw는 구분한다. **원본 파일을 OA 파일시스템에 복사하지 않는다.** 공유 결과의 로그는 비밀 마스킹/검증 경계를 따르며 전체 정규화 기록을 V2 parts로 받는다. V2 원본 파일 다운로드는 `SOURCE_FILE_ON_VWP`로 알리고, 기존 legacy 추가 근거 요청을 V2 파일 요청으로 재해석하지 않는다. 회사 정책상 private DB 원문 저장 자체가 불허되면 배포를 중단하고 별도 참조 어댑터를 검토한다.
+현재 private EVIDENCE의 원문 보존은 유지한다. 기본은 `raw_bytes`이며 선택형 [011](../db/PAYLOAD_STORAGE.md)은 같은 DB의 검증된 압축 본문에 원문을 보존하고 기존 hash로 동일 byte를 복원한다. 원본 report의 전체 byte 동일 파일과 추출/디코딩된 개별 근거 raw는 구분한다. **원본 파일을 OA 파일시스템에 복사하지 않는다.** 공유 결과의 로그는 비밀 마스킹/검증 경계를 따르며 전체 정규화 기록을 V2 parts로 받는다. V2 원본 파일 다운로드는 `SOURCE_FILE_ON_VWP`로 알리고, 기존 legacy 추가 근거 요청을 V2 파일 요청으로 재해석하지 않는다. 회사 정책상 private DB 원문 저장 자체가 불허되면 배포를 중단하고 별도 참조 어댑터를 검토한다.
 
 ### 4.2. 추가할 논리 레코드와 V2 메시지
 

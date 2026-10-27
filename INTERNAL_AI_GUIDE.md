@@ -151,6 +151,12 @@ VWP 담당은 허용된 `prepare`/factory와 원천 wrapper를, bridge 담당은
 
 `common/sanity_submission_intake.py`, HTTPS/DB 원본 모듈, CLI/API/worker·source receiver, `oa/sanity_submission_intake.py`·workbench 라우트·확정 화면·010/포털·Docker·기존 테스트는 Codex 보호 공통 코드다. 이번 접수 흐름은 추가 migration/계정/GRANT 없이 기존 네 테이블을 사용한다. OA 모델용 개인 JWT와 기존 SSO/RBAC 보호는 별도로 유지한다.
 
+### 3.8. 선택형 VWP 압축 저장 011 — 2026-10-27
+
+Codex가 [무손실 압축 저장](db/PAYLOAD_STORAGE.md)의 평문/압축형 혼합 reader, 선택형 011, 기본 읽기 전용 유지보수·평문 복구 도구와 포털 60번을 제공한다. 원본 report는 기존 RAW 조각에 남고, 압축된 V2 근거 원문도 같은 DB 본문에서 기존 hash로 복원한다. 회사 parser/SDK·OA 전송/전체 로그·SSO/OWNER·사람 확정 이력은 유지한다. 압축형의 물리 `payload`/`raw_bytes` 컬럼만 읽어 전체 원문을 얻었다고 간주하지 않는다.
+
+내부 AI의 수정·실행 권한은 넓히지 않는다. 공통 codec/reader·`vwp_bridge/payload_compaction.py`·011/포털·재작성 SQL·기존 테스트는 보호 대상이다. 앱 계정에 owner/추가 UPDATE 권한을 주거나 직접 NULL 처리·payload 제거·원본 삭제를 하지 않는다. 실제 DB 도입·데이터 변환·재작성·복구는 사용자가 관리하는 승인 DBA 절차이며, 코드 배포나 `OA_STORED`만으로 실행 승인을 대신하지 않는다. 초기 포털의 0행/쓰기 중지 조건도 유지한다.
+
 ## 4. 내부 AI가 절대 수정하지 않는 부분
 
 읽고 설명하거나 검토 요청을 만드는 것은 가능하지만, 수정·우회·테스트 완화는 금지한다. 허용 목록의 부분 변경 외에는 모두 보호 대상이다.

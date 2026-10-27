@@ -67,9 +67,12 @@ class PgEvidence:
     def flush(self):
         if not self.pending:
             return
+        storage = getattr(self, 'payload_storage', None)
         with self.db.transaction():
             existing = {row["record_id"]: row for row in self.db.execute(
                 "SELECT * FROM {vwp} WHERE record_id=ANY(%s)", (list(self.pending),)).fetchall()}
+            if storage is not None:
+                existing = {key: storage.restore(row['record_type'], row) for key, row in existing.items()}
             new = []
             for row_id, (expected, status) in self.pending.items():
                 old = existing.get(row_id)
@@ -79,12 +82,19 @@ class PgEvidence:
                 elif self.sealed:
                     raise ReviewError("EVIDENCE_CONFLICT", "Sealed analysis has missing evidence")
                 else:
-                    new.append((row_id, expected["record_type"], self.analysis_id, expected["entity_key"],
-                                expected["review_unit_id"], expected["parent_id"], json_value(expected["payload"]),
-                                status, expected["raw_bytes"], expected["raw_sha256"]))
+                    payload, packed, raw = expected['payload'], None, expected['raw_bytes']
+                    if storage is not None and storage.enabled and expected['record_type'] == 'EVIDENCE':
+                        from common.sanity_payload_storage import encode_evidence
+                        payload, raw, packed = encode_evidence(payload, raw)
+                    values = (row_id, expected["record_type"], self.analysis_id, expected["entity_key"],
+                              expected["review_unit_id"], expected["parent_id"], json_value(payload),
+                              status, raw, expected["raw_sha256"])
+                    new.append(values + (packed,) if storage is not None and storage.enabled else values)
             if new:
+                extra = storage.selection if storage is not None else ''
                 self.db.executemany("INSERT INTO {vwp}(record_id,record_type,analysis_id,entity_key,review_unit_id,"
-                    "parent_id,payload,status,raw_bytes,raw_sha256) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", new)
+                    "parent_id,payload,status,raw_bytes,raw_sha256" + extra + ") VALUES "
+                    "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s" + (",%s" if extra else '') + ")", new)
             if not self.sealed:
                 self.db.execute("UPDATE {vwp} SET state=%s,version=version+1,updated_at=clock_timestamp() "
                                 "WHERE record_id=%s AND status<>'SEALED'",

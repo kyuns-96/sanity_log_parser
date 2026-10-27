@@ -13,6 +13,14 @@ PROFILES = ("quick", "full")
 # A short regression set for everyday edits. Keep expensive datasets and the
 # complete portal migration replay in full, with their original assertions.
 QUICK_TESTS = (
+    "tests.test_payload_storage.PayloadCodecTests",
+    "tests.test_payload_storage.PayloadStorageDatabaseTests.test_old_schema_plain_and_new_schema_compressed_sources_share_the_same_reader",
+    "tests.test_payload_storage.PayloadStorageDatabaseTests.test_dry_run_backfill_restart_and_restore_preserve_all_logical_columns",
+    "tests.test_payload_storage.PayloadStorageDatabaseTests.test_repack_keeps_every_byte_hash_id_revision_timestamp_and_payload",
+    "tests.test_payload_storage.PayloadStorageDatabaseTests.test_app_roles_cannot_modify_blobs_or_use_owner_maintenance",
+    "tests.test_payload_storage.CompactSubmissionFlows.test_tokenless_tls_and_sso_owner_confirmation_with_compressed_storage",
+    "tests.test_payload_storage_migration.PayloadStoragePortalTests",
+    "tests.test_payload_storage_migration.PayloadStorageMigrationTests.test_checkpoint_59_prepares_and_verifies_the_exact_original_011_catalog",
     "tests.test_submission_tokenless.InternalIntakeContracts",
     "tests.test_submission_tokenless.TokenlessSubmissionTests.test_real_tls_without_token_reaches_pending_then_sso_owner_publishes",
     "tests.test_submission_tokenless.TokenlessSubmissionTests.test_only_current_owner_can_confirm_and_digest_revision_and_request_are_bound",

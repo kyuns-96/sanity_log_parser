@@ -127,7 +127,7 @@ def derive_steps(before, after, phase):
     return steps
 
 
-def capture(connection, schema='portal_reference', *, raw_sources=False):
+def capture(connection, schema='portal_reference', *, raw_sources=False, payload_storage=False):
     with connection.cursor() as cursor:
         cursor.execute('SELECT current_database()')
         if not cursor.fetchone()[0].startswith('sanity_test_'):
@@ -136,7 +136,8 @@ def capture(connection, schema='portal_reference', *, raw_sources=False):
     initial = snapshot(connection, schema)
     state = deepcopy(initial)
     steps = []
-    migrations = MIGRATIONS + (('010_raw_sources.sql',) if raw_sources else ())
+    migrations = (MIGRATIONS + (('010_raw_sources.sql',) if raw_sources or payload_storage else ())
+                  + (('011_payload_storage.sql',) if payload_storage else ()))
     for filename in migrations:
         source = (ROOT / 'db' / filename).read_text(encoding='utf-8')
         expressions = check_sources(source, state, filename[:3])
@@ -164,6 +165,7 @@ def main():
     parser.add_argument('--pg-bin')
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--raw-sources',action='store_true',help='include the opt-in 010 raw-storage extension')
+    parser.add_argument('--payload-storage',action='store_true',help='include 010 and opt-in 011 lossless payload storage')
     args = parser.parse_args()
     import psycopg2
     from db.tests.run_mock import MockDatabase, pg_binaries
@@ -174,7 +176,7 @@ def main():
         connection = psycopg2.connect(**database.parameters('admin'))
         connection.autocommit = True
         try:
-            plan = capture(connection,raw_sources=args.raw_sources)
+            plan = capture(connection,raw_sources=args.raw_sources,payload_storage=args.payload_storage)
         finally:
             connection.close()
         with args.out.open('x', encoding='utf-8') as stream:

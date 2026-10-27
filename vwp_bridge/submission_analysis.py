@@ -8,6 +8,7 @@ from common.sanity_common import canonical_json, digest
 from common.sanity_db import lock_key
 from common.sanity_parsers import ParserRegistry
 from common.sanity_privacy import SecretGuard
+from common.sanity_payload_storage import PrivatePayloadStorage
 from common.sanity_submission import (MAX_PARTS, PART_BYTES, PART_RECORDS, check, packet_base, source_execution,
     source_unit, source_version, validate_packet)
 from common.sanity_submission_files import regular
@@ -20,6 +21,10 @@ SOURCE_PRODUCER_VERSION = "postgresql-source-2.1"
 
 class SourceEvidence(PgEvidence):
     """Parsing is independent of the later AI/human grouping workflow."""
+    def __init__(self, db, *args, **kwargs):
+        self.payload_storage = PrivatePayloadStorage(db)
+        super().__init__(db, *args, **kwargs)
+
     def record(self, unit, file, index, fields, raw, location, status, reasons):
         rid = "r-" + digest([self.run['run_id'],unit['review_unit_id'],file['file_id'],index])
         payload = {'record_id':rid,'record_index':index,'file_id':file['file_id'],**location,
@@ -98,13 +103,15 @@ def analyze_source(db, store, collection, original, file, snapshot_root, *, conf
 
 def public_records(db, analysis_id, guard):
     after = 0
+    storage = PrivatePayloadStorage(db)
     while True:
-        rows = db.execute("SELECT payload,raw_bytes,raw_sha256 FROM {vwp} WHERE analysis_id=%s "
+        rows = db.execute("SELECT entity_key,payload,raw_bytes,raw_sha256" + storage.selection + " FROM {vwp} WHERE analysis_id=%s "
             "AND record_type='EVIDENCE' AND (payload->>'record_index')::bigint>%s "
             "ORDER BY (payload->>'record_index')::bigint LIMIT 256",(analysis_id,after)).fetchall()
         if not rows:
             break
         for row in rows:
+            row = storage.restore('EVIDENCE', row)
             p = row['payload']
             raw = bytes(row['raw_bytes']).decode('utf-8')
             fields, masked = guard.redact(p['fields']), guard.text(raw)

@@ -2,6 +2,7 @@
 from common.sanity_common import digest
 from common.sanity_db import json_value, stable_uuid
 from common.sanity_submission import check
+from common.sanity_payload_storage import PrivatePayloadStorage, encode_payload
 
 
 def require_schema(db):
@@ -27,17 +28,23 @@ class SubmissionStore:
         check(db.side == "vwp", "FORBIDDEN")
         self.db = db
         require_schema(db)
+        self.payload_storage = PrivatePayloadStorage(db)
 
     def get(self, kind, key, *, lock=False):
-        return self.db.execute("SELECT * FROM {vwp} WHERE record_type=%s AND entity_key=%s"
-                               + (" FOR UPDATE" if lock else ""), (kind, key)).fetchone()
+        row = self.db.execute("SELECT * FROM {vwp} WHERE record_type=%s AND entity_key=%s"
+                              + (" FOR UPDATE" if lock else ""), (kind, key)).fetchone()
+        return self.payload_storage.restore(kind, row) if row else None
 
     def immutable(self, kind, key, payload):
         check(kind in ('SOURCE_RUN','SOURCE_OUTBOX'))
         rid = stable_uuid("submission-v2", kind, key)
-        self.db.execute("INSERT INTO {vwp}(record_id,record_type,analysis_id,entity_key,payload,status) "
-                        "VALUES (%s,%s,NULL,%s,%s,'RECORDED') ON CONFLICT DO NOTHING",
-                        (rid, kind, key, json_value(payload)))
+        stored, packed = payload, None
+        if kind == 'SOURCE_OUTBOX' and self.payload_storage.enabled:
+            stored, packed = encode_payload(kind, payload)
+        extra = self.payload_storage.selection
+        values = (rid, kind, key, json_value(stored)) + ((packed,) if extra else ())
+        self.db.execute("INSERT INTO {vwp}(record_id,record_type,analysis_id,entity_key,payload,status" + extra + ") "
+                        "VALUES (%s,%s,NULL,%s,%s,'RECORDED'" + (",%s" if extra else '') + ") ON CONFLICT DO NOTHING", values)
         existing = self.get(kind, key)
         check(existing and existing['record_id'] == rid and existing['payload'] == payload,
               "SOURCE_IDENTITY_CONFLICT" if kind == 'SOURCE_RUN' else "SUBMISSION_CONFLICT")
@@ -66,8 +73,9 @@ class SubmissionStore:
         return self.get('SUBMISSION',sid)
 
     def outbox(self, sid):
-        return self.db.execute("SELECT payload FROM {vwp} WHERE record_type='SOURCE_OUTBOX' "
+        rows = self.db.execute("SELECT payload" + self.payload_storage.selection + " FROM {vwp} WHERE record_type='SOURCE_OUTBOX' "
             "AND payload->>'submission_id'=%s ORDER BY (payload->>'position')::bigint",(sid,)).fetchall()
+        return [{'payload': self.payload_storage.restore('SOURCE_OUTBOX', row)['payload']} for row in rows]
 
     def put_outbox(self, sid, position, kind, packet):
         from common.sanity_submission import message_id
