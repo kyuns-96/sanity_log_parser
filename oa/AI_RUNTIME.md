@@ -37,6 +37,7 @@ flowchart TD
 | `SANITY_OA_AI_TOKEN` | 해당 OA API의 Bearer 토큰 |
 | `SANITY_OA_AI_TOKEN_SOURCE` | 기본 `server`. `user`는 SSO 사용자별 등록 토큰을 사용하며 서버 공용 토큰을 무시 |
 | `SANITY_OA_AI_TOKEN_STORE_SECRET` | `user` 모드의 서버 전용 Fernet 암호화 키. 웹과 worker에 동일한 비공개 값 주입 |
+| `SANITY_OA_AI_TOKEN_ISSUE_URL` | 선택형 개인 JWT 발급 페이지의 절대 HTTPS 주소. OA 웹 서버의 실행 환경에서 읽어 개인 토큰 입력창에 링크로 표시 |
 | `SANITY_OA_AI_MODEL` | 사내에서 확인한 모델 ID |
 | `SANITY_OA_AI_API` | `chat_completions`(기본) 또는 `responses`; 실제 지원 API를 선택 |
 | `SANITY_OA_AI_JSON_MODE` | 기본 `false`. JSON object 출력 옵션을 실제 지원할 때만 `true` |
@@ -78,6 +79,7 @@ flowchart TD
 이번 사내 배포에서 사용자별 호출을 사용할 때는 `SANITY_OA_AI_TOKEN_SOURCE=user`와 `SANITY_OA_AI_SESSION_MODE=per_request`를 설정한다. 운영 담당자가 `SANITY_OA_AI_TOKEN_STORE_SECRET`에 **URL-safe base64로 인코딩한 32바이트 Fernet 키**를 비공개로 발급·보관하고 웹/worker에 동일하게 주입한다. 기존 `cryptography` 의존성의 `Fernet.generate_key()`로 생성할 수 있다. 키는 DB·Git·로그·브라우저에 저장하지 않으며 재시작마다 재생성하지 않는다. 배포 시 기존 키를 보존해야 등록된 JWT를 복호화할 수 있다. [Fernet 키와 암호화 계약](https://cryptography.io/en/latest/fernet/).
 
 1. 운영 SSO 사용자는 포털 또는 workbench 상단의 **개인 AI 토큰**에서 게이트웨이가 본인에게 발급한 JWT를 등록·교체·연결 해제한다. `Bearer ` 접두어를 포함하지 않는다.
+   OA 웹 서버에 `SANITY_OA_AI_TOKEN_ISSUE_URL`을 설정하면 같은 입력창에 **JWT 토큰 발급받기** 링크가 표시된다. 새 탭으로 이동해 발급받은 뒤 원래 창에서 붙여넣는다. 주소는 실행 시 `/api/ai/credentials` 응답으로 제공하므로 주소 변경에 프런트엔드 재빌드가 필요 없다. Docker도 기존 `OA_ENV_FILE`에 이 키를 넣고 OA 웹 컨테이너를 재생성해 적용한다. 빈 값·잘못된 주소·HTTP·상대 주소·사용자명/비밀번호가 포함된 URL은 링크를 표시하지 않으며 기존 토큰 저장/교체/해제는 유지한다. 링크 주소는 로그인 사용자에게 공개되므로 비밀값·JWT가 포함된 URL을 넣지 않는다. 입력 중인 JWT나 SSO 정보를 주소에 붙이지 않으며 자동 발급·자동 입력을 수행하지 않는다.
 2. `/api/ai/credentials`는 로그인한 활성 SSO 사용자 자신의 상태 조회/저장만 제공한다. `/remove`는 자신의 연결을 해제한다. 다른 사용자 ID·임의 헤더를 받지 않으며 변경 요청은 기존 Origin·클라이언트 표식 검사를 통과해야 한다. 토큰 값을 다시 조회하는 API는 없다.
 3. JWT는 OA private 테이블의 기존 `WS_CONFIG`에서 `oa-ai-user-token-v1` namespace의 암호문으로 보관한다. 암호문 내부에 사용자와 개정을 결합하며 다른 사용자의 행으로 복사한 암호문은 거부한다. **추가 테이블·DDL은 필요 없다.** 기존 불변 저장 계약 때문에 교체 전 암호문은 이력에 남고 연결 해제는 tombstone을 추가한다. 연결 해제가 게이트웨이의 토큰 자체를 폐기하는 것은 아니다.
 4. AI 작업자는 요청자의 서버 확정 `user_id`로 현재 토큰을 읽어 해당 호출에만 주입한다. 사용자 모드에서는 서버 공용 토큰이나 다른 사용자의 토큰으로 fallback하지 않는다. JWT는 AI 작업/판정 payload, 모델 prompt, 공개 메타데이터와 로그에 넣지 않는다. 클라이언트 키·clientName/version은 서버 공통 설정을 사용한다.

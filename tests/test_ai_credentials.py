@@ -2,6 +2,9 @@
 import base64
 from datetime import datetime, timedelta, timezone
 import json
+import os
+from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -11,6 +14,7 @@ from fastapi import Request
 from fastapi.testclient import TestClient
 
 from common.sanity_common import ReviewError, canonical_json
+from common.sanity_config import load_environment
 from common.sanity_db import Database, json_value
 from common.sanity_privacy import SecretGuard, MASK
 from oa import ai_tokens_api
@@ -33,6 +37,16 @@ def credential_environment():
 
 
 class CredentialConfigurationTests(unittest.TestCase):
+    def test_issuance_url_is_loaded_at_runtime_and_exported_settings_override_the_file(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+            path = Path(directory) / ".env"
+            path.write_text("SANITY_OA_AI_TOKEN_ISSUE_URL=https://identity.example.test/tokens\n", encoding="utf-8")
+            self.assertEqual("https://identity.example.test/tokens", load_environment(path)["SANITY_OA_AI_TOKEN_ISSUE_URL"])
+            with patch.dict(os.environ, {"SANITY_OA_AI_TOKEN_ISSUE_URL": "https://identity.example.test/new-page"}):
+                self.assertEqual("https://identity.example.test/new-page", load_environment(path)["SANITY_OA_AI_TOKEN_ISSUE_URL"])
+            with patch.dict(os.environ, {"SANITY_OA_AI_TOKEN_ISSUE_URL": ""}):
+                self.assertEqual("", load_environment(path)["SANITY_OA_AI_TOKEN_ISSUE_URL"])
+
     def test_user_mode_discards_the_server_token_and_requires_a_bound_personal_token(self):
         settings = OASettings.from_env(environment(SANITY_OA_AI_TOKEN_SOURCE="user"))
         self.assertEqual("", settings.token)
@@ -210,3 +224,36 @@ class CredentialApiTests(unittest.TestCase):
         with patch.object(ai_tokens_api, "load_environment", return_value={}):
             self.assertEqual({"enabled": False}, self.client.get("/api/ai/credentials").json())
         self.factory.assert_not_called()
+
+    def test_issuance_link_is_runtime_metadata_retained_after_save_and_removal(self):
+        url = "https://identity.example.test:8443/ai/tokens?app=sanity#issue"
+        settings = {"SANITY_OA_AI_TOKEN_SOURCE": "user", "SANITY_OA_AI_TOKEN_ISSUE_URL": url}
+        with patch.object(ai_tokens_api, "load_environment", return_value=settings):
+            response = self.client.get("/api/ai/credentials")
+            self.assertEqual(200, response.status_code)
+            self.assertEqual(url, response.json()["issuance_url"])
+            self.assertIn("no-store", response.headers["cache-control"])
+            for path, body in (("", {"token": synthetic_jwt(), "expected_revision": 0}),
+                               ("/remove", {"expected_revision": 1})):
+                response = self.client.post("/api/ai/credentials" + path, headers=self.headers, json=body)
+                self.assertEqual(200, response.status_code)
+                self.assertEqual(url, response.json()["issuance_url"])
+            settings["SANITY_OA_AI_TOKEN_ISSUE_URL"] = "https://identity.example.test/replacement"
+            self.assertEqual(settings["SANITY_OA_AI_TOKEN_ISSUE_URL"], self.client.get("/api/ai/credentials").json()["issuance_url"])
+
+    def test_missing_or_unsafe_issuance_urls_hide_only_the_link(self):
+        for value in (None, "", "javascript:alert(1)", "data:text/html,hello", "http://identity.example.test/tokens",
+                      "/tokens", "//identity.example.test/tokens", "https:///tokens", "https://",
+                      "https://user:password@identity.example.test/tokens", "https://@identity.example.test/tokens",
+                      "https://identity.example.test:invalid/tokens", "https://identity.example.test:0/tokens",
+                      "https://identity.example.test:65536/tokens", "https://[broken/tokens",
+                      "https://identity.example.test/with space", " https://identity.example.test/tokens",
+                      "https://identity.example.test/\nother", "https://identity.example.test/\x00other",
+                      "https://identity.example.test\\other", "https://identity.example.test/" + "a" * 2048):
+            settings = {"SANITY_OA_AI_TOKEN_SOURCE": "user", "SANITY_OA_AI_TOKEN_ISSUE_URL": value}
+            with self.subTest(url=value), patch.object(ai_tokens_api, "load_environment", return_value=settings):
+                response = self.client.get("/api/ai/credentials")
+                self.assertEqual(200, response.status_code)
+                self.assertTrue(response.json()["enabled"])
+                self.assertIsNone(response.json()["issuance_url"])
+        self.store.save.assert_not_called()

@@ -3,6 +3,8 @@
 .personal-ai-token-form label { font-size: 14px; font-weight: 600; }
 .personal-ai-token-form p { font-size: 13px; line-height: 1.65; margin: 0; }
 .personal-ai-token-status { display: flex; flex-direction: column; gap: 6px; padding-block: 8px; font-size: 14px; }
+.personal-ai-token-issue-link { display: inline-flex; align-items: center; align-self: flex-start; gap: 6px; min-height: 36px; color: var(--accent); font-size: 13px; text-underline-offset: 3px; }
+.personal-ai-token-issue-link:hover { text-decoration: underline; }
 @media (max-width: 640px) {
   .personal-ai-token-trigger > span { display: none; }
   .personal-ai-token-trigger { min-width: 32px; padding-inline: 8px; }

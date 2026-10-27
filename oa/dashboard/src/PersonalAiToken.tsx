@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import { KeyRound, LoaderCircle } from 'lucide-react'
+import { ExternalLink, KeyRound, LoaderCircle } from 'lucide-react'
 import { Button } from './studio/components/ui/button'
 import { Input } from './studio/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog'
 import './personal-ai-token.css'
 
-type TokenStatus = { enabled: boolean; registered?: boolean; revision?: number; expires_at?: string | null; expired?: boolean; expires_soon?: boolean }
+type TokenStatus = { enabled: boolean; registered?: boolean; revision?: number; expires_at?: string | null; expired?: boolean; expires_soon?: boolean; issuance_url?: string | null }
 const messages: Record<string, string> = {
   UNAUTHORIZED: '로그인 세션을 확인한 뒤 다시 열어 주세요.',
   FORBIDDEN: '로그인한 본인의 토큰만 설정할 수 있습니다.',
@@ -29,6 +29,14 @@ async function tokenRequest(path = '', body?: Record<string, unknown>, signal?: 
   return data as TokenStatus
 }
 
+function issuanceUrl(value?: string | null): string | null {
+  if (!value || value.length > 2048 || /[\s\u0000-\u001f\u007f\\]/u.test(value)) return null
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && !url.username && !url.password ? value : null
+  } catch { return null }
+}
+
 export default function PersonalAiToken() {
   const [open, setOpen] = useState(false)
   const [status, setStatus] = useState<TokenStatus | null>(null)
@@ -37,6 +45,7 @@ export default function PersonalAiToken() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const issueUrl = issuanceUrl(status?.issuance_url)
   useEffect(() => {
     setToken(''); setError(''); setNotice(''); setStatus(null)
     if (!open) return
@@ -83,6 +92,7 @@ export default function PersonalAiToken() {
             {status.expired && <p role="alert">토큰이 만료됐습니다. 새로 발급받은 토큰으로 교체해 주세요.</p>}
             {status.expires_soon && <p role="status">30일 안에 만료됩니다. 새 토큰을 발급받아 교체해 주세요.</p>}
           </div>
+          {issueUrl && <a className="personal-ai-token-issue-link" href={issueUrl} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">JWT 토큰 발급받기<ExternalLink size={14} aria-hidden="true" /><span className="sr-only"> (새 탭)</span></a>}
           <label htmlFor="personal-ai-token-input">{status.registered ? '교체할 JWT 토큰' : 'JWT 토큰'}</label>
           <Input id="personal-ai-token-input" type="password" autoComplete="off" spellCheck={false} autoCapitalize="none"
             value={token} maxLength={8192} disabled={busy} onChange={event => setToken(event.target.value)}
