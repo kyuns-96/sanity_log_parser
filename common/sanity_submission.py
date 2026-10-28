@@ -176,11 +176,15 @@ def scope_digest(plan):
     c = plan["collection"]
     # File presence, source executions, upload actor and times are not scope approval.
     scope = {key: c[key] for key in COLLECTION_KEYS - {"target_eco"}}
-    return digest({"scope": scope, "inventory_source": plan["inventory"]["source"],
+    value = {"scope": scope, "inventory_source": plan["inventory"]["source"],
                    "inventory_version": plan["inventory"]["version"],
                    "units": sorted(({"unit_key":source_unit(c,u),"applicable":u['applicable'],
                                      "exclusion":u.get('exclusion')}
-                                    for u in plan["inventory"]["units"]),key=lambda u:u['unit_key'])})
+                                    for u in plan["inventory"]["units"]),key=lambda u:u['unit_key'])}
+    if plan['schema_version'] == 3:
+        from common.sanity_preserved_sources import scope_declarations
+        value['preserved_files'] = scope_declarations(plan)
+    return digest(value)
 
 
 def validate_collection(c):
@@ -197,10 +201,13 @@ def validate_collection(c):
 
 def validate_plan(plan):
     check(isinstance(plan, dict) and set(plan) == {"schema_version", "collection", "inventory", "approval"})
-    check(type(plan["schema_version"]) is int and plan["schema_version"] == 2, "UNSUPPORTED_SOURCE_SCHEMA")
+    check(type(plan["schema_version"]) is int and plan["schema_version"] in (2, 3), "UNSUPPORTED_SOURCE_SCHEMA")
     c = validate_collection(plan['collection'])
     inv = plan["inventory"]
-    check(isinstance(inv, dict) and set(inv) == {"confirmed", "source", "version", "units"})
+    keys = {"confirmed", "source", "version", "units"}
+    if plan['schema_version'] == 3:
+        keys.add('preserved_files')
+    check(isinstance(inv, dict) and set(inv) == keys)
     check(type(inv["confirmed"]) is bool and text(inv["source"]) and text(inv["version"]))
     check(isinstance(inv["units"], list) and 1 <= len(inv["units"]) <= MAX_UNITS)
     ids, paths, units = set(), set(), set()
@@ -234,6 +241,9 @@ def validate_plan(plan):
     if c["layout"] == "POST":
         check(any(u["source"]["layout"] == "POST" and u["source"]["eco"] == c["target_eco"] for u in inv["units"]))
         check(c['pre_revision'] is None or any(u['source']['layout']=='PRE' for u in inv['units']))
+    if plan['schema_version'] == 3:
+        from common.sanity_preserved_sources import validate_declarations
+        validate_declarations(plan)
     approval = plan["approval"]
     if approval is not None:
         check(isinstance(approval, dict) and set(approval) == {"scope_sha256", "reference", "actor", "approved_at"})

@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import WorkspaceReview from './WorkspaceReview'
 import GroupRationale, { rationaleLabels } from './GroupRationale'
 import CaseSource from './CaseSource'
+import PreservedSources from './PreservedSources'
 import { NEW_LOG_GROUP, useLogDrag } from './useLogDrag'
 import type { LogMove } from './useLogDrag'
 import { aiJobActive, aiJobMessage, workspaceApiBase, WorkspaceError, toolResultStatus, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
@@ -360,6 +361,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
       </div>
     </div>
     </div>
+    <PreservedSources files={data.report.preserved_sources} />
     {error && <p className="ws-error" role="alert">{error}</p>}{notice && <p className="ws-notice" role="status"><Check size={14} />{notice}</p>}
     {historyEvent && <p className="ws-notice">이전 개정의 구성을 조회 중입니다. 읽기 전용입니다. <button type="button" onClick={() => { setHistoryEvent(null); setGroupId(''); setGroupOffset(0) }}>현재 구성으로 돌아가기</button></p>}
     {data.stale && !activeTask(task) && !aiRunning && <p className="ws-error">참고 분류가 변경되었습니다. 새 초안을 받거나 구성을 검토·저장한 뒤 다시 확정하세요.</p>}

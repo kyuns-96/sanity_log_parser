@@ -53,6 +53,8 @@ class SubmissionClient:
             self.authority.authorize(actor, prepared.plan["collection"])
             confirmed = approved(prepared.plan, self.authority)
         expected = {unit["report"] for unit in prepared.plan["inventory"]["units"]}
+        from common.sanity_preserved_sources import declared_paths
+        preserved = declared_paths(prepared.plan)
         found = set(prepared.reports)
         summary = {"actor": actor.actor, "target": dict(target), "scope_sha256": prepared.plan["approval"]["scope_sha256"]
                    if prepared.plan["approval"] else None, "inventory_confirmed": confirmed,
@@ -62,12 +64,16 @@ class SubmissionClient:
                    "approval_reference":prepared.plan['approval']['reference'] if prepared.plan['approval'] else None,
                    "expected": len(expected), "found": len(found & expected), "missing": len(expected - found),
                    "incomplete":sum(u['applicable'] and u['execution_status']!='COMPLETED' for u in prepared.plan['inventory']['units']),
-                   "unexpected": len(found - expected), "bytes": sum(Path(p).stat().st_size for p in prepared.reports.values()),
+                   "unexpected": len(found - expected - preserved),
+                   "bytes": sum(Path(p).stat().st_size for p in prepared.reports.values()),
                    "units": [{"item": u["item_id"], "mode": u["source"]["mode"], "revision": u["source"]["revision"],
                               "layout": u["source"]["layout"], "eco": u["source"]["eco"],
                               "found":u['report'] in found,'execution_ref':u['source']['execution_ref'],
                               'tool':u['source']['tool'],'tool_version':u['source']['tool_version'],
                               "execution_status": u["execution_status"]} for u in prepared.plan["inventory"]["units"]]}
+        if prepared.plan['schema_version'] == 3:
+            summary.update(preserved=len(found & preserved), preserved_missing=len(preserved - found),
+                           preserved_files=prepared.plan['inventory']['preserved_files'])
         return actor, prepared, summary
 
     def submit(self, target, *, confirm, preview=print, dry_run=False):
@@ -155,6 +161,12 @@ def display_preview(value):
     print(f"프로필: {value['profile_id']} @ {value['profile_version']} · 연결 PRE: {value['pre_revision'] or '없음'}")
     print(f"대상 ECO: {target['eco'] or '없음'} · 예상 {value['expected']} · 발견 {value['found']} · 누락 {value['missing']}"
           f" · 실행 미완료 {value['incomplete']} · 예상 밖 {value['unexpected']} · {value['bytes']} bytes")
+    if 'preserved_files' in value:
+        print(f"보존 근거 파일 {value['preserved']}개 · 보존 파일 누락 {value['preserved_missing']}개")
+        for file in value['preserved_files']:
+            bind = file['binding']
+            print(f"  {file['path']} · {file['role']} · {bind['kind']} "
+                  f"{bind.get('review_unit_id', bind.get('anchor_unit_id'))}")
     print("범위 승인: " + ("검증됨" if value["inventory_confirmed"] else "미승인 — 수신 후 검토 차단")
           + ' · 참조: '+(value['approval_reference'] or '없음'))
     if unverified(value['actor']):

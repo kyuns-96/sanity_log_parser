@@ -174,6 +174,12 @@ VWP-bridge에서 원문·추출 필드를 수집하고 새 PASS/FAIL을 계산�
 
 양쪽 bridge에 공통 수정본을 반영한 뒤 사내 AI는 기존 회사 parser/등록 파일·허용 메서드에서 `none`을 명시적으로 등록할 수 있다. 원문 판정 유무·필드/완료/건수·0건 계약과 합성/사내 기대값을 확인한다. plan의 수치 정책은 생략/null이며 `unit.evaluation="none"` 문자열이나 `{}`를 넣지 않는다. 기존 수치 정책을 삭제해 평가를 회피하지 않는다. 공통 상태·집계·전송·OA 준비/화면은 Codex의 COMMON-02F 구현을 사용한다. 예상 밖 오류는 기존대로 `WAITING_FOR_CODEX`로 문의하며 evaluator·UNKNOWN/coverage 검사·DB·UI·기존 테스트를 사내 AI가 수정하지 않는다. 이번 구현은 회사 파일/메서드 수정 허용 범위를 넓히지 않는다.
 
+### 3.12. 비-unit 보존 근거 — 2026-10-28 공통 구현
+
+[보존 파일 계약](vwp/PRESERVED_SOURCES.md)의 plan/collection manifest 3과 producer `postgresql-source-2.3`을 제공한다. 공통 호환 코드가 배포된 뒤 기존 허용 `CorporateSubmissionInput.prepare()`/회사 입력 wrapper에서 `inventory.preserved_files`와 원본 Path 대응을 반환할 수 있다. 역할은 `canonical_companion`/`constraint_input`, 귀속은 같은 plan의 정확한 unit 또는 anchor에서 산출한 source execution이다. 다중 대상·범용 context·검사 제외 통로가 아니다. 필수 unit과 선언 없는 파일 차단은 유지한다.
+
+원본 전체 byte는 기존 RAW에 보관하고 OA에는 검증된 목록·귀속·hash를 전달한다. OWNER 범위 확인과 report/AI 입력 개정에 결합하며 **AI에는 현재 본문이 제공되지 않는다.** 보존 파일 parser 자동 호출·OA 원문 열람·본문 AI 전달은 후속 공통 작업이다. 별도 SQL/GRANT는 없으며 내부 AI의 공통 코드·UI·기존 테스트 수정 권한을 확대하지 않는다. 코드 배포 전 새 선언 활성화, 구버전 호환을 위한 필드 제거, 예상 밖 오류의 자체 수정/재시도를 하지 않는다.
+
 ## 4. 내부 AI가 절대 수정하지 않는 부분
 
 읽고 설명하거나 검토 요청을 만드는 것은 가능하지만, 수정·우회·테스트 완화는 금지한다. 허용 목록의 부분 변경 외에는 모두 보호 대상이다.

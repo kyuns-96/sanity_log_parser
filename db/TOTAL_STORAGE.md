@@ -65,3 +65,28 @@ PG12.1에서 POST 원본 14,000,000 bytes·50,000건과 PRE 원본 224 bytes·4�
 단위 혼동을 피하려고 POST 원본을 **14MiB(14,680,064 bytes)**로 늘린 별도 합성 실행도 확인했다. PRE를 포함한 원본은 14,680,288 bytes, 전체 네 테이블은 **13,246,464 bytes(13.25MB)**였고 같은 원본/전체 로그/53개 패킷 검사를 통과했다.
 
 이 결과는 합성 입력의 목표 충족이며 모든 회사 파일의 절대 상한을 보장하지 않는다. 원문의 압축성·parser fields 양·고유 문자열·분석/재시도 이력·기존 bloat에 따라 달라진다. 참조 복원은 DB 조회와 gzip/hash 검증 CPU를 사용하므로 현장의 처리·읽기 성능도 검증한다. 과거 이력·다른 report·WAL·백업과 유지보수 중 임시 공간을 이 수치에 숨겨 포함하거나 제외하지 않는다.
+
+## plan 3 보존 파일을 포함한 합성 측정 — 2026-10-28
+
+[보존 파일 계약](../vwp/PRESERVED_SOURCES.md)을 적용한 별도 구성도 전체 원본 **14,000,000 bytes**로 측정했다. POST CSV **9,799,776 bytes / 50,000건**, PRE **224 bytes / 4건**, full.rpt **3,920,000 bytes**, SDC **280,000 bytes**다. 즉 기존 14MB CSV에 보존 파일을 추가한 결과가 아니라 **모든 원본의 합계가 14MB인 합성 구성**이다. 원본과 보존 파일 내용은 전부 합성이고 실제 형식/판단 품질 검증은 아니다.
+
+PG12.1·011/012/013 적용·신규 제출에서 `pg_total_relation_size`는 다음과 같다. owner repack/삭제 없이 정상 업로드→분석→OA 수신→receipt 후 측정했다.
+
+| 테이블 | TOAST·인덱스 포함 bytes |
+|---|---:|
+| sanity_vwp_data | 10,436,608 |
+| sanity_oa_data | 630,784 |
+| sanity_vwp_to_oa | 6,258,688 |
+| sanity_oa_to_vwp | 98,304 |
+| 합계 | **17,424,384 (17.42MB)** |
+
+전체 원본 byte/hash 복원, 50,004개 VWP/OA 로그 일치, 53개 전송 패킷과 보존 메타데이터 전달을 대조했다. 해당 구성은 20MB 목표를 충족한다. 회사 파일의 엔트로피·추가 원본 크기·누적 제출/사람 이력·기존 미회수 공간까지 항상 이 수치 안에 들어간다는 보장은 아니다. 기존 013 합성 수치는 위의 별도 구성으로 대체하거나 혼합하지 않는다.
+
+```bash
+.venv/bin/python db/tests/benchmark_total_storage.py \
+  --pg-bin /path/to/postgresql/bin --preserved-sources \
+  --rows 50000 --source-bytes 14000000 --layout shared \
+  --out /tmp/synthetic-preserved-storage-new.json
+```
+
+`--preserved-sources`일 때만 source 예산의 30%를 보존 파일에 배정하고 나머지를 PRE/POST에 사용한다. 기본 모드의 기존 POST byte 예산 의미는 유지한다. 어떤 모드도 외부 DSN이나 사내 파일을 받지 않으며 별도 socket-only 합성 DB를 만들고 종료한다.

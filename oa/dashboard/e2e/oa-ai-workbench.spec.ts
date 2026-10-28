@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { writeFile } from 'node:fs/promises'
 import type { Page } from '@playwright/test'
+import type { PreservedSource } from '../src/PreservedSources'
 import type { CodexJob, ReportReview, ReviewCase, ReviewProposal } from '../src/workspaceApi'
 import { makeWorkspaceDemo } from '../src/workspaceDemo'
 
@@ -15,7 +16,7 @@ const base = '/api/workbench/blocks/b1/versions/v1/reports/report-a'
 const url = '/?page=workbench&project=p1&block=b1&version=v1&eco=ECO-2&item=synthetic_check&tab=reports&review=report-a'
 const emptyPage = { items: [], total: 0, offset: 0, limit: 25 }
 
-type MockOptions = { collectionOnly?: boolean; configured?: boolean; personalToken?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
+type MockOptions = { preserved?: PreservedSource[]; collectionOnly?: boolean; configured?: boolean; personalToken?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
 
 async function mockOA(page: Page, options: MockOptions = {}) {
   const actor = options.readOnly ? { ...user, role: 'TOP' } : user
@@ -24,7 +25,7 @@ async function mockOA(page: Page, options: MockOptions = {}) {
     return { ...record, ...(options.collectionOnly ? { check_status: 'UNKNOWN', evaluation_status: 'NOT_PERFORMED' } : {}), fields: options.longFields && index === 0 ? { object: 'node-1/' + 'long-path/'.repeat(20), mode: 'MODE_' + 'LONG_NAME_'.repeat(12) } : record.fields,
       ...(!options.omitFirstReasons || index > 0 ? { reasons } : {}) }
   })
-  const currentReport = { ...report, record_count: sourceRecords.length, ...(options.collectionOnly ? { check_status: 'UNKNOWN', evaluation_mode: 'none', not_evaluated_count: sourceRecords.length } : {}) }
+  const currentReport = { ...report, ...(options.preserved ? { preserved_sources: options.preserved } : {}), record_count: sourceRecords.length, ...(options.collectionOnly ? { check_status: 'UNKNOWN', evaluation_mode: 'none', not_evaluated_count: sourceRecords.length } : {}) }
   const state = { revision: options.initialRevision || 0, confirmed: options.confirmed || false, reviewRevision: 0, clusterJob: options.initialJob || null as CodexJob | null, reviewJob: null as CodexJob | null, clusterReads: 0, reviewReads: 0, current: null as ReviewCase | null, proposal: null as ReviewProposal | null, writes: [] as { path: string; body: Record<string, unknown>; marker: string | undefined }[], unexpected: [] as string[], calls: [] as string[], recordRequests: [] as { offset: number; limit: number; search: string; group: string | null; revision: string | null }[], recordPause: null as { offset: number; promise: Promise<void> } | null, recordFailure: null as { offset: number; remaining: number } | null }
   const reviewHistory = options.currentCase ? [options.currentCase] : []
   let credentialReady = false
@@ -698,5 +699,57 @@ test('collection-only shows unperformed tool verdicts while keeping human group 
   await expect(review.locator('.ws-judgment-summary')).toContainText('PASS')
   await expect(review.locator('.ws-judgment-summary')).toContainText('판정 미실행')
   expect(state.current?.conclusion).toBe('PASS')
+  expect(state.unexpected).toEqual([])
+})
+
+const preserved: PreservedSource[] = [
+  { id: 'pf-synthetic-full', path: 'reports/companion/full.rpt', role: 'canonical_companion',
+    binding: { kind: 'execution', anchor_unit_id: 'u-gca' }, size_bytes: 14000, sha256: 'b'.repeat(64),
+    unit_key: 'su-synthetic', execution_id: 'sx-synthetic', storage_status: 'PRESERVED', content_available_to_ai: false },
+  { id: 'pf-synthetic-sdc', path: 'reports/companion/input.sdc', role: 'constraint_input',
+    binding: { kind: 'unit', review_unit_id: 'u-gca' }, size_bytes: 200, sha256: 'c'.repeat(64),
+    unit_key: 'su-synthetic', execution_id: 'sx-synthetic', storage_status: 'PRESERVED', content_available_to_ai: false },
+]
+
+test('preserved source metadata stays visible without claiming AI body access', async ({ page }) => {
+  const state = await mockOA(page, { preserved })
+  await page.goto(url)
+  await page.getByText('보존 근거 파일 2개', { exact: true }).click()
+  const files = page.getByLabel('보존 근거 파일', { exact: true })
+  await expect(files).toContainText('파일 본문은 아직 전달되지 않습니다.')
+  await expect(files).toContainText('reports/companion/full.rpt')
+  await expect(files).toContainText('분석 입력 제약')
+  await files.getByText('SHA256 확인', { exact: true }).first().click()
+  await expect(files.getByText('b'.repeat(64), { exact: true })).toBeVisible()
+  await expect(files.getByRole('link')).toHaveCount(0)
+  await page.screenshot({ path: test.info().outputPath('preserved-workbench.png'), fullPage: true })
+  expect(state.unexpected).toEqual([])
+})
+
+test('OWNER confirms preserved roles and bindings with the exact submission digest', async ({ page }) => {
+  const state = await mockOA(page)
+  const entry = { id: 'synthetic-submission', revision: 0, scope: { project_key: 'p1', block_key: 'b1', net_ver: 'NET-1', submission_revision: 'REV-1', layout: 'POST', target_eco: 'ECO-2', pre_revision: null, profile_id: 'synthetic', profile_version: '1' }, reported_by: 'synthetic-owner', delivery_state: 'AWAITING_CONFIRMATION', created_at: at, blockers: [], decision: null }
+  const detail = { ...entry, can_confirm: true, content_sha256: 'd'.repeat(64), scope_sha256: 'e'.repeat(64), manifest_sha256: 'f'.repeat(64), total_units: 1, offset: 0, limit: 50, units: [{ review_unit_id: 'u-gca', item_id: 'synthetic_check', report: 'reports/primary.csv', applicable: true, condition: {}, execution_status: 'COMPLETED', parse_status: 'COMPLETE', record_count: 2, blockers: [], source: { layout: 'POST', revision: 'REV-1', eco: 'ECO-2', mode: 'test', tool: 'synthetic', tool_version: '1', execution_ref: 'synthetic-execution', execution_order: 1 } }], preserved_files: preserved }
+  let decision: Record<string, unknown> | undefined
+  await page.route('**/api/workbench/blocks/b1/intake**', async route => {
+    if (route.request().method() === 'POST') {
+      decision = route.request().postDataJSON()
+      return route.fulfill({ json: { id: entry.id, delivery_state: 'OA_STORED' } })
+    }
+    return route.fulfill({ json: new URL(route.request().url()).pathname.endsWith('/intake') ? { items: [entry], total: 1, can_confirm: true } : detail })
+  })
+  await page.goto(url.replace('&review=report-a', ''))
+  await page.locator('.submission-intake > details > summary').click()
+  await page.getByRole('button', { name: '범위 확인', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByText('보존 근거 파일 2개', { exact: true }).click()
+  await expect(dialog).toContainText('원천 실행')
+  await expect(dialog).toContainText('reports/companion/input.sdc')
+  await page.screenshot({ path: test.info().outputPath('preserved-owner.png'), fullPage: true })
+  await dialog.getByRole('checkbox', { name: /보존 파일 2개의 역할·귀속/ }).check()
+  await dialog.getByRole('textbox').fill('전체 범위와 보존 근거의 귀속 확인')
+  await dialog.getByRole('button', { name: '범위 확정 후 접수', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  expect(decision).toMatchObject({ decision: 'CONFIRM', confirmed_scope: true, content_sha256: detail.content_sha256, scope_sha256: detail.scope_sha256, manifest_sha256: detail.manifest_sha256 })
   expect(state.unexpected).toEqual([])
 })

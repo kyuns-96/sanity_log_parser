@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
-def _benchmark(rows, source_bytes, output, *, shared=True):
+def _benchmark(rows, source_bytes, output, *, shared=True, preserved=False):
     from common.sanity_common import canonical_json, unpack_json
     from common.sanity_db import Database, Queue
     from common.sanity_privacy import SecretGuard
@@ -44,6 +44,24 @@ def _benchmark(rows, source_bytes, output, *, shared=True):
             return values
 
         before = sizes()
+        requested_bytes = source_bytes
+        if preserved:
+            from tests.test_preserved_sources import preserve
+            preserve(case.f, case.root)
+            original_pre_bytes = sum(path.stat().st_size for key, path in case.f['prepared'].reports.items()
+                                     if key not in ('reports/companion/full.rpt', 'reports/companion/input.sdc')
+                                     and key != next(u['report'] for u in case.f['prepared'].plan['inventory']['units']
+                                                     if u['source']['layout'] == 'POST'))
+            preserved_bytes = source_bytes * 3 // 10
+            for name, size in (('full.rpt', preserved_bytes * 14 // 15),
+                               ('input.sdc', preserved_bytes - preserved_bytes * 14 // 15)):
+                path = case.f['prepared'].reports['reports/companion/'+name]
+                with path.open('wb') as stream:
+                    remaining, index = size, 0
+                    while remaining:
+                        line = ('# SYNTHETIC '+name+' '+hashlib.sha256(str(index).encode()).hexdigest()+'\n').encode()
+                        block = line[:remaining]; stream.write(block); remaining -= len(block); index += 1
+            source_bytes -= preserved_bytes + original_pre_bytes
         unit = next(u for u in case.f['prepared'].plan['inventory']['units'] if u['source']['layout'] == 'POST')
         source = case.f['prepared'].reports[unit['report']]
         header = b'object,check_point,mode,code,severity,observed,unit\n'
@@ -115,6 +133,10 @@ def _benchmark(rows, source_bytes, output, *, shared=True):
 
         total = sum(value['total_bytes'] for value in after.values())
         report = {'synthetic_only': True, 'layout': 'shared_013' if shared else 'pages_012',
+                  'preserved_sources': preserved, 'requested_source_bytes': requested_bytes,
+                  'preserved_original_bytes': sum(f['size_bytes'] for f in manifest.get('preserved_files', [])),
+                  'preserved_metadata_verified': (not preserved or sum(len(r['payload'].get('preserved_sources', []))
+                                                                       for r in headers) == 2),
                   'transport': 'in_process_https_api', 'post_original_bytes': source_bytes,
                   'all_original_bytes': sum(item['size_bytes'] for item in manifest['files']),
                   'post_records': rows, 'complete_records': total_records, 'exact_packets_verified': packets,
@@ -123,6 +145,8 @@ def _benchmark(rows, source_bytes, output, *, shared=True):
                   'all_four_total_bytes': total, 'target_bytes': 20000000, 'target_met': total <= 20000000,
                   'size_scope': 'all_four_tables_including_toast_indexes_and_existing_fixture_metadata',
                   'owner_repack_used': False}
+        if preserved and (report['all_original_bytes'] != requested_bytes or not report['preserved_metadata_verified']):
+            raise RuntimeError('Preserved source budget or metadata changed')
         with output.open('x') as stream:
             json.dump(report, stream, indent=2); stream.write('\n')
     finally:
@@ -135,6 +159,8 @@ def main(argv=None):
     parser.add_argument('--rows', type=int, default=50000)
     parser.add_argument('--source-bytes', type=int, default=14000000)
     parser.add_argument('--layout', choices=('pages', 'shared'), default='shared')
+    parser.add_argument('--preserved-sources', action='store_true',
+                        help='plan 3: use 30%% of source bytes for full.rpt/SDC; budget includes all original files')
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args(argv)
     if not 1 <= args.rows <= 100000 or not args.rows*128 <= args.source_bytes <= 64*1024*1024:
@@ -149,9 +175,11 @@ def main(argv=None):
         database.start(); database.setup(source)
         result = directory/'result.json'
         code = ('from pathlib import Path;from db.tests.benchmark_total_storage import _benchmark;import sys;'
-                '_benchmark(int(sys.argv[1]),int(sys.argv[2]),Path(sys.argv[3]),shared=sys.argv[4]=="shared")')
+                '_benchmark(int(sys.argv[1]),int(sys.argv[2]),Path(sys.argv[3]),shared=sys.argv[4]=="shared",'
+                'preserved=sys.argv[5]=="True")')
         with (directory/'benchmark.log').open('wb') as log:
-            done = subprocess.run([sys.executable,'-c',code,str(args.rows),str(args.source_bytes),str(result),args.layout],
+            done = subprocess.run([sys.executable,'-c',code,str(args.rows),str(args.source_bytes),str(result),args.layout,
+                                   str(args.preserved_sources)],
                                   cwd=source,env=database.test_environment(),stdout=log,stderr=subprocess.STDOUT)
         if done.returncode:
             print('status=FAILED artifact_directory='+str(directory)); return done.returncode

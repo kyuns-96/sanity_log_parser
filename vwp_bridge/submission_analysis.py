@@ -15,6 +15,7 @@ from common.sanity_submission import (MAX_PARTS, PART_BYTES, PART_RECORDS, check
     source_unit, source_version, validate_packet)
 from common.sanity_submission_files import regular
 from common.sanity_submission_intake import unverified
+from common.sanity_preserved_sources import PRODUCER as PRESERVED_PRODUCER, for_unit, validate_metadata
 from vwp_bridge.main import analyze_unit
 from vwp_bridge.sanity_evidence import PgEvidence
 
@@ -122,7 +123,8 @@ class SourceEvidence(PgEvidence):
                 self.set_state(self.analysis_id,state,'SEALED')
 
 
-def analyze_source(db, store, collection, original, file, snapshot_root, *, confirmed, registry, record_execution=True):
+def analyze_source(db, store, collection, original, file, snapshot_root, *, confirmed, registry, record_execution=True,
+                   preserved_sources=None):
     uid, execution = source_unit(collection,original), source_execution(collection,original)
     raw_sha = file['sha256'] if file else None
     if file and record_execution:
@@ -141,7 +143,9 @@ def analyze_source(db, store, collection, original, file, snapshot_root, *, conf
                     'sha256':raw_sha,'size_bytes':file['size_bytes']} if file else None)
     manifest = {'run':run,'inventory':inventory,'files':[source_file] if file else [],'unexpected_files':[]}
     contract = (registry or ParserRegistry()).contract(run,[unit])
-    ev = SourceEvidence(db,manifest,parser_contract=contract,producer_version=producer_version(contract))
+    ev = SourceEvidence(db,manifest,parser_contract=contract,
+                        producer_version=PRESERVED_PRODUCER if preserved_sources else producer_version(contract),
+                        source_context=preserved_sources)
     try:
         parsing_file = {**source_file,'path':file['path']} if file else None
         result = analyze_unit(unit,parsing_file,snapshot_root,ev,registry)
@@ -244,6 +248,9 @@ def record_parts(records, report_id):
 
 def build_transfer(db, store, submission, manifest, root, *, confirmed, registry):
     collection, reports, position = submission['plan']['collection'], [], 1
+    preserved = manifest.get('preserved_files', [])
+    if submission['plan']['schema_version'] == 3:
+        validate_metadata(submission['plan'], preserved)
     guard = SecretGuard()
     # Structural scope/approval facts cannot be silently changed by redaction.
     guard.ensure_public(submission['plan'])
@@ -254,7 +261,8 @@ def build_transfer(db, store, submission, manifest, root, *, confirmed, registry
         source = unit['source']
         run = {'tool':source['tool'],'tool_version':source['tool_version']}
         contracts.append((registry or ParserRegistry()).contract(run,[unit]))
-    version = producer_version([c for contract in contracts for c in contract])
+    version = (PRESERVED_PRODUCER if submission['plan']['schema_version'] == 3
+               else producer_version([c for contract in contracts for c in contract]))
     collection_id = 'sc-'+digest([submission['content_sha256'],confirmed,version,contracts])
     # A prior revision may have committed some immutable parts before crashing.
     # Reject before writing any new analysis/part under the same submission UUID.
@@ -264,8 +272,12 @@ def build_transfer(db, store, submission, manifest, root, *, confirmed, registry
     check(not conflict,'SUBMISSION_CONTRACT_MISMATCH')
     base = packet_base(submission,collection_id)
     for unit in submission['plan']['inventory']['units']:
+        context = for_unit(submission['plan'], unit, preserved)
         value = analyze_source(db,store,collection,unit,files.get(unit['report']),root,confirmed=confirmed,
-                               registry=registry,record_execution=not unverified(submission['actor']))
+                               registry=registry,record_execution=not unverified(submission['actor']),
+                               preserved_sources=context)
+        if context:
+            value['preserved_sources'] = context
         rid = 'sr-'+digest([value['execution_id'],value['raw_sha256'],value['analysis_id']])
         header = {**value,'report_id':rid,'parts':[],'record_bytes':0}
         for part in record_parts(public_records(db,value['analysis_id'],guard),rid):
@@ -283,6 +295,8 @@ def build_transfer(db, store, submission, manifest, root, *, confirmed, registry
         reports.append(header)
     output = {'plan':submission['plan'],'inventory_confirmed':confirmed,'global_blockers':blockers,'reports':reports,
               'producer':version}
+    if submission['plan']['schema_version'] == 3:
+        output['preserved_files'] = preserved
     plan_packet = {**base,'body':output}
     validate_packet(plan_packet)
     commit = {**base,'body':{'manifest_sha256':digest(output),'parts':position-1}}
