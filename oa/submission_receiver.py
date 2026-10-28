@@ -18,6 +18,7 @@ from common.sanity_privacy import SecretGuard
 from common.sanity_submission import (HEX, PART_BYTES, PART_RECORDS, PROTOCOL, SOURCE_TYPES, check,
     message_id, scope_digest, source_execution, source_unit, source_version, validate_packet, validate_plan)
 from common.sanity_submission_store import require_schema
+from common.sanity_shared_sources import GATE, SharedSourcePackets
 from common.sanity_submission_intake import UnverifiedSubmitter, PENDING_BLOCKER, require_pending_plan, unverified
 from oa.sanity_workspace import WorkspaceStore, record_id
 from oa.sanity_production_workspace import ProductionWorkspaceStore
@@ -50,6 +51,7 @@ class SourceReceiver:
         check(db.side=='oa','FORBIDDEN')
         require_schema(db)
         self.db, self.ws, self.identity = db, WorkspaceStore(db) if workspace is None else workspace, identity
+        self.shared = SharedSourcePackets(db)
         check(self.ws.db is db,'AUTHORIZATION_CONFIG')
 
     @contextmanager
@@ -66,7 +68,8 @@ class SourceReceiver:
             yield
 
     def existing(self, kind, key):
-        return self.db.execute('SELECT * FROM {oa} WHERE record_type=%s AND workspace_key=%s',(kind,key)).fetchone()
+        row = self.db.execute('SELECT * FROM {oa} WHERE record_type=%s AND workspace_key=%s',(kind,key)).fetchone()
+        return self.shared.restore_part(row) if row and kind == 'WS_SOURCE_PART' else row
 
     def update(self, row, state):
         self.db.execute('UPDATE {oa} SET state=%s,version=version+1,updated_at=clock_timestamp() WHERE record_id=%s',
@@ -117,7 +120,10 @@ class SourceReceiver:
             check(old['payload']==body and old['workspace_block_ref']==record_id('WS_BLOCK',packet['scope']['block_key'])
                   and old['workspace_project_ref']==record_id('WS_PROJECT',packet['scope']['project_key']),'SOURCE_PART_CONFLICT')
         else:
-            self.ws.put('WS_SOURCE_PART',value['id'],body,project=packet['scope']['project_key'],block=packet['scope']['block_key'])
+            stored, reference = self.shared.part_header(packet) if self.shared.enabled else (body, None)
+            self.ws.put('WS_SOURCE_PART',value['id'],stored,project=packet['scope']['project_key'],
+                        block=packet['scope']['block_key'],
+                        **({'source_packet_ref': reference} if reference is not None else {}))
         return value['id']
 
     def header(self, output, unit, value):
@@ -326,7 +332,11 @@ class SourceReceiver:
             check(message['message_id']==message_id(message['message_type'],packet)
                   and message['project']==packet['scope']['project_key'] and message['correlation_id']==packet['submission_id']
                   and message['run_id'] is None and message['bundle_id'] is None,'SOURCE_SCOPE_MISMATCH')
-            check(message['payload']=={k:packet[k] for k in ('schema_version','protocol','submission_id','content_sha256','collection_id')},
+            expected_header = {k:packet[k] for k in ('schema_version','protocol','submission_id','content_sha256','collection_id')}
+            if message['payload'].get(GATE) is True:
+                check(self.shared.enabled and message['message_type'] == 'SOURCE_PART', 'SHARED_SOURCE_SCHEMA_REQUIRED')
+                expected_header[GATE] = True
+            check(message['payload']==expected_header,
                   'SOURCE_SCOPE_MISMATCH')
             SecretGuard().ensure_public(packet)
             trusted = True

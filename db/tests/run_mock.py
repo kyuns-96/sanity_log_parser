@@ -22,7 +22,7 @@ SOURCE_PATTERNS = ("*.py", "common/*.py", "devtools/*.py", "tests/*.py", "vwp/*.
                    "vwp/integration/__init__.py", "oa/integration/__init__.py",
                    "vwp_bridge/integration/__init__.py", "vwp_bridge/integration/parser_example.py",
                    "vwp_bridge/integration/public_parsers.py",
-                   "db/*.sql", "db/form/*.sql", "db/tests/*.sql", "db/tests/*.py",
+                   "db/*.sql", "db/form/*.sql", "db/maintenance/*.sql", "db/tests/*.sql", "db/tests/*.py",
                    "db/portal/*.py", "db/portal/*.json")
 DB_NAME = "sanity_test_mock"
 

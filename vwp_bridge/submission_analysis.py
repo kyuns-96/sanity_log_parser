@@ -4,10 +4,13 @@ from __future__ import annotations
 import copy
 from datetime import timezone
 
-from common.sanity_common import canonical_json, digest
+from common.sanity_common import ReviewError, canonical_json, digest
 from common.sanity_db import lock_key
 from common.sanity_parsers import ParserRegistry
 from common.sanity_privacy import SecretGuard
+from common.sanity_payload_storage import PrivatePayloadStorage
+from common.sanity_evidence_pages import (EvidencePageStorage, KIND as PAGE_KIND, MAX_BYTES as PAGE_BYTES,
+    MAX_RECORDS as PAGE_RECORDS, decode_page, encode_page, page_key)
 from common.sanity_submission import (MAX_PARTS, PART_BYTES, PART_RECORDS, check, packet_base, source_execution,
     source_unit, source_version, validate_packet)
 from common.sanity_submission_files import regular
@@ -20,27 +23,90 @@ SOURCE_PRODUCER_VERSION = "postgresql-source-2.1"
 
 class SourceEvidence(PgEvidence):
     """Parsing is independent of the later AI/human grouping workflow."""
+    def __init__(self, db, *args, **kwargs):
+        self.payload_storage = PrivatePayloadStorage(db)
+        self.page_storage = EvidencePageStorage(db)
+        self.page_records, self.page_size = [], 16
+        super().__init__(db, *args, **kwargs)
+        try:
+            kinds = {row['record_type'] for row in db.execute(
+                "SELECT DISTINCT record_type FROM {vwp} WHERE analysis_id=%s "
+                "AND record_type IN ('EVIDENCE','SOURCE_EVIDENCE_PAGE')", (self.analysis_id,)).fetchall()}
+            check(len(kinds) <= 1, 'EVIDENCE_PAGE_CORRUPT')
+            self.use_pages = self.page_storage.enabled and 'EVIDENCE' not in kinds
+            check(PAGE_KIND not in kinds or self.use_pages, 'EVIDENCE_PAGE_SCHEMA_REQUIRED')
+        except ReviewError:
+            db.conn.execute('SELECT pg_advisory_unlock(%s)', (lock_key(self.analysis_id),))
+            raise
+
     def record(self, unit, file, index, fields, raw, location, status, reasons):
         rid = "r-" + digest([self.run['run_id'],unit['review_unit_id'],file['file_id'],index])
         payload = {'record_id':rid,'record_index':index,'file_id':file['file_id'],**location,
                    'fields':fields,'check_status':status,'reasons':reasons,
                    'review_unit_id':unit['review_unit_id'],'item_id':unit['item_id'],
                    'rule_version':unit['rule_version'],'finding_group_id':None}
+        if self.use_pages:
+            check(type(index) is int and index == self.record_count + 1, 'SOURCE_COVERAGE_MISMATCH')
+            item = {'payload': payload, 'raw': raw}
+            size = len(canonical_json(item)) + 1
+            check(size + 16 <= PAGE_BYTES, 'RECORD_TRANSFER_LIMIT')
+            if self.page_records and self.page_size + size > PAGE_BYTES:
+                self._stage_page()
+            self.page_records.append(item)
+            self.page_size += size
+            self.record_count += 1
+            if len(self.page_records) == PAGE_RECORDS:
+                self._stage_page()
+            return
         self.stage('EVIDENCE',rid,payload,'RECORDED',unit['review_unit_id'],
                    self.row_id('UNIT',unit['review_unit_id']),raw=raw)
 
+    def _stage_page(self):
+        if not self.page_records:
+            return
+        header, packed = encode_page(self.page_records)
+        unit = self.page_records[0]['payload']['review_unit_id']
+        self.page_records, self.page_size = [], 16
+        self.stage(PAGE_KIND, page_key(header['record_index']), header, 'RECORDED',
+                   unit, self.row_id('UNIT', unit), page_bytes=packed)
+
+    def flush(self):
+        # A partial page has not been staged yet; never claim it is durable.
+        total = self.record_count
+        self.record_count -= len(self.page_records)
+        try:
+            super().flush()
+        finally:
+            self.record_count = total
+
+    def unit_result(self, result):
+        self._stage_page()
+        super().unit_result(result)
+
     def seal_source(self, result):
         """Seal parsing coverage, without pretending parser output is a partition."""
+        self._stage_page()
         self.flush()
         actual = {r['record_type']:r['n'] for r in self.db.execute(
             'SELECT record_type,count(*) AS n FROM {vwp} WHERE analysis_id=%s GROUP BY record_type',
             (self.analysis_id,)).fetchall()}
         expected = {'RUN':1,'UNIT':1,'FILE':self.expected_files,'EVIDENCE':result['record_count']}
-        check(all(actual.get(k,0)==v for k,v in expected.items()) and not set(actual)-set(expected),
+        evidence_count = actual.get('EVIDENCE', 0)
+        if actual.get(PAGE_KIND):
+            evidence_count = self.db.execute("SELECT COALESCE(sum((payload->>'record_count')::bigint),0) AS n "
+                "FROM {vwp} WHERE analysis_id=%s AND record_type='SOURCE_EVIDENCE_PAGE'",
+                (self.analysis_id,)).fetchone()['n']
+        check(all(actual.get(k,0)==v for k,v in expected.items() if k != 'EVIDENCE')
+              and evidence_count == result['record_count']
+              and not set(actual)-set(expected)-{PAGE_KIND}
+              and not (actual.get(PAGE_KIND) and actual.get('EVIDENCE')),
               'SOURCE_COVERAGE_MISMATCH')
-        counts = {r['status']:r['n'] for r in self.db.execute(
-            "SELECT payload->>'check_status' AS status,count(*) AS n FROM {vwp} "
-            "WHERE analysis_id=%s AND record_type='EVIDENCE' GROUP BY 1",(self.analysis_id,)).fetchall()}
+        counts = {'PASS': 0, 'FAIL': 0, 'UNKNOWN': 0}
+        total = 0
+        for row in private_records(self.db, self.analysis_id):
+            total += 1
+            counts[row['payload']['check_status']] += 1
+        check(total == result['record_count'], 'SOURCE_COVERAGE_MISMATCH')
         check(all(counts.get(k,0)==v for k,v in result['status_counts'].items()),'SOURCE_COVERAGE_MISMATCH')
         state = {'source_protocol':2,'counts':expected,'result_sha256':digest(result)}
         if self.sealed:
@@ -96,24 +162,64 @@ def analyze_source(db, store, collection, original, file, snapshot_root, *, conf
         db.conn.execute('SELECT pg_advisory_unlock(%s)',(lock_key(ev.analysis_id),))
 
 
-def public_records(db, analysis_id, guard):
+def private_records(db, analysis_id):
+    """Restore all logical records with bounded reads and exact coverage order."""
     after = 0
+    storage = PrivatePayloadStorage(db)
+    pages = EvidencePageStorage(db)
+    root = db.execute("SELECT payload,state,status FROM {vwp} WHERE record_id=%s AND record_type='RUN'",
+                      (analysis_id,)).fetchone()
+    expected = None
+    if root and root['status'] == 'SEALED' and root['state'].get('source_protocol') == 2:
+        expected = root['state'].get('counts', {}).get('EVIDENCE')
+        check(type(expected) is int and expected >= 0, 'SOURCE_COVERAGE_MISMATCH')
+    kinds = {row['record_type'] for row in db.execute(
+        "SELECT DISTINCT record_type FROM {vwp} WHERE analysis_id=%s "
+        "AND record_type IN ('EVIDENCE','SOURCE_EVIDENCE_PAGE')", (analysis_id,)).fetchall()}
+    check(len(kinds) <= 1, 'EVIDENCE_PAGE_CORRUPT')
+    if PAGE_KIND in kinds:
+        check(pages.enabled, 'EVIDENCE_PAGE_SCHEMA_REQUIRED')
+        while True:
+            identities = db.execute("SELECT record_id FROM {vwp} WHERE analysis_id=%s "
+                "AND record_type='SOURCE_EVIDENCE_PAGE' AND (payload->>'record_index')::bigint>%s "
+                "ORDER BY (payload->>'record_index')::bigint LIMIT 16", (analysis_id, after)).fetchall()
+            if not identities:
+                check(expected is None or after == expected, 'SOURCE_COVERAGE_MISMATCH')
+                return
+            for identity in identities:
+                row = db.execute('SELECT * FROM {vwp} WHERE record_id=%s', (identity['record_id'],)).fetchone()
+                for restored in decode_page(row):
+                    check(restored['payload']['record_index'] == after + 1, 'SOURCE_COVERAGE_MISMATCH')
+                    p = restored['payload']
+                    check(root is not None and p['record_id'] == 'r-' + digest([
+                        root['payload']['run']['run_id'], p['review_unit_id'], p['file_id'], p['record_index']]),
+                        'EVIDENCE_PAGE_CORRUPT')
+                    after += 1
+                    yield restored
     while True:
-        rows = db.execute("SELECT payload,raw_bytes,raw_sha256 FROM {vwp} WHERE analysis_id=%s "
+        rows = db.execute("SELECT entity_key,payload,raw_bytes,raw_sha256" + storage.selection + " FROM {vwp} WHERE analysis_id=%s "
             "AND record_type='EVIDENCE' AND (payload->>'record_index')::bigint>%s "
             "ORDER BY (payload->>'record_index')::bigint LIMIT 256",(analysis_id,after)).fetchall()
         if not rows:
+            check(expected is None or after == expected, 'SOURCE_COVERAGE_MISMATCH')
             break
         for row in rows:
-            p = row['payload']
-            raw = bytes(row['raw_bytes']).decode('utf-8')
-            fields, masked = guard.redact(p['fields']), guard.text(raw)
-            after = p['record_index']
-            yield {'id':p['record_id'],'fields':fields,'check_status':p['check_status'],
-                'raw':masked,'line_start':p['line_start'],'line_end':p['line_end'],
-                **{key:p[key] for key in ('byte_start','byte_end','json_pointer') if key in p},
-                'reasons':p['reasons'],'evidence_id':p['record_id'],'source_raw_sha256':row['raw_sha256'],
-                'redacted':masked!=raw or fields!=p['fields']}
+            row = storage.restore('EVIDENCE', row)
+            check(row['payload']['record_index'] == after + 1, 'SOURCE_COVERAGE_MISMATCH')
+            after += 1
+            yield row
+
+
+def public_records(db, analysis_id, guard):
+    for row in private_records(db, analysis_id):
+        p = row['payload']
+        raw = bytes(row['raw_bytes']).decode('utf-8')
+        fields, masked = guard.redact(p['fields']), guard.text(raw)
+        yield {'id':p['record_id'],'fields':fields,'check_status':p['check_status'],
+            'raw':masked,'line_start':p['line_start'],'line_end':p['line_end'],
+            **{key:p[key] for key in ('byte_start','byte_end','json_pointer') if key in p},
+            'reasons':p['reasons'],'evidence_id':p['record_id'],'source_raw_sha256':row['raw_sha256'],
+            'redacted':masked!=raw or fields!=p['fields']}
 
 
 def record_parts(records, report_id):

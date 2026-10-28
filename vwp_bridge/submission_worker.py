@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import sys
 
-from common.sanity_common import ReviewError, digest, pack_json
+from common.sanity_common import ReviewError, canonical_json, digest, pack_json
 from common.sanity_db import Database, Queue, lock_key
 from common.sanity_parsers import validate_builtin_evaluation
 from common.sanity_privacy import SecretGuard
@@ -16,6 +16,7 @@ from common.sanity_submission import (PART_BYTES, PROTOCOL, VerifiedRemoteSubmit
 from common.sanity_submission_files import (copy_bundle, directory, fsync_dir, load_config, read_json_file,
     remove_own_partial, storage, verify_bundle, verify_snapshot, write_json_file)
 from common.sanity_submission_store import SubmissionStore
+from common.sanity_shared_sources import GATE
 from common.sanity_submission_intake import (UnverifiedSubmitter, PENDING_BLOCKER,
     require_pending_plan, tokenless, unverified)
 from vwp_bridge.submission_analysis import build_transfer
@@ -165,10 +166,17 @@ class SubmissionWorker:
             value, packet = self.publication_packet(sid,position)
             packed = pack_json(packet,max_bytes=PART_BYTES)
             with self.db.transaction():
-                Queue(self.db,'vwp_to_oa').enqueue({'message_id':value['message_id'],'message_type':value['kind'],
-                    'project':packet['scope']['project_key'],'run_id':None,'bundle_id':None,
-                    'correlation_id':sid,'payload':{k:packet[k] for k in
-                        ('schema_version','protocol','submission_id','content_sha256','collection_id')},**packed})
+                queue = Queue(self.db, 'vwp_to_oa')
+                staged = queue.get(value['message_id'])
+                if staged and staged['payload'].get(GATE) is True:
+                    check(self.store.shared.enabled and value['kind'] == 'SOURCE_PART', 'SHARED_SOURCE_SCHEMA_REQUIRED')
+                    check(canonical_json(self.store.shared.packet(value['message_id'], gated=True)) == canonical_json(packet),
+                          'SUBMISSION_CONFLICT')
+                else:
+                    queue.enqueue({'message_id':value['message_id'],'message_type':value['kind'],
+                        'project':packet['scope']['project_key'],'run_id':None,'bundle_id':None,
+                        'correlation_id':sid,'payload':{k:packet[k] for k in
+                            ('schema_version','protocol','submission_id','content_sha256','collection_id')},**packed})
                 current = self.store.get('SUBMISSION',sid,lock=True)
                 self.store.state(sid,'DB_QUEUED',{**current['state'],'next_publish':position+1})
         return self.store.get('SUBMISSION',sid)

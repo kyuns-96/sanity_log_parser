@@ -147,8 +147,13 @@ DB 버전 조건은 PostgreSQL 12.1 이상·UTF-8이며 실검증 버전은 12.1
 | `008_submissions.sql` | V2 제출/실행/outbox·OA staging과 SOURCE 메시지·원천 순서/중복 제약 |
 | `009_sso_identity.sql` | OA SSO identity의 kind/scope·계정 JSON 계약 |
 | `010_raw_sources.sql` | 기존 VWP private의 원본 DB 보관. v4 CHECK 6개와 인덱스 3개, 새 테이블/GRANT 없음 |
+| `011_payload_storage.sql` | 선택형 VWP 근거/OUTBOX 무손실 압축. 기존 자료 변환은 별도 DBA 절차 |
+| `012_source_evidence_pages.sql` | 선택형 새 V2 근거 묶음. kind/status는 v5로 확장하고 기존 원본 보호는 유지 |
+| `013_shared_source_packets.sql` | 선택형 전체 용량 최적화. 기존 공유 본문 한 개와 두 private FK 참조·최종 COMMIT 전 claim 차단 |
 
 사내 실제 적용 상태는 **미확인**이다. 합성 테스트 DB의 적용 기록으로 대체하지 않는다. 앱은 DDL/자동 migration을 하지 않는다. 비공개 스키마는 `002`~`010`의 `public.`과 `003`의 schema USAGE 대상을 실행 사본에서 함께 대응하고 `SANITY_DB_SCHEMA`와 맞춘다. [공식 사본 생성 절차](INSTALLATION_CHECKS.md#3-public-이외-스키마에-원본-sql-대응)를 사용하며 원본 SQL/포털 계획은 수정하지 않는다. 실제 적용은 사용자/DBA가 관리한다.
+
+전체 약 14MB → 20MB 목표는 [011~013 도입 안내](TOTAL_STORAGE.md)를 따른다. 선택한 후속 SQL의 `public.`도 동일하게 대응하고 양쪽 호환 코드를 먼저 배포한다. 적용된 단계는 반복하지 않으며 기존 inline 데이터가 자동 변환되거나 참조된 큐 본문을 ACK 후 삭제할 수 있다는 뜻이 아니다. 포털은 `--shared-source-packets`의 빈 DB 전용 경로를 사용한다.
 
 사용자가 2026-10-21 확인한 포털의 단일 문장 DDL/FK 경로에는 [포털 초기 설치 안내](portal/README.md)를 사용한다. 네 테이블이 모두 빈 상태에서 기존 읽기 전용 접속으로 catalog JSON을 사내에 저장하고 오프라인 도구로 실제 스키마/제약 이름에 맞는 실행본을 만든다. 원본 form/002~008은 보존하며 005를 생략하지 않는다. 앱에 DDL 권한을 주지 않고, 포털 적용은 사용자/승인 운영 담당자가 수행한다. 기본 모드에서는 003의 별도 역할·컬럼 권한 완료가 필요하며, 단일 모드는 3.1절을 따른다. 두 모드 모두 양쪽 서버의 읽기 전용 검사가 필수다. 생성된 catalog·실제 스키마·SQL bundle은 공개 저장소나 외부 대화에 올리지 않는다.
 
