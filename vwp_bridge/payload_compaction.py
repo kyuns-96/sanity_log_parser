@@ -136,11 +136,13 @@ def compact(db, *, apply=False, restore_plain=False, batch_size=32, max_rows=Non
         with db.transaction(readonly=not apply):
             if apply:
                 db.execute('LOCK TABLE {vwp} IN ACCESS EXCLUSIVE MODE')
-            # Only V2 source evidence is eligible; legacy clustering evidence stays plain.
-            rows = db.execute("SELECT e.record_id FROM {vwp} e WHERE "
+            # Compress only sealed V2 evidence. Restoring must also cover batches
+            # committed before seal_source(), so unfinished runs remain replayable.
+            eligible = ("e.record_type IN ('SOURCE_OUTBOX','EVIDENCE')" if restore_plain else
                 "(e.record_type='SOURCE_OUTBOX' OR (e.record_type='EVIDENCE' AND EXISTS "
                 "(SELECT 1 FROM {vwp} r WHERE r.record_id=e.analysis_id AND r.record_type='RUN' AND r.status='SEALED' "
-                "AND r.state->>'source_protocol'='2'))) AND e.payload_bytes IS "
+                "AND r.state->>'source_protocol'='2')))")
+            rows = db.execute("SELECT e.record_id FROM {vwp} e WHERE " + eligible + " AND e.payload_bytes IS "
                 + ('NOT NULL ' if restore_plain else 'NULL ')
                 + ('AND e.source_packet_ref IS NULL ' if shared.enabled else '')
                 + ('AND e.record_id>%s ' if after else '')

@@ -208,6 +208,40 @@ class PayloadStorageDatabaseTests(PgTestCase):
         self.assertEqual(before, self.snapshot_rows()[0])
         with self.owner() as db: self.assertEqual(original_fingerprint, fingerprint(db))
 
+    def test_restore_plain_includes_committed_evidence_from_unfinished_analyses(self):
+        self.install()
+        manifest = self.manifest('unfinished')
+        with Database('vwp') as db:
+            ev = SourceEvidence(db, manifest)
+            try:
+                ev.record(manifest['inventory']['units'][0], manifest['files'][0], 1,
+                          payload()['fields'], 'synthetic raw 1\n',
+                          {'line_start': 1, 'line_end': 1, 'json_pointer': '/results/0'},
+                          'UNKNOWN', ['SYNTHETIC-NO-CRITERION'])
+                ev.flush()
+                analysis = ev.analysis_id
+            finally:
+                db.conn.execute('SELECT pg_advisory_unlock(%s)', (lock_key(ev.analysis_id),))
+        run = self.admin_query("SELECT status,state FROM {vwp} WHERE record_id=%s", (analysis,)).fetchone()
+        self.assertEqual('BUILDING', run[0])
+        self.assertNotIn('source_protocol', run[1])
+        before, logical = self.snapshot_rows()
+        self.assertEqual(1, sum(row['payload_bytes'] is not None for row in before))
+        with self.owner() as db:
+            original_fingerprint = fingerprint(db)
+            self.assertEqual(0, compact(db)['rows_examined'])
+            preview = compact(db, restore_plain=True)
+            self.assertEqual(1, preview['rows_would_change'])
+        self.assertEqual(before, self.snapshot_rows()[0])
+        with self.owner() as db:
+            self.assertEqual(1, compact(db, apply=True, restore_plain=True)['rows_changed'])
+            self.assertEqual(0, compact(db, apply=True, restore_plain=True)['rows_changed'])
+            self.assertEqual(original_fingerprint, fingerprint(db))
+        restored, restored_logical = self.snapshot_rows()
+        self.assertEqual(logical, restored_logical)
+        self.assertTrue(all(row['payload_bytes'] is None for row in restored))
+        self.assertEqual(analysis, self.seed('unfinished', count=1))
+
     def test_repack_keeps_every_byte_hash_id_revision_timestamp_and_payload(self):
         analysis = self.seed(); self.install()
         with Database('vwp') as db:

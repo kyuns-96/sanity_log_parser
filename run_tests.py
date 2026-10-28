@@ -13,6 +13,7 @@ PROFILES = ("quick", "full")
 # A short regression set for everyday edits. Keep expensive datasets and the
 # complete portal migration replay in full, with their original assertions.
 QUICK_TESTS = (
+    "tests.test_payload_storage.PayloadStorageDatabaseTests.test_restore_plain_includes_committed_evidence_from_unfinished_analyses",
     "tests.test_repository_layout.RepositoryLayoutTests.test_shared_code_and_each_server_use_their_own_namespace",
     "tests.test_shared_source_packets.SharedSourceDatabaseTests.test_one_retained_queue_body_serves_both_private_stores_after_ack",
     "tests.test_shared_source_packets.SharedSourceDatabaseTests.test_staged_parts_are_not_claimable_until_commit_even_by_exact_id_and_resume_without_duplicates",
