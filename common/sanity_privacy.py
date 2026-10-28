@@ -62,6 +62,47 @@ class SecretGuard:
                     else self.redact(v) for k, v in value.items()}
         return value
 
+    def ensure_public_json(self, value):
+        """Scan already validated JSON without building a second object tree.
+
+        The canonical serializer/strict decoder remains the caller's boundary.
+        Only short safe strings and key classifications are memoized per scan.
+        Non-ASCII strings use the exact regexp path (Unicode IGNORECASE matters).
+        """
+        safe, keys = set(), {}
+        triggers = ('password', 'passwd', 'pwd', 'secret', 'token', 'api_key', 'api-key',
+                    'bearer', 'basic', 'postgres', 'private key')
+        def fail():
+            raise ReviewError('SENSITIVE_CONTENT', 'Outbound content contains credentials; no data was exported')
+        def string(text):
+            if text in safe: return
+            lowered = text.lower()
+            plain = (text.isascii() and not text.startswith('hex:')
+                     and not any(secret in text for secret in self.known)
+                     and not any(word in lowered for word in triggers))
+            if not plain and self.text(text) != text: fail()
+            if len(text) <= 256 and len(safe) < 4096: safe.add(text)
+        def visit(item):
+            if isinstance(item, str):
+                string(item)
+            elif isinstance(item, list):
+                for child in item: visit(child)
+            elif isinstance(item, dict):
+                truncated_hex = (type(item.get('raw_omitted_chars')) is int and item['raw_omitted_chars'] > 0
+                                 and isinstance(item.get('raw'), str)
+                                 and re.fullmatch(r'hex:[0-9a-fA-F]+', item['raw']) is not None)
+                for key, child in item.items():
+                    string(key)
+                    secret = keys.get(key)
+                    if secret is None:
+                        secret = bool(SECRET_KEY.search(key))
+                        if len(keys) < 4096: keys[key] = secret
+                    if (secret and child) or (key == 'raw' and truncated_hex):
+                        if child != MASK: fail()
+                        continue  # redact replaces this whole value, without scanning inside MASK.
+                    visit(child)
+        visit(value)
+
     def ensure_public(self, value):
         if self.redact(value) != value:
             raise ReviewError("SENSITIVE_CONTENT", "Outbound content contains credentials; no data was exported")
