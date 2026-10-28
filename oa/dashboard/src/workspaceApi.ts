@@ -6,8 +6,8 @@ export type WorkspaceBlock = { id: string; project_id: string; name: string; own
 export type WorkspaceProject = { id: string; name: string; description: string; tops: WorkspaceUser[]; blocks: WorkspaceBlock[] }
 export type WorkspaceOverview = { user: WorkspaceUser; projects: WorkspaceProject[]; data_origin: string }
 export type WorkspaceVersions = { items: WorkspaceVersion[]; por: WorkspacePor; can_assign_por: boolean }
-export type WorkspaceRecord = { id: string; fields: Record<string, unknown>; check_status: string; raw: string; raw_display_truncated?: boolean; line_start: number; line_end: number; reasons?: string[] }
-export type WorkspaceReport = { id: string; item_id?: string; project_id: string; block_id: string; version_id: string; eco: string | null; family: string; rule: string; check_status: string; parse_status: string; parser: string; raw_report?: string | null; record_count: number; records?: WorkspaceRecord[]; blockers: string[]; analysis_ready: boolean; source_storage?: 'PARTS_V2'; delivery_ready?: boolean; delivery_blockers?: string[]; human_review?: { conclusion: string; actor: WorkspaceUser; at: string; revision: number; reusable: boolean } | null; group_review_summary?: PipelineSummary | null }
+export type WorkspaceRecord = { evaluation_status?: 'NOT_PERFORMED'; id: string; fields: Record<string, unknown>; check_status: string; raw: string; raw_display_truncated?: boolean; line_start: number; line_end: number; reasons?: string[] }
+export type WorkspaceReport = { evaluation_mode?: 'none'; not_evaluated_count?: number; id: string; item_id?: string; project_id: string; block_id: string; version_id: string; eco: string | null; family: string; rule: string; check_status: string; parse_status: string; parser: string; raw_report?: string | null; record_count: number; records?: WorkspaceRecord[]; blockers: string[]; analysis_ready: boolean; source_storage?: 'PARTS_V2'; delivery_ready?: boolean; delivery_blockers?: string[]; human_review?: { conclusion: string; actor: WorkspaceUser; at: string; revision: number; reusable: boolean } | null; group_review_summary?: PipelineSummary | null }
 export type WorkspaceItemGroup = { item_id: string; total: number; counts: Record<string, number>; parse_counts: Record<string, number>; families: string[] }
 export type WorkspaceReports = { items: WorkspaceReport[]; total: number; offset: number; limit: number; counts: Record<string, number>; groups: WorkspaceItemGroup[]; version: WorkspaceVersion }
 export type WorkspaceEvent = { id: string; previous_version_id: string | null; version: WorkspaceVersion; actor: WorkspaceUser; reason: string; at: string; revision: number }
@@ -135,5 +135,11 @@ export async function workspaceRequest<T>(path: string, options: { body?: unknow
   return value as T
 }
 
-export const workspaceLabels: Record<string, string> = { GCA: 'GCA', VCLP: 'VC LP', SPYGLASS: 'SpyGlass', PASS: 'PASS', FAIL: 'FAIL', DEFER: '보류', UNKNOWN: '판정 보류', COMPLETE: '완료', PARTIAL: '일부 해석', MISSING: '미수신' }
+export const workspaceLabels: Record<string, string> = { GCA: 'GCA', VCLP: 'VC LP', SPYGLASS: 'SpyGlass', PASS: 'PASS', FAIL: 'FAIL', DEFER: '보류', UNKNOWN: '판정 보류', NOT_PERFORMED: '판정 미실행', COMPLETE: '완료', PARTIAL: '일부 해석', MISSING: '미수신' }
 export const workspaceTime = (value: string | null) => value ? new Date(value).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'
+
+// UNKNOWN remains the wire verdict; collection-only metadata explains its cause.
+export function toolResultStatus(value: { check_status: string; evaluation_mode?: string; evaluation_status?: string }): string {
+  return value.check_status === 'UNKNOWN' && (value.evaluation_mode === 'none' || value.evaluation_status === 'NOT_PERFORMED')
+    ? 'NOT_PERFORMED' : value.check_status
+}

@@ -33,6 +33,8 @@ VWP-bridge 코드는 `vwp_bridge/`, 회사 구현은 `vwp_bridge/integration/`�
 
 위 목록은 [공통 허용 목록](../INTERNAL_AI_GUIDE.md)의 부분집합이다. plan provider는 VWP 담당자, SSO는 OA 담당자가 소유한다. `vwp_bridge/main.py`, `corporate_analyze.py`, `sanity_*.py`, SQL·기존 테스트는 읽기 전용이다. 공통 parser registry/검증 엔진을 교체하지 않는다.
 
+**2026-10-28 수집 전용 구현:** [parser 4.1절](PARSER_INTEGRATION.md#collection-only-parser)의 `evaluation="none"`을 지원한다. 양쪽 공통 수정본을 전달받은 뒤 기존 `create_parser_registry`에서 명시적으로 등록한다. 원문 판정 유무·추출 필드·완료/건수·0건을 확인하고 원문에 있는 PASS/FAIL은 `reported`로 보존할 수 있다. `none`도 필드·원문·전체 건수 검증을 통과해야 하며 수치 정책과 함께 사용할 수 없다. 공통 상태·집계·전송·OA 준비/화면·기존 테스트는 Codex의 COMMON-02F 구현을 사용한다. 수집 전용은 OA AI 제안·사람 확정을 생략하거나 최종 PASS를 생성하는 설정이 아니다. 예상 밖 오류는 기존 중단 규칙대로 `WAITING_FOR_CODEX`로 문의한다.
+
 ## 3. 실행 순서
 
 1. `git status --short`로 시작 상태를 기록하고, 수정할 자기 허용 파일/메서드를 제시한다.
@@ -73,6 +75,7 @@ Q1의 [분산 수집 설계](../vwp/SOURCE_COLLECTION_DESIGN.md)는 제출 묶�
 공통 계약 회귀는 전체 개발 의존성 설치 후 `.venv/bin/python -m unittest tests.test_integration_contracts -v`로 실행한다. 자기 회사 테스트와 별개로 결과를 기록하고, `git status --short`·`git diff --check`로 변경을 확인한다. 기존 테스트는 수정하지 않는다.
 
 - parser: 정상·위반·경계값·명시적 0건·빈 파일·잘림·미해석/encoding·버전 변경, 실제 기대/추출 건수와 원문 위치를 비교한다.
+- 수집 전용: 공통 합성 시험은 `tests/test_collection_only.py`와 tokenless 접수의 전용 시나리오로 확인한다. 실제 형식·필드·완료/건수 정확성과 사내 모델 판단 품질은 현장에서 별도 검증한다. 수집 완료와 최종 판단 완료를 구분한다.
 - SDK: 명시적인 모의 SDK를 주입해 사례 0건/사람 수정 사례, ID 누락·중복·미지 참조, 그룹별 근거와 대표 ID, 선택 그룹 경계, 입력 불변, 잘못된 JSON·timeout을 검증한다. 오프라인 시험은 실제 모델/DB를 호출하지 않는다.
 - 공개 가능한 합성 결과와 사내 실제 report/모델 검증을 구분한다. 검증 안 한 대규모 성능을 완료로 보고하지 않는다.
 - OA 담당자에게는 현재 기존 DB 계약에서 송수신 가능한 범위와 접속 점검 상태만 인계한다. 새 workspace 메시지/envelope를 임의 정의하지 않는다. Codex에게 SDK 대응·한도·실패 계약과 필요한 COMMON 연결을 제출한다.

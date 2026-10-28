@@ -83,6 +83,19 @@ registry가 관리할 내용은 item·도구 버전 적용 범위, report 파일
 
 개별 기록에는 실행·단위·item·record ID, 대상·조건·검사 지점, 실제값·기대값·단위, 코드·심각도·판정, 파일·줄 범위, 원문과 적용 규칙을 연결한다. 심각도는 PASS/FAIL과 별개다. PASS를 포함한 전체 기록을 VWP DB에 보존하고 전체를 판정한 뒤 표시용 집계를 만든다.
 
+<a id="collection-only-parser"></a>
+
+### 5.1. 수집 전용 parser — 2026-10-28 공통 구현
+
+VWP-bridge에서 새 판정 없이 로그를 수집하는 요구는 [parser 4.1절](vwp_bridge/PARSER_INTEGRATION.md#collection-only-parser)을 따른다. 원문에 명시적 PASS/FAIL이 있으면 기존 `reported`로 보존할 수 있다. 판정 없는 로그를 위한 registry `evaluation="none"`을 기존 `numeric`/`reported`와 함께 지원한다.
+
+- `none`은 명시적 대상/버전 등록을 요구하고 수치 정책과 함께 사용하거나 평가 오류의 fallback으로 사용하지 않는다. plan의 `unit.evaluation`에 문자열 `"none"`을 넣지 않는다.
+- 추출 필드·원문 위치·EOF·완료/전체 건수·해시·미해석/encoding 검증을 유지한다. 정상 추출의 **판정 미실행**과 실제 파싱 오류를 구분한다. 명시적 0건은 사실 근거로 보존하되 빈 파일·결과 기록 0개를 완료로 바꾸지 않는다.
+- 수집/파싱 완료는 PASS/FAIL·AI 판단 완료·사람 검토 완료와 별도다. 정상 수집은 OA 두 단계 검토의 입력이 될 수 있어야 하며 권한·접수 범위·입력 개정·근거/기준/사례 검증은 유지한다. 원문 결과·AI 제안·사람 확정은 각각 보존한다.
+- COMMON-02F는 결과/header의 `evaluation_mode="none"`과 `not_evaluated_count`, 정상 record의 `check_status="UNKNOWN"`/`evaluation_status="NOT_PERFORMED"`를 저장·검증한다. 기존 세 항목 집계와 legacy UNKNOWN 검토 차단을 유지하며 미평가 건수는 UNKNOWN의 부분집합으로 별도 표시한다. 새로운 테이블·migration이나 내부 AI 수정 권한 확대는 없다.
+
+양쪽 공통 수정본을 반영한 뒤 기존 회사 추출/등록 지점에서 사용하며 실제 형식과 완료·건수 정확성은 사내에서 검증한다. 오류 시 기존 `WAITING_FOR_CODEX` 중단 규칙을 유지한다. 이번 수집 단계 요구는 OA AI 분류·그룹 판정과 사람의 정정·사례 활용 목표를 유지한다.
+
 ## 6. 같은 코드·같은 문제·같은 원인의 구분
 
 현재 구현은 선언된 식별 키의 정확한 일치로 반복 기록을 집계한다. 별도 AI 분류 루프에서는 선언형 규칙 제안과 실행 간 지속 그룹 ID를 지원한다. 의미 유사도·임베딩 기반 후보 비교는 미구현이며, 14절에 확장 방법과 현재 구현 범위를 구분한다.
@@ -185,6 +198,8 @@ PostgreSQL 설정은 `SANITY_DB_HOST`, `SANITY_DB_PORT`(기본 5432), `SANITY_DB
 누락·미지원·미실행은 분모에 남는다. 동일성 UNDECIDED여도 독립 기록의 판정 근거가 충분하면 검토할 수 있지만 판정 근거 부족은 완료를 막는다. review=COMPLETE와 check=PASS를 분리한다. 전체 check는 FAIL 우선, 그 외 분석 미완료이면 UNKNOWN, 전부 승인된 적용 제외이면 NOT_APPLICABLE, 그 외 PASS다. 화면 일부만으로 전체 완료를 계산하지 않는다.
 
 이 보증은 확정된 목록·규칙·파서에 대한 누락 검출이며 업무 기준이나 AI·사람 판단의 절대 정확성 보증이 아니다. 현장 기준 사례와 정상·경계값·예외·형식 변경 회귀로 판정 정확성을 별도로 평가한다. 표본 검증은 전체 발생 기록 판정을 대신하지 않는다.
+
+[5.1절](#collection-only-parser)의 수집 전용 구현은 위 legacy 평가/검토 완료 조건을 해제하지 않는다. COMMON-02F는 정상 수집의 OA 준비 상태와 이후 판정/사람 확정을 별도로 연결한다. 판정 미실행을 자동 PASS로 세거나 실제 UNKNOWN 오류를 무시하지 않는다.
 
 ## 12. 추가 근거 요청과 운영 AI
 

@@ -6,7 +6,7 @@ import { RadioGroup, RadioGroupItem } from './studio/components/ui/radio-group'
 import { Textarea } from './studio/components/ui/textarea'
 import { Input } from './studio/components/ui/input'
 import CaseSource from './CaseSource'
-import { aiJobActive, aiJobMessage, WorkspaceError, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
+import { aiJobActive, aiJobMessage, WorkspaceError, toolResultStatus, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
 import type { CodexJob, Judgment, ReportReview, ReviewCase, WorkspaceReport, WorkspaceSession, WorkspaceVersion } from './workspaceApi'
 
 const factNames: Record<string, string> = { rule: '검사 규칙', mode: '모드', object: '대상', check_point: '검사 지점', severity: '심각도', code: '메시지 코드', design: '설계' }
@@ -147,7 +147,7 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
     {data.current_stale && <p className="ws-notice">그룹 구성이 변경되었습니다. 이전 판정은 이력으로 보존되며 현재 그룹을 다시 검토해야 합니다.</p>}
     {error && <p className="ws-error" role="alert">{error}</p>}
     {notice && <p className="ws-notice" role="status"><Check size={15} />{notice}</p>}
-    <div className="ws-judgment-summary ws-studio-meta-row"><div><span>도구 판정</span><Badge variant="outline" className={`ws-status ws-status-${report.check_status.toLowerCase()}`}>{labels[report.check_status]}</Badge></div><div><span>사용자 판정</span><Badge variant="secondary">{data.current_stale ? `재검토 · 이전 ${labels[data.current!.conclusion]}` : data.current ? labels[data.current.conclusion] : '미판정'}</Badge></div></div>
+    <div className="ws-judgment-summary ws-studio-meta-row"><div><span>도구 판정</span><Badge variant="outline" className={`ws-status ws-status-${report.check_status.toLowerCase()}`}>{labels[toolResultStatus(report)]}</Badge></div><div><span>사용자 판정</span><Badge variant="secondary">{data.current_stale ? `재검토 · 이전 ${labels[data.current!.conclusion]}` : data.current ? labels[data.current.conclusion] : '미판정'}</Badge></div></div>
     {!data.current_stale && data.current?.exception && <div className="ws-review-current-exception" aria-label="현재 확정된 규칙 예외"><ExceptionEvidence value={data.current.exception} /></div>}
     <section className="ws-review-advice ws-studio-ai-card" aria-label="AI review와 누적 기준 제안">
       <header className="ws-studio-ai-title"><div><h4><Sparkles size={16} />AI 판정 제안</h4><p>{production ? group ? data.ai?.enabled ? `OA AI · ${data.ai.model}` : 'OA AI 연결 설정이 필요합니다.' : '분류 확정 후 각 그룹에서 AI 판정을 요청하세요.' : demo ? '합성 데모 · AI 호출 없음' : '사내 AI 미연결 · 확정 사례 참고 엔진'}</p></div>

@@ -6,7 +6,7 @@ import { Checkbox } from '../studio/components/ui/checkbox'
 import { Input } from '../studio/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../studio/components/ui/table'
 import type { LogMove, useLogDrag } from '../useLogDrag'
-import { workspaceLabels as labels, workspaceRequest as request } from '../workspaceApi'
+import { toolResultStatus, workspaceLabels as labels, workspaceRequest as request } from '../workspaceApi'
 import type { GroupRecords } from '../workspaceApi'
 
 const n = (value: number) => value.toLocaleString('ko-KR')
@@ -92,7 +92,7 @@ export default function Records({ base, revision, groupId, eventId, selected, se
               <TableCell className="ws-record-table-target"><div className="ws-record-line"><strong title={target}>{target}</strong><span className="ws-record-table-message ws-log-preview" title={preview}>{preview}</span></div></TableCell>
               <TableCell className="ws-record-table-mode" title={fieldText(value.fields.mode)}>{fieldText(value.fields.mode)}</TableCell>
               <TableCell className="ws-record-table-line">{value.line_start === value.line_end ? n(value.line_start) : `${n(value.line_start)}–${n(value.line_end)}`}</TableCell>
-              <TableCell className="ws-record-table-result"><Badge variant="outline" className={`ws-status ws-status-${value.check_status.toLowerCase()}`}>{labels[value.check_status] || value.check_status}</Badge></TableCell>
+              <TableCell className="ws-record-table-result"><Badge variant="outline" className={`ws-status ws-status-${value.check_status.toLowerCase()}`}>{labels[toolResultStatus(value)] || value.check_status}</Badge></TableCell>
             </TableRow>
           })}</TableBody>
         </Table>

@@ -38,11 +38,13 @@ Q1 이후에는 [분산 수집·PRE/POST 설계](SOURCE_COLLECTION_DESIGN.md)도
 3. 새 제출용 `prepare(target) → SubmissionInput(plan, reports)`를 구현한다. 토큰 없는 모드의 신원/권한 어댑터는 구현하지 않는다. `inventory.confirmed=false`, `approval=null`인 범위 초안을 준비하고 OA OWNER가 정확한 범위를 확정하게 한다. 전체 예상 목록과 실제 발견 파일을 분리하며 누락 report, `FAILED/UNKNOWN/NOT_RUN`, 적용 제외/승인 근거·예상 밖 report를 보존한다. provider는 원본 경로를 읽어 반환할 뿐 파일/DB 쓰기·sanity 실행을 하지 않는다. `--eco`로 이전 슬롯/PRE 예상 목록을 줄이지 않는다.
 4. V2는 `common.sanity_submission.validate_plan`으로 검증하고 공통 CLI에 전달한다. CLI가 byte 동일 snapshot/해시·명시적 전송 확인·HTTPS 업로드를 수행한다. OA가 범위를 확정하기 전까지 입력의 confirmed/approval은 승인으로 사용하지 않는다. 기존 현장 launcher를 유지할 때의 `get_plan()`은 schema 1과 기존 `vwp.main.validate_plan`/collector를 그대로 사용한다. 두 wire schema를 혼합하지 않는다.
 5. project/block 안정 키, NET_VER·전체 REVISION·PRE/POST·ECO, PRE 연결, **실제 재검사를 구별하고 다른 PC 재전달에도 보존하는 실행 ID와 권위 있는 정수 순서**를 확인한다. 실제 source별 tool/version·stage를 V2 필드에 대응한다. GCA 공통 stage는 `sanity`이며 버전 메타데이터를 condition에 숨기지 않는다. 불명확한 의미/순서는 `FACTS_REQUIRED`다.
-6. VWP-bridge 담당자에게 item별 실제 형식/도구 버전, 종료·건수·명시적 0건 의미, 비교 방향·단위·임계값·identity 출처와 비공개 정답 사례를 현장 승인 절차로 인계한다. 실제 parser 코드는 VWP-bridge 담당자가 작성한다.
+6. VWP-bridge 담당자에게 item별 실제 형식/도구 버전, 종료·건수·명시적 0건 의미, 수치 평가 대상 여부·원문 PASS/FAIL 유무, 비교 방향·단위·임계값·identity 출처와 비공개 정답 사례를 현장 승인 절차로 인계한다. 실제 parser 코드는 VWP-bridge 담당자가 작성한다.
 
 7. OA 담당자에게 사내에서 확인된 item별 점검 기준·조건·예외·정답/반례와 사람의 분류/판정 정정 사례를 전달한다. 원본·실행/버전 정보를 보존해 첫 판단의 직접 근거와 다음 판단의 사례 검색에 사용하게 한다. 공유는 사내 승인 경로로 하고 Codex에게는 합성 예제·비식별 계약만 전달한다.
 
 수집 snapshot은 **VWP 영역 안에서 VWP-bridge가 사용하는 입력**이다. OA로 report/snapshot 파일을 직접 복사하거나 새로운 전송 채널을 만들지 않는다. 평균 10,000건·100,000건 이상은 한 item report 안의 로그/위반 항목 수이며 파일 수가 아니다.
+
+**2026-10-28 수집 전용 구현:** [parser 4.1절](../vwp_bridge/PARSER_INTEGRATION.md#collection-only-parser)의 registry `evaluation="none"`을 지원한다. VWP는 판정 없는 로그의 필드·완료/건수 계약을 준비하며 수치 정책을 생략/null로 둔다. `unit.evaluation="none"` 문자열을 반환하거나 기존 `numeric` 기준을 지워 평가를 회피하지 않는다. 양쪽 공통 수정본을 반영한 뒤 기존 제출 경로를 사용하고, 원문 판정이 있으면 `reported`로 보존 가능함을 bridge에 인계한다. 접수 범위 확정과 OA AI·사람 확정 절차, 오류 시 중단·문의 규칙을 유지한다.
 
 ## 4. DB 연결
 

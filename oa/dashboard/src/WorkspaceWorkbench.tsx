@@ -11,7 +11,7 @@ import GroupRationale, { rationaleLabels } from './GroupRationale'
 import CaseSource from './CaseSource'
 import { NEW_LOG_GROUP, useLogDrag } from './useLogDrag'
 import type { LogMove } from './useLogDrag'
-import { aiJobActive, aiJobMessage, workspaceApiBase, WorkspaceError, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
+import { aiJobActive, aiJobMessage, workspaceApiBase, WorkspaceError, toolResultStatus, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
 import type { ClusterBrief, CodexJob, GroupBrief, GroupRecords, PageResult, PipelineTask, WorkbenchView, WorkspaceSession } from './workspaceApi'
 
 const n = (value: number) => value.toLocaleString('ko-KR')
@@ -389,7 +389,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
         <div className="ws-context-version"><GitBranch size={15} /><div><strong>{data.version.net_ver}</strong><span>{data.version.layout} · {data.version.revision}</span><span>ECO {data.report.eco || '해당 없음'}</span></div></div>
         <div className="ws-context-por"><ShieldCheck size={15} /><div><span>현재 PoR</span><strong>{context?.porLabel || '미지정'}</strong></div></div>
         <div className="ws-context-heading"><FileText size={16} /><h2>검사 보고서</h2></div>
-        <div className="ws-context-file"><strong>{data.report.item_id || data.report.rule}</strong><span>{data.report.family}</span><code title={data.report.id}>{data.report.id}</code><Badge variant="outline" className={`ws-status ws-status-${data.report.check_status.toLowerCase()}`}>도구 결과 {labels[data.report.check_status]}</Badge></div>
+        <div className="ws-context-file"><strong>{data.report.item_id || data.report.rule}</strong><span>{data.report.family}</span><code title={data.report.id}>{data.report.id}</code><Badge variant="outline" className={`ws-status ws-status-${data.report.check_status.toLowerCase()}`}>도구 결과 {labels[toolResultStatus(data.report)]}</Badge></div>
         <dl className="ws-context-metrics"><div><dt>전체 로그</dt><dd>{n(data.record_count)}</dd></div><div><dt>분류 그룹</dt><dd>{n(data.summary.total)}</dd></div><div><dt>분류 개정</dt><dd>{data.revision}</dd></div></dl>
         <p className="ws-context-permission">{data.can_edit ? '블록 담당자 · 검토 가능' : '조회 전용'}</p>
         <Button variant="ghost" size="sm" onClick={onBack}><ArrowLeft size={14} />보고서 목록</Button>
@@ -413,7 +413,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
       </section>
       <section className="ws-workbench-detail ws-studio-evidence" aria-label="선택 그룹 상세">
         {groupId ? <>
-          <header className="ws-selected-group-header"><div><h2>{chosen?.label || '선택 그룹 조회 중…'}</h2><span>{chosen ? `로그 ${n(chosen.record_count)}건` : '로그 조회 중'}{chosen && <> · 도구 판정 <Badge variant="outline" className={`ws-status ws-status-${chosen.check_status.toLowerCase()}`}>{labels[chosen.check_status]}</Badge></>}</span></div>{step === 1 && data.can_edit && chosen && !historyEvent && <Button variant="ghost" size="sm" disabled={!writable || dirtyRationale} onClick={() => { setEditReason(reason); setEditor('rename') }}><Pencil size={14} />이름 변경</Button>}</header>
+          <header className="ws-selected-group-header"><div><h2>{chosen?.label || '선택 그룹 조회 중…'}</h2><span>{chosen ? `로그 ${n(chosen.record_count)}건` : '로그 조회 중'}{chosen && <> · 도구 판정 <Badge variant="outline" className={`ws-status ws-status-${chosen.check_status.toLowerCase()}`}>{labels[toolResultStatus({ ...data.report, check_status: chosen.check_status })]}</Badge></>}</span></div>{step === 1 && data.can_edit && chosen && !historyEvent && <Button variant="ghost" size="sm" disabled={!writable || dirtyRationale} onClick={() => { setEditReason(reason); setEditor('rename') }}><Pencil size={14} />이름 변경</Button>}</header>
           {step === 1 && selectedRecords.size > 0 && <div className="ws-workbench-edit"><span>로그 {n(selectedRecords.size)}건 선택 · 페이지 간 선택 유지</span><div><Button variant="outline" size="sm" disabled={!writable || dirtyRationale} onClick={() => moveLogs(selectionMove(), groupId)}>선택 로그를 이 그룹으로 이동</Button><Button variant="outline" size="sm" disabled={!writable || dirtyRationale} onClick={() => moveLogs(selectionMove(), NEW_LOG_GROUP)}>새 그룹</Button><Button variant="ghost" size="icon" aria-label="로그 선택 해제" disabled={busy} onClick={() => { setSelectedRecords(new Set()); selectionGroups.current.clear() }}><X size={14} /></Button></div></div>}
           {records}
         </> : <p className="ws-muted">왼쪽에서 검토할 그룹을 선택하세요.</p>}

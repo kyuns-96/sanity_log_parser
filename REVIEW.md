@@ -1,5 +1,15 @@
 # 프로토타입 구현 검토 기록
 
+## 2026-10-28 수집 전용 parser와 OA 검토 연결
+
+- `evaluation="none"`을 명시적인 회사 parser 등록 방식으로 추가했다. 정상 추출은 evaluator를 호출하지 않고 원문·필드·위치·완료/전체 건수를 검증한다. 수치 정책의 생략/null만 허용하며 `{}`·숫자 정책·문자열 `"none"`의 혼용은 거부한다. 기존 `numeric`/`reported`와 legacy coverage 검사는 유지한다.
+- 정상 미평가는 `check_status=UNKNOWN`에 `evaluation_status=NOT_PERFORMED`를 붙이고 결과/header의 `evaluation_mode=none`·`not_evaluated_count`로 구분한다. 실제 파싱 오류에는 기존 사유를 남긴다. UNKNOWN 집계의 부분집합이므로 미평가 건수를 이중 합산하지 않는다. 기존 네 테이블과 wire schema 2를 유지하며 추가 SQL/GRANT는 없다.
+- `none` source/해당 collection은 producer `postgresql-source-2.2`를 사용한다. 기존 evaluated source의 2.1 식별은 보존한다. OA에서 등록 범위·수치 정책·producer·정수 집계·실제 part marker 수를 확인하고 OWNER 확정 시 다시 검증한다. 잘림과 위조 집계는 차단하고 정상 수집은 기존 OA AI 초기 분류·사람 확정·그룹 AI 제안·사람 판정으로 연결한다. 원본 결과와 AI/사람 이력은 각각 보존한다.
+- PostgreSQL **12.1**, socket/SCRAM 전용의 독립 mock에서 최종 **quick 253/253**, 실패·오류·skip 0을 확인했다. 새 전용 시나리오는 순수 계약 **12건**과 DB/SSO·모의 모델 **4건**이며 quick에 포함된 부분집합이다. 저장 probe는 **100 records/10 groups**, `full`/10만 건 검사는 실행하지 않았다. 실제 회사 자료·DB·모델 호출은 없다.
+- 프런트엔드 TypeScript/production build가 통과했다. 브라우저는 기존 OA AI·사람 정정 흐름 **1건**, 새 수집 전용의 판정 미실행 표시·그룹 확정·사람 PASS 저장 **1건**을 각각 통과했다. 판정 미실행 도구 결과와 별도의 사람 PASS가 함께 표시되는 것을 확인했다.
+- 새 통합 시험의 첫 실패는 시험용 기준 provider와 실제 저장 시 기준 loader의 불일치에 따른 `PROPOSAL_STALE`, 신규 오류의 HTTP 상태 기대 불일치였다. 실제 기준 파일 loader로 시험을 연결하고 새 오류의 400 기대를 고쳤으며 기존 개정·권한·근거 검사와 기존 시험은 완화하지 않았다. 초기 실패는 `/tmp/sanity-mock-pg-utl2uyfh/`, 최종 통과는 `/tmp/sanity-mock-pg-fpder8mr/summary.json`에 보존했다. 모든 DB fixture는 종료했다.
+- [parser 계약](vwp_bridge/PARSER_INTEGRATION.md#collection-only-parser), plan·역할별 인계·가이드·요구사항·PROTOCOL을 구현에 맞췄다. 사내 적용은 OA receiver/UI와 VWP bridge의 수정본을 전달한 뒤 기존 회사 추출/등록 지점에서 진행한다. 실제 형식·완료/건수 정확성, 실제 OA 모델 판단 품질과 운영 배포는 별도다.
+
 ## 2026-10-27 VWP 제출 토큰 제거·OA OWNER 범위 확정
 
 - 사용자 결정에 맞춰 새 기본 예제를 CLI schema 3·bridge schema 4의 `submission_auth=internal_network`로 바꿨다. CLI는 제출 토큰 환경변수를 읽거나 Authorization을 전송하지 않으며 VWP/bridge의 회사 신원·권한·승인 hook을 호출하지 않는다. 실제 소켓 출발 IP/CIDR·직접 TLS·Host를 검사하고 forwarded 헤더는 신뢰하지 않는다. 기존 Bearer/폴더 설정의 보호와 테스트는 호환 경로로 유지하며 자동 fallback하지 않는다.
