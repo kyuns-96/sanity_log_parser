@@ -231,10 +231,15 @@ class TokenlessSubmissionTests(PgTestCase):
         self.assertEqual('none',packets[0]['context']['report']['evaluation_mode'])
         self.assertEqual(2,len(packets[1]['context']['group_evidence']))
         self.assertEqual(original,self.collection_report())
-        private=self.admin_query("SELECT payload FROM {vwp} WHERE record_type='EVIDENCE' "
-            "AND payload->>'evaluation_status'='NOT_PERFORMED'").fetchall()
+        from vwp_bridge.submission_analysis import private_records
+        with Database('vwp') as db:
+            private=list(private_records(db,original['analysis_id']))
         self.assertEqual(2,len(private))
-        self.assertTrue(all(row[0]['check_status']=='UNKNOWN' for row in private))
+        self.assertTrue(all(row['payload']['evaluation_status']=='NOT_PERFORMED'
+                            and row['payload']['check_status']=='UNKNOWN' for row in private))
+        self.assertEqual([record['fields'] for record in records],[row['payload']['fields'] for row in private])
+        self.assertEqual([record['raw'].encode() for record in records],[bytes(row['raw_bytes']) for row in private])
+        self.assertEqual([record['source_raw_sha256'] for record in records],[row['raw_sha256'] for row in private])
 
     def test_collection_only_cannot_bypass_numeric_policy_or_publish_an_analysis(self):
         unit=self.collection_input();unit['evaluation']={}

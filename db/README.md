@@ -38,11 +38,19 @@ OA 브라우저의 로컬 API 접속은 브리지 간 통신과 별개다.
 | [008_submissions.sql](008_submissions.sql) | V2 SUBMISSION/SOURCE_RUN/OUTBOX·OA staging, SOURCE 큐 종류·중복/실행 순서·범위 제약 | `007` 적용 후 새 제출 경로 도입 시 owner/DBA가 검토해 한 번 실행. 앱 자동 적용 없음 |
 | [009_sso_identity.sql](009_sso_identity.sql) | OA `SSO_IDENTITY` kind/scope·엄격한 계정 JSON·기존 UNIQUE 재사용 | `008` 이후 검토·적용. 포털은 생성된 55번 단일 ALTER 사용. 실제 SSO/JIT 앱 구현·업무 권한 연결은 별도 |
 | [010_raw_sources.sql](010_raw_sources.sql) | 기존 VWP private의 `RAW_SUBMISSION/RAW_FILE/RAW_CHUNK`, v4 CHECK 6개·인덱스 3개 | `009` 이후 원본 DB 보관 도입 시 DBA 검토·적용. 새 테이블/역할/GRANT 없음. 빈 초기 포털은 raw 계획의 56~59 단계 |
+| [011_payload_storage.sql](011_payload_storage.sql) | VWP private `payload_bytes`, 무손실 근거·OUTBOX 압축과 raw 압축 허용 | 010 이후 선택형. 호환 코드 선배포·DBA 적용. 빈 포털은 `--payload-storage`의 60번. [기존 데이터 변환·재작성·평문 복구](PAYLOAD_STORAGE.md) |
+| [012_source_evidence_pages.sql](012_source_evidence_pages.sql) | 새 V2 근거를 최대 256건씩 `page_bytes`에 무손실 보관 | 011 이후 선택형. [근거 묶음·호환 reader·기존 데이터 경계](EVIDENCE_PAGES.md). 빈 포털은 `--evidence-pages`의 61/62번 |
+| [013_shared_source_packets.sql](013_shared_source_packets.sql) | SOURCE_PART 본문 한 개와 VWP/OA private FK 참조·발행 gate | 012 이후 선택형. [네 테이블 합 20MB 목표](TOTAL_STORAGE.md). 양쪽 호환 코드 선배포. 빈 포털은 `--shared-source-packets`의 63~66번 |
 
 기본 모드의 전체 준비 순서는 **신청한 `form`으로 생성 → `002` → 역할 준비 → `003` → `004`**다. 단일 모드는 역할 준비/`003` 대신 위 단일 계정 계약을 확인한다.
 이미 완료한 단계는 반복하지 않는다. 생성·`002`·`003`까지 완료했다면 **`004`만 실행**한다.
 workspace에는 이어서 `005 → 006 → 007`을 적용한다. 각 증분은 직전의 검증된 kind/scope 제약을 확인하고 기존 행·테이블·권한을 보존한다.
 현재 HTTPS 원본 DB 보관까지는 이어서 `008 → 009 → 010`이 필요하다. 이미 009까지 준비됐다면 010만 검토하며 앞 단계를 반복하지 않는다. 적용 증거는 [010 확인 기준](INSTALLATION_CHECKS.md#4-010-적용의-확인-기준)을 따른다.
+용량 최적화는 선택형 011을 추가한다. 기존 데이터 변환과 [owner 재작성](maintenance/repack_payload_storage.sql)은 초기 설치와 분리된 유지보수이며 앱이 자동 실행하지 않는다. 원본 SQL 002~010과 기존 55/59단계 계획은 보존한다.
+
+새 V2 분석에는 선택형 012의 근거 묶음 저장도 제공한다. 원문·개별 로그 ID·전체 fields·전송 내용은 유지하고 물리 행 수를 줄인다. 012는 기존 EVIDENCE 행을 자동 변환하지 않으며, 적용 이후에는 012 호환 reader를 유지한다. SQL 011과 60단계 계획도 보존한다.
+
+전체 용량 목표는 VWP/OA private·양방향 큐 네 테이블의 물리 합이다. 선택형 013은 기존 공유 큐의 전체 source packet을 두 private 참조가 재사용한다. ACK 이후에도 본문을 유지하고 FK로 참조된 큐 행 삭제를 막는다. 012와 62단계 계획도 보존하며, 기존 데이터 자동 변환/삭제·이전 reader로의 복귀는 제공하지 않는다.
 OA에 `WS_REVIEW`, `WS_REVIEW_EVENT`, `WS_REVIEW_PROPOSAL`을 추가하며, 사례/제안은 state/version/갱신 시각을 고정한다.
 `007`은 `WS_CLUSTER`, `WS_CLUSTER_EVENT`, `WS_GROUP_REVIEW`, `WS_GROUP_REVIEW_EVENT`, `WS_GROUP_REVIEW_PROPOSAL`을 추가한다.
 새 행은 원본 보고서/버전과 분류 event를 FK로 참조한다. 분류/판정 event·제안은 추가 전용이며 head만 갱신한다.
@@ -136,7 +144,7 @@ owner/DBA가 작업 중지·백업/복구·잠금 시간을 검토한 뒤 파일
   같은 분석의 parent 존재는 FK로 확인하지만 parent 종류·unit 일치·파일/그룹 연결은 앱 검증이다.
 - VWP `payload`에는 불변 입력/규칙/식별 필드/위치/개별 판정을 넣고, `state`에는 가변 checkpoint·집계를 넣는다.
   RUN/UNIT/GROUP/CLUSTER_JOB의 state를 바꾼다. FILE/EVIDENCE/CLUSTER_PART의 state/version/갱신 시각은 고정한다.
-  현재 구현은 모든 원문을 raw_bytes에 저장한다. DB 원문 보관이 불허되면 배포를 중단하고
+  기본/legacy는 원문을 raw_bytes에 저장한다. 선택형 [011](PAYLOAD_STORAGE.md)은 V2 근거 원문도 검증된 압축 본문에 보존하고 읽을 때 동일 byte로 복원한다. DB 원문 보관이 불허되면 배포를 중단하고
   승인된 VWP 파일 위치/해시 참조 어댑터를 추가해야 한다. DDL의 local_evidence_ref만으로 지원되는 것은 아니다.
 - OA 수신본의 state에 `current_review_revision`을 저장한다. 초기 개정 0의 REVIEW_EVENT와 함께 만든다.
   REVIEW_EVENT는 한 개정의 결정 변경 목록·검토자·사유를 payload에 담는다. 개별 단위는 REVIEW_UNIT 행으로 유지한다.

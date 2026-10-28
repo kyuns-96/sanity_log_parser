@@ -2,6 +2,7 @@
 from common.sanity_common import canonical_json, digest
 from common.sanity_db import json_value
 from common.sanity_submission import check
+from common.sanity_shared_sources import SharedSourcePackets
 
 MAX_CONTEXT_BYTES = 256 * 1024 * 1024
 MAX_CONTEXT_RECORDS = 1000000
@@ -25,12 +26,12 @@ def delivery_status(db, header):
 
 
 def part(db, header, ref, index):
-    row = db.execute("SELECT payload,workspace_project_ref,workspace_block_ref FROM {oa} "
+    row = db.execute("SELECT * FROM {oa} "
         "WHERE record_type='WS_SOURCE_PART' AND workspace_key=%s",(ref['id'],)).fetchone()
     from oa.sanity_workspace import record_id
     check(row and row['workspace_project_ref']==record_id('WS_PROJECT',header['project_id'])
           and row['workspace_block_ref']==record_id('WS_BLOCK',header['block_id']),'STATE_CORRUPT')
-    value = row['payload']
+    value = SharedSourcePackets(db).restore_part(row)['payload']
     check(value['report_id']==header['id'] and value['part_index']==index and digest(value)==ref['sha256']
           and len(value['records'])==ref['count'],'STATE_CORRUPT')
     return value['records']

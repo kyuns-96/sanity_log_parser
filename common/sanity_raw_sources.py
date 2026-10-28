@@ -28,13 +28,21 @@ KINDS = ('RAW_SUBMISSION','RAW_FILE','RAW_CHUNK')
 
 def require_raw_schema(db):
     check(db.side == 'vwp','FORBIDDEN')
-    names = {'sanity_vwp_kind_v4','sanity_vwp_status_v4','sanity_vwp_submission_parent_v4',
-             'sanity_vwp_raw_scope_v4','sanity_vwp_raw_payload_v4','sanity_vwp_raw_immutable_v4'}
+    base = {'sanity_vwp_submission_parent_v4','sanity_vwp_raw_scope_v4',
+            'sanity_vwp_raw_payload_v4','sanity_vwp_raw_immutable_v4'}
+    old = base | {'sanity_vwp_kind_v4','sanity_vwp_status_v4'}
+    paged = base | {'sanity_vwp_kind_v5','sanity_vwp_status_v5',
+                    'sanity_vwp_payload_storage_v1','sanity_vwp_source_page_v1'}
+    names = old | paged
     rows = db.conn.execute("SELECT c.conname FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid "
         "JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=%s AND t.relname='sanity_vwp_data' "
         "AND c.contype='c' AND c.convalidated AND NOT c.connoinherit AND c.conname=ANY(%s)",
         (db.schema,sorted(names))).fetchall()
-    check({r['conname'] for r in rows} == names,'RAW_SOURCE_SCHEMA_REQUIRED','DBA migration 010 is required')
+    actual = {r['conname'] for r in rows}
+    check(old <= actual or paged <= actual,'RAW_SOURCE_SCHEMA_REQUIRED','DBA migration 010 is required')
+    from common.sanity_evidence_pages import EvidencePageStorage
+    pages = EvidencePageStorage(db)
+    check(not pages.enabled or paged <= actual, 'RAW_SOURCE_SCHEMA_REQUIRED')
     rows = db.conn.execute("SELECT i.indisunique,i.indisvalid,i.indisready,i.indislive,i.indimmediate,"
         "pg_get_expr(i.indpred,i.indrelid) AS predicate,"
         "ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY k(attnum,position) "

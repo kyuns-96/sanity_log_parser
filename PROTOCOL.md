@@ -381,6 +381,10 @@ Older SAME_FINDING bundles without a declaration must be regenerated, not implic
 
 ## PostgreSQL 저장·전달 계약
 
+이 절의 행별 EVIDENCE·그룹 연결·ANALYSIS_BUNDLE은 legacy 저장/전달 계약이다. V2 source는 선택형 [012 근거 묶음](db/EVIDENCE_PAGES.md)을 사용하면 `SOURCE_EVIDENCE_PAGE`의 검증된 본문에서 모든 개별 로그를 복원한다. 물리 행 수와 논리 로그 수를 구분하며, 원본 RAW·record ID·원문/전체 fields·V2 SOURCE_PART/COMMIT/RECEIPT·OA/사람의 판정 계약은 유지한다. 012가 없거나 이미 행별 근거가 있는 분석은 기존 형식을 사용한다.
+
+선택형 [013 공유 저장](db/TOTAL_STORAGE.md)은 같은 마스킹된 SOURCE_PART의 불변 본문을 기존 공유 큐 한 곳에 보존하고 VWP/OA private에서 FK로 참조한다. 논리 packet JSON·message ID·scope·기존 권한을 유지한다. `__source_commit_gate__=true`인 준비된 part는 같은 제출/내용/collection의 최종 COMMIT가 있어야 claim되며, 명시적 message ID도 우회하지 않는다. ACK 후에도 참조된 큐 행을 보존한다. 원본/private 원문은 공유 마스킹본으로 대체하지 않는다.
+
 VWP private `sanity_vwp_data`의 RUN/UNIT/FILE/GROUP/EVIDENCE는 종류별 별도 행이다.
 모든 PASS/FAIL/UNKNOWN 원문과 판정·위치·그룹 연결을 EVIDENCE에 보존한다.
 입력 계약에서 결정한 UUID가 analysis_id이며 같은 분석의 동시 실행은 advisory lock으로 차단한다.
