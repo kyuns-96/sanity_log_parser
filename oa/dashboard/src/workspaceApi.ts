@@ -29,7 +29,7 @@ export type ClusterEvent = { id: string; report_id: string; revision: number; ac
 export type PipelineView = { current: ClusterEvent | null; revision: number; ready: boolean; can_edit: boolean; stale: boolean; history: ClusterEvent[]; case_count: number; reusable_count: number; summary: PipelineSummary | null; corporate_ai_connected: boolean; record_count: number }
 export type ClusterBrief = Omit<ClusterEvent, 'groups'> & { group_count: number; record_count: number; rationale_counts: Record<RationaleStatus, number> }
 export type PipelineTask = { id: string; status: 'PENDING' | 'RUNNING' | 'FAILED' | 'STALE' | 'CANCELLED' | 'COMPLETED'; record_count: number; processed: number; next_chunk: number; error: string | null; chunks: { index: number; start: number; stop: number; record_count: number; input_sha256: string; status: string }[] }
-export type CodexJob = { id: string; status: 'PENDING' | 'RUNNING' | 'RESULT_READY' | 'COMPLETED' | 'FAILED' | 'STALE' | 'UNKNOWN' | 'CANCELLED' | 'SAVE_FAILED'; error: string | null; model: string; created_at: string; finished_at?: string; expected_revision: number; input_case_count: number; event_id?: string }
+export type CodexJob = { id: string; status: 'PENDING' | 'RUNNING' | 'RESULT_READY' | 'COMPLETED' | 'FAILED' | 'STALE' | 'UNKNOWN' | 'CANCELLED' | 'SAVE_FAILED'; error: string | null; model: string; created_at: string; finished_at?: string; expected_revision: number; input_case_count: number; event_id?: string; progress?: { mode: 'BATCH'; phase: 'CLASSIFY' | 'MERGE'; completed_records: number; total_records: number; completed_calls: number; round: number; waiting: boolean } }
 export type CodexCapability = { available: boolean; supported: boolean; enabled: boolean; model: string; remaining: number | null; job: CodexJob | null; provider?: string; synthetic_only?: boolean; credential_required?: boolean; credential_ready?: boolean; credential_error?: string | null }
 export type WorkbenchView = { report: WorkspaceReport; version: WorkspaceVersion; current: ClusterBrief | null; revision: number; ready: boolean; can_edit: boolean; stale: boolean; task: PipelineTask | null; ai?: CodexCapability; record_count: number; raw_line_count: number; source_sha256: string; case_count: number; reusable_count: number; removed_count: number; corporate_ai_connected: boolean; summary: { confirmed: boolean; total: number; reviewed: number; pending: number; complete: boolean; rationale_counts: Record<RationaleStatus, number>; counts: Record<string, number> } }
 export type GroupBrief = { id: string; ordinal?: number; label: string; record_count: number; status: string; revision: number; example: Record<string, unknown>; rationale: { status: RationaleStatus; reason: string; reason_truncated: boolean; reason_omitted_chars: number; source: string | null; evidence_count: number } }
@@ -104,6 +104,12 @@ export const workspaceApiBase = () => productionWorkbench() ? '/api/workbench' :
 export const aiJobActive = (job?: CodexJob | null) => !!job && ['PENDING', 'RUNNING', 'RESULT_READY'].includes(job.status)
 export const aiJobMessage = (job: CodexJob) => {
   if (job.status === 'PENDING') return 'AI 작업을 등록했습니다. 처리 시작을 기다리고 있습니다.'
+  if (job.status === 'RUNNING' && job.progress) {
+    const p = job.progress
+    return p.phase === 'CLASSIFY'
+      ? `AI가 전체 로그를 나누어 검토하고 있습니다. ${p.completed_records.toLocaleString()} / ${p.total_records.toLocaleString()}건 완료. 전체 검증 후 분류 초안을 공개합니다.`
+      : `전체 ${p.total_records.toLocaleString()}건의 개별 분류를 마치고 그룹의 의미·조건을 비교하고 있습니다. 통합과 전체 배정 검증이 남아 있습니다.`
+  }
   if (job.status === 'RUNNING') return 'AI가 전체 로그와 관련 확정 사례를 검토하고 있습니다.'
   if (job.status === 'RESULT_READY') return 'AI 응답의 근거와 현재 개정을 검증하고 있습니다.'
   if (job.status === 'UNKNOWN') return 'AI 호출 결과가 불명확합니다. 자동 재호출하지 않습니다. 운영 담당자에게 작업 상태를 확인해 주세요.'

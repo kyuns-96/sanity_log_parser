@@ -39,7 +39,7 @@ def main(argv=None):
                 print("status=" + result["status"] + (" code=" + result["error"] if result.get("error") else ""), flush=True)
             if args.once:
                 return 0
-            if result is None or result["status"] == "RUNNING":
+            if result is None or result["status"] == "RUNNING" and result.get('progress',{}).get('waiting',True):
                 time.sleep(args.interval)
     except ReviewError as error:
         print("code=" + error.code, file=sys.stderr)

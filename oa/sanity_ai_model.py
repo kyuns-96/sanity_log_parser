@@ -25,6 +25,7 @@ from common.sanity_clustering import check
 from common.sanity_clustering_advice import evidence, identity_fields_valid, validate_clustering_advice
 from common.sanity_common import ReviewError, _decode_json, canonical_json, digest
 from common.sanity_privacy import SecretGuard
+from oa.sanity_ai_budget import BatchSettings, BATCH_PROMPT_VERSION
 
 
 CLUSTER_PROMPT_VERSION = "oa-semantic-clustering-v3"
@@ -133,8 +134,12 @@ class OASettings:
     client_version: str = field(default="", repr=False)
     session_mode: str = field(default="disabled", repr=False)
     session_id: str = field(default="", repr=False)
+    batch: BatchSettings = field(default_factory=BatchSettings)
 
     def __post_init__(self):
+        check(isinstance(self.batch, BatchSettings), 'AI_BATCH_CONFIG')
+        if self.batch.enabled:
+            check((self.api == 'responses') == (self.batch.output_parameter == 'max_output_tokens'), 'AI_BATCH_CONFIG')
         valid = (type(self.enabled) is bool and type(self.json_mode) is bool
                  and self.token_source in ("server", "user")
                  and self.api in ("chat_completions", "responses")
@@ -210,7 +215,7 @@ class OASettings:
                    client_name=env.get("SANITY_OA_AI_CLIENT_NAME", ""),
                    client_version=env.get("SANITY_OA_AI_CLIENT_VERSION", ""),
                    session_mode=env.get("SANITY_OA_AI_SESSION_MODE", "disabled"),
-                   session_id=env.get("SANITY_OA_AI_SESSION_ID", ""))
+                   session_id=env.get("SANITY_OA_AI_SESSION_ID", ""), batch=BatchSettings.from_env(env))
 
 
 def _strict_json(raw):
@@ -297,6 +302,11 @@ class OAAdvisor:
                   "json_mode": settings.json_mode, "timeout": settings.timeout,
                   "max_input_bytes": settings.max_input_bytes, "max_output_bytes": settings.max_output_bytes,
                   "prompt_versions": {"clustering": CLUSTER_PROMPT_VERSION, "review": REVIEW_PROMPT_VERSION}}
+        if settings.batch.enabled:
+            from oa.sanity_ai_budget import TokenBudget
+            TokenBudget(settings.batch)  # Recheck the actual file, not just its configured hash.
+            public['batch'] = settings.batch.public()
+            public['prompt_versions']['batch_clustering'] = BATCH_PROMPT_VERSION
         # Preserve existing pins without a gateway. Credentials may rotate;
         # routing/session policy changes must invalidate queued model work.
         config = {**public, "endpoint": settings.endpoint}
@@ -356,13 +366,17 @@ class OAAdvisor:
             report["records"] = context["report"]["records"]
         return {**{key: value for key, value in context.items() if not key.startswith("_")}, "report": report}
 
-    def _call(self, packet, instruction, prompt_version, attempt):
+    def _request(self, packet, instruction, *, budget=None):
         settings = self.settings
+        input_tokens = None
         check(bool(settings.token), "AI_USER_TOKEN_REQUIRED", "Register a personal AI token")
         self._guard.ensure_public(packet)
         messages = [{"role": "system", "content": instruction},
                     {"role": "user", "content": canonical_json(packet).decode("utf-8")}]
         body = {"model": settings.model, "stream": False}
+        if budget is not None:
+            input_tokens = budget.check(packet, instruction)
+            body[budget.settings.output_parameter] = budget.settings.output_tokens
         if settings.api == "chat_completions":
             body["messages"] = messages
             if settings.json_mode:
@@ -382,6 +396,12 @@ class OAAdvisor:
         data = canonical_json(body)
         check(len(data) <= settings.max_input_bytes, "AI_INPUT_LIMIT",
               "Complete OA AI input exceeds the configured bound; no records were dropped")
+        return data, headers, input_tokens
+
+    def _call(self, packet, instruction, prompt_version, attempt, *, budget=None, prepared_request=None):
+        settings = self.settings
+        data, headers, input_tokens = (self._request(packet,instruction,budget=budget)
+                                      if prepared_request is None else prepared_request)
         # HTTP debug logs may otherwise include URLs and credential headers.
         for name in ("httpx", "httpcore", *list(logging.Logger.manager.loggerDict)):
             if name in ("httpx", "httpcore") or name.startswith(("httpx.", "httpcore.")):
@@ -428,6 +448,10 @@ class OAAdvisor:
                     "response_sha256": hashlib.sha256(bytes(raw)).hexdigest(),
                     "output_sha256": digest(value), "input_bytes": len(data), "output_bytes": len(raw),
                     "usage": _usage(envelope.get("usage")), "model_called": True}
+        if budget is not None:
+            metadata['token_budget'] = {'input_units': input_tokens, 'counter': budget.settings.tokenizer_mode,
+                'overhead_tokens': budget.settings.overhead_tokens, 'output_tokens': budget.settings.output_tokens,
+                'tokenizer_sha256': budget.settings.tokenizer_sha256}
         self._guard.ensure_public(value)
         self._guard.ensure_public(metadata)
         return value, metadata

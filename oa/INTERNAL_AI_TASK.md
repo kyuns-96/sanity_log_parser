@@ -8,6 +8,8 @@ OA API·화면은 `oa/`, 회사 구현은 `oa/integration/`에 있다. Git 저�
 
 원천 로그의 복원 캐시·묶음 조회와 합성 측정/현장 확인 범위는 [읽기 성능 안내](SOURCE_READ_PERFORMANCE.md)를 따른다. 추가 DDL은 없으며 공통 캐시·비밀 검사·권한 코드를 현장 AI가 직접 수정하는 권한은 부여하지 않는다.
 
+선택형 [대용량 분류](BATCHED_CLUSTERING.md)는 지원된 비공개 배치 설정과 확인한 모델/게이트웨이 한도로 활성화한다. UTF-8 byte 추정과 실제 tokenizer 계수를 구분하고, 실제 판단 품질을 현장에서 검증한다. 큰 확정 그룹의 판정·보존 본문 자체의 분할은 미지원이며 공통 코드/보호 수정 허용 범위는 그대로다.
+
 ## 1. 먼저 읽을 문서
 
 [AGENTS.md](../AGENTS.md) → [INTERNAL_AI_GUIDE.md](../INTERNAL_AI_GUIDE.md) 전체 → [통합 인계 명세](../INTERNAL_AI_HANDOFF.md) → 이 문서 → [AI_RUNTIME.md](AI_RUNTIME.md) → [SSO_INTEGRATION.md](SSO_INTEGRATION.md) → [DB 연결 인계](../db/CONNECTION_HANDOFF.md)를 읽는다. 업무 범위/담당/PoR 기준은 [요구사항](../requirement.md)의 15·17·18절을 따른다.

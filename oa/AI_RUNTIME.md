@@ -2,7 +2,7 @@
 
 최우선 목표는 **AI가 report A를 분류·판정하고, 사람이 정정·확정한 근거를 다음 report B의 판단에 사용하는 것**이다. [AI 판단 설계](../AI_DECISION_DESIGN.md)의 첫 순환을 실행하는 공통 코드를 제공한다. 사내 API·실제 report에 대한 호출 성공과 판단 품질은 사내에서 별도로 검증한다.
 
-이번 실행 범위는 **한 번의 모델 입력에 전체 대상이 들어가는 report 또는 확정 그룹**이다. 평균 10,000건·100,000건 이상을 위한 모델 분할·조각 간 그룹 통합은 COMMON-05 후속 작업이다. 입력/출력 한도를 넘으면 명시적으로 실패하며, 일부 로그를 빼거나 참고 엔진으로 대체해 완료하지 않는다.
+기본 실행은 **한 번의 모델 입력에 전체 대상이 들어가는 report 또는 확정 그룹**이다. 선택형 [전체 로그 배치 분류](BATCHED_CLUSTERING.md)는 새 분류 작업을 예산별로 나누고 중간 그룹을 통합해 전체 partition 검증 후 공개한다. 기존 단일 호출 이력은 유지한다. 대형 그룹 판정과 보존 본문 자체의 분할은 COMMON-05 후속이며, 일부 로그를 빼거나 참고 엔진으로 대체해 완료하지 않는다.
 
 ## 1. 동작과 서버 역할
 
@@ -189,4 +189,4 @@ OA 담당 개발 AI는 위 지원 환경변수, 승인된 비공개 기준 파�
 .venv/bin/python -m unittest tests.test_ai_gateway tests.test_ai_model tests.test_ai_criteria tests.test_ai_workbench_api tests.test_ai_credentials.CredentialConfigurationTests tests.test_ai_credentials.CredentialApiTests -v
 ```
 
-일상 검증은 변경 전용 시험과 `quick`을 사용하고 실제 실행 수·skip을 보고한다. 현재 한도를 넘는 전체 모델 처리와 계층적 조각 통합은 COMMON-05 미완성으로 기록한다. 오류·보호 파일 변경 필요는 [비식별 문의 절차](../INTERNAL_AI_GUIDE.md#6-디버깅이-필요하면-codex에게-문의)로 전달한다. 실제 URL·토큰·report·기준 원문·사람 계정은 외부 자료에 포함하지 않는다.
+일상 검증은 변경 전용 시험과 `quick`을 사용하고 실제 실행 수·skip을 보고한다. 선택형 분류 배치의 범위와 남은 대형 그룹 판정/보존 본문 분할은 [배치 계약](BATCHED_CLUSTERING.md)으로 구분한다. 분류·대용량 계약 변경은 full과 10만 건 검증도 수행한다. 오류·보호 파일 변경 필요는 [비식별 문의 절차](../INTERNAL_AI_GUIDE.md#6-디버깅이-필요하면-codex에게-문의)로 전달한다. 실제 URL·토큰·report·기준 원문·사람 계정은 외부 자료에 포함하지 않는다.
