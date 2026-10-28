@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
-def _benchmark(rows, source_bytes, output, *, shared=True, preserved=False, preserved_text=False):
+def _benchmark(rows, source_bytes, output, *, shared=True, preserved=False, preserved_text=False, measure_reads=False):
     from common.sanity_common import canonical_json, unpack_json
     from common.sanity_db import Database, Queue
     from common.sanity_privacy import SecretGuard
@@ -111,6 +111,11 @@ def _benchmark(rows, source_bytes, output, *, shared=True, preserved=False, pres
                     raise RuntimeError('Exact original bytes changed')
             headers = oa.execute("SELECT payload FROM {oa} WHERE record_type='WS_REPORT' "
                                  "AND payload->>'source_storage'='PARTS_V2' ORDER BY workspace_key").fetchall()
+            read_performance = None
+            if measure_reads:
+                from db.tests.benchmark_source_reads import measure
+                target = next(row['payload'] for row in headers if row['payload']['source']['layout'] == 'POST')
+                read_performance = measure(oa, target)
             total_records, hashes = 0, []
             for row in headers:
                 report = row['payload']
@@ -159,6 +164,7 @@ def _benchmark(rows, source_bytes, output, *, shared=True, preserved=False, pres
                   'owner_repack_used': False}
         if preserved and (report['all_original_bytes'] != requested_bytes or not report['preserved_metadata_verified']):
             raise RuntimeError('Preserved source budget or metadata changed')
+        if measure_reads: report['read_performance'] = read_performance
         with output.open('x') as stream:
             json.dump(report, stream, indent=2); stream.write('\n')
     finally:
@@ -174,6 +180,7 @@ def main(argv=None):
     parser.add_argument('--preserved-sources', action='store_true',
                         help='plan 3: use 30%% of source bytes for full.rpt/SDC; budget includes all original files')
     parser.add_argument('--preserved-text', action='store_true', help='plan 4: also verify all masked text on OA')
+    parser.add_argument('--measure-reads', action='store_true', help='compare exact legacy, cold and warm complete hydration')
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args(argv)
     args.preserved_sources = args.preserved_sources or args.preserved_text
@@ -190,10 +197,10 @@ def main(argv=None):
         result = directory/'result.json'
         code = ('from pathlib import Path;from db.tests.benchmark_total_storage import _benchmark;import sys;'
                 '_benchmark(int(sys.argv[1]),int(sys.argv[2]),Path(sys.argv[3]),shared=sys.argv[4]=="shared",'
-                'preserved=sys.argv[5]=="True",preserved_text=sys.argv[6]=="True")')
+                'preserved=sys.argv[5]=="True",preserved_text=sys.argv[6]=="True",measure_reads=sys.argv[7]=="True")')
         with (directory/'benchmark.log').open('wb') as log:
             done = subprocess.run([sys.executable,'-c',code,str(args.rows),str(args.source_bytes),str(result),args.layout,
-                                   str(args.preserved_sources),str(args.preserved_text)],
+                                   str(args.preserved_sources),str(args.preserved_text),str(args.measure_reads)],
                                   cwd=source,env=database.test_environment(),stdout=log,stderr=subprocess.STDOUT)
         if done.returncode:
             print('status=FAILED artifact_directory='+str(directory)); return done.returncode
