@@ -14,18 +14,23 @@
   기존 두 보안 테스트의 사내 독립 Linux 검증은 대기이며 운영 검사/기대값을 유지한다.
 - 최신 **quick 348건 실행: 341 통과·실패 5·오류 2·skip 0**. 실패는 PostgreSQL 18
   포털 카탈로그 비교, 오류는 기존 Termux 보안 fixture 항목이다. 전체 성공으로
-  표시하지 않는다. full은 실행 중이며 최종 수치는 종료 후 기록한다.
+  표시하지 않는다. 최신 `run_tests.py --profile full`은 **894건 선택·실행: 883 통과·
+  실패 9·오류 2·skip 0**으로 종료했다. full의 실패 9건도 PG18 카탈로그 비교이며
+  오류 2건은 같은 보안 fixture다. 새 10만 건 배치 입력/partition, 기존 10만 건
+  화면/근거·10만 개 고유 그룹 및 1만 건 사례 재사용·재개·편집은 통과했다.
+  현재 Python 파일과 full snapshot이 같음을 확인했고 fixture를 종료했다.
 - 14MB POST·49,000건 + PRE 224 bytes·4건 합성 제출에서 실제 mock 배치 worker까지
   실행한 네 테이블의 TOAST/index 포함 합계가 **19,357,696 bytes**로 20MB 목표 안에
   들어왔다. 원본 byte·52개 패킷·전체 VWP/OA/leaf 입력 hash·최종 partition이 일치했다.
   보존 본문 없는 기존 측정 구성이며 AI 감사와 최종 제안을 포함한다. mock 호출 442회,
-  leaf 419회, 이력 1,337행, worker 448단계다. 삭제/repack은 사용하지 않았다.
+  leaf 419회, 자식 이력 1,337행, worker 448단계다. 삭제/repack은 사용하지 않았다.
 - 이번 수치는 PG18.6의 실제 합성 측정이다. 과거 PG12.1의 20.66MB와 환경 차이를
   유지하며 사내 자료의 용량/성능·의미 판단 품질로 확대 해석하지 않는다. 측정 fixture는
   종료했고 결과를 `artifacts/oa-batch-followup/optimized-pg18/`에 보관했다.
 - 삭제된 서버의 이전 full 결과는 미확인이다. 사용자 지시에 따라 비공개 문의 폴더와
   OA 후속 답변을 새로 작성하고 기존 Git 제외 규칙을 확인했다. 질문 원문/이전 답변의
-  복원으로 표시하지 않는다. main 병합·운영 배포는 하지 않았다.
+  복원으로 표시하지 않는다. [Draft PR #29](https://github.com/kyuns-96/sanity_log_parser/pull/29)에
+  검토 가능한 코드와 실제 결과를 제공했으며 main 병합·운영 배포는 하지 않았다.
 
 ## 2026-10-28 수집 전용 parser와 OA 검토 연결
 
