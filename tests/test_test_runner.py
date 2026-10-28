@@ -27,6 +27,24 @@ class TestRunnerTests(unittest.TestCase):
             self.assertIn(name, full)
             self.assertNotIn(name, quick)
         self.assertFalse(any("_FailedTest" in name for name in full + quick))
+        for name in (
+            "tests.test_submission_tokenless.TokenlessSubmissionTests.test_real_tls_without_token_reaches_pending_then_sso_owner_publishes",
+            "tests.test_shared_source_packets.SharedSourceSubmissionFlows.test_tokenless_sso_owner_confirmation_keeps_full_shared_evidence",
+            "tests.test_shared_source_packets.SharedSourceSubmissionFlows.test_collection_only_owner_intake_and_human_review_with_shared_bodies",
+            "tests.test_shared_source_packets.SharedSourceSubmissionFlows.test_collection_only_marker_tampering_is_rejected_with_shared_bodies",
+        ):
+            self.assertIn(name, quick)
+        for name in (
+            "tests.test_payload_storage.CompactSubmissionFlows.test_tokenless_tls_and_sso_owner_confirmation_with_compressed_storage",
+            "tests.test_evidence_pages.PagedSubmissionFlows.test_tokenless_tls_and_sso_owner_confirmation_with_pages",
+            "tests.test_raw_sources.RawSourcesDatabaseTests.test_real_tls_db_originals_reach_oa_and_receipts_survive_without_server_files",
+            "tests.test_submission_https_database.HttpsSubmissionDatabaseTests.test_real_tls_upload_reaches_oa_and_returns_its_verified_receipt_without_shared_storage",
+            "tests.test_submission_https_database.HttpsSubmissionDatabaseTests.test_worker_resumes_partial_analysis_from_the_private_http_archive_after_restart",
+            "tests.test_submission_tokenless.TokenlessSubmissionTests.test_collection_only_runs_owner_intake_ai_and_human_review_without_changing_source",
+            "tests.test_submission_tokenless.TokenlessSubmissionTests.test_collection_only_receiver_rejects_scope_producer_and_count_tampering",
+        ):
+            self.assertIn(name, full)
+            self.assertNotIn(name, quick)
 
     def test_default_quick_records_success_with_its_actual_scope(self):
         case = unittest.FunctionTestCase(lambda: None)

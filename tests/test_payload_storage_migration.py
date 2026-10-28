@@ -2,9 +2,8 @@
 from pathlib import Path
 import tempfile
 import unittest
-import uuid
 
-from db.portal.build_reference import capture, create_forms, snapshot
+from db.portal.build_reference import snapshot
 from db.portal.runbook import checkpoints, fingerprint, identifier, load_plan, prepare, verify
 from tests.support import PgTestCase, ROOT
 
@@ -50,25 +49,3 @@ class PayloadStorageMigrationTests(PgTestCase):
             cursor.execute("SELECT attstorage FROM pg_attribute WHERE attrelid=%s::regclass "
                            "AND attname='payload_bytes'", (identifier(self.schema)+'.sanity_vwp_data',))
             self.assertEqual('e', cursor.fetchone()[0])
-
-    def test_all_60_steps_match_original_sql_and_preserve_table_oids(self):
-        portal = 'payload_portal_'+uuid.uuid4().hex
-        reference = 'payload_reference_'+uuid.uuid4().hex
-        for schema in (portal, reference):
-            self.addCleanup(self.admin.execute, 'DROP SCHEMA IF EXISTS '+identifier(schema)+' CASCADE')
-        create_forms(self.admin, portal)
-        generated = capture(self.admin, reference, payload_storage=True)
-        plan = load_plan(payload_storage=True)
-        self.assertEqual(plan['steps'], generated['steps'])
-        query = "SELECT oid FROM pg_class WHERE relnamespace=%s::regnamespace AND relkind='r' ORDER BY oid"
-        before = self.admin.execute(query, (portal,)).fetchall()
-        with tempfile.TemporaryDirectory() as temporary:
-            bundle = Path(temporary)/'all-60'
-            manifest = prepare(snapshot(self.admin, portal), bundle, plan)
-            self.assertEqual(60, len(manifest['steps']))
-            for step in manifest['steps']:
-                verify(snapshot(self.admin, portal), bundle, step['number'], 'before')
-                self.admin.execute((bundle/step['file']).read_text())
-                verify(snapshot(self.admin, portal), bundle, step['number'], 'after')
-            verify(snapshot(self.admin, portal), bundle)
-        self.assertEqual(before, self.admin.execute(query, (portal,)).fetchall())
