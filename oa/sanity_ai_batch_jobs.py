@@ -158,7 +158,7 @@ def public(service,event):
             return value
         raise
     state=step['state'] if step else {}
-    value['progress']={'mode':'BATCH','phase':('CLASSIFY' if state.get('round',0)==0 else 'MERGE'),
+    value['progress']={'mode':'BATCH','phase':state.get('phase', 'CLASSIFY' if state.get('round',0)==0 else 'MERGE'),
         'completed_records':state.get('records',0),'total_records':event['data']['batch'].get('total_records',0),
         'completed_calls':state.get('calls',0),'round':state.get('round',0),
         'waiting':bool(step and step['status']=='RESERVED')}
@@ -169,19 +169,42 @@ def public(service,event):
     return value
 
 
+def _model(advisor,event,context,cases,criteria):
+    if event['data']['batch']['version']==2:
+        from oa.sanity_ai_evidence_batch import EvidenceBatchModel
+        return EvidenceBatchModel(advisor,context,cases,event['data']['pins']['identity_fields'],criteria)
+    return BatchModel(advisor,context,cases,event['data']['pins']['identity_fields'])
+
+
+def _record_plan(model):
+    kind='REVIEW_LEAF' if getattr(model,'review',False) else 'LEAF'
+    return [{'kind':kind,**r} for r in model.leaf_plan()]
+
+
+def _bind_preserved(model,ledger,state):
+    if state.get('preserved_ref'):
+        model.bind_preserved(ledger.nodes([state['preserved_ref']])[0])
+
+
 def _prepare(service,event,advisor,now):
     """Inside a short authorization transaction. Never performs HTTP."""
     from oa.sanity_ai_jobs import _db_now
-    _,context,cases,_=service._inputs(event)
+    _,context,cases,criteria=service._inputs(event)
     revision=None
     if service._personal_tokens():
         token,revision=service._user_token(event['data']['command']['user_id'])
         advisor=advisor.with_user_token(token)
-    model=BatchModel(advisor,context,cases,event['data']['pins']['identity_fields'])
+    model=_model(advisor,event,context,cases,criteria)
     ledger=Ledger(service,event)
     if event['status']=='PENDING':
-        ranges=model.leaf_plan()  # All leaves preflight, including an oversized last record.
-        plan=ledger.plans(0,[{'kind':'LEAF',**r} for r in ranges],len(context['report']['records']))
+        # Catch a fundamentally oversized record/criterion before paying for
+        # text analysis. The final record plan also includes its actual summary.
+        if getattr(model,'segments',[]): model.leaf_plan()
+        text_plan=model.text_plan() if hasattr(model,'text_plan') else []
+        # Every text fragment is preflighted before the first HTTP call. Record
+        # leaves are preflighted together after the actual text analysis fits.
+        ranges=text_plan or _record_plan(model)
+        plan=ledger.plans(0,ranges,len(text_plan) or len(model.records))
         started=now or _db_now(service.db)
         batch={**event['data']['batch'],'total_records':len(model.records),'leaf_count':len(ranges),
                'plan':plan,'credential_revision':revision}
@@ -189,8 +212,29 @@ def _prepare(service,event,advisor,now):
             'model_attempted':False,'model_called':False,'started_at':started.isoformat(),
             'deadline':(started+timedelta(seconds=model.settings.deadline_seconds)).isoformat()},now=started)
         ledger=Ledger(service,event)
-        ledger.step(None,None,'READY',{'round':0,'index':0,'records':0,'calls':0,'nodes':0,'stable':0,'actual_model':None})
+        state={'round':0,'index':0,'records':0,'calls':0,'nodes':0,'stable':0,'actual_model':None}
+        if event['data']['batch']['version']==2:
+            state.update(phase='TEXT' if text_plan else 'REVIEW' if model.review else 'CLASSIFY',stage_round=0)
+        ledger.step(None,None,'READY',state)
+    _bind_preserved(model,ledger,ledger.last()[0]['state'])
     return event,ledger,model,revision
+
+
+def _text_round(ledger,model,step,ref,nodes,node_refs):
+    state=step['state'];number=state['round']+1
+    if len(nodes)==1:
+        model.bind_preserved(nodes[0])
+        descriptors=_record_plan(model)
+        ledger.plans(number,descriptors,len(model.records))
+        ledger.step(step,ref,'READY',{**state,'round':number,'index':0,'nodes':0,'stage_round':0,
+            'phase':'REVIEW' if model.review else 'CLASSIFY','preserved_ref':node_refs[0]})
+    else:
+        check(state['stage_round']<model.settings.max_rounds,'AI_BATCH_LIMIT')
+        groups=model.bounded_groups(nodes,text=True);by_id={r['id']:r for r in node_refs}
+        descriptors=[{'kind':'TEXT_MERGE','nodes':g,'node_refs':[by_id[k] for k in g]} for g in groups]
+        ledger.plans(number,descriptors,len(nodes))
+        ledger.step(step,ref,'READY',{**state,'round':number,'index':0,'nodes':0,
+                                    'stage_round':state['stage_round']+1,'phase':'TEXT_MERGE'})
 
 
 def _finish_round(service,event,ledger,model,step,ref):
@@ -198,13 +242,18 @@ def _finish_round(service,event,ledger,model,step,ref):
     nodes,node_refs=ledger.completed_round(round_number)
     manifest=ledger.round(round_number)
     check(nodes and len(nodes)==state['nodes'],'AI_BATCH_CORRUPT')
-    stable=state['stable']+1 if round_number>0 and len(nodes)==manifest['input_nodes'] else 0
-    if len(nodes)==1 or stable>=2:
+    if state.get('phase') in ('TEXT','TEXT_MERGE'):
+        _text_round(ledger,model,step,ref,nodes,node_refs)
+        return event
+    stage_round=state.get('stage_round',round_number)
+    stable=state['stable']+1 if stage_round>0 and len(nodes)==manifest['input_nodes'] else 0
+    review=getattr(model,'review',False)
+    if len(nodes)==1 or (not review and stable>=2):
         check(state['records']==len(model.records),'INVALID_PARTITION')
         advice,citations=model.advice(nodes)  # Existing full-original partition and rationales.
         chain=ledger.audit()
         metadata={**model.advisor.describe(),'model':state['actual_model'],'requested_model':model.advisor.settings.model,
-            'prompt_version':VERSION,'model_called':True,'input_sha256':digest([event['data']['batch']['plan'],chain]),
+            'prompt_version':getattr(model,'version',VERSION),'model_called':True,'input_sha256':digest([event['data']['batch']['plan'],chain]),
             'input_hash_kind':'BATCH_MANIFEST','output_sha256':digest(advice),'batch_receipt':{
                 'version':1,'root':chain,'calls':state['calls'],'records':state['records'],
                 'plan':event['data']['batch']['plan']}}
@@ -221,23 +270,25 @@ def _finish_round(service,event,ledger,model,step,ref):
         final=ledger.put('final',{'nodes':node_refs,'metadata':metadata})
         event=service._append(event,'RESULT_READY',{**event['data'],'result_ref':final,'model_called':True,'model_attempted':True})
         return event
-    check(round_number<model.settings.max_rounds,'AI_BATCH_LIMIT','Reduction has not stabilized within its call budget')
-    groups=model.merge_plan(nodes,round_number+1)
+    check(stage_round<model.settings.max_rounds,'AI_BATCH_LIMIT','Reduction has not stabilized within its call budget')
+    groups=model.merge_plan(nodes,stage_round+1)
     by_id={r['id']:r for r in node_refs}
-    descriptors=[{'kind':'MERGE','nodes':g,'node_refs':[by_id[k] for k in g]} for g in groups]
+    descriptors=[{'kind':'REVIEW_MERGE' if review else 'MERGE','nodes':g,'node_refs':[by_id[k] for k in g]} for g in groups]
     ledger.plans(round_number+1,descriptors,len(nodes))
-    ledger.step(step,ref,'READY',{**state,'round':round_number+1,'index':0,'nodes':0,'stable':stable})
+    extra={'stage_round':stage_round+1,'phase':'REVIEW_MERGE' if review else 'MERGE'} if 'phase' in state else {}
+    ledger.step(step,ref,'READY',{**state,'round':round_number+1,'index':0,'nodes':0,'stable':stable,**extra})
     return event
 
 
-def load_result(service,event,context,cases):
+def load_result(service,event,context,cases,criteria=None):
     ledger=Ledger(service,event)
     ref=event['data']['result_ref']
     result=ledger.get(ref['key'],ref)[0]
     check(set(result)=={'nodes','metadata'} and result['metadata'].get('input_hash_kind')=='BATCH_MANIFEST'
           and result['metadata']['batch_receipt']['root']==ledger.audit()
           and result['metadata']['input_sha256']==digest([event['data']['batch']['plan'],ledger.last()[1]['sha256']]),'AI_BATCH_CORRUPT')
-    model=BatchModel(service.advisor,context,cases,event['data']['pins']['identity_fields'])
+    model=_model(service.advisor,event,context,cases,criteria or [])
+    _bind_preserved(model,ledger,ledger.last()[0]['state'])
     advice,citations=model.advice(ledger.nodes(result['nodes']))
     check(digest(advice)==result['metadata']['output_sha256'],'AI_BATCH_CORRUPT')
     if available(context):check(citations==result['metadata']['preserved_citations'],'AI_BATCH_CORRUPT')
@@ -265,7 +316,7 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
                 return public(service,_finish_round(service,event,ledger,model,step,ref))
             check(state['index']<manifest['count'],'AI_BATCH_CORRUPT')
             descriptor=ledger.descriptor(state)
-            nodes=ledger.nodes(descriptor['node_refs']) if descriptor['kind']=='MERGE' else None
+            nodes=ledger.nodes(descriptor['node_refs']) if 'node_refs' in descriptor else None
             if nodes is not None and len(nodes)==1:
                 result=ledger.put(f"result.{state['round']:03d}.{state['index']:06d}",{'nodes':nodes,'metadata':None})
                 ledger.step(step,ref,'READY',{**state,'index':state['index']+1,'nodes':state['nodes']+1},result=result)
@@ -279,7 +330,7 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
                 call_token=str(uuid4()),deadline=(current+timedelta(seconds=advisor.settings.timeout+60)).isoformat())
             dispatch=(event,reserved,reserved_ref,model,descriptor,nodes,revision,prepared_call)
         except ReviewError as error:
-            stale=error.code in ('AI_INPUT_STALE','AI_CASES_STALE','REVISION_CONFLICT','AI_CONFIG_CHANGED','AI_CREDENTIAL_CHANGED','UNAUTHORIZED','FORBIDDEN')
+            stale=error.code in ('AI_INPUT_STALE','AI_CASES_STALE','AI_CRITERIA_STALE','REVISION_CONFLICT','AI_CONFIG_CHANGED','AI_CREDENTIAL_CHANGED','UNAUTHORIZED','FORBIDDEN')
             return public(service,service._failed(event,error,status='STALE' if stale else 'FAILED'))
     # No database connection or authorization lock survives model dispatch.
     event,reserved,reserved_ref,model,descriptor,nodes,revision,prepared_call=dispatch
@@ -305,7 +356,7 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
             check(result['metadata']['input_sha256']==step['input_sha256'],'AI_BATCH_CORRUPT')
             check(state['actual_model'] is None or state['actual_model']==actual,'AI_MODEL_CHANGED')
             result_ref=ledger.put(f"result.{state['round']:03d}.{state['index']:06d}",result)
-            records=state['records']+(descriptor['stop']-descriptor['start'] if descriptor['kind']=='LEAF' else 0)
+            records=state['records']+(descriptor['stop']-descriptor['start'] if descriptor['kind'] in ('LEAF','REVIEW_LEAF') else 0)
             ledger.step(step,ref,'READY',{**state,'index':state['index']+1,'calls':state['calls']+1,
                         'records':records,'nodes':state['nodes']+len(result['nodes']),'actual_model':actual},result=result_ref)
             return public(service,current)

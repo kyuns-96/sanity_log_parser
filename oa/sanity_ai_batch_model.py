@@ -35,18 +35,30 @@ class BatchModel:
         self.budget = TokenBudget(self.settings)
         self.records = evidence(context)
 
+    def model_context(self):
+        return self.context
+
+    def instruction(self, context, stage):
+        return source_instruction(context, LEAF_PROMPT if stage == 'LEAF' else MERGE_PROMPT,
+                                  VERSION+'.'+stage.lower())
+
+    def citation_context(self, context):
+        return context
+
+    def check_citations(self, citations):
+        pass
+
     def packet(self, rows, *, stage, details):
-        context = self.advisor._context(self.context)
+        context = self.advisor._context(self.model_context())
         report = {**context['report'], 'records':rows, 'record_count':len(rows)}
         # SOURCE_PART manifests remain audit metadata on the server; they are
         # not another copy of the original records for the model to classify.
         report.pop('source_parts',None)
         context = {**context,'report':report}
         packet = {'context':context,'cases':[shared_case(c) for c in self.cases],
-                  'identity_fields':self.fields,'batch':{'version':VERSION,'stage':stage,
+                  'identity_fields':self.fields,'batch':{'version':getattr(self,'version',VERSION),'stage':stage,
                   'source_record_count':len(self.records),'source_sha256':self.context['source_sha256'],**details}}
-        instruction, version = source_instruction(context, LEAF_PROMPT if stage == 'LEAF' else MERGE_PROMPT,
-                                                  VERSION+'.'+stage.lower())
+        instruction, version = self.instruction(context, stage)
         return packet, instruction, version, context
 
     def leaf(self, start, stop):
@@ -127,9 +139,11 @@ class BatchModel:
         attempt = {'model_called':False}
         try:
             value,metadata = self.advisor._call(packet,instruction,version,attempt,budget=self.budget,prepared_request=request)
-            value,citations = split_reply(value,context)
+            citation_context = self.citation_context(context)
+            value,citations = split_reply(value,citation_context)
+            self.check_citations(citations)
             advice = validate_clustering_advice(value,context,self.cases,require_rationales=True)
-            metadata = model_metadata(metadata,citations,advice,context)
+            metadata = model_metadata(metadata,citations,advice,citation_context)
             rationales = {r['group_id']:r for r in advice['group_rationales']}
             cites = {c['target_id']:c for c in citations or []}
             by_id = {n['id']:n for n in nodes or []}

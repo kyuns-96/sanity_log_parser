@@ -132,6 +132,14 @@ test('batch progress distinguishes complete-record classification from group int
   job.progress = { ...job.progress!, phase: 'MERGE', completed_records: 2, round: 1 }
   await page.reload()
   await expect(page.getByRole('status').filter({ hasText: '통합과 전체 배정 검증이 남아 있습니다' })).toBeVisible()
+  for (const [phase, message] of [
+    ['TEXT', '보존 본문을 나누어 읽고'], ['TEXT_MERGE', '보존 본문을 나누어 읽고'],
+    ['REVIEW', '확정 그룹의 전체 로그를 나누어 판정'], ['REVIEW_MERGE', '분할 판정을 비교하고'],
+  ] as const) {
+    job.progress = { ...job.progress!, phase }
+    await page.reload()
+    await expect(page.getByRole('status').filter({ hasText: message })).toBeVisible()
+  }
   expect(state.writes).toHaveLength(0)
   expect(state.unexpected).toEqual([])
 })

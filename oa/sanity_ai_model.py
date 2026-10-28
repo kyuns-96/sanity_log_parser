@@ -307,6 +307,8 @@ class OAAdvisor:
             TokenBudget(settings.batch)  # Recheck the actual file, not just its configured hash.
             public['batch'] = settings.batch.public()
             public['prompt_versions']['batch_clustering'] = BATCH_PROMPT_VERSION
+            from oa.sanity_ai_evidence_batch import VERSION as EVIDENCE_BATCH_VERSION
+            public['prompt_versions']['batch_evidence'] = EVIDENCE_BATCH_VERSION
         # Preserve existing pins without a gateway. Credentials may rotate;
         # routing/session policy changes must invalidate queued model work.
         config = {**public, "endpoint": settings.endpoint}

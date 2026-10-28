@@ -132,7 +132,8 @@ def _validate_data(event):
         check("call_token" in data, "AI_JOB_CORRUPT")
     if 'batch' in data:
         batch=data['batch']
-        check(isinstance(batch,dict) and type(batch.get('version'))is int and batch['version']==1 and command['group_id'] is None
+        check(isinstance(batch,dict) and type(batch.get('version'))is int and batch['version'] in (1,2)
+              and (batch['version']==2 or command['group_id'] is None)
               and set(batch) in ({'version'},{'version','total_records','leaf_count','plan','credential_revision'}), 'AI_JOB_CORRUPT')
         if 'plan' in batch:
             check(type(batch['total_records'])is int and 1<=batch['total_records']<=1000000
@@ -335,7 +336,7 @@ class AIJobService:
         check(not latest or latest["status"] not in ACTIVE, "AI_JOB_ACTIVE")
         stage = "REVIEW" if group_id is not None else "CLUSTER"
         case_budget = max(1, min(1024 * 1024, model.get("max_input_bytes", 1024 * 1024) // 3))
-        if group_id is None and model.get('batch',{}).get('enabled'):
+        if model.get('batch',{}).get('enabled'):
             case_budget=min(case_budget,max(1,model['batch']['input_tokens']//4))
         selected = CaseRetriever(self.db, workspace=self.ws).select(context, stage=stage, max_bytes=case_budget)
         criteria = self.criteria_provider(context) if group_id is not None else []
@@ -349,7 +350,9 @@ class AIJobService:
         now = _db_now(self.db)
         data = {"command": command, "target": target, "pins": pins, "retrieval": selected["metadata"],
                 "model": model["model"], "created_at": now.isoformat(), "model_called": False}
-        if group_id is None and model.get('batch',{}).get('enabled'): data['batch']={'version':1}
+        if model.get('batch',{}).get('enabled'):
+            from common.sanity_preserved_ai import available
+            data['batch']={'version':2 if group_id is not None or available(context) else 1}
         return self.public(self._append(None, "PENDING", data, now=now))
 
     def status(self, user_id, job_id):
@@ -407,7 +410,7 @@ class AIJobService:
         data, command = event["data"], event["data"]["command"]
         if 'batch' in data:
             from oa.sanity_ai_batch_jobs import load_result
-            try: result=load_result(self,event,context,cases)
+            try: result=load_result(self,event,context,cases,criteria)
             except ReviewError as error: return self._failed(event,error,status='FAILED')
         else:
             result = data["result"]
