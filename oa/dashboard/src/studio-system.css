@@ -209,7 +209,7 @@ body { text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; 
 .ws-studio-breadcrumb > [data-slot='badge'] { border-color: var(--line); background: var(--surface-soft); color: var(--text-secondary); font-size: 9px; padding: 2px 6px; }
 .ws-studio-user-name { color: var(--text-secondary); font-size: 11px; }
 .ws-studio-workspace .ws-studio-item-tabs { display: flex; gap: 9px; overflow-x: auto; padding: 3px; }
-.ws-studio-workspace .ws-studio-item-tabs > button { flex: 1 0 135px; min-width: 135px; min-height: 70px; padding: 13px 15px; }
+.ws-studio-workspace .ws-studio-item-tabs > button { flex: 1 0 135px; min-width: 135px; max-width: 280px; min-height: 70px; padding: 13px 15px; }
 .ws-studio-workspace .ws-studio-item-tabs .ws-item-title { align-items: center; gap: 12px; }
 .ws-studio-workspace .ws-studio-item-tabs .ws-item-title > [data-slot='badge'] { padding: 2px 6px; color: var(--text-secondary); background: var(--surface-recessed); border-color: var(--line); font-size: 10px; }
 .ws-studio-workspace .ws-studio-item-tabs .ws-item-stats { font-size: 10px; }
