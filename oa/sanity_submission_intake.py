@@ -61,7 +61,8 @@ class SubmissionIntake:
                for unit,report in zip(plan['inventory']['units'][offset:offset+limit],reports[offset:offset+limit])]
         return {**result,'scope_sha256':scope_digest(plan),'manifest_sha256':digest(manifest),
                 'inventory_source':plan['inventory']['source'],'inventory_version':plan['inventory']['version'],
-                'global_blockers':manifest['global_blockers'],'units':units,'total_units':len(reports)}
+                'global_blockers':manifest['global_blockers'],'units':units,'total_units':len(reports),
+                'preserved_files':manifest.get('preserved_files', [])}
 
     def decide(self, user_id, block_id, sid, *, decision, expected_revision, request_id, reason,
                content_sha256, manifest_sha256, scope_sha256, confirmed_scope):

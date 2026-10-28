@@ -3,12 +3,13 @@ import { Button } from './studio/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './components/ui/dialog'
 import { WorkspaceError, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
 import './submission-intake.css'
+import PreservedSources, { type PreservedSource } from './PreservedSources'
 
 type Scope = { project_key: string; block_key: string; net_ver: string; submission_revision: string; layout: string; target_eco: string | null; pre_revision: string | null; profile_id: string; profile_version: string }
 type Entry = { id: string; revision: number; scope: Scope; reported_by: string; delivery_state: string; created_at: string; blockers: string[]; decision: null | { user_id: string; confirmed_at: string; reason: string; decision: string } }
 type Listing = { items: Entry[]; total: number; can_confirm: boolean }
 type Unit = { review_unit_id: string; item_id: string; report: string; applicable: boolean; exclusion?: unknown; condition: unknown; execution_status: string; parse_status: string; record_count: number; blockers: string[]; source: { layout: string; revision: string; eco: string | null; mode: string; tool: string; tool_version: string; execution_ref: string; execution_order: number } }
-type Detail = Entry & { can_confirm: boolean; content_sha256: string; scope_sha256: string | null; manifest_sha256: string | null; total_units: number; offset: number; limit: number; units: Unit[]; global_blockers?: string[] }
+type Detail = Entry & { can_confirm: boolean; content_sha256: string; scope_sha256: string | null; manifest_sha256: string | null; total_units: number; offset: number; limit: number; units: Unit[]; global_blockers?: string[]; preserved_files?: PreservedSource[] }
 const stateName: Record<string, string> = { IMPORTING: '수신 중', AWAITING_CONFIRMATION: '담당자 확인 대기', OA_STORED: '접수 확정', REJECTED: '반려' }
 
 export default function SubmissionIntake({ blockId, refresh, onComplete }: { blockId: string; refresh: number; onComplete: () => void }) {
@@ -96,8 +97,9 @@ export default function SubmissionIntake({ blockId, refresh, onComplete }: { blo
         </tr>)}</tbody></table></div>
         {detail.total_units > 50 && <div className="submission-intake-actions"><Button variant="outline" disabled={loading || busy || !unitOffset} onClick={() => setUnitOffset(v => Math.max(0, v - 50))}>이전 범위</Button><Button variant="outline" disabled={loading || busy || unitOffset + 50 >= detail.total_units} onClick={() => setUnitOffset(v => v + 50)}>다음 범위</Button></div>}
         {detail.decision && <p>처리: {detail.decision.user_id} · {time(detail.decision.confirmed_at)}<br />{detail.decision.reason}</p>}
+        <PreservedSources files={detail.preserved_files} />
         {pending && detail.can_confirm && <>
-          <label className="submission-intake-confirm"><input type="checkbox" checked={confirmed} disabled={busy || loading} onChange={e => setConfirmed(e.target.checked)} />전체 {detail.total_units}개의 예상 검사 범위와 누락·제외 항목을 확인했습니다.</label>
+          <label className="submission-intake-confirm"><input type="checkbox" checked={confirmed} disabled={busy || loading} onChange={e => setConfirmed(e.target.checked)} />전체 {detail.total_units}개의 예상 검사 범위와 누락·제외 항목{detail.preserved_files?.length ? ` 및 보존 파일 ${detail.preserved_files.length}개의 역할·귀속` : ''}을 확인했습니다.</label>
           <label className="ws-reason-label">확인·반려 사유<textarea value={reason} maxLength={2000} disabled={busy} onChange={e => setReason(e.target.value)} /></label>
           <p className="ws-muted">범위 확정은 검사 PASS나 사람 판정 완료를 뜻하지 않습니다. 파싱 누락·실행 미완료 등의 차단은 유지됩니다.</p>
           <div className="submission-intake-actions"><Button variant="outline" disabled={busy || loading || !reason.trim()} onClick={() => decide('REJECT')}>반려</Button><Button disabled={busy || loading || !confirmed || !reason.trim()} onClick={() => decide('CONFIRM')}>{busy ? '처리 중…' : '범위 확정 후 접수'}</Button></div>

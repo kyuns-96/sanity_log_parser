@@ -6,6 +6,8 @@
 
 2026-10-16 Q1 검토는 [분산 수집·PRE/POST 인계](SOURCE_COLLECTION_DESIGN.md)를 따른다. **아래 `get_plan()`은 기존 schema 1 계약이다.** 별도 V2의 `prepare()`·원천/신원/승인 SDK와 공통 제출 CLI/source 작업자는 [SUBMISSION.md](SUBMISSION.md)에 구현·정의했다. 두 계약을 혼합하지 않는다.
 
+별도 `prepare()` 제출의 비-unit full.rpt/SDC 보존은 [plan 3 계약](PRESERVED_SOURCES.md)을 따른다. 이 확장은 아래 schema 1 `get_plan()`에 필드를 추가하는 지시가 아니다. 호환 코드 배포 후 허용된 회사 입력 대응과 전용 테스트만 작성한다.
+
 ## 1. 제공한 경계
 
 | 위치 | 내용 | 내부 AI 변경 |

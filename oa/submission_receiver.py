@@ -20,6 +20,7 @@ from common.sanity_submission import (HEX, PART_BYTES, PART_RECORDS, PROTOCOL, S
     message_id, scope_digest, source_execution, source_unit, source_version, validate_packet, validate_plan)
 from common.sanity_submission_store import require_schema
 from common.sanity_shared_sources import GATE, SharedSourcePackets
+from common.sanity_preserved_sources import PRODUCER as PRESERVED_PRODUCER, for_unit, validate_metadata
 from common.sanity_submission_intake import UnverifiedSubmitter, PENDING_BLOCKER, require_pending_plan, unverified
 from oa.sanity_workspace import WorkspaceStore, record_id
 from oa.sanity_production_workspace import ProductionWorkspaceStore
@@ -160,7 +161,7 @@ class SourceReceiver:
         collecting = collection_only_contract(value['parser_contract'],s,unit)
         if collecting:
             count = result.get('not_evaluated_count')
-            check(unit['applicable'] and output['producer']==COLLECTION_PRODUCER_VERSION
+            check(unit['applicable'] and output['producer'] in (COLLECTION_PRODUCER_VERSION, PRESERVED_PRODUCER)
                   and result.get('evaluation_mode')=='none' and type(count) is int
                   and result.get('evaluation') is None and result.get('parser')==unit['parser']
                   and result.get('rule_version')==unit['rule_version']
@@ -188,8 +189,18 @@ class SourceReceiver:
 
     def validate_manifest(self, packet):
         output = packet['body']
-        check(set(output)=={'plan','inventory_confirmed','global_blockers','reports','producer'},'INVALID_SOURCE_MANIFEST')
+        check(isinstance(output.get('plan'), dict), 'INVALID_SOURCE_MANIFEST')
+        preserving = output['plan'].get('schema_version') == 3
+        keys = {'plan','inventory_confirmed','global_blockers','reports','producer'}
+        if preserving:
+            keys.add('preserved_files')
+        check(set(output)==keys,'INVALID_SOURCE_MANIFEST')
         validate_plan(output['plan'])
+        if preserving:
+            check(output['producer'] == PRESERVED_PRODUCER, 'PRESERVED_SOURCE_MISMATCH')
+            validate_metadata(output['plan'], output['preserved_files'])
+        else:
+            check(output['producer'] != PRESERVED_PRODUCER, 'PRESERVED_SOURCE_MISMATCH')
         if unverified(packet['actor']):
             require_pending_plan(output['plan'])
             check(output['inventory_confirmed'] is False,'SOURCE_APPROVAL_MISMATCH')
@@ -205,6 +216,9 @@ class SourceReceiver:
         units = output['plan']['inventory']['units']
         check(isinstance(output['reports'],list) and len(output['reports'])==len(units),'SOURCE_COVERAGE_MISMATCH')
         for unit,value in zip(units,output['reports']):
+            sources = for_unit(output['plan'], unit, output.get('preserved_files', []))
+            check(canonical_json(value.get('preserved_sources', [])) == canonical_json(sources)
+                  and (bool(sources) or 'preserved_sources' not in value), 'PRESERVED_SOURCE_MISMATCH')
             if unit['applicable']:
                 validate_builtin_evaluation(unit.get('parser'),unit)
             self.header(output,unit,value)
@@ -343,6 +357,8 @@ class SourceReceiver:
             'source_bytes':value['record_bytes'],'raw_line_count':value['raw_line_count']}
         if result.get('evaluation_mode')=='none':
             payload.update(evaluation_mode='none',not_evaluated_count=result['not_evaluated_count'])
+        if value.get('preserved_sources'):
+            payload['preserved_sources'] = value['preserved_sources']
         old = self.existing('WS_REPORT',payload['id'])
         if old:
             check(old['payload']==payload,'SOURCE_REPORT_CONFLICT')

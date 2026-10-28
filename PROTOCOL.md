@@ -709,3 +709,12 @@ analysis, else PASS; human review completion is a separate field.
 This is a prototype: actual report adapters, authoritative inventory discovery,
 full-access DBaaS integration, model APIs, ordering multiple bundles and production authentication
 remain unimplemented. Jira integration has been retired, not deferred. Documentation and outputs must say so plainly.
+
+
+## plan 3의 보존 원천 근거 — 2026-10-28
+
+[정식 계약과 배포 순서](vwp/PRESERVED_SOURCES.md)를 따른다. 보존 선언이 있는 plan/collection manifest는 schema 3, source producer는 `postgresql-source-2.3`이다. 제출 envelope·`source-collection-v2`·SOURCE_* 종류는 기존 2를 유지한다. plan 2 필드/해시/이력은 유지하며 구버전 reader에 새 필드를 버려 전달하지 않는다. 별도 DB DDL은 없다.
+
+`inventory.preserved_files`의 path/role/정확한 unit 또는 execution anchor를 검증하고 실제 전체 file hash/크기와 결합해 `PRESERVED` 메타데이터를 만든다. 누락은 `PRESERVED_FILE_MISSING`, 메타데이터/귀속 불일치는 `PRESERVED_SOURCE_MISMATCH` 등으로 거부한다. 선언 없는 파일은 UNEXPECTED_REPORTS로 남는다. 원본은 VWP RAW에 전체 byte로 보관하며 OA에는 전체 목록과 report별 `preserved_sources` 참조를 보낸다. scope/content/manifest digest와 OWNER 현재 권한·revision 검사는 유지한다.
+
+귀속된 보존 메타데이터를 분석 계약에 포함하므로 같은 CSV/execution에서도 근거가 바뀌면 새 analysis/report가 생성된다. 기존 식별 공식과 이전 확정 기록을 바꾸지 않는다. OA source digest·AI 입력 SHA256에 연결하며 실제 분류/판정 요청에 메타데이터와 본문 미제공 안내를 전달한다. 파일 본문·추출 결과·새 파일 근거 인용은 이번 버전에 없다.
