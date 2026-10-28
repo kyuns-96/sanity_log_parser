@@ -20,6 +20,8 @@ LINE_LIMIT = 1024 * 1024
 RAW_LIMIT = 64 * 1024 * 1024
 JSON_LIMIT = 16 * 1024 * 1024
 BUILTIN_PARSERS = frozenset({"numeric_csv_v1", "summary_json_v1"})
+NOT_PERFORMED = "NOT_PERFORMED"
+COLLECTION_PRODUCER_VERSION = "postgresql-source-2.2"
 PARSER_CODES = frozenset({"PARSER_NOT_CONFIGURED", "PARSER_REGISTRATION_ERROR",
                           "PARSER_SCOPE_MISMATCH", "PARSER_INVALID_RESULT",
                           "PARSER_FAILED", "PARSER_SOURCE_LIMIT"})
@@ -43,6 +45,56 @@ def validate_builtin_evaluation(parser_id, unit):
     """Reported JSON cannot substitute for an approved numerical policy."""
     _require(parser_id != "summary_json_v1" or unit.get("evaluation") is None,
              "PARSER_SCOPE_MISMATCH")
+
+
+def extraction_reasons(fields, unit):
+    """Structural checks shared by evaluation and collection-only extraction."""
+    reasons = []
+    for key in ("code", "severity"):
+        if not isinstance(fields.get(key), str) or not fields[key].strip():
+            reasons.append("MISSING_" + key.upper())
+    if fields.get("severity") not in ("ERROR", "WARNING", "INFO", "FATAL"):
+        reasons.append("INVALID_SEVERITY")
+    for key in ("object", "check_point", "mode"):
+        if fields.get(key) is not None and not isinstance(fields[key], str):
+            reasons.append("INVALID_" + key.upper())
+    condition = unit.get("condition", {})
+    if not isinstance(condition, Mapping):
+        reasons.append("INVALID_CONDITION")
+    elif "mode" in condition and fields.get("mode") != condition["mode"]:
+        reasons.append("MODE_MISMATCH")
+    return reasons
+
+
+def collection_only_contract(contracts, run, unit):
+    """Validate the explicit collection-only scope on both sides of the DB."""
+    _require(isinstance(contracts, list) and all(isinstance(c, dict) for c in contracts))
+    if not any(c.get("evaluation") == "none" for c in contracts):
+        return False
+    _require(len(contracts) == 1, "PARSER_SCOPE_MISMATCH")
+    contract = contracts[0]
+    def valid_text(value):
+        return (isinstance(value, str) and 1 <= len(value) <= 100 and value == value.strip()
+                and "*" not in value and re.search(r"[\x00-\x1f\x7f]", value) is None)
+
+    _require(set(contract) == {"parser_id", "implementation_version", "evaluation", "item_ids", "tool",
+                               "tool_versions", "rule_versions"}
+             and isinstance(contract.get("parser_id"), str)
+             and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}", contract["parser_id"])
+             and contract["parser_id"] == unit.get("parser")
+             and contract["parser_id"] not in BUILTIN_PARSERS
+             and valid_text(contract.get("implementation_version")) and valid_text(contract.get("tool"))
+             and contract.get("tool") == run.get("tool")
+             and unit.get("evaluation") is None, "PARSER_SCOPE_MISMATCH")
+    for key, value in (("item_ids", unit.get("item_id")),
+                       ("tool_versions", run.get("tool_version")),
+                       ("rule_versions", unit.get("rule_version"))):
+        allowed = contract.get(key)
+        _require(isinstance(allowed, list) and bool(allowed)
+                 and all(valid_text(v) for v in allowed)
+                 and len(allowed) == len(set(allowed)) and value in allowed,
+                 "PARSER_SCOPE_MISMATCH")
+    return True
 
 
 def valid_json_pointer(value):
@@ -255,7 +307,7 @@ class ReportSource:
 class RegisteredParser:
     parser: ReportParser = field(repr=False)
     implementation_version: str
-    evaluation: Literal["numeric", "reported"]
+    evaluation: Literal["numeric", "reported", "none"]
     item_ids: tuple[str, ...]
     tool: str
     tool_versions: tuple[str, ...]
@@ -269,7 +321,7 @@ class ParserRegistry:
         self._parsers = {}
 
     def register(self, parser_id: str, parser: ReportParser, *, implementation_version: str,
-                 evaluation: Literal["numeric", "reported"], item_ids: tuple[str, ...],
+                 evaluation: Literal["numeric", "reported", "none"], item_ids: tuple[str, ...],
                  tool: str, tool_versions: tuple[str, ...], rule_versions: tuple[str, ...]):
         def valid_text(value):
             return (isinstance(value, str) and bool(value) and value == value.strip()
@@ -279,7 +331,7 @@ class ParserRegistry:
         _require(isinstance(parser_id, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}", parser_id)
                  and parser_id not in BUILTIN_PARSERS and parser_id not in self._parsers
                  and isinstance(parser, ReportParser) and valid_text(tool)
-                 and valid_text(implementation_version) and evaluation in ("numeric", "reported"),
+                 and valid_text(implementation_version) and evaluation in ("numeric", "reported", "none"),
                  "PARSER_REGISTRATION_ERROR")
         for values in (item_ids, tool_versions, rule_versions):
             _require(isinstance(values, tuple) and bool(values)
@@ -298,7 +350,7 @@ class ParserRegistry:
                  and run.get("tool") == registered.tool
                  and run.get("tool_version") in registered.tool_versions
                  and unit.get("rule_version") in registered.rule_versions
-                 and not (registered.evaluation == "reported" and unit.get("evaluation") is not None),
+                 and not (registered.evaluation in ("reported", "none") and unit.get("evaluation") is not None),
                  "PARSER_SCOPE_MISMATCH")
         return registered
 
@@ -324,7 +376,7 @@ def _reason(value):
 
 
 def checked_records(parser: ReportParser, path, context: ParseContext, blockers: set,
-                    evaluate, *, evaluation: Literal["numeric", "reported"]) -> Iterable[tuple]:
+                    evaluate, *, evaluation: Literal["numeric", "reported", "none"]) -> Iterable[tuple]:
     """Validate the complete event stream before the bridge can seal an analysis."""
     try:
         yield from _checked_records(parser, path, context, blockers, evaluate, evaluation=evaluation)
@@ -335,7 +387,8 @@ def checked_records(parser: ReportParser, path, context: ParseContext, blockers:
 
 
 def _checked_records(parser, path, context, blockers, evaluate, *, evaluation):
-    _require(evaluation in ("numeric", "reported"))
+    _require(evaluation in ("numeric", "reported", "none"))
+    _require(evaluation != "none" or context.unit.get("evaluation") is None, "PARSER_SCOPE_MISMATCH")
     with ReportSource(path) as source:
         try:
             events = iter(parser.parse(source, context))
@@ -402,7 +455,11 @@ def _checked_records(parser, path, context, blockers, evaluate, *, evaluation):
                 count += 1
                 if event.json_pointer is not None:
                     location["json_pointer"] = event.json_pointer
-                if valid_encoding:
+                if valid_encoding and evaluation == "none":
+                    status, reasons = "UNKNOWN", extraction_reasons(fields, context.unit)
+                    if not reasons:
+                        location["evaluation_status"] = NOT_PERFORMED
+                elif valid_encoding:
                     status, reasons = evaluate(fields, numeric=evaluation == "numeric")
                 else:
                     status, reasons = "UNKNOWN", ["INVALID_ENCODING"]

@@ -13,7 +13,8 @@ import uuid
 
 from common.sanity_common import ReviewError, canonical_json, digest, unpack_json
 from common.sanity_db import Database, Queue, json_value, lock_key
-from common.sanity_parsers import valid_json_pointer, validate_builtin_evaluation
+from common.sanity_parsers import (valid_json_pointer, validate_builtin_evaluation, collection_only_contract,
+    extraction_reasons, NOT_PERFORMED, COLLECTION_PRODUCER_VERSION)
 from common.sanity_privacy import SecretGuard
 from common.sanity_submission import (HEX, PART_BYTES, PART_RECORDS, PROTOCOL, SOURCE_TYPES, check,
     message_id, scope_digest, source_execution, source_unit, source_version, validate_packet, validate_plan)
@@ -28,7 +29,8 @@ def validate_record(record):
     check(isinstance(record,dict) and {'id','fields','check_status','raw','line_start','line_end',
         'reasons','evidence_id','source_raw_sha256','redacted'} <= set(record)
         and set(record) <= {'id','fields','check_status','raw','line_start','line_end','reasons',
-                           'evidence_id','source_raw_sha256','redacted','byte_start','byte_end','json_pointer'},'INVALID_SOURCE_RECORD')
+                           'evidence_id','source_raw_sha256','redacted','byte_start','byte_end','json_pointer',
+                           'evaluation_status'},'INVALID_SOURCE_RECORD')
     check(isinstance(record['id'],str) and record['id'].startswith('r-') and HEX.fullmatch(record['id'][2:])
           and record['evidence_id']==record['id'] and isinstance(record['fields'],dict)
           and isinstance(record['raw'],str) and record['check_status'] in ('PASS','FAIL','UNKNOWN')
@@ -42,6 +44,9 @@ def validate_record(record):
               and 0 <= record['byte_start'] <= record['byte_end'],'INVALID_SOURCE_RECORD')
     if 'json_pointer' in record:
         check(valid_json_pointer(record['json_pointer']),'INVALID_SOURCE_RECORD')
+    if 'evaluation_status' in record:
+        check(record['evaluation_status']==NOT_PERFORMED and record['check_status']=='UNKNOWN'
+              and not record['reasons'] and not extraction_reasons(record['fields'],{}),'INVALID_SOURCE_RECORD')
     if not record['redacted']:
         check(hashlib.sha256(record['raw'].encode()).hexdigest()==record['source_raw_sha256'],'INVALID_SOURCE_RECORD')
 
@@ -152,6 +157,24 @@ class SourceReceiver:
         check(isinstance(result['blockers'],list) and len(result['blockers'])<=100
               and all(isinstance(code,str) and re.fullmatch(r'[A-Z][A-Z0-9_]{0,63}',code) for code in result['blockers']),
               'INVALID_SOURCE_MANIFEST')
+        collecting = collection_only_contract(value['parser_contract'],s,unit)
+        if collecting:
+            count = result.get('not_evaluated_count')
+            check(unit['applicable'] and output['producer']==COLLECTION_PRODUCER_VERSION
+                  and result.get('evaluation_mode')=='none' and type(count) is int
+                  and result.get('evaluation') is None and result.get('parser')==unit['parser']
+                  and result.get('rule_version')==unit['rule_version']
+                  and 0<=count<=result['record_count'] and result['check_status']=='UNKNOWN'
+                  and type(result.get('evaluated_count')) is int and result['evaluated_count']==0
+                  and type(result.get('unknown_count')) is int and result['unknown_count']==result['record_count']
+                  and not result['status_counts']['PASS'] and not result['status_counts']['FAIL'],
+                  'SOURCE_EVALUATION_MISMATCH')
+            if result['parse_status']=='COMPLETE':
+                check(result['record_count']>0 and count==result['record_count'] and not result['blockers']
+                      and unit['execution_status']=='COMPLETED','SOURCE_EVALUATION_MISMATCH')
+        else:
+            check('evaluation_mode' not in result and 'not_evaluated_count' not in result,
+                  'SOURCE_EVALUATION_MISMATCH')
         check(type(value['record_bytes']) is int and value['record_bytes']>=0
               and type(value['raw_line_count']) is int and value['raw_line_count']>=0,'INVALID_SOURCE_MANIFEST')
         ids = []
@@ -210,7 +233,9 @@ class SourceReceiver:
         self.db.execute('SELECT pg_advisory_xact_lock(%s)',(lock_key('source-block-'+packet['scope']['block_key']),))
         report_ids, blockers = [], set(output['global_blockers'])
         for value in output['reports']:
-            counts, index, record_bytes, line_count = Counter(), 0, 0, 0
+            counts, index, record_bytes, line_count, not_evaluated = Counter(), 0, 0, 0, 0
+            result = value['result']
+            collecting = result.get('evaluation_mode')=='none'
             fid = 'f-'+digest([value['execution_id'],value['raw_sha256']])
             for part_index, ref in enumerate(value['parts']):
                 part_row = self.existing('WS_SOURCE_PART',ref['id'])
@@ -222,11 +247,20 @@ class SourceReceiver:
                 record_bytes += len(canonical_json(part['records']))
                 for record in part['records']:
                     validate_record(record)
+                    marked = 'evaluation_status' in record
+                    check(not marked or collecting,'SOURCE_EVALUATION_MISMATCH')
+                    if collecting:
+                        check(record['check_status']=='UNKNOWN'
+                              and set(record['reasons'])<=set(result['blockers'])
+                              and (not extraction_reasons(record['fields'],{'condition':result['condition']})
+                                   if marked else bool(record['reasons'])), 'SOURCE_EVALUATION_MISMATCH')
+                        not_evaluated += marked
                     index += 1
                     check(record['id']=='r-'+digest([value['execution_id'],value['unit_key'],fid,index]),'SOURCE_RECORD_ID_MISMATCH')
                     counts[record['check_status']] += 1
                     line_count = max(line_count,record['line_end'])
             result = value['result']
+            check(not collecting or not_evaluated==result['not_evaluated_count'],'SOURCE_EVALUATION_MISMATCH')
             check(index==result['record_count'] and record_bytes==value['record_bytes'] and line_count<=value['raw_line_count']
                   and all(counts[k]==n for k,n in result['status_counts'].items()),'SOURCE_COVERAGE_MISMATCH')
             existing = self.db.execute("SELECT payload->>'raw_sha256' AS raw,payload->>'execution_id' AS execution_id,"
@@ -307,6 +341,8 @@ class SourceReceiver:
             'analysis_id':value['analysis_id'],'raw_sha256':value['raw_sha256'],'source_parts':value['parts'],
             'analysis_created_at':value['analysis_created_at'],
             'source_bytes':value['record_bytes'],'raw_line_count':value['raw_line_count']}
+        if result.get('evaluation_mode')=='none':
+            payload.update(evaluation_mode='none',not_evaluated_count=result['not_evaluated_count'])
         old = self.existing('WS_REPORT',payload['id'])
         if old:
             check(old['payload']==payload,'SOURCE_REPORT_CONFLICT')

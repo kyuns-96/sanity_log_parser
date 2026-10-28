@@ -27,8 +27,8 @@ from common.sanity_common import ReviewError, _decode_json, canonical_json, dige
 from common.sanity_privacy import SecretGuard
 
 
-CLUSTER_PROMPT_VERSION = "oa-semantic-clustering-v2"
-REVIEW_PROMPT_VERSION = "oa-direct-evidence-review-v4"
+CLUSTER_PROMPT_VERSION = "oa-semantic-clustering-v3"
+REVIEW_PROMPT_VERSION = "oa-direct-evidence-review-v5"
 PROVIDER = "OA_OPENAI_COMPATIBLE"
 MAX_BYTES = 64 * 1024 * 1024
 
@@ -45,6 +45,9 @@ evidence_mode=SHARED_CONFIRMED_KNOWLEDGE인 과거 사례에는 원문 로그·�
 과거 사례가 없거나 새 패턴이어도 현재 자료를 분석하세요. 코드/심각도/이름 일치만으로 같은 원인이나 결론을 단정하지 마세요.
 모든 그룹 이름과 설명은 한국어로 작성하세요. 원본 식별자·도구 코드·수치는 그대로 보존하세요.
 설명에서 현재 사실, 판단 이유, 조건 차이와 불확실성을 구분하세요. JSON 객체 하나만 반환하세요.
+report.evaluation_mode=none과 record.evaluation_status=NOT_PERFORMED는 bridge가 판정을 실행하지 않고 수집했다는 뜻입니다.
+이때 check_status=UNKNOWN을 파싱 오류나 FAIL/PASS로 단정하지 마세요. 실제 파싱 오류·누락은 parse_status, blockers, reasons로 확인하세요.
+수집된 현재 원본과 제공된 확인 기준/사람 사례로 판단하고, 수집 완료만으로 판정이나 사람 확정이 끝났다고 표시하지 마세요.
 """
 
 _CLUSTER_PROMPT = _COMMON_PROMPT + """

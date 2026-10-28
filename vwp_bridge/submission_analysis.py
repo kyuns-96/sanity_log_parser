@@ -6,7 +6,7 @@ from datetime import timezone
 
 from common.sanity_common import ReviewError, canonical_json, digest
 from common.sanity_db import lock_key
-from common.sanity_parsers import ParserRegistry
+from common.sanity_parsers import ParserRegistry, COLLECTION_PRODUCER_VERSION
 from common.sanity_privacy import SecretGuard
 from common.sanity_payload_storage import PrivatePayloadStorage
 from common.sanity_evidence_pages import (EvidencePageStorage, KIND as PAGE_KIND, MAX_BYTES as PAGE_BYTES,
@@ -19,6 +19,11 @@ from vwp_bridge.main import analyze_unit
 from vwp_bridge.sanity_evidence import PgEvidence
 
 SOURCE_PRODUCER_VERSION = "postgresql-source-2.1"
+
+
+def producer_version(contracts):
+    return (COLLECTION_PRODUCER_VERSION if any(c['evaluation']=='none' for c in contracts)
+            else SOURCE_PRODUCER_VERSION)
 
 
 class SourceEvidence(PgEvidence):
@@ -136,7 +141,7 @@ def analyze_source(db, store, collection, original, file, snapshot_root, *, conf
                     'sha256':raw_sha,'size_bytes':file['size_bytes']} if file else None)
     manifest = {'run':run,'inventory':inventory,'files':[source_file] if file else [],'unexpected_files':[]}
     contract = (registry or ParserRegistry()).contract(run,[unit])
-    ev = SourceEvidence(db,manifest,parser_contract=contract,producer_version=SOURCE_PRODUCER_VERSION)
+    ev = SourceEvidence(db,manifest,parser_contract=contract,producer_version=producer_version(contract))
     try:
         parsing_file = {**source_file,'path':file['path']} if file else None
         result = analyze_unit(unit,parsing_file,snapshot_root,ev,registry)
@@ -217,7 +222,7 @@ def public_records(db, analysis_id, guard):
         fields, masked = guard.redact(p['fields']), guard.text(raw)
         yield {'id':p['record_id'],'fields':fields,'check_status':p['check_status'],
             'raw':masked,'line_start':p['line_start'],'line_end':p['line_end'],
-            **{key:p[key] for key in ('byte_start','byte_end','json_pointer') if key in p},
+            **{key:p[key] for key in ('byte_start','byte_end','json_pointer','evaluation_status') if key in p},
             'reasons':p['reasons'],'evidence_id':p['record_id'],'source_raw_sha256':row['raw_sha256'],
             'redacted':masked!=raw or fields!=p['fields']}
 
@@ -249,7 +254,8 @@ def build_transfer(db, store, submission, manifest, root, *, confirmed, registry
         source = unit['source']
         run = {'tool':source['tool'],'tool_version':source['tool_version']}
         contracts.append((registry or ParserRegistry()).contract(run,[unit]))
-    collection_id = 'sc-'+digest([submission['content_sha256'],confirmed,SOURCE_PRODUCER_VERSION,contracts])
+    version = producer_version([c for contract in contracts for c in contract])
+    collection_id = 'sc-'+digest([submission['content_sha256'],confirmed,version,contracts])
     # A prior revision may have committed some immutable parts before crashing.
     # Reject before writing any new analysis/part under the same submission UUID.
     conflict = db.execute("SELECT 1 FROM {vwp} WHERE record_type='SOURCE_OUTBOX' "
@@ -276,7 +282,7 @@ def build_transfer(db, store, submission, manifest, root, *, confirmed, registry
         check(sum(p['count'] for p in header['parts']) == value['result']['record_count'],'SOURCE_COVERAGE_MISMATCH')
         reports.append(header)
     output = {'plan':submission['plan'],'inventory_confirmed':confirmed,'global_blockers':blockers,'reports':reports,
-              'producer':SOURCE_PRODUCER_VERSION}
+              'producer':version}
     plan_packet = {**base,'body':output}
     validate_packet(plan_packet)
     commit = {**base,'body':{'manifest_sha256':digest(output),'parts':position-1}}

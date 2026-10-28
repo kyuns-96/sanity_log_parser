@@ -195,7 +195,7 @@ registry is empty; the company stub raises `PARSER_NOT_CONFIGURED`.
 normal `main.py` does not load company code. A plan cannot select Python modules.
 
 Registrations require parser ID, implementation_version, fixed evaluation mode
-(`numeric` or `reported`), item IDs, tool, tool versions and rule versions.
+(`numeric`, `reported` or `none`), item IDs, tool, tool versions and rule versions.
 Duplicate/built-in names and wildcard scopes are rejected; a registered scope
 mismatch stops before DB writes. Reported mode cannot bypass a plan's numerical
 evaluation. Numerical measurements use the existing exact Decimal evaluator.
@@ -213,7 +213,8 @@ Used registrations are included in the VWP immutable RUN's `parser_contract` and
 payload `producer.parsers` as `{parser_id, implementation_version, evaluation,
 item_ids, tool, tool_versions, rule_versions}`. They participate in analysis and
 bundle IDs; installing/updating an adapter produces a separate immutable analysis.
-No SQL migration or review-status changes are needed. Legacy built-in-only analyses
+For current numeric/reported registrations, no SQL migration or review-status changes
+are needed. Legacy built-in-only analyses
 keep the original producer/ID contract. V2 source analysis uses the separate
 normalization revision described below. Adapter changes must increment implementation_version.
 
@@ -224,6 +225,33 @@ The common UTF-8 reader limits physical lines to 1MiB, raw spans to 64MiB and JS
 Pointer documents to 16MiB. See [parser handoff](vwp_bridge/PARSER_INTEGRATION.md)
 for field requirements, source coverage and company-only validation. Real reports
 stay inside the company; external Codex debugging uses synthetic inputs only.
+
+**Collection-only mode (2026-10-28):**
+[`evaluation="none"`](vwp_bridge/PARSER_INTEGRATION.md#collection-only-parser)
+is an explicitly scoped registry mode. The plan's `unit.evaluation` must be absent
+or null, including rejection of `{}`; it is never the string `"none"`. Numerical
+policies must not be removed to bypass evaluation. `none` performs structural
+field/source/count checks without calling the evaluator. Normal records retain
+`check_status="UNKNOWN"`, add `evaluation_status="NOT_PERFORMED"`, and have no
+error reasons. Actual malformed/unparsed records retain UNKNOWN/error reasons
+without this marker. Result and OA report headers add `evaluation_mode="none"`
+and `not_evaluated_count`. That count is a subset of `unknown_count` and
+`status_counts.UNKNOWN`; the existing three status-count keys remain unchanged.
+A complete collection has positive records, no blockers, zero evaluated records,
+and a NOT_PERFORMED marker on every record. Missing/partial sources retain their
+real blockers and do not become ready.
+
+Source analyses using `none` and collections containing them use producer
+`postgresql-source-2.2`. Numeric/reported source analyses retain 2.1, preserving
+their IDs. Registry/producer contracts bind analysis/collection IDs, and ordered
+part hashes bind record markers. OA revalidates the declared scope, policy,
+producer, counts and actual part markers, including at OWNER confirmation.
+Both bridges must receive this release before using `none`; old receivers reject
+the new record metadata rather than silently accepting it. Wire schema 2 and
+the existing four tables require no migration or GRANT changes. Normal collection
+can feed the authorized OA AI/human group workflow; it never grants review
+completion or creates a confirmed knowledge case. Legacy coverage still blocks
+unevaluated/UNKNOWN records. COMMON-02F owns this common implementation.
 
 ## V2 수집·원천 인계
 

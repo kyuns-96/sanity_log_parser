@@ -202,7 +202,7 @@ class OAModelTests(unittest.TestCase):
         self.assertTrue(meta["model_called"])
         self.assertEqual(digest(json.loads(captured[0].content)), meta["input_sha256"])
         self.assertEqual({"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}, meta["usage"])
-        self.assertEqual("oa-semantic-clustering-v2", meta["prompt_version"])
+        self.assertEqual("oa-semantic-clustering-v3", meta["prompt_version"])
         self.assertNotIn("model.invalid", json.dumps(meta))
 
     def test_first_review_sends_only_complete_selected_group_and_approved_criteria(self):
@@ -224,7 +224,7 @@ class OAModelTests(unittest.TestCase):
             return httpx.Response(200, json=chat(reply))
         result = self.adapter(handler).review(context, [], criteria)
         self.assertEqual(reply, result["advice"])
-        self.assertEqual("oa-direct-evidence-review-v4", result["metadata"]["prompt_version"])
+        self.assertEqual("oa-direct-evidence-review-v5", result["metadata"]["prompt_version"])
 
     def test_no_history_or_criterion_reaches_model_for_explicit_deferral(self):
         packet = group_review_example()

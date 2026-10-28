@@ -114,6 +114,8 @@ VWP 내부의 여러 물리 루트는 허용된 회사 launcher에서 byte 동�
 
 **수용 기준:** 정상/위반/경계값/명시적 0건/빈 파일/잘림/새 섹션/encoding 오류/버전 변경, 정확한 span·EOF·전체 건수와 UNKNOWN 보존을 검증한다. 파서는 추출만 하며 최종 수치 판정은 공통 엔진이 담당한다. parser/rule version 변경 기준은 세부 계약을 따른다.
 
+**2026-10-28 수집 전용 구현:** 공통 `none` 등록·검증·미평가 집계·VWP→OA 전달과 검토 입력 연결을 제공한다. 원문 판정이 있으면 `reported`로 보존할 수 있고, 판정 없는 로그는 [parser 4.1절](vwp_bridge/PARSER_INTEGRATION.md#collection-only-parser)의 `none`을 사용한다. 사내 담당자는 양쪽 수정본을 전달받은 뒤 기존 회사 추출/명시적 등록 지점과 전용 테스트만 작성한다. 필드·완료/건수·0건 의미는 현장에서 확인하며 공통 상태·저장·전송·coverage·UI·기존 테스트의 수정은 아래 COMMON-02F의 Codex 책임이다.
+
 ### INT-04. 1단계 AI 초기 분류 — OA API 연동 우선
 
 **먼저 확인:** 승인된 SDK·동기 호출/timeout·JSON 응답 방식·토큰/출력/동시성 한도·사용량/실패 구분. 실제 평균 약 10,000개이며 100,000개 이상도 가능한 **한 report 안의 로그/위반 항목 수**다.
@@ -161,7 +163,7 @@ Q1 인계에는 제출 대상 REVISION과 각 PRE/POST report의 실제 소속, 
 | COMMON-05 | **미완성:** 대용량 OA AI 분할·조각 간 그룹 정합성·전체 범위와 재개. 현재 한도 초과는 명시적 실패 | 평균 10,000/100,000+건 크기/토큰·고유 그룹 분포와 API 한도·현장 성능 목표 |
 | COMMON-06 | **미검증:** 실제 판단 품질 비교. 사례 미제공/제공, 정정 전후, 검색 적합성·분류 수정량·근거/판정 일치·FAIL 누락·보류 | 사내 독립 정답·반례 집합과 수용 목표. 실제 입력·정답은 사내에 보관 |
 | COMMON-01 | **공통 연결 제공:** 기존 SSO와 운영 AccessStore의 workbench·PoR·V2 대상 권한 검사. 합성 `/workspace`는 운영에 마운트하지 않음 | 현장 활성 계정·관리자 설정·프로젝트/블록 승인·실제 소속·프록시/CSRF 검증 |
-| COMMON-02 | V2 제출·분할 source 수신·receipt와 운영 권한 주입 제공. 아래 02A~E와 현장 준비 구분 | 원천/승인/실행 ID·인증된 mount/ACL·동일 계정·parser·운영 DB의 실제 연결 검증 |
+| COMMON-02 | V2 제출·분할 source 수신·receipt와 운영 권한 주입 제공. 아래 02A~F의 제공 범위와 현장 검증을 구분 | 원천/승인/실행 ID·인증된 mount/ACL·동일 계정·parser·운영 DB의 실제 연결 검증, 수집 전용 입력 계약 |
 
 COMMON-02의 구현 순서와 경계:
 
@@ -172,8 +174,11 @@ COMMON-02의 구현 순서와 경계:
 | COMMON-02C | VWP 봉인/DB 전달·OA 원자 import. project/block 포함 버전/단위/실행/원본/분석 키, 같은 PRE 참조·재전달 중복 방지·같은 실행 원문 충돌 보류 |
 | COMMON-02D | workspace 원천/분석 개정·누락/감사와 현재 두 단계 UI 연결. 새 수신으로 PoR·사람 판정 자동 변경 없음 |
 | COMMON-02E | 사용자 `sanity submit/status/retry`·PATH/설치·별도 배포 설정, VWP 내부 spool 공개/접수·원본 보관·DB/파일 중단 복구·OA 응답/receipt·상태 조회. [제출 설계](vwp/SUBMISSION_DESIGN.md) 기준 |
+| COMMON-02F | **공통 구현 제공:** 수집 전용 `none`의 명시적 등록·필드/전체 원문 검증, 수집/파싱 완료와 판정 미실행의 별도 상태·집계·직렬화, VWP→OA 수신/준비 상태·화면과 두 단계 검토 연결. 수치 정책 우회 금지·실제 오류 차단·기존 evaluated/봉인 이력 보존 및 합성 회귀를 함께 제공 |
 
 위 02A~E는 **공통 코드·증분 SQL 제공, 합성 검증** 상태다. 실제 회사 어댑터는 기본 차단이며 mount/ACL·원천/실행 ID·승인/계정·운영 DB는 현장 준비/검증이 필요하다. source 실행 ID 정책이 없으면 같은 바이트의 재검사와 재전달을 구별할 수 없으므로 운영 완료를 선언하지 않는다. 상세 ID는 [수집 설계](vwp/SOURCE_COLLECTION_DESIGN.md), 설치/저장/실행은 [SUBMISSION.md](vwp/SUBMISSION.md)를 따른다. 내부 AI에게 공통 코드 수정 권한을 주지 않는다. COMMON-01의 운영 SSO workbench/V2 연결과 COMMON-03·04의 전체 입력 한도 내 첫 순환은 공통 코드로 제공한다. 현장 어댑터/배포 검증, COMMON-05 대용량 모델 처리와 COMMON-06 실제 품질 평가는 남아 있다. 단계 순서는 [AI 판단 설계 8절](AI_DECISION_DESIGN.md#8-현재-구현과-우선-구현-순서)을 따른다.
+
+COMMON-02F는 producer `postgresql-source-2.2`에서 `evaluation_mode="none"`/`not_evaluated_count`와 정상 record의 `evaluation_status="NOT_PERFORMED"`를 보존·검증한다. 기존 `check_status=UNKNOWN`과 세 항목 집계는 유지하며 정상 미평가와 실제 오류를 구분한다. 수집 완료만으로 OA AI 판단·사람 검토·정답 사례 축적의 완료를 선언하지 않는다. 기존 네 테이블을 사용하며 별도 migration/GRANT는 없다. 회사 형식·실제 OA 모델 판단 품질과 운영 반영은 현장에서 별도 확인한다.
 
 운영 관리·권한의 최신 API/저장/반영 순서는 [ACCESS_MANAGEMENT.md](oa/ACCESS_MANAGEMENT.md)를 따른다. 추가 DDL 없이 기존 SSO 행을 보존하며, 계정 JSON이나 synthetic `tops/owners`를 운영 권한 저장소로 바꾸지 않는다. 회사 AI의 공통 수정 권한은 확대하지 않는다.
 

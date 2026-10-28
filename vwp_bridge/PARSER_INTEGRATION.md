@@ -8,6 +8,8 @@
 
 파서의 공통 인터페이스·정규화 규약·검증·판정·DB 저장·전송과 전체 흐름의 설계·구현·디버깅은 **현재 대화의 설계 담당 Codex**가 책임진다. [VWP-bridge 담당 AI](INTERNAL_AI_TASK.md)는 확인된 사내 형식을 이 고정 규약에 대응하는 추출 어댑터와 명시적 등록·전용 테스트만 구현한다. VWP 원천 담당자는 실제 형식·의미·정답 자료를 사내에서 준비한다. 실행 코드와 회사 구현은 [소스 구조](../DEPLOYMENT.md)의 `vwp_bridge/`와 `vwp_bridge/integration/`에 둔다.
 
+**2026-10-28 수집 전용 구현:** `evaluation="none"`의 공통 등록·검증·전송·OA 연결을 제공한다. [4.1절](#collection-only-parser)의 상태·호환 계약을 따르고 양쪽 bridge에 수정본을 반영한 뒤 기존 회사 등록 지점에서 사용한다. 실제 형식·의미·정확성은 사내에서 별도 검증한다.
+
 ## 1. 제공 파일과 수정 책임
 
 | 파일/위치 | 제공 내용 | 사내 AI의 작업 |
@@ -30,13 +32,13 @@ class ReportParser(ABC):
 
 `parse`는 동기 함수이며 이벤트를 순서대로 `yield`하는 generator로 작성한다. `context.run`과 `context.unit`은 중첩 구조까지 읽기 전용이다. 실행 정보·조건·판정 설정·동일성 규칙을 읽되 변경하지 않는다. 어댑터 인스턴스가 여러 unit에 재사용되므로 입력별 buffer·count·상태는 메서드의 지역 변수로 둔다.
 
-공통 경로는 다음과 같다.
+현재 제공한 공통 경로는 다음과 같다.
 
 ```text
 확정된 plan → 원본 snapshot/해시 검사 → 등록 범위 대조
  → ReportParser.parse(ReportSource, ParseContext)
  → 원문 위치·전체 읽기·미해석 구간·완료 표시·건수 검사
- → 기존 evaluate(Decimal 또는 report의 명시적 PASS/FAIL)
+ → 등록 방식별 처리(numeric: Decimal / reported: 원문 판정 / none: 구조 검사·판정 미실행)
  → PASS 포함 전체 evidence 저장 → 집계·봉인 → 기존 DB 전송
 ```
 
@@ -49,13 +51,13 @@ class ReportParser(ABC):
 | 경계 | Codex가 제공하는 고정 계약·실행 | 사내 확인/구현 |
 |---|---|---|
 | 원본 → 추출 이벤트 | `ReportParser`, `ReportSource`, `ParseContext`, `ParsedRecord`·metadata·미해석·완료 이벤트 | 실제 GCA 등 지원 버전의 문법·섹션·필드·건수·종료 근거를 허용된 `parse()`에 대응 |
-| 추출 이벤트 → 정규화 근거 | `checked_records`의 원문 위치·EOF·누락·완료/건수 검사, `evaluate`의 필드·모드·Decimal/명시적 판정 검사 | 실제 추출 기대값과 정규화 결과가 일치하는지 사내 fixture로 검증 |
+| 추출 이벤트 → 정규화 근거 | `checked_records`의 원문 위치·EOF·누락·완료/건수 검사, 공통 필드·모드 검사와 방식별 Decimal/명시적 판정 또는 판정 미실행 기록 | 실제 추출 기대값과 정규화 결과가 일치하는지 사내 fixture로 검증 |
 | 정규화 근거 → VWP DB | `analyze_unit`, `SourceEvidence`의 record ID·원본 참조·상태·전체 건수 저장과 봉인 | 회사 파서에서 DB를 직접 쓰지 않음 |
 | VWP DB → OA DB | `build_transfer`의 마스킹·분할·manifest/commit, 제출 worker의 outbox 발행, OA `SourceReceiver`의 범위·해시·전체 건수 검증과 반영 | 기존 허용 신원 어댑터·실환경 설정/검증. 공통 packet·저장 코드는 읽기 전용 |
 
 `ParsedRecord.fields`의 공통 이름은 `code`, `severity`, `object`, `check_point`, `mode`다. `severity`는 `ERROR/WARNING/INFO/FATAL`을 사용한다. `numeric`은 정확한 십진 문자열 `observed`와 `unit`, `reported`는 원본의 명시적 `status=PASS/FAIL`을 사용한다. 필수 여부·판정·0건 의미는 4절의 기존 방식별 계약을 따른다. 회사 필드명을 공통 키에 대응하는 근거와 단위/판정의 의미는 사내에서 확인하며 공통 엔진이 추측하지 않는다.
 
-어댑터가 반환한 `fields`와 공통 코드가 생성하는 저장 레코드는 구분한다. ID·원문 추출·해시·위치·범위·전체 건수·parser/규칙 버전은 공통 경로가 결합/검증한다. V2 OA 전달 레코드는 `id`, `fields`, `check_status`, `raw`, `line_start`, `line_end`, `reasons`, `evidence_id`, `source_raw_sha256`, `redacted`와 제공된 경우의 byte 위치·`json_pointer`를 사용하며, 원본 파일 hash·실행/버전·parser 계약은 report header/manifest에 결합한다. Python 파서 이벤트와 DB 전송 packet을 회사 코드에서 별도로 변환·재정의하지 않는다.
+어댑터가 반환한 `fields`와 공통 코드가 생성하는 저장 레코드는 구분한다. ID·원문 추출·해시·위치·범위·전체 건수·parser/규칙 버전은 공통 경로가 결합/검증한다. V2 OA 전달 레코드는 `id`, `fields`, `check_status`, `raw`, `line_start`, `line_end`, `reasons`, `evidence_id`, `source_raw_sha256`, `redacted`와 제공된 경우의 byte 위치·`json_pointer`를 사용하며, 원본 파일 hash·실행/버전·parser 계약은 report header/manifest에 결합한다. 수집 전용의 추가 marker/집계는 4.1절을 따른다. Python 파서 이벤트와 DB 전송 packet을 회사 코드에서 별도로 변환·재정의하지 않는다.
 
 GCA 원문 추출 후에도 이 공통 경로 전체를 합성 입력으로 연결해 검증하는 것은 Codex 책임이다. 공통 검증 성공과 실제 사내 형식·업무 의미의 정확성 검증은 각각 결과를 남긴다. AI 초기 그룹·판정은 이후 OA 단계이며, 파서의 원본 규칙 결과를 AI 또는 사람의 최종 판단으로 저장하지 않는다.
 
@@ -84,12 +86,13 @@ JSON은 `source.lines()`를 끝까지 읽고 전체 문서 span과 `/results/0` 
 
 ## 4. 추출과 판정의 분리
 
-registry의 `evaluation`은 파서별로 고정한다. 개별 이벤트가 판정 방식을 바꿀 수 없다.
+registry의 `evaluation`은 파서별로 고정한다. 개별 이벤트가 판정 방식을 바꿀 수 없다. 아래 세 방식을 지원한다. 수집 전용의 상태·전송 계약은 4.1절을 함께 따른다.
 
 | 등록 방식 | 추출 필드 | 공통 판정 |
 |---|---|---|
 | `numeric` | `code`, `severity`, `observed`(정확한 십진 문자열), `unit`, 객체/검사 지점/모드 | 기존 plan의 `evaluation.operator=le/ge`, `limit`, `unit`으로 Decimal 비교. 어댑터가 반환한 `status`는 수치 판정에 사용하지 않음 |
 | `reported` | `code`, `severity`, `status=PASS/FAIL`, `object`, `check_point`, `mode` | report에 명시된 판정과 필수 필드·모드 검증. plan의 수치 evaluation을 이 방식으로 우회할 수 없음 |
+| `none` | 확인된 `code`, `severity`, 실행 조건의 `mode`, 나머지 추출 필드 | 필드·모드 정합성만 검사하고 새 PASS/FAIL은 만들지 않음. 수치 evaluation과 조합 금지 |
 
 severity는 기존 `ERROR`/`WARNING`/`INFO`/`FATAL` 중 확인된 대응을 사용하며 severity만으로 PASS/FAIL을 추정하지 않는다. 수치 임계값·단위·같은 문제의 기준을 내부 AI가 새로 정하지 않는다. 기존 설정·스크립트·담당자가 확인한 업무 규칙을 plan으로 전달한다. 복합식이나 새로운 판정 정책이 필요하면 공통 evaluator를 수정하지 않고 문의한다.
 
@@ -98,6 +101,58 @@ severity는 기존 `ERROR`/`WARNING`/`INFO`/`FATAL` 중 확인된 대응을 사�
 정규화 이후의 공개 근거에도 원문 위치 계약을 유지한다. `json_pointer`가 있으면 VWP private evidence에서 OA part·record 조회까지 보존하며 없는 위치를 만들어 넣지 않는다. UTF-8 실패의 `hex:<bytes>`는 VWP 안에서만 보존하고 공개 raw 전체를 `[REDACTED]`로 바꿔 `redacted=true`로 전달한다. UNKNOWN·완료 차단·근거 ID·원문 해시는 유지한다. 세부 예약 표현과 구 packet 호환성은 [PROTOCOL.md의 전송 개정](../PROTOCOL.md#정규화원문-위치전송-개정)을 따른다. 회사 어댑터가 이 마스킹이나 전송 개정을 직접 구현하지 않는다.
 
 **위반 0건:** 실제 report에 완료된 검사 범위와 `0 violations` 같은 정상 근거가 명시되어 있으면 그 문구의 span을 사용하는 결과 기록을 만든다. 수치 형식은 위반 수 `observed="0"`를 승인된 기준과 비교하고, 명시적 정상 판정 형식은 확인된 규칙으로 PASS를 대응한다. 합성 예제의 `CLEAN ...`은 후자의 예다. 빈 파일, header/footer만 있는 파일, 단순히 FAIL 문구가 없는 파일을 PASS로 만들지 않는다. 현재 계약은 결과 기록이 0개면 미완료다.
+
+<a id="collection-only-parser"></a>
+
+### 4.1. 수집 전용 `none` — 2026-10-28 공통 구현
+
+VWP-bridge에서 새 PASS/FAIL을 계산하지 않고 원문·추출 필드·실행 조건을 수집하는 요구를 지원 방향으로 반영한다. 이 범위는 **parser/bridge의 평가 단계**다. OA AI의 초기 분류·그룹 판정 제안, 사람의 확정과 다음 판단의 사례 활용이라는 제품 목표는 유지한다.
+
+**현재 구현:** `ParserRegistry.register`와 `checked_records`가 `none`을 지원한다. `none`의 정상 추출은 공통 구조 검사를 통과한 뒤 기존 `evaluate`를 호출하지 않는다. 기존 `numeric`/`reported`의 평가와 legacy coverage 차단은 유지한다.
+
+| 위치 | 수집 전용의 저장·표시 계약 |
+|---|---|
+| 분석 결과와 OA report header | `evaluation_mode="none"`, 정수 `not_evaluated_count` |
+| 정상 추출 record | `check_status="UNKNOWN"`, `evaluation_status="NOT_PERFORMED"`, `reasons=[]` |
+| 실제 필드/파싱 오류 record | 기존 `UNKNOWN`과 오류 `reasons`, 판정 미실행 marker 없음 |
+| 기존 집계 | `evaluated_count=0`, `status_counts.UNKNOWN`/`unknown_count`는 전체 UNKNOWN 건수. `not_evaluated_count`는 그중 정상 추출된 미평가 건수이며 별도 합산하지 않음 |
+| OA 화면 | 보고서·그룹·로그의 정상 수집 상태는 **판정 미실행**, 실제 오류와 파싱/준비 상태는 별도 표시 |
+
+구조 검사는 `code`와 기존 네 값 중 `severity`를 요구한다. `object`/`check_point`/`mode`는 제공된 경우 문자열이어야 하고, 실행 조건에 mode가 있으면 추출 mode와 일치해야 한다. identity 누락에 임의 값을 넣지 않는다. 수집 전용도 EOF·span·전체 건수·완료/encoding·미해석 검사를 통과해야 파싱 완료다.
+
+선택 기준과 공통 계약은 다음과 같다.
+
+| 대상 | 적용 방향 |
+|---|---|
+| 승인된 수치 기준을 적용해야 하는 report | 기존 `numeric`과 Decimal 평가 유지 |
+| 원문에 명시적 PASS/FAIL이 있는 report | 기존 `reported`로 도구 결과 보존 가능. 원문 판정을 읽는 것과 새로운 판정을 계산하는 것을 구분 |
+| 원문에 판정이 없고 로그·사실만 추출하는 report | `none` 대상. 판정을 만들지 않고 추출 완료와 판정 미실행을 각각 기록 |
+
+1. `none`은 명시적으로 등록한 item·tool/tool_version·rule_version에만 적용한다. 미지원 parser, 추출 오류, 수치 기준 불명, 평가 실패를 `none`으로 자동 전환하지 않는다. `unit.evaluation`은 생략 또는 null이어야 하며 `{}`를 포함한 non-null 수치 정책과 함께 사용하지 못하게 한다. plan의 수치 정책을 없애 기존 `numeric` 대상의 평가를 우회하지 않는다.
+2. PASS/FAIL용 비교는 실행하지 않더라도 추출 필드·자료형·실행 mode의 정합성, 원문 span·EOF·전체 건수·완료 표시·encoding·미해석 구간·원본 hash 검증은 유지한다. 확인되지 않은 code/severity/status나 임계값을 임의로 채워 성공시키지 않는다. 필드 누락과 identity 불명도 숨기지 않는다.
+3. **수집·파싱 완료와 판정 완료를 분리한다.** 정상 추출의 판정 미실행을 파싱 오류로 집계하거나 자동 PASS/NOT_APPLICABLE로 표시하지 않는다. 반대로 잘림·누락·미해석·건수 불일치 등 실제 오류는 기존 차단 사유로 남긴다. 원문에 명시된 결과·측정 사실은 보존하며 AI 제안·사람 판정으로 덮어쓰지 않는다.
+4. 명시적 위반 0건도 원문 근거의 span을 가진 사실 기록으로 보존한다. 판정 미실행 상태에서는 이 사실만으로 PASS를 생성하지 않는다. 빈 파일·header/footer만 있는 파일·결과 기록 0개를 완료로 바꾸는 요구는 이번 범위에 포함하지 않는다.
+5. 정상 수집된 전체 기록은 OA 분류·사람의 그룹 확정·그룹 판정의 입력으로 전달할 수 있어야 한다. 현재 OWNER의 접수 범위 확정과 기존 SSO/RBAC·전체 입력·근거/기준/사례 검증을 유지한다. 판정 미실행만을 이유로 이 후속 흐름을 영구 차단하지 않되, 수집 완료를 AI 판단·사람 검토 완료로 승계하지 않는다. 기준·사례·현재 근거가 부족하면 기존 계약대로 보류한다.
+6. 기존 evaluated 경로와 봉인 이력은 보존한다. 평가 의미 변경은 새 parser/규칙 계약과 분석 개정으로 구분하며 과거 결과를 재해석하거나 덮어쓰지 않는다. 기존 legacy coverage의 UNKNOWN 검사도 일괄 삭제하지 않는다.
+
+**호환·검증 경계:** `check_status` enum과 세 항목의 `status_counts`는 변경하지 않았다. V2 source의 `none` 분석은 producer `postgresql-source-2.2`로 봉인하고, 이를 포함한 collection도 2.2로 식별한다. 기존 `numeric`/`reported`의 source producer/분석 ID는 2.1을 유지한다. parser 계약·producer·순서 있는 part hash가 새 상태와 건수에 결합되며 이전 분석/확정 이력을 덮어쓰지 않는다. wire schema 2와 기존 네 테이블을 사용하고 추가 migration/GRANT는 없다.
+
+OA는 명시적 `none` 등록의 item·tool/version·규칙 범위, 수치 정책 부재, producer, 결과 집계와 실제 part의 marker 건수를 재검증한다. marker를 다른 방식에 붙이거나 정상 marker/오류 사유를 바꿔 수신·OWNER 확정을 우회할 수 없다. 전체 수집/파싱이 정상이고 기존 접수 범위·권한 검사를 통과하면 OA AI와 사람 검토의 입력이 된다. legacy bundle의 미평가/UNKNOWN 검토 완료 차단은 그대로다. 구체 직렬화는 [PROTOCOL.md](../PROTOCOL.md)를 따른다.
+
+**사내 담당자의 현재 범위:** VWP·OA 양쪽에 수정본을 전달받은 뒤 기존 `create_parser_registry`의 명시적 등록에서 `evaluation="none"`을 사용할 수 있다. 원문 판정의 유무, 추출 필드/누락 의미, 완료·건수·0건 계약과 합성 입력/기대값을 확인하고 실제 report는 사내에서 검증한다. 회사 파일/메서드의 허용 범위는 유지한다. 공통 코드를 직접 바꾸거나 오류 후 등록/분석/제출을 반복하지 않고 기존 중단 규칙대로 `WAITING_FOR_CODEX`로 문의한다.
+
+공통 구현의 최소 수용 시나리오:
+
+| 사례 | 확인할 결과 |
+|---|---|
+| 명시적으로 등록한 `none`, 판정 없는 정상 로그 | 전체 필드·원문 위치·건수 보존, 수집/파싱 완료와 판정 미실행 구분, 가짜 PASS/FAIL 없음 |
+| `none`과 non-null `unit.evaluation`의 조합 | scope 불일치로 봉인·전송 차단. 평가 오류의 자동 fallback도 없음 |
+| 잘림·빈 파일·종료/건수 불일치·미해석·encoding 오류 | 실제 미완료 사유와 UNKNOWN 근거 보존, 수집 전용을 이유로 성공 전환하지 않음 |
+| 원문의 명시적 0건 | 근거 있는 사실 기록 보존, 판정 자동 생성 없음 |
+| VWP→OA 전달과 OWNER 접수 확정 후 두 단계 검토 | 전체 입력·권한·개정 검사 유지, 별도 사람 확정 전에는 검토 완료/정답 사례 생성 없음 |
+| 기존 `numeric`/`reported`와 과거 봉인 결과 | 기존 판정·건수·차단·불변 이력 계약 유지 |
+
+전용 합성 시험은 `tests/test_collection_only.py`와 `tests/test_submission_tokenless.py`의 수집 전용 시나리오를 사용하며 기본 `quick`에 포함한다. 원문·필드·도구 버전의 사내 정확성, 실제 OA 모델 판단 품질과 운영 배포는 별도 확인 대상이다. 합성 모델 응답의 흐름 검증을 실제 AI 품질 완료로 보고하지 않는다.
 
 ## 5. 구현·등록 순서
 
@@ -159,7 +214,7 @@ return registry
 
 | 사례 | 확인할 결과 |
 |---|---|
-| 정상/위반/경계값 | 기대 필드·원문 위치·개별 PASS/FAIL·전체 건수 |
+| 정상/위반/경계값 | 기대 필드·원문 위치·기존 방식의 PASS/FAIL 또는 `none`의 판정 미실행·전체 건수 |
 | 명시적 위반 0건 | 정상 근거를 가진 결과 기록과 COMPLETE, 사람 검토는 별도 |
 | 빈 파일/종료 누락/잘림/건수 불일치 | PARTIAL/UNKNOWN·blocker, 검토 완료 차단 |
 | 미해석 섹션/encoding 실패/후속 내용 | 모든 해당 원문 UNKNOWN 보존 |

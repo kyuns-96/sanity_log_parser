@@ -231,6 +231,16 @@ class SharedSourceSubmissionFlows(unittest.TestCase):
         self.run_scenario(TokenlessSubmissionTests,
             'test_real_tls_without_token_reaches_pending_then_sso_owner_publishes')
 
+    def test_collection_only_owner_intake_and_human_review_with_shared_bodies(self):
+        from tests.test_submission_tokenless import TokenlessSubmissionTests
+        self.run_scenario(TokenlessSubmissionTests,
+            'test_collection_only_runs_owner_intake_ai_and_human_review_without_changing_source')
+
+    def test_collection_only_marker_tampering_is_rejected_with_shared_bodies(self):
+        from tests.test_submission_tokenless import TokenlessSubmissionTests
+        self.run_scenario(TokenlessSubmissionTests,
+            'test_collection_only_receiver_rejects_scope_producer_and_count_tampering')
+
     def test_group_confirmation_human_judgment_and_next_run_references_with_shared_bodies(self):
         from tests.test_submission_database import SubmissionDatabaseTests
         self.run_scenario(SubmissionDatabaseTests,

@@ -15,16 +15,16 @@ const base = '/api/workbench/blocks/b1/versions/v1/reports/report-a'
 const url = '/?page=workbench&project=p1&block=b1&version=v1&eco=ECO-2&item=synthetic_check&tab=reports&review=report-a'
 const emptyPage = { items: [], total: 0, offset: 0, limit: 25 }
 
-type MockOptions = { configured?: boolean; personalToken?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
+type MockOptions = { collectionOnly?: boolean; configured?: boolean; personalToken?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
 
 async function mockOA(page: Page, options: MockOptions = {}) {
   const actor = options.readOnly ? { ...user, role: 'TOP' } : user
   const sourceRecords = makeRecords(options.recordCount || 2).map((value, index) => {
     const { reasons, ...record } = value
-    return { ...record, fields: options.longFields && index === 0 ? { object: 'node-1/' + 'long-path/'.repeat(20), mode: 'MODE_' + 'LONG_NAME_'.repeat(12) } : record.fields,
+    return { ...record, ...(options.collectionOnly ? { check_status: 'UNKNOWN', evaluation_status: 'NOT_PERFORMED' } : {}), fields: options.longFields && index === 0 ? { object: 'node-1/' + 'long-path/'.repeat(20), mode: 'MODE_' + 'LONG_NAME_'.repeat(12) } : record.fields,
       ...(!options.omitFirstReasons || index > 0 ? { reasons } : {}) }
   })
-  const currentReport = { ...report, record_count: sourceRecords.length }
+  const currentReport = { ...report, record_count: sourceRecords.length, ...(options.collectionOnly ? { check_status: 'UNKNOWN', evaluation_mode: 'none', not_evaluated_count: sourceRecords.length } : {}) }
   const state = { revision: options.initialRevision || 0, confirmed: options.confirmed || false, reviewRevision: 0, clusterJob: options.initialJob || null as CodexJob | null, reviewJob: null as CodexJob | null, clusterReads: 0, reviewReads: 0, current: null as ReviewCase | null, proposal: null as ReviewProposal | null, writes: [] as { path: string; body: Record<string, unknown>; marker: string | undefined }[], unexpected: [] as string[], calls: [] as string[], recordRequests: [] as { offset: number; limit: number; search: string; group: string | null; revision: string | null }[], recordPause: null as { offset: number; promise: Promise<void> } | null, recordFailure: null as { offset: number; remaining: number } | null }
   const reviewHistory = options.currentCase ? [options.currentCase] : []
   let credentialReady = false
@@ -34,7 +34,7 @@ async function mockOA(page: Page, options: MockOptions = {}) {
   state.proposal = options.proposal || null
   const capability = (job: CodexJob | null) => ({ available: options.configured !== false && (!options.personalToken || credentialReady), supported: true, enabled: options.configured !== false, model: model.model, remaining: null, provider: 'OA_OPENAI_COMPATIBLE', synthetic_only: false, job, ...(options.personalToken ? { credential_required: true, credential_ready: credentialReady, credential_error: credentialReady ? null : 'AI_USER_TOKEN_REQUIRED' } : {}) })
   const cluster = () => state.revision ? { id: `cluster-${state.revision}`, report_id: report.id, revision: state.revision, action: state.confirmed ? 'CONFIRM' : 'PROPOSE', confirmed: state.confirmed, reusable: false, compatible_versions: false, criteria: '', reason: '전체 로그의 검토 의도에 따라 묶었습니다.', identity_fields: ['mode'], group_count: 1, record_count: sourceRecords.length, at, actor, references: [], advisor: 'OA_OPENAI_COMPATIBLE', model_called: true, model_metadata: model, rationale_counts: { MISSING: 0, DRAFT: Number(!state.confirmed), CONFIRMED: Number(state.confirmed), STALE: 0 } } : null
-  const group = () => ({ id: 'g1', label: '확인이 필요한 합성 대상', record_count: sourceRecords.length, check_status: 'FAIL', status: state.current?.conclusion || 'PENDING', revision: state.reviewRevision, example: {}, rationale: { status: state.confirmed ? 'CONFIRMED' : 'DRAFT', reason: '같은 조건의 확인 대상입니다.', reason_truncated: false, reason_omitted_chars: 0, source: 'AI', evidence_count: 1 } })
+  const group = () => ({ id: 'g1', label: '확인이 필요한 합성 대상', record_count: sourceRecords.length, check_status: options.collectionOnly ? 'UNKNOWN' : 'FAIL', status: state.current?.conclusion || 'PENDING', revision: state.reviewRevision, example: {}, rationale: { status: state.confirmed ? 'CONFIRMED' : 'DRAFT', reason: '같은 조건의 확인 대상입니다.', reason_truncated: false, reason_omitted_chars: 0, source: 'AI', evidence_count: 1 } })
   const finish = (job: CodexJob) => {
     job.status = options.fail ? 'FAILED' : 'COMPLETED'; job.error = options.fail || null
     if (!options.fail) state.revision = 1
@@ -678,5 +678,25 @@ test('personal token registration enables AI judgment without discarding the hum
   const request = state.writes.find(write => write.path.endsWith('/review/ai'))!
   expect(request.body).not.toHaveProperty('token')
   expect(JSON.stringify(request.body)).not.toContain('synthetic-personal-token')
+  expect(state.unexpected).toEqual([])
+})
+
+
+test('collection-only shows unperformed tool verdicts while keeping human group review available', async ({ page }) => {
+  const state = await mockOA(page, { collectionOnly: true })
+  await page.goto(url)
+  await page.getByRole('button', { name: 'AI로 그룹 만들기', exact: true }).click()
+  await expect(page.locator('.ws-context-file')).toContainText('판정 미실행')
+  await expect(page.locator('.ws-record-table-result').filter({ hasText: '판정 미실행' })).toHaveCount(2)
+  await expect(page.locator('.ws-selected-group-header')).toContainText('판정 미실행')
+  await page.getByRole('button', { name: '분류 확정 · 판정 시작', exact: true }).click()
+  const review = page.locator('.ws-judgment-workspace')
+  await expect(review.locator('.ws-judgment-summary')).toContainText('판정 미실행')
+  await review.getByRole('radio', { name: 'PASS', exact: true }).check()
+  await review.getByRole('textbox', { name: '판정 근거', exact: true }).fill('사람이 수집된 원문과 점검 기준을 확인했습니다.')
+  await review.getByRole('button', { name: '판정 저장', exact: true }).click()
+  await expect(review.locator('.ws-judgment-summary')).toContainText('PASS')
+  await expect(review.locator('.ws-judgment-summary')).toContainText('판정 미실행')
+  expect(state.current?.conclusion).toBe('PASS')
   expect(state.unexpected).toEqual([])
 })

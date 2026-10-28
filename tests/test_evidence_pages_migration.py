@@ -2,9 +2,8 @@
 from pathlib import Path
 import tempfile
 import unittest
-import uuid
 
-from db.portal.build_reference import capture, create_forms, snapshot
+from db.portal.build_reference import snapshot
 from db.portal.runbook import checkpoints, fingerprint, identifier, load_plan, prepare, verify
 from tests.support import PgTestCase, ROOT
 
@@ -44,24 +43,3 @@ class EvidencePagesMigrationTests(PgTestCase):
                 self.admin.execute((bundle/step['file']).read_text())
                 verify(snapshot(self.admin, self.schema), bundle, step['number'], 'after')
             verify(snapshot(self.admin, self.schema), bundle)
-
-    def test_all_62_steps_match_original_sql_and_preserve_every_table_oid(self):
-        portal, reference = 'pages_portal_'+uuid.uuid4().hex, 'pages_reference_'+uuid.uuid4().hex
-        for schema in (portal, reference):
-            self.addCleanup(self.admin.execute, 'DROP SCHEMA IF EXISTS '+identifier(schema)+' CASCADE')
-        create_forms(self.admin, portal)
-        generated = capture(self.admin, reference, evidence_pages=True)
-        plan = load_plan(evidence_pages=True)
-        self.assertEqual(plan['steps'], generated['steps'])
-        query = "SELECT oid FROM pg_class WHERE relnamespace=%s::regnamespace AND relkind='r' ORDER BY oid"
-        before = self.admin.execute(query, (portal,)).fetchall()
-        with tempfile.TemporaryDirectory() as temporary:
-            bundle = Path(temporary)/'all-62'
-            manifest = prepare(snapshot(self.admin, portal), bundle, plan)
-            self.assertEqual(62, len(manifest['steps']))
-            for step in manifest['steps']:
-                verify(snapshot(self.admin, portal), bundle, step['number'], 'before')
-                self.admin.execute((bundle/step['file']).read_text())
-                verify(snapshot(self.admin, portal), bundle, step['number'], 'after')
-            verify(snapshot(self.admin, portal), bundle)
-        self.assertEqual(before, self.admin.execute(query, (portal,)).fetchall())

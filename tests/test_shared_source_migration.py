@@ -52,7 +52,20 @@ class SharedPacketMigrationTests(PgTestCase):
             self.addCleanup(self.admin.execute, 'DROP SCHEMA IF EXISTS '+identifier(schema)+' CASCADE')
         create_forms(self.admin, portal)
         plan = load_plan(shared_packets=True)
-        self.assertEqual(plan['steps'], capture(self.admin, reference, shared_packets=True)['steps'])
+        generated = capture(self.admin, reference, shared_packets=True)
+        self.assertEqual(plan['steps'], generated['steps'])
+        # One complete replay covers the formerly separate 60/62-step installs.
+        # Compare each historical plan with original SQL and check its final
+        # catalog/OIDs at the matching point, before later extensions run.
+        historical = (load_plan(), load_plan(raw_sources=True),
+                      load_plan(payload_storage=True), load_plan(evidence_pages=True))
+        expected = {}
+        for prior in historical:
+            count = len(prior['steps'])
+            with self.subTest(historical_checkpoint=count):
+                self.assertEqual(prior['steps'], plan['steps'][:count])
+                self.assertEqual(prior['steps'], generated['steps'][:count])
+            expected[count] = list(checkpoints(prior))[-1]
         query = "SELECT oid FROM pg_class WHERE relnamespace=%s::regnamespace AND relkind='r' ORDER BY oid"
         before = self.admin.execute(query, (portal,)).fetchall()
         with tempfile.TemporaryDirectory() as temporary:
@@ -62,6 +75,11 @@ class SharedPacketMigrationTests(PgTestCase):
             for step in manifest['steps']:
                 verify(snapshot(self.admin, portal), bundle, step['number'], 'before')
                 self.admin.execute((bundle/step['file']).read_text())
-                verify(snapshot(self.admin, portal), bundle, step['number'], 'after')
+                actual = snapshot(self.admin, portal)
+                verify(actual, bundle, step['number'], 'after')
+                if step['number'] in expected:
+                    with self.subTest(historical_checkpoint=step['number']):
+                        self.assertEqual(fingerprint(expected[step['number']]), fingerprint(actual))
+                        self.assertEqual(before, self.admin.execute(query, (portal,)).fetchall())
             verify(snapshot(self.admin, portal), bundle)
         self.assertEqual(before, self.admin.execute(query, (portal,)).fetchall())

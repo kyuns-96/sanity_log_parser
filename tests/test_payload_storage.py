@@ -348,3 +348,8 @@ class CompactSubmissionFlows(unittest.TestCase):
         from tests.test_submission_tokenless import TokenlessSubmissionTests
         self.run_existing_scenario(TokenlessSubmissionTests,
             'test_real_tls_without_token_reaches_pending_then_sso_owner_publishes')
+
+    def test_collection_only_owner_intake_and_human_review_with_compressed_storage(self):
+        from tests.test_submission_tokenless import TokenlessSubmissionTests
+        self.run_existing_scenario(TokenlessSubmissionTests,
+            'test_collection_only_runs_owner_intake_ai_and_human_review_without_changing_source')

@@ -12,8 +12,13 @@ ROOT = Path(__file__).resolve().parent
 PROFILES = ("quick", "full")
 # A short regression set for everyday edits. Keep expensive datasets and the
 # complete portal migration replay in full, with their original assertions.
+# Pure contracts are cheap. Exercise TLS/OWNER intake with the plain and shared
+# layouts here; the compressed/page variants and legacy HTTPS replay stay in
+# full rather than repeating the same workflow in every everyday run.
 QUICK_TESTS = (
     "tests.test_payload_storage.PayloadStorageDatabaseTests.test_restore_plain_includes_committed_evidence_from_unfinished_analyses",
+    "tests.test_shared_source_packets.SharedSourceSubmissionFlows.test_collection_only_owner_intake_and_human_review_with_shared_bodies",
+    "tests.test_shared_source_packets.SharedSourceSubmissionFlows.test_collection_only_marker_tampering_is_rejected_with_shared_bodies",
     "tests.test_repository_layout.RepositoryLayoutTests.test_shared_code_and_each_server_use_their_own_namespace",
     "tests.test_shared_source_packets.SharedSourceDatabaseTests.test_one_retained_queue_body_serves_both_private_stores_after_ack",
     "tests.test_shared_source_packets.SharedSourceDatabaseTests.test_staged_parts_are_not_claimable_until_commit_even_by_exact_id_and_resume_without_duplicates",
@@ -36,7 +41,6 @@ QUICK_TESTS = (
     "tests.test_evidence_pages.EvidencePageDatabaseTests.test_fingerprint_repack_and_restore_guard_preserve_pages_and_raw_sources",
     "tests.test_evidence_pages.EvidencePageDatabaseTests.test_011_restore_cannot_claim_old_reader_compatibility_after_012_even_before_new_pages",
     "tests.test_evidence_pages.EvidencePageDatabaseTests.test_app_cannot_update_page_bytes_or_apply_012_and_reapplication_is_atomic",
-    "tests.test_evidence_pages.PagedSubmissionFlows.test_tokenless_tls_and_sso_owner_confirmation_with_pages",
     "tests.test_evidence_pages_migration.EvidencePagesPortalTests",
     "tests.test_evidence_pages_migration.EvidencePagesMigrationTests.test_checkpoint_60_applies_only_012_with_exact_original_catalog",
     "tests.test_payload_storage.PayloadCodecTests",
@@ -44,9 +48,11 @@ QUICK_TESTS = (
     "tests.test_payload_storage.PayloadStorageDatabaseTests.test_dry_run_backfill_restart_and_restore_preserve_all_logical_columns",
     "tests.test_payload_storage.PayloadStorageDatabaseTests.test_repack_keeps_every_byte_hash_id_revision_timestamp_and_payload",
     "tests.test_payload_storage.PayloadStorageDatabaseTests.test_app_roles_cannot_modify_blobs_or_use_owner_maintenance",
-    "tests.test_payload_storage.CompactSubmissionFlows.test_tokenless_tls_and_sso_owner_confirmation_with_compressed_storage",
     "tests.test_payload_storage_migration.PayloadStoragePortalTests",
     "tests.test_payload_storage_migration.PayloadStorageMigrationTests.test_checkpoint_59_prepares_and_verifies_the_exact_original_011_catalog",
+    "tests.test_collection_only",
+    "tests.test_submission_tokenless.TokenlessSubmissionTests.test_collection_only_cannot_bypass_numeric_policy_or_publish_an_analysis",
+    "tests.test_submission_tokenless.TokenlessSubmissionTests.test_collection_only_truncated_report_stays_blocked_after_owner_confirmation",
     "tests.test_submission_tokenless.InternalIntakeContracts",
     "tests.test_submission_tokenless.TokenlessSubmissionTests.test_real_tls_without_token_reaches_pending_then_sso_owner_publishes",
     "tests.test_submission_tokenless.TokenlessSubmissionTests.test_only_current_owner_can_confirm_and_digest_revision_and_request_are_bound",
@@ -59,8 +65,8 @@ QUICK_TESTS = (
     "tests.test_scoped_dashboard.ScopedDashboardTests.test_admin_starts_without_business_grants_and_can_approve_own_top_request",
     "tests.test_scoped_dashboard.ScopedDashboardTests.test_response_id_alias_cannot_expose_another_blocks_evidence",
     "tests.test_schema", "tests.test_submission_contracts", "tests.test_submission_https",
-    "tests.test_submission_https_database", "tests.test_normalization", "tests.test_integration_contracts",
-    "tests.test_raw_sources.RawSourcesDatabaseTests.test_real_tls_db_originals_reach_oa_and_receipts_survive_without_server_files",
+    "tests.test_submission_https_database.HttpsSubmissionDatabaseTests.test_worker_rechecks_remote_identity_and_current_block_assignment_before_analysis",
+    "tests.test_normalization", "tests.test_integration_contracts",
     "tests.test_raw_sources.RawSourcesDatabaseTests.test_incomplete_submission_is_not_parsed_or_published",
     "tests.test_raw_sources.RawSourcesDatabaseTests.test_analysis_crash_removes_scratch_and_restarts_from_database_originals",
     "tests.test_raw_sources.RawSourcesDatabaseTests.test_private_raw_bytes_and_payloads_keep_restricted_database_permissions",

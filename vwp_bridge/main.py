@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.sanity_common import ReviewError, atomic_json, canonical_json, digest, read_json, require_id, safe_path, sha256_file, validate_payload, identity_value_valid
 from common.sanity_db import Database
 from vwp_bridge.sanity_evidence import PgEvidence, PRODUCER_VERSION
-from common.sanity_parsers import ParseContext, ParserRegistry, checked_records
+from common.sanity_parsers import ParseContext, ParserRegistry, checked_records, extraction_reasons, NOT_PERFORMED
 from common.sanity_scope import run_scope
 
 HEADER = ["object", "check_point", "mode", "code", "severity", "observed", "unit"]
@@ -156,22 +156,7 @@ class Evidence(PgEvidence):
 
 
 def evaluate(fields, unit, numeric=False):
-    reasons = []
-    for key in ("code", "severity"):
-        if not nonempty(fields.get(key)):
-            reasons.append("MISSING_" + key.upper())
-    if fields.get("severity") not in ("ERROR", "WARNING", "INFO", "FATAL"):
-        reasons.append("INVALID_SEVERITY")
-    # Identity-only omissions are allowed; malformed identity values are not silently coerced.
-    for key in ("object", "check_point", "mode"):
-        value = fields.get(key)
-        if value is not None and not isinstance(value, str):
-            reasons.append("INVALID_" + key.upper())
-    condition = unit.get("condition", {})
-    if not isinstance(condition, dict):
-        reasons.append("INVALID_CONDITION")
-    elif "mode" in condition and fields.get("mode") != condition["mode"]:
-        reasons.append("MODE_MISMATCH")
+    reasons = extraction_reasons(fields, unit)
     if numeric:
         rule = unit.get("evaluation")
         if not isinstance(rule, dict):
@@ -332,12 +317,14 @@ def analyze_unit(unit, source, root, evidence, parser_registry=None):
         return result
     if unit["execution_status"] != "COMPLETED":
         blockers.add("EXECUTION_NOT_COMPLETED")
+    registered = (parser_registry or ParserRegistry()).resolve(unit.get("parser"), evidence.run, unit)
+    if registered is not None and registered.evaluation == "none":
+        result.update(evaluation_mode="none", not_evaluated_count=0)
     if source is None:
         blockers.add("REPORT_MISSING")
         result.update(parse_status="MISSING", blockers=sorted(blockers))
         return result
     parser = unit.get("parser")
-    registered = (parser_registry or ParserRegistry()).resolve(parser, evidence.run, unit)
     path = safe_path(root, source["path"])
     if parser == "numeric_csv_v1":
         records = numeric_records(path, unit, blockers)
@@ -356,6 +343,8 @@ def analyze_unit(unit, source, root, evidence, parser_registry=None):
         evidence.record(unit, source, index, fields, raw, location, status, reasons)
         result["status_counts"][status] += 1
         result["record_count"] += 1
+        if location.get("evaluation_status") == NOT_PERFORMED:
+            result["not_evaluated_count"] += 1
     result["unknown_count"] = result["status_counts"]["UNKNOWN"]
     result["evaluated_count"] = result["status_counts"]["PASS"] + result["status_counts"]["FAIL"]
     if result["record_count"] == 0:

@@ -118,7 +118,8 @@ class TokenlessSubmissionTests(PgTestCase):
 
     def bridge(self):
         with Database('vwp') as db:
-            return SubmissionWorker(db,self.config,self.no_identity,ParserRegistry()).once()
+            return SubmissionWorker(db,self.config,self.no_identity,
+                                    getattr(self,'parser_registry',None) or ParserRegistry()).once()
 
     def receiver(self, db):
         return SourceReceiver(db,self.no_identity,workspace=ProductionWorkspaceStore(db,AccessStore(db,ADMIN)))
@@ -148,6 +149,142 @@ class TokenlessSubmissionTests(PgTestCase):
 
     def report_count(self):
         return self.admin_query("SELECT count(*) FROM {oa} WHERE record_type='WS_REPORT'").fetchone()[0]
+
+    def collection_input(self, body=None):
+        from tests.test_collection_only import collecting_registry, prepare_collection
+        self.parser_registry=collecting_registry()
+        return prepare_collection(self.f,body)
+
+    def collection_report(self):
+        return self.admin_query("SELECT payload FROM {oa} WHERE record_type='WS_REPORT' "
+            "AND payload->>'evaluation_mode'='none'").fetchone()[0]
+
+    def test_collection_only_runs_owner_intake_ai_and_human_review_without_changing_source(self):
+        import httpx
+        from oa.sanity_ai_jobs import AIJobService, run_once
+        from oa.sanity_ai_model import OAAdvisor
+        self.collection_input()
+        sid=self.submit()
+        self.assertEqual('AWAITING_CONFIRMATION',self.detail(sid)['delivery_state'])
+        self.assertEqual(0,self.report_count())
+        self.assertEqual(403,self.decide(sid,user=TOP).status_code)
+        self.success(self.decide(sid));self.bridge()
+        self.assertEqual('READY',self.client.status(sid)['review_readiness'])
+        original=self.collection_report()
+        self.assertEqual(('COMPLETE','UNKNOWN',2,True),
+            (original['parse_status'],original['check_status'],original['not_evaluated_count'],original['analysis_ready']))
+        base='/api/workbench/blocks/block-a1/versions/'+original['version_id']+'/reports/'+original['id']
+        records=self.success(self.clients[OWNER].get(base+'/clustering/records?expected_revision=0'))['items']
+        self.assertEqual(2,len(records))
+        self.assertTrue(all(r['evaluation_status']=='NOT_PERFORMED' and not r['reasons'] for r in records))
+        self.assertEqual(['clock fact A','clock fact B'],[r['fields']['message'] for r in records])
+        self.assertTrue(all('status' not in r['fields'] for r in records))
+        packets=[]
+        def model(request):
+            body=json.loads(request.content);packet=json.loads(body['messages'][1]['content']);packets.append(packet)
+            context=packet['context']
+            if 'identity_fields' in packet:
+                ids=[r['id'] for r in context['report']['records']]
+                reply={'groups':[{'id':'facts','label':'클록 관측 사실','record_ids':ids}],
+                    'reason':'같은 검사에서 수집한 사실을 검토한다.','reference_ids':[],
+                    'group_rationales':[{'group_id':'facts','reason':'같은 클록 검사 범위의 두 사실을 함께 검토한다.',
+                        'evidence_ids':ids,'reference_groups':[]}]}
+            else:
+                reply={'schema_version':2,'conclusion':'PASS','reason':'이번 두 사실을 확인된 기준과 비교했다.',
+                    'evidence_ids':[r['id'] for r in context['group_evidence']],
+                    'reference_ids':[],'criterion_ids':['synthetic-observation']}
+            return httpx.Response(200,json={'model':'synthetic-model','choices':[{'finish_reason':'stop',
+                'message':{'role':'assistant','content':json.dumps(reply,ensure_ascii=False)}}]})
+        advisor=OAAdvisor({'SANITY_OA_AI_ENABLED':'true','SANITY_OA_AI_URL':'https://synthetic.invalid/chat',
+            'SANITY_OA_AI_TOKEN':'synthetic-collection-token','SANITY_OA_AI_MODEL':'synthetic-model'},
+            transport=httpx.MockTransport(model))
+        criterion={'id':'synthetic-observation','version':'1',
+            'scope':{**{key:original[key] for key in ('project_id','block_id','item_id','family','parser','rule_version')},
+                     'layout':'POST'},'text':'합성 클록 관측 사실이 모두 확인되면 PASS를 제안한다.'}
+        criteria_path=self.root/'collection-criteria.json'
+        criteria_path.write_text(json.dumps({'schema_version':1,'criteria':[criterion]},ensure_ascii=False))
+        workspace=lambda db:ProductionWorkspaceStore(db,AccessStore(db,ADMIN))
+        factory=lambda scope:AIJobService(scope.db,scope.ws,advisor=advisor)
+        with patch.dict(os.environ,{'SANITY_OA_AI_CRITERIA_FILE':str(criteria_path)}), \
+             patch('oa.ai_workbench_api.jobs',side_effect=factory):
+            response=self.post(OWNER,base+'/clustering/ai',{'request_id':str(uuid.uuid4()),'expected_revision':0})
+            self.assertEqual(202,response.status_code,response.text)
+            self.assertEqual('COMPLETED',run_once(lambda:Database('oa'),workspace,advisor)['status'])
+            view=self.success(self.clients[OWNER].get(base+'/workbench'))
+            self.assertFalse(view['current']['confirmed'])
+            self.assertFalse(view['summary']['complete'])
+            confirmed=self.success(self.post(OWNER,base+'/clustering?compact=true',{
+                'action':'CONFIRM','expected_revision':1,'request_id':str(uuid.uuid4()),'reason':'사람이 두 사실과 그룹 근거를 확인했다.'}))
+            review=base+'/groups/facts/review'
+            response=self.post(OWNER,review+'/ai',{'expected_revision':0,'expected_cluster_revision':confirmed['revision'],
+                                                 'request_id':str(uuid.uuid4())})
+            self.assertEqual(202,response.status_code,response.text)
+            self.assertEqual('COMPLETED',run_once(lambda:Database('oa'),workspace,advisor)['status'])
+            value=self.success(self.clients[OWNER].get(review+'?compact=true'))
+            self.assertIsNone(value['current'])
+            self.assertEqual('PASS',value['proposal']['conclusion'])
+            self.assertEqual(2,len(value['proposal']['evidence_ids']))
+            self.success(self.post(OWNER,review+'?compact=true',{'expected_revision':0,
+                'expected_cluster_revision':confirmed['revision'],'request_id':str(uuid.uuid4()),
+                'conclusion':'PASS','reason':'사람이 현재 원본과 기준을 확인했다.','proposal_id':value['proposal']['id']}))
+        self.assertEqual(2,len(packets))
+        self.assertEqual('none',packets[0]['context']['report']['evaluation_mode'])
+        self.assertEqual(2,len(packets[1]['context']['group_evidence']))
+        self.assertEqual(original,self.collection_report())
+        from vwp_bridge.submission_analysis import private_records
+        with Database('vwp') as db:
+            private=list(private_records(db,original['analysis_id']))
+        self.assertEqual(2,len(private))
+        self.assertTrue(all(row['payload']['evaluation_status']=='NOT_PERFORMED'
+                            and row['payload']['check_status']=='UNKNOWN' for row in private))
+        self.assertEqual([record['fields'] for record in records],[row['payload']['fields'] for row in private])
+        self.assertEqual([record['raw'].encode() for record in records],[bytes(row['raw_bytes']) for row in private])
+        self.assertEqual([record['source_raw_sha256'] for record in records],[row['raw_sha256'] for row in private])
+
+    def test_collection_only_cannot_bypass_numeric_policy_or_publish_an_analysis(self):
+        unit=self.collection_input();unit['evaluation']={}
+        self.client.submit(self.f['target'],confirm=lambda _:True,preview=lambda _:None)
+        with self.assertRaises(ReviewError) as error:self.bridge()
+        self.assertEqual('PARSER_SCOPE_MISMATCH',error.exception.code)
+        self.assertEqual(0,self.admin_query("SELECT count(*) FROM {vwp} WHERE record_type IN ('RUN','SOURCE_OUTBOX')").fetchone()[0])
+        self.assertEqual(0,self.report_count())
+
+    def test_collection_only_truncated_report_stays_blocked_after_owner_confirmation(self):
+        self.collection_input('SYNTHETIC REPORT v1\nA|P1|M1|C1|INFO|fact\n')
+        sid=self.submit();self.success(self.decide(sid));self.bridge()
+        report=self.collection_report()
+        self.assertEqual('PARTIAL',report['parse_status']);self.assertFalse(report['analysis_ready'])
+        self.assertEqual('BLOCKED',self.client.status(sid)['review_readiness'])
+        self.assertIn('MISSING_END_MARKER',report['blockers'])
+        base='/api/workbench/blocks/block-a1/versions/'+report['version_id']+'/reports/'+report['id']
+        self.assertFalse(self.success(self.clients[OWNER].get(base+'/workbench'))['ready'])
+
+    def test_collection_only_receiver_rejects_scope_producer_and_count_tampering(self):
+        self.collection_input();sid=self.submit()
+        row=self.admin_query("SELECT state FROM {oa} WHERE record_type='WS_SUBMISSION' AND workspace_key=%s",(sid,)).fetchone()[0]
+        manifest=row['manifest']
+        with Database('oa') as db:
+            receiver=self.receiver(db)
+            for mutation in ('producer','contract','policy','mode','count','evaluated_boolean','result_policy'):
+                changed=copy.deepcopy(manifest);v=changed['reports'][1];u=changed['plan']['inventory']['units'][1]
+                if mutation=='producer':changed['producer']='postgresql-source-2.1'
+                elif mutation=='contract':v['parser_contract']=[]
+                elif mutation=='policy':u['evaluation']={}
+                elif mutation=='mode':v['result'].pop('evaluation_mode')
+                elif mutation=='evaluated_boolean':v['result']['evaluated_count']=False
+                elif mutation=='result_policy':v['result']['evaluation']={}
+                else:v['result']['not_evaluated_count']=0
+                with self.subTest(mutation=mutation),self.assertRaises(ReviewError):receiver.header(changed,u,v)
+        # Coherent manifest/commit hashes cannot hide a disagreement with the actual part markers.
+        changed=copy.deepcopy(row);result=changed['manifest']['reports'][1]['result']
+        result.update(parse_status='PARTIAL',blockers=['SYNTHETIC_BLOCKER'],not_evaluated_count=0)
+        changed['commit']['manifest_sha256']=digest(changed['manifest'])
+        self.admin_query("UPDATE {oa} SET state=%s WHERE record_type='WS_SUBMISSION' AND workspace_key=%s",(json_value(changed),sid))
+        response=self.decide(sid)
+        self.assertEqual(400,response.status_code,response.text)
+        self.assertEqual('SOURCE_EVALUATION_MISMATCH',response.json()['code'])
+        self.assertEqual(0,self.report_count())
+        self.assertIsNone(self.detail(sid)['decision'])
 
     def test_real_tls_without_token_reaches_pending_then_sso_owner_publishes(self):
         headers=[]

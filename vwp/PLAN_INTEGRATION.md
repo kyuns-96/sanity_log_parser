@@ -65,6 +65,10 @@ class SanityPlanProvider(ABC):
 
 세부 구조는 [PROTOCOL의 입력/출력](../PROTOCOL.md#vwp-수집-입력과-출력), parser 의미는 [PARSER_INTEGRATION](../vwp_bridge/PARSER_INTEGRATION.md)을 따른다. 한 plan의 `run.tool/tool_version`는 한 쌍이다. 여러 도구 실행을 한 plan에 섞어 다른 버전을 숨기지 않는다. 현장 실행 묶음과 일치하지 않으면 합성 구조로 공통 확장을 문의한다.
 
+**2026-10-28 수집 전용 입력:** registry의 `evaluation="none"`은 [parser 4.1절](../vwp_bridge/PARSER_INTEGRATION.md#collection-only-parser)의 공통 구현을 사용한다. registry의 방식 문자열과 plan의 `unit.evaluation` 수치 정책 객체는 서로 다른 필드다. `none` 대상의 수치 정책은 생략/null이며 `{}` 등 non-null 정책과의 조합은 거부한다. plan에 `unit.evaluation="none"`을 넣거나 schema를 임의 증분하지 않는다. 기존 승인된 수치 정책을 삭제해 `numeric` 평가를 회피하지 않는다.
+
+VWP 담당자는 원문 PASS/FAIL 유무, 수치 평가 대상 여부, 판정 없는 로그의 필드·완료/건수·0건 의미를 bridge에 인계한다. 원문 판정은 `reported`로 보존할 수 있고 심각도·파일 존재·위반 문구 부재만으로 판정을 만들지 않는다. 수집 전용은 양쪽 공통 수정본을 반영한 뒤 기존 회사 parser 등록과 제출 경로를 사용한다. 예상 범위·실행 상태·접수 확정의 기존 검사는 유지한다.
+
 `files`, `inventory.sha256`, `ready`, `unexpected_files`는 snapshot collector의 산출물이다. provider가 원문 검증을 수행한 것처럼 미리 채우지 않는다. `validate_plan`은 구조 검사이며 실제 예상 목록의 완전성·원천 진실성·업무 승인까지 증명하지 않는다. 확인되지 않은 목록도 구조 검사/수집은 가능하지만 이후 분석/검토 완료 조건을 우회할 수 없다.
 
 ## 4. workspace 원천 대응은 별도 자료

@@ -168,6 +168,11 @@ Codex가 [VWP 근거 묶음 저장](db/EVIDENCE_PAGES.md)을 제공한다. 새 V
 사용자가 확정한 목표는 원본 약 14MB 한 건의 **VWP/OA private·양방향 큐 전체 물리 합 20MB 이내**다. [013 전체 저장](db/TOTAL_STORAGE.md)은 마스킹된 전체 SOURCE_PART를 기존 공유 큐에 한 번 보존하고 두 private FK 참조로 복원한다. 원본 RAW·private 원문·개별 로그·전체 OA/모델 입력·사람 이력은 보존한다. 준비한 part는 최종 source COMMIT 이전에 claim되지 않으며 SSO OWNER 확정은 그대로다.
 
 공통 저장/reader·발행 gate·013/포털·기존 테스트는 Codex 보호 대상이다. 양쪽 공통 코드 선배포와 DBA 적용은 사용자가 관리하며 내부 AI의 SQL/권한/공통 코드 수정 범위는 넓히지 않는다. 큐 ACK 뒤 본문을 지우거나 참조를 직접 바꾸지 않는다. 기존 inline 자료의 자동 변환·원본 삭제·이전 reader 복귀는 제공하지 않는다. 실제 회사 자료의 기능·전체 물리 합·읽기 성능은 사내에서 확인하고 외부에는 비식별 집계만 전달한다.
+### 3.11. 수집 전용 parser — 2026-10-28 공통 구현
+
+VWP-bridge에서 원문·추출 필드를 수집하고 새 PASS/FAIL을 계산하지 않는 `evaluation="none"`은 [parser 4.1절](vwp_bridge/PARSER_INTEGRATION.md#collection-only-parser)을 따른다. 공통 코드는 `numeric`/`reported`/`none`을 지원한다. 원문 판정이 있으면 `reported`로 보존할 수 있고 승인된 수치 기준을 적용해야 하는 대상은 `numeric`을 유지한다. 수집 전용은 OA AI 분류·그룹 판정과 사람 확정·사례 활용 목표를 유지한다.
+
+양쪽 bridge에 공통 수정본을 반영한 뒤 사내 AI는 기존 회사 parser/등록 파일·허용 메서드에서 `none`을 명시적으로 등록할 수 있다. 원문 판정 유무·필드/완료/건수·0건 계약과 합성/사내 기대값을 확인한다. plan의 수치 정책은 생략/null이며 `unit.evaluation="none"` 문자열이나 `{}`를 넣지 않는다. 기존 수치 정책을 삭제해 평가를 회피하지 않는다. 공통 상태·집계·전송·OA 준비/화면은 Codex의 COMMON-02F 구현을 사용한다. 예상 밖 오류는 기존대로 `WAITING_FOR_CODEX`로 문의하며 evaluator·UNKNOWN/coverage 검사·DB·UI·기존 테스트를 사내 AI가 수정하지 않는다. 이번 구현은 회사 파일/메서드 수정 허용 범위를 넓히지 않는다.
 
 ## 4. 내부 AI가 절대 수정하지 않는 부분
 
