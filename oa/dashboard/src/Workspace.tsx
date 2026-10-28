@@ -354,7 +354,7 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
           <Tabs defaultValue="source" key={selectedReport.id} className="ws-report-tabs">
             <TabsList className="ws-studio-dialog-tabs"><TabsTrigger value="source">보고서·근거</TabsTrigger><TabsTrigger value="pipeline">Clustering·그룹 판정</TabsTrigger>{!production && <TabsTrigger value="review">사용자 판정·AI review</TabsTrigger>}</TabsList>
             <TabsContent value="source"><div className="ws-report-dialog-scroll">{selectedReport.blockers.length > 0 && <div className="ws-report-blockers"><strong>파싱 완료를 막는 사유</strong><ul>{selectedReport.blockers.map(code => <li key={code}>{code}</li>)}</ul></div>}
-              <PreservedSources files={selectedReport.preserved_sources} />
+              <PreservedSources files={selectedReport.preserved_sources} base={production ? `/blocks/${selectedReport.block_id}/versions/${selectedReport.version_id}/reports/${selectedReport.id}` : undefined} />
               {selectedReport.source_storage === 'PARTS_V2' ? <>
                 <h3>수신한 검사 근거 {n(selectedReport.record_count)}건</h3>
                 <p className="ws-muted">로그를 페이지로 나누어 저장했습니다. 검토 화면에서 전체 로그를 확인하고 그룹 분류를 시작할 수 있습니다. 원본 report 파일은 VWP에 보관됩니다.</p>

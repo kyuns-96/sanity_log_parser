@@ -16,7 +16,7 @@ PROFILES = ("quick", "full")
 # layouts here; the compressed/page variants and legacy HTTPS replay stay in
 # full rather than repeating the same workflow in every everyday run.
 QUICK_TESTS = (
-    "tests.test_preserved_sources",
+    "tests.test_preserved_sources", "tests.test_preserved_text",
     "tests.test_payload_storage.PayloadStorageDatabaseTests.test_restore_plain_includes_committed_evidence_from_unfinished_analyses",
     "tests.test_shared_source_packets.SharedSourceSubmissionFlows.test_collection_only_owner_intake_and_human_review_with_shared_bodies",
     "tests.test_shared_source_packets.SharedSourceSubmissionFlows.test_collection_only_marker_tampering_is_rejected_with_shared_bodies",

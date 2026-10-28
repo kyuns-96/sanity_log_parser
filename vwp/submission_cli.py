@@ -71,7 +71,7 @@ class SubmissionClient:
                               "found":u['report'] in found,'execution_ref':u['source']['execution_ref'],
                               'tool':u['source']['tool'],'tool_version':u['source']['tool_version'],
                               "execution_status": u["execution_status"]} for u in prepared.plan["inventory"]["units"]]}
-        if prepared.plan['schema_version'] == 3:
+        if prepared.plan['schema_version'] >= 3:
             summary.update(preserved=len(found & preserved), preserved_missing=len(preserved - found),
                            preserved_files=prepared.plan['inventory']['preserved_files'])
         return actor, prepared, summary
@@ -164,9 +164,10 @@ def display_preview(value):
     if 'preserved_files' in value:
         print(f"보존 근거 파일 {value['preserved']}개 · 보존 파일 누락 {value['preserved_missing']}개")
         for file in value['preserved_files']:
+            from common.sanity_preserved_sources import binding_ids
             bind = file['binding']
             print(f"  {file['path']} · {file['role']} · {bind['kind']} "
-                  f"{bind.get('review_unit_id', bind.get('anchor_unit_id'))}")
+                  f"{', '.join(binding_ids(bind))}")
     print("범위 승인: " + ("검증됨" if value["inventory_confirmed"] else "미승인 — 수신 후 검토 차단")
           + ' · 참조: '+(value['approval_reference'] or '없음'))
     if unverified(value['actor']):

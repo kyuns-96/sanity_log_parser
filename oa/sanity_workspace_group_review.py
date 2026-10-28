@@ -106,6 +106,9 @@ class WorkspaceGroupReviewStore(WorkspaceReviewStore):
                                              "metadata": metadata, "retrieval": retrieval})}
         self.db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("workspace-review-write"),))
         context = self.context(user_id, block_id, version_id, report_id, write=True)
+        from oa.sanity_preserved_text import enrich
+        from common.sanity_preserved_ai import receipt
+        receipt(metadata, advice, enrich(self.db, context))
         previous = self.row(self.proposal_kind, rid)
         if previous:
             check(previous["payload"]["command"] == command, "REQUEST_CONFLICT")

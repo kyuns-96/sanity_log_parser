@@ -10,7 +10,9 @@
 
 **2026-10-28 수집 전용 구현:** `evaluation="none"`의 공통 등록·검증·전송·OA 연결을 제공한다. [4.1절](#collection-only-parser)의 상태·호환 계약을 따르고 양쪽 bridge에 수정본을 반영한 뒤 기존 회사 등록 지점에서 사용한다. 실제 형식·의미·정확성은 사내에서 별도 검증한다.
 
-**비-unit 보존 근거:** full.rpt/SDC의 명시 보존은 별도 [plan 3 계약](../vwp/PRESERVED_SOURCES.md)을 따른다. 보존 선언만으로 이 parser가 호출되거나 본문이 OA AI에 전달되지는 않는다. 이번 연결은 전체 byte RAW 보관과 귀속·hash 메타데이터까지이며, 본문 추출/마스킹/AI 인용 연결은 후속 공통 작업이다. 기존 허용 회사 parser/등록 범위는 그대로다.
+[plan 4](../vwp/PRESERVED_TEXT.md)는 별도 공통 UTF-8 전체 텍스트 추출·마스킹·AI 인용을 제공한다. 사내 parser의 자동 호출이나 SDC 실행은 아니며 기존 허용 parser 지점은 유지한다.
+
+**비-unit 보존 근거(plan 3):** full.rpt/SDC의 명시 보존은 별도 [plan 3 계약](../vwp/PRESERVED_SOURCES.md)을 따른다. 보존 선언만으로 이 parser가 호출되거나 본문이 OA AI에 전달되지는 않는다. 이번 연결은 전체 byte RAW 보관과 귀속·hash 메타데이터까지이며, 본문 추출/마스킹/AI 인용 연결은 후속 공통 작업이다. 기존 허용 회사 parser/등록 범위는 그대로다.
 
 ## 1. 제공 파일과 수정 책임
 

@@ -718,3 +718,10 @@ remain unimplemented. Jira integration has been retired, not deferred. Documenta
 `inventory.preserved_files`의 path/role/정확한 unit 또는 execution anchor를 검증하고 실제 전체 file hash/크기와 결합해 `PRESERVED` 메타데이터를 만든다. 누락은 `PRESERVED_FILE_MISSING`, 메타데이터/귀속 불일치는 `PRESERVED_SOURCE_MISMATCH` 등으로 거부한다. 선언 없는 파일은 UNEXPECTED_REPORTS로 남는다. 원본은 VWP RAW에 전체 byte로 보관하며 OA에는 전체 목록과 report별 `preserved_sources` 참조를 보낸다. scope/content/manifest digest와 OWNER 현재 권한·revision 검사는 유지한다.
 
 귀속된 보존 메타데이터를 분석 계약에 포함하므로 같은 CSV/execution에서도 근거가 바뀌면 새 analysis/report가 생성된다. 기존 식별 공식과 이전 확정 기록을 바꾸지 않는다. OA source digest·AI 입력 SHA256에 연결하며 실제 분류/판정 요청에 메타데이터와 본문 미제공 안내를 전달한다. 파일 본문·추출 결과·새 파일 근거 인용은 이번 버전에 없다.
+
+
+## plan 4 보존 본문과 다중 귀속 — 2026-10-28
+
+[본문 계약](vwp/PRESERVED_TEXT.md)은 plan/manifest 4, producer postgresql-source-2.4를 사용한다. 기존 SOURCE_PART 안의 명시 kind=preserved-text-v1과 source_id/part_index/segments를 검증하며 가짜 unit/로그를 만들지 않는다. 같은 파일을 여러 대상에 연결해도 본문 part는 한 번 전송·보관한다. 전체 줄/byte·hash·완전성·마스킹을 검증하고 SOURCE_COMMIT에 로그/본문 전체 part 집합을 결합한다. 기존 SQL/제한 권한/SSO OWNER·불변 이력은 유지한다.
+
+OA는 보고서 권한 안에서 마스킹 본문을 조회/다운로드하고 실제 AI 요청에 전체 본문을 제공한다. 별도 preserved_citations를 실제 pe 근거/대상과 대조해 모델 metadata·원문 위치·입력 SHA256·prompt 개정에 저장하고 공개 시 재검증한다. 승인 criterion/사람 case 조건을 대체하지 않는다. 미마스킹 원본은 VWP RAW에 남고 DB 분할과 다중 모델 호출을 혼동하지 않는다.

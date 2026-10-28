@@ -21,6 +21,7 @@ from common.sanity_submission import (HEX, PART_BYTES, PART_RECORDS, PROTOCOL, S
 from common.sanity_submission_store import require_schema
 from common.sanity_shared_sources import GATE, SharedSourcePackets
 from common.sanity_preserved_sources import PRODUCER as PRESERVED_PRODUCER, for_unit, validate_metadata
+from common.sanity_preserved_text import PRODUCER as TEXT_PRODUCER, KIND as TEXT_KIND, validate_part as validate_text_part, verify_parts
 from common.sanity_submission_intake import UnverifiedSubmitter, PENDING_BLOCKER, require_pending_plan, unverified
 from oa.sanity_workspace import WorkspaceStore, record_id
 from oa.sanity_production_workspace import ProductionWorkspaceStore
@@ -114,12 +115,16 @@ class SourceReceiver:
         value = packet['body']
         check(set(value)=={'id','body'} and isinstance(value['body'],dict),'INVALID_SOURCE_PART')
         body = value['body']
-        check(set(body)=={'report_id','part_index','records'} and value['id']=='sp-'+digest(body)
-              and isinstance(body['report_id'],str) and body['report_id'].startswith('sr-')
-              and type(body['part_index']) is int and body['part_index']>=0
-              and isinstance(body['records'],list) and 1<=len(body['records'])<=PART_RECORDS,'INVALID_SOURCE_PART')
-        for record in body['records']:
-            validate_record(record)
+        if body.get('kind') == TEXT_KIND:
+            validate_text_part(body)
+            check(value['id'] == 'sp-'+digest(body), 'INVALID_SOURCE_PART')
+        else:
+            check(set(body)=={'report_id','part_index','records'} and value['id']=='sp-'+digest(body)
+                  and isinstance(body['report_id'],str) and body['report_id'].startswith('sr-')
+                  and type(body['part_index']) is int and body['part_index']>=0
+                  and isinstance(body['records'],list) and 1<=len(body['records'])<=PART_RECORDS,'INVALID_SOURCE_PART')
+            for record in body['records']:
+                validate_record(record)
         self.db.execute('SELECT pg_advisory_xact_lock(%s)',(lock_key('source-part-'+value['id']),))
         old = self.existing('WS_SOURCE_PART',value['id'])
         if old:
@@ -161,7 +166,7 @@ class SourceReceiver:
         collecting = collection_only_contract(value['parser_contract'],s,unit)
         if collecting:
             count = result.get('not_evaluated_count')
-            check(unit['applicable'] and output['producer'] in (COLLECTION_PRODUCER_VERSION, PRESERVED_PRODUCER)
+            check(unit['applicable'] and output['producer'] in (COLLECTION_PRODUCER_VERSION, PRESERVED_PRODUCER, TEXT_PRODUCER)
                   and result.get('evaluation_mode')=='none' and type(count) is int
                   and result.get('evaluation') is None and result.get('parser')==unit['parser']
                   and result.get('rule_version')==unit['rule_version']
@@ -190,17 +195,18 @@ class SourceReceiver:
     def validate_manifest(self, packet):
         output = packet['body']
         check(isinstance(output.get('plan'), dict), 'INVALID_SOURCE_MANIFEST')
-        preserving = output['plan'].get('schema_version') == 3
+        preserving = output['plan'].get('schema_version') in (3, 4)
         keys = {'plan','inventory_confirmed','global_blockers','reports','producer'}
         if preserving:
             keys.add('preserved_files')
         check(set(output)==keys,'INVALID_SOURCE_MANIFEST')
         validate_plan(output['plan'])
         if preserving:
-            check(output['producer'] == PRESERVED_PRODUCER, 'PRESERVED_SOURCE_MISMATCH')
-            validate_metadata(output['plan'], output['preserved_files'])
+            check(output['producer'] == (TEXT_PRODUCER if output['plan']['schema_version'] == 4 else PRESERVED_PRODUCER),
+                  'PRESERVED_SOURCE_MISMATCH')
+            validate_metadata(output['plan'], output['preserved_files'], transferred=True)
         else:
-            check(output['producer'] != PRESERVED_PRODUCER, 'PRESERVED_SOURCE_MISMATCH')
+            check(output['producer'] not in (PRESERVED_PRODUCER, TEXT_PRODUCER), 'PRESERVED_SOURCE_MISMATCH')
         if unverified(packet['actor']):
             require_pending_plan(output['plan'])
             check(output['inventory_confirmed'] is False,'SOURCE_APPROVAL_MISMATCH')
@@ -238,6 +244,7 @@ class SourceReceiver:
         guard.ensure_public(state['manifest'])
         output = self.validate_manifest({**packet,'body':state['manifest']})
         expected = [p['id'] for r in output['reports'] for p in r['parts']]
+        expected += [p['id'] for f in output.get('preserved_files', []) for p in f.get('extraction', {}).get('parts', [])]
         check(len(expected)==len(set(expected)),'SOURCE_PART_CONFLICT')
         check(state['commit']=={'manifest_sha256':digest(output),'parts':len(expected)},'SOURCE_COMMIT_CONFLICT')
         check(set(state['seen_parts'])<=set(expected),'SOURCE_PART_CONFLICT')
@@ -246,6 +253,15 @@ class SourceReceiver:
         self.authorize(packet)
         self.db.execute('SELECT pg_advisory_xact_lock(%s)',(lock_key('source-block-'+packet['scope']['block_key']),))
         report_ids, blockers = [], set(output['global_blockers'])
+        def text_part(ref):
+            row = self.existing('WS_SOURCE_PART', ref['id'])
+            check(row and row['workspace_block_ref'] == record_id('WS_BLOCK', packet['scope']['block_key'])
+                  and row['workspace_project_ref'] == record_id('WS_PROJECT', packet['scope']['project_key']),
+                  'PRESERVED_TEXT_CORRUPT')
+            return row['payload']
+        for file in output.get('preserved_files', []):
+            if file.get('content_available_to_ai'):
+                verify_parts(file, text_part)
         for value in output['reports']:
             counts, index, record_bytes, line_count, not_evaluated = Counter(), 0, 0, 0, 0
             result = value['result']
