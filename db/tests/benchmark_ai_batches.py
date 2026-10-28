@@ -58,7 +58,13 @@ def measure(report):
         if event['confirmed'] or len(members)!=report['record_count'] or set(members)!=seen or len(seen)!=len(members):
             raise RuntimeError('Complete final partition changed')
         rows=db.execute("SELECT count(*) AS n FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s",('ai2.'+job['id']+'.%',)).fetchone()['n']
+        ledger_storage = {r['kind']:{'rows':r['rows'],'payload_bytes':r['payload_bytes']}
+            for r in db.execute("SELECT split_part(workspace_key,'.',3) AS kind,count(*) AS rows,"
+                "sum(pg_column_size(payload)) AS payload_bytes FROM {oa} "
+                "WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s GROUP BY 1",
+                ('ai2.'+job['id']+'.%',)).fetchall()}
     return {'synthetic_only':True,'model_calls':calls,'leaf_calls':leaves,'records':len(seen),
             'complete_input_sha256':input_hash.hexdigest(),'final_partition_complete':True,
-            'ledger_rows':rows,'worker_steps':steps,'seconds':round(time.monotonic()-started,3),
+            'ledger_rows':rows,'ledger_storage_by_kind':ledger_storage,
+            'worker_steps':steps,'seconds':round(time.monotonic()-started,3),
             'maximum_request_bytes':maximum_bytes,'batch_settings':batch.public()}

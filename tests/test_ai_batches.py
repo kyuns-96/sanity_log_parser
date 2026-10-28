@@ -140,6 +140,39 @@ class BatchPureTests(unittest.TestCase):
         self.assertEqual([segments[0]['id']],citations[0]['evidence_ids'])
         self.assertEqual(advice['groups'][0]['id'],citations[0]['target_id'])
 
+    def test_many_distinct_groups_remain_separate_across_bounded_merge_rounds(self):
+        model=self.model(max_records=8,input_tokens=64000)
+        template=model.records[0]
+        model.records=[{**template,'id':f'log-{i}','raw':f'Synthetic distinct condition {i}'} for i in range(137)]
+        model.context['report'].update(records=model.records,record_count=len(model.records))
+        model.context['source_sha256']=digest(model.context['report'])
+        merge_sizes=[]
+        def respond(request):
+            packet=json.loads(json.loads(request.content)['messages'][1]['content'])
+            ids=[r['id'] for r in packet['context']['report']['records']]
+            if packet['batch']['stage']=='MERGE':merge_sizes.append(len(ids))
+            reply={'groups':[{'id':key,'label':'Same code, distinct condition','record_ids':[key]} for key in ids],
+                'reason':'Each condition requires separate review','reference_ids':[],
+                'group_rationales':[{'group_id':key,'reason':'Keep this independently reviewed condition separate',
+                    'evidence_ids':[key],'reference_groups':[]} for key in ids]}
+            return httpx.Response(200,json={'model':'synthetic-model','choices':[{'finish_reason':'stop',
+                'message':{'role':'assistant','content':json.dumps(reply)}}]})
+        model.advisor.transport=httpx.MockTransport(respond)
+        nodes=[]
+        for desc in model.leaf_plan():nodes.extend(model.execute({'kind':'LEAF',**desc})['nodes'])
+        for round_number in (1,2):
+            lookup={n['id']:n for n in nodes};following=[]
+            for group in model.merge_plan(nodes,round_number):
+                selected=[lookup[key] for key in group]
+                following.extend(selected if len(group)==1 else model.execute(
+                    {'kind':'MERGE','nodes':group},nodes=selected)['nodes'])
+            nodes=following
+        advice,_=model.advice(nodes)
+        self.assertEqual({(r['id'],) for r in model.records},
+                         {tuple(g['record_ids']) for g in advice['groups']})
+        self.assertGreater(len(merge_sizes),2)
+        self.assertLessEqual(max(merge_sizes),model.settings.merge_groups)
+
 
 @unittest.skipIf(getattr(PgTestCase,'__unittest_skip__',False),'Disposable PostgreSQL fixture required')
 class BatchDatabaseTests(unittest.TestCase):
@@ -167,6 +200,55 @@ class BatchDatabaseTests(unittest.TestCase):
             reservations=[s for s,_ in ledger.rows('step.') if s['status']=='RESERVED']
             self.assertEqual(3,len(reservations));self.assertTrue(all(len(s['input_sha256'])==64 for s in reservations))
         self.assertIsNone(self.c.run_job())
+
+    def test_round_keeps_every_descriptor_without_separate_plan_rows(self):
+        job=self.c.enqueue();self.c.run_job()
+        with self.c.service() as service:
+            ledger=Ledger(service,service._load(job['id']))
+            manifest=ledger.round(0)
+            self.assertEqual(2,manifest['plan_format'])
+            self.assertEqual(2,manifest['count'])
+            self.assertEqual([(0,1),(1,2)],[(d['start'],d['stop']) for d in manifest['descriptors']])
+            self.assertEqual([],ledger.rows('plan.'))
+            self.assertEqual(manifest['descriptors'][1],ledger.descriptor({'round':0,'index':1}))
+        self.assertEqual('COMPLETED',self.finish()['status'])
+        self.assertEqual(3,len(self.c.requests))
+
+    def test_checkpoint_row_plans_resume_without_repeating_completed_children(self):
+        def old_plans(ledger,round_number,descriptors,input_count):
+            refs=[ledger.put(f'plan.{round_number:03d}.{i:06d}',d) for i,d in enumerate(descriptors)]
+            return ledger.put(f'round.{round_number:03d}',
+                              {'count':len(refs),'input_nodes':input_count,'plans':refs})
+        job=self.c.enqueue()
+        with patch.object(Ledger,'plans',old_plans):self.c.run_job()
+        self.assertEqual('COMPLETED',self.finish()['status'])
+        self.assertEqual(3,len(self.c.requests))
+        with self.c.service() as service:
+            ledger=Ledger(service,service._load(job['id']))
+            self.assertIn('plans',ledger.round(0))
+            self.assertEqual(2,ledger.round(1)['plan_format'])
+            self.assertIsNotNone(ledger.audit())
+
+    def test_rehashed_leaf_plan_cannot_replace_the_parent_pinned_plan(self):
+        import base64
+        from common.sanity_common import pack_json
+        from common.sanity_db import json_value
+        job=self.c.enqueue();self.c.run_job()
+        with self.c.service() as service:
+            ledger=Ledger(service,service._load(job['id']))
+            manifest=ledger.round(0)
+        manifest['descriptors'][1]['start']=0
+        key='ai2.'+job['id']+'.round.000'
+        payload=self.c.admin_query("SELECT payload FROM {oa} WHERE workspace_key=%s",(key,)).fetchone()[0]
+        packed=pack_json(manifest)
+        packed['payload_gzip']=base64.b64encode(packed['payload_gzip']).decode('ascii')
+        payload['packed']=packed
+        payload['sha256']=digest({k:v for k,v in payload.items() if k!='sha256'})
+        self.c.admin_query("UPDATE {oa} SET payload=%s WHERE workspace_key=%s",(json_value(payload),key))
+        result=self.c.run_job()
+        self.assertEqual(('FAILED','AI_BATCH_CORRUPT'),(result['status'],result['error']))
+        self.assertEqual(1,len(self.c.requests));self.assertIsNone(self.c.run_job())
+        self.assertEqual(0,self.c.admin_query("SELECT count(*) FROM {oa} WHERE record_type='WS_CLUSTER_EVENT'").fetchone()[0])
 
     def test_second_child_failure_does_not_publish_partial_results_or_retry(self):
         self.c.enqueue();self.c.run_job()

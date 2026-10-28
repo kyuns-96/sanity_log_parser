@@ -76,15 +76,37 @@ class Ledger:
         return body,self.put('step.'+str(index).zfill(8),body)
 
     def plans(self, round_number, descriptors, input_count):
-        refs=[]
-        for i, value in enumerate(descriptors):
-            refs.append(self.put(f'plan.{round_number:03d}.{i:06d}',value))
-        return self.put(f'round.{round_number:03d}',{'count':len(refs),'input_nodes':input_count,'plans':refs})
+        # One compressed immutable round retains every descriptor. Separate
+        # rows repeat the parent binding, envelope and DB indexes for each leaf.
+        # Reservations still hash the exact descriptor and actual HTTP body.
+        return self.put(f'round.{round_number:03d}',{'plan_format':2,
+            'count':len(descriptors),'input_nodes':input_count,'descriptors':descriptors})
+
+    def round(self, round_number):
+        expected = self.parent['data']['batch']['plan'] if round_number == 0 else None
+        manifest, _ = self.get(f'round.{round_number:03d}', expected)
+        check(isinstance(manifest,dict),'AI_BATCH_CORRUPT')
+        if 'plan_format' in manifest:
+            check(set(manifest)=={'plan_format','count','input_nodes','descriptors'}
+                  and type(manifest['plan_format']) is int and manifest['plan_format']==2,
+                  'AI_BATCH_CORRUPT')
+            entries=manifest['descriptors']
+        else:
+            # Checkpoint jobs retain their original rows and receipt hashes.
+            check(set(manifest)=={'count','input_nodes','plans'},'AI_BATCH_CORRUPT')
+            entries=manifest['plans']
+        check(type(manifest['count']) is int and manifest['count']>0
+              and type(manifest['input_nodes']) is int and manifest['input_nodes']>0
+              and isinstance(entries,list) and len(entries)==manifest['count']
+              and all(isinstance(entry,dict) for entry in entries),'AI_BATCH_CORRUPT')
+        return manifest
 
     def descriptor(self, state):
-        manifest,_=self.get(f"round.{state['round']:03d}")
+        manifest=self.round(state['round'])
         index=state['index']
         check(type(index)is int and 0<=index<manifest['count'],'AI_BATCH_CORRUPT')
+        if 'descriptors' in manifest:
+            return manifest['descriptors'][index]
         ref=manifest['plans'][index]
         return self.get(ref['key'],ref)[0]
 
@@ -174,7 +196,7 @@ def _prepare(service,event,advisor,now):
 def _finish_round(service,event,ledger,model,step,ref):
     state=step['state']; round_number=state['round']
     nodes,node_refs=ledger.completed_round(round_number)
-    manifest,_=ledger.get(f'round.{round_number:03d}')
+    manifest=ledger.round(round_number)
     check(nodes and len(nodes)==state['nodes'],'AI_BATCH_CORRUPT')
     stable=state['stable']+1 if round_number>0 and len(nodes)==manifest['input_nodes'] else 0
     if len(nodes)==1 or stable>=2:
@@ -238,7 +260,7 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
                 return public(service,event)
             if _timestamp(event['data']['deadline'])<=current:
                 return public(service,service._failed(event,ReviewError('AI_BATCH_DEADLINE','Overall batch deadline exceeded'),status='FAILED'))
-            manifest,_=ledger.get(f"round.{state['round']:03d}")
+            manifest=ledger.round(state['round'])
             if state['index']==manifest['count']:
                 return public(service,_finish_round(service,event,ledger,model,step,ref))
             check(state['index']<manifest['count'],'AI_BATCH_CORRUPT')

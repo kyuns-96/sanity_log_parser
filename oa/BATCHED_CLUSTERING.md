@@ -74,6 +74,13 @@ context/output·chat framing/reasoning·게이트웨이 body 제한과 출력 �
 별도 테이블·DDL·GRANT·큐 재전송은 없다. plan·자식 결과는 압축 JSON으로 보관하고 작은 호출
 이벤트를 hash chain으로 연결한다. 원문이나 인증 header를 감사 행에 복제하지 않는다.
 
+새 라운드 계획은 `plan_format=2`로 전체 descriptor 목록을 한 압축 레코드에
+보존한다. 기록 범위·원본 hash·통합 대상 참조는 생략하지 않으며, 각 호출 예약에는
+해당 descriptor와 실제 HTTP body hash를 계속 남긴다. 첫 라운드의 hash는 부모가
+고정한 계획 참조와도 대조한다. 기존 개별 `plan.*` 레코드 형식은 그대로 읽어
+진행 중 작업을 재개한다. 기존 행을 변환하거나 삭제하지 않는다. 새 계획을 생성하기
+전에 웹/worker 모두 이 reader를 배포해야 하며 이전 reader로 되돌릴 수 없다.
+
 1. 전체 입력·사례/기준·설정 개정을 고정하고 모든 leaf를 사전 계획한다. 한 기록 과대도 첫 호출 전에 거부한다.
 2. 네트워크 호출 전에 배치 범위, 실제 전송 body SHA256, prompt, 예약 ID·deadline을 commit한다.
 3. DB 연결/권한 lock을 놓은 뒤 모델을 호출한다. 응답 SHA·검증 결과·실제 모델·사용량을 자식 결과에 저장한다.
@@ -101,6 +108,8 @@ token/body 한도·한 기록 과대, 보존 본문·별도 인용, DB 자식 �
 감사 이력/최종 사람 이력이 추가되므로 기존 수집만의 용량 수치를 그대로 적용하지 않는다.
 `db/tests/benchmark_total_storage.py --measure-ai`는 같은 합성 제출에 mock 모델을 연결하고
 전체 네 테이블의 TOAST/index 포함 크기, 실제 전달 기록 hash·최종 배정과 호출 수를 기록한다.
+`ledger_storage_by_kind`는 자식 이력 종류별 행 수와 `pg_column_size(payload)` 합계다.
+이 값은 원인 분석용이며 네 테이블의 TOAST/index 포함 물리 합계를 대신하지 않는다.
 현재는 보존 본문 없는 입력용 측정이다. 임의 초기화·삭제·repack으로 용량 목표를 맞추지 않는다.
 
 현장 담당은 지원된 설정/토크나이저 자료·모델 한도·독립 정답 평가를 준비한다. 공통 모델/worker/

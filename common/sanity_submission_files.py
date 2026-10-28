@@ -31,11 +31,14 @@ def regular(path, maximum=MAX_METADATA):
     check('..' not in path.parts,'UNSAFE_SUBMISSION_PATH')
     # Resolve every component relative to an already-open directory. Checking
     # is_symlink then opening an absolute path leaves parent rename races.
+    # Ancestors need search access, not directory-listing access (e.g. Android's
+    # root directory). Keep DIRECTORY/NOFOLLOW on every pinned path descriptor.
+    directory_flags = getattr(os, 'O_PATH', os.O_RDONLY) | os.O_DIRECTORY | os.O_NOFOLLOW
     parent = None
     try:
-        parent = os.open('/',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+        parent = os.open('/', directory_flags)
         for component in path.parent.parts[1:]:
-            following = os.open(component,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=parent)
+            following = os.open(component, directory_flags, dir_fd=parent)
             os.close(parent)
             parent = following
         descriptor = os.open(path.name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=parent)
