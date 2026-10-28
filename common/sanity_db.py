@@ -236,12 +236,20 @@ class Queue:
         if not 1 <= lease_seconds <= 3600:
             raise ReviewError("INVALID_LEASE", "Lease must be between 1 and 3600 seconds")
         token = uuid.uuid4()
+        gate = ''
+        if self.direction == 'vwp_to_oa':
+            # Shared outbox bodies are staged before publication. Only the
+            # final COMMIT, written after preflight, releases these source parts.
+            gate = ("AND (NOT (q.payload ? '__source_commit_gate__') OR EXISTS "
+                    "(SELECT 1 FROM {vwp_to_oa} c WHERE c.message_type='SOURCE_COMMIT' "
+                    "AND c.correlation_id=q.correlation_id AND c.project=q.project "
+                    "AND c.payload=q.payload-'__source_commit_gate__')) ")
         with self.db.transaction():
-            row = self.db.execute(f"SELECT message_id FROM {self.table} WHERE message_type=ANY(%s) "
-                "AND (%s::varchar IS NULL OR message_id=%s) AND "
-                "((status IN ('READY','RETRY') AND next_attempt_at<=clock_timestamp()) "
-                "OR (status='PROCESSING' AND lease_expires_at<=clock_timestamp())) "
-                "ORDER BY next_attempt_at,message_id FOR UPDATE SKIP LOCKED LIMIT 1",
+            row = self.db.execute(f"SELECT q.message_id FROM {self.table} q WHERE q.message_type=ANY(%s) "
+                "AND (%s::varchar IS NULL OR q.message_id=%s) AND "
+                "((q.status IN ('READY','RETRY') AND q.next_attempt_at<=clock_timestamp()) "
+                "OR (q.status='PROCESSING' AND q.lease_expires_at<=clock_timestamp())) " + gate +
+                "ORDER BY q.next_attempt_at,q.message_id FOR UPDATE OF q SKIP LOCKED LIMIT 1",
                 (list(message_types), message_id, message_id)).fetchone()
             if row is None:
                 return None

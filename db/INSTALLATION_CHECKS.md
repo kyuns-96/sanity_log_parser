@@ -126,6 +126,8 @@ fi
 
 ## 4. 010 적용의 확인 기준
 
+아래는 **010 단독 상태**의 확인 기준이다. 012를 적용한 정상 DB는 kind/status가 `sanity_vwp_kind_v5`·`sanity_vwp_status_v5`로 확장되고 나머지 원본 보호 v4는 유지된다. 이 경우 v4 kind/status 두 이름이 없다고 010을 재실행하지 않는다. 현재 `RawSourceStore`는 완전한 010 또는 012 이후의 호환 계약을 검사한다. 011~013의 저장/참조·양쪽 reader 도입과 전체 용량 확인은 [전체 저장 안내](TOTAL_STORAGE.md)를 함께 따른다.
+
 **010 적용 = 새 테이블 생성이 아니라 기존 `sanity_vwp_data`의 v4 CHECK 6개와 인덱스 3개 추가/교체로 확인한다.** 기존 네 테이블·역할·GRANT를 유지한다. 앞 단계는 009이며 성공한 010은 재실행하지 않는다.
 
 승인된 읽기 전용 연결에서 아래 실제 정의를 사내에 보관하고 [원본 010](010_raw_sources.sql)과 대조한다. `sanity_app`을 실제 스키마로 바꾼다. CHECK는 아래 이름 6개 모두 `convalidated=true`, `connoinherit=false`여야 한다.

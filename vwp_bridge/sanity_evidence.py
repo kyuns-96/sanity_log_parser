@@ -44,7 +44,7 @@ class PgEvidence:
     def row_id(self, kind, key):
         return uuid.uuid5(self.analysis_id, kind + ":" + key)
 
-    def stage(self, kind, key, payload, status, unit=None, parent=None, raw=None, row_id=None):
+    def stage(self, kind, key, payload, status, unit=None, parent=None, raw=None, row_id=None, *, page_bytes=None):
         row_id = row_id or self.row_id(kind, key)
         raw_bytes = raw.encode("utf-8") if raw is not None else None
         if raw_bytes is not None and len(raw_bytes) > 67108864:
@@ -53,12 +53,14 @@ class PgEvidence:
                "entity_key": key, "review_unit_id": unit, "parent_id": parent, "payload": payload,
                "raw_bytes": raw_bytes,
                "raw_sha256": hashlib.sha256(raw_bytes).hexdigest() if raw_bytes is not None else None}
+        if page_bytes is not None:
+            row['page_bytes'] = page_bytes
         previous = self.pending.get(row_id)
         if previous is not None and previous[0] != row:
             raise ReviewError("EVIDENCE_CONFLICT", "A logical evidence key has conflicting contents")
         if previous is None:
             self.pending[row_id] = (row, status)
-            self.pending_bytes += len(canonical_json(payload)) + len(raw_bytes or b"")
+            self.pending_bytes += len(canonical_json(payload)) + len(raw_bytes or b"") + len(page_bytes or b'')
         if kind == "EVIDENCE":
             self.record_count += 1
         if len(self.pending) >= 256 or self.pending_bytes >= 4 * 1024 * 1024:
@@ -68,6 +70,7 @@ class PgEvidence:
         if not self.pending:
             return
         storage = getattr(self, 'payload_storage', None)
+        pages = getattr(self, 'page_storage', None)
         with self.db.transaction():
             existing = {row["record_id"]: row for row in self.db.execute(
                 "SELECT * FROM {vwp} WHERE record_id=ANY(%s)", (list(self.pending),)).fetchall()}
@@ -77,7 +80,17 @@ class PgEvidence:
             for row_id, (expected, status) in self.pending.items():
                 old = existing.get(row_id)
                 if old is not None:
-                    if any(old[key] != value for key, value in expected.items()):
+                    compared = expected
+                    if expected['record_type'] == 'SOURCE_EVIDENCE_PAGE':
+                        from common.sanity_evidence_pages import decode_page
+                        def content(row):
+                            return canonical_json([{'payload': item['payload'], 'raw': item['raw_bytes'].decode('utf-8')}
+                                                   for item in decode_page(row)])
+                        if content(old) != content({**old, **expected}):
+                            raise ReviewError('EVIDENCE_CONFLICT', 'Persisted page differs from regenerated records')
+                        # Equivalent gzip streams may differ between Python/zlib versions.
+                        compared = {key: value for key, value in expected.items() if key not in ('payload', 'page_bytes')}
+                    if any(old[key] != value for key, value in compared.items()):
                         raise ReviewError("EVIDENCE_CONFLICT", "Persisted evidence differs from regenerated data")
                 elif self.sealed:
                     raise ReviewError("EVIDENCE_CONFLICT", "Sealed analysis has missing evidence")
@@ -89,12 +102,18 @@ class PgEvidence:
                     values = (row_id, expected["record_type"], self.analysis_id, expected["entity_key"],
                               expected["review_unit_id"], expected["parent_id"], json_value(payload),
                               status, raw, expected["raw_sha256"])
-                    new.append(values + (packed,) if storage is not None and storage.enabled else values)
+                    if storage is not None and storage.enabled:
+                        values += (packed,)
+                    if pages is not None and pages.enabled:
+                        values += (expected.get('page_bytes'),)
+                    new.append(values)
             if new:
                 extra = storage.selection if storage is not None else ''
+                if pages is not None:
+                    extra += pages.selection
                 self.db.executemany("INSERT INTO {vwp}(record_id,record_type,analysis_id,entity_key,review_unit_id,"
                     "parent_id,payload,status,raw_bytes,raw_sha256" + extra + ") VALUES "
-                    "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s" + (",%s" if extra else '') + ")", new)
+                    "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s" + ",%s" * extra.count(',') + ")", new)
             if not self.sealed:
                 self.db.execute("UPDATE {vwp} SET state=%s,version=version+1,updated_at=clock_timestamp() "
                                 "WHERE record_id=%s AND status<>'SEALED'",

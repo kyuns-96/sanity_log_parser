@@ -49,14 +49,17 @@ class WorkspaceStore:
     def rows(self, kind):
         return self.db.execute("SELECT * FROM {oa} WHERE record_type=%s ORDER BY workspace_key", (kind,)).fetchall()
 
-    def put(self, kind, key, payload, *, project=None, block=None, state=None):
+    def put(self, kind, key, payload, *, project=None, block=None, state=None, source_packet_ref=None):
         project_ref = record_id("WS_PROJECT", project) if project else None
         block_ref = record_id("WS_BLOCK", block) if block else None
         scope = payload.get("project_id") if kind == "WS_PROJECT" else project
+        extra = ',source_packet_ref' if source_packet_ref is not None else ''
+        values = (record_id(kind, key), kind, key, scope, json_value(payload), json_value(state or {}), project_ref, block_ref)
+        if source_packet_ref is not None:
+            values += (source_packet_ref,)
         self.db.execute("INSERT INTO {oa} (record_id,record_type,workspace_key,project,payload,state,"
-                        "workspace_project_ref,workspace_block_ref) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-                        (record_id(kind, key), kind, key, scope, json_value(payload), json_value(state or {}),
-                         project_ref, block_ref))
+                        "workspace_project_ref,workspace_block_ref" + extra + ") VALUES "
+                        "(%s,%s,%s,%s,%s,%s,%s,%s" + (',%s' if extra else '') + ")", values)
 
     def check_workspace(self):
         config = self.get("WS_CONFIG", CONFIG_KEY)["payload"]

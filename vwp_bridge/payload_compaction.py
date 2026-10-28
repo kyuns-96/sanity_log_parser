@@ -16,6 +16,8 @@ import re
 from common.sanity_common import ReviewError, canonical_json
 from common.sanity_db import json_value
 from common.sanity_payload_storage import PrivatePayloadStorage, encode_evidence, encode_payload, restore_row
+from common.sanity_evidence_pages import EvidencePageStorage, KIND as PAGE_KIND, decode_page
+from common.sanity_shared_sources import MARKER as SHARED_MARKER, SharedSourcePackets
 
 
 class MaintenanceDatabase:
@@ -30,6 +32,7 @@ class MaintenanceDatabase:
         from common.sanity_postgres import connect
         self.schema = schema
         self.table = sql.Identifier(schema, 'sanity_vwp_data')
+        self.source_queue = sql.Identifier(schema, 'sanity_vwp_to_oa')
         self.conn = connect(dsn, autocommit=True, cursor_factory=RealDictCursor,
                             connect_timeout=10, application_name='sanity-payload-maintenance')
         try:
@@ -42,7 +45,7 @@ class MaintenanceDatabase:
 
     def execute(self, query, params=None):
         from psycopg2 import sql
-        return self.conn.execute(sql.SQL(query).format(vwp=self.table), params)
+        return self.conn.execute(sql.SQL(query).format(vwp=self.table, vwp_to_oa=self.source_queue), params)
 
     @contextmanager
     def transaction(self, *, readonly=False):
@@ -58,10 +61,18 @@ class MaintenanceDatabase:
         self.conn.close()
 
 
-def logical_row(row):
+def logical_row(row, db=None):
     """Include all identity, source-byte, state, revision, and timestamp columns."""
     restored = restore_row(row['record_type'], row)
-    return {key: value for key, value in restored.items() if key != 'payload_bytes'}
+    if row['record_type'] == 'SOURCE_OUTBOX' and SHARED_MARKER in restored['payload']:
+        if db is None:
+            raise ReviewError('SHARED_SOURCE_SCHEMA_REQUIRED', 'A shared queue connection is required')
+        restored = SharedSourcePackets(db).restore_outbox(restored)
+    result = {key: value for key, value in restored.items()
+              if key not in ('payload_bytes', 'page_bytes', 'source_packet_ref')}
+    if row['record_type'] == PAGE_KIND:
+        result['page_records'] = decode_page(row)
+    return result
 
 
 def fingerprint(db):
@@ -70,17 +81,23 @@ def fingerprint(db):
     with db.transaction(readonly=True):
         db.conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
         PrivatePayloadStorage(db)
+        EvidencePageStorage(db)
+        SharedSourcePackets(db)
         while True:
             identities = db.execute('SELECT record_id FROM {vwp} '+('WHERE record_id>%s ' if after else '')
                                     +'ORDER BY record_id LIMIT 64', (after,) if after else None).fetchall()
             if not identities:
                 break
             for identity in identities:
-                row = db.execute("SELECT *,to_jsonb(t)-'payload'-'raw_bytes'-'payload_bytes' AS metadata "
+                row = db.execute("SELECT *,to_jsonb(t)-'payload'-'raw_bytes'-'payload_bytes'-'page_bytes'"
+                                 "-'source_packet_ref' AS metadata "
                                  'FROM {vwp} t WHERE record_id=%s', (identity['record_id'],)).fetchone()
-                restored = logical_row(row)
+                restored = logical_row(row, db)
                 pieces = (canonical_json(row['metadata']), canonical_json(restored['payload']),
                           bytes(restored['raw_bytes'] or b''), canonical_json(restored['raw_bytes'] is not None))
+                if row['record_type'] == PAGE_KIND:
+                    pieces += (canonical_json([{'payload': r['payload'], 'raw': r['raw_bytes'].decode('utf-8')}
+                                              for r in restored['page_records']]),)
                 for piece in pieces:
                     result.update(len(piece).to_bytes(8, 'big'))
                     result.update(piece)
@@ -96,6 +113,10 @@ def compact(db, *, apply=False, restore_plain=False, batch_size=32, max_rows=Non
         raise ReviewError('COMPACTION_CONFIG', 'Invalid row limit')
     if not PrivatePayloadStorage(db).enabled:
         raise ReviewError('PAYLOAD_STORAGE_SCHEMA_REQUIRED', 'DBA migration 011 is required')
+    pages = EvidencePageStorage(db)
+    shared = SharedSourcePackets(db)
+    if restore_plain and pages.enabled:
+        raise ReviewError('PAGE_STORAGE_RESTORE_REQUIRED', '012 pages require a page-capable reader; 011 restore is insufficient')
     if apply:
         owner = db.conn.execute("SELECT pg_has_role(current_user,t.relowner,'MEMBER') AS owns "
             "FROM pg_class t JOIN pg_namespace n ON n.oid=t.relnamespace "
@@ -121,13 +142,14 @@ def compact(db, *, apply=False, restore_plain=False, batch_size=32, max_rows=Non
                 "(SELECT 1 FROM {vwp} r WHERE r.record_id=e.analysis_id AND r.record_type='RUN' AND r.status='SEALED' "
                 "AND r.state->>'source_protocol'='2'))) AND e.payload_bytes IS "
                 + ('NOT NULL ' if restore_plain else 'NULL ')
+                + ('AND e.source_packet_ref IS NULL ' if shared.enabled else '')
                 + ('AND e.record_id>%s ' if after else '')
                 + 'ORDER BY e.record_id LIMIT %s', ((after, limit) if after else (limit,))).fetchall()
             if not rows:
                 break
             for identity in rows:
                 row = db.execute('SELECT * FROM {vwp} WHERE record_id=%s', (identity['record_id'],)).fetchone()
-                before = logical_row(row)
+                before = logical_row(row, db)
                 raw = before['raw_bytes']
                 if restore_plain:
                     payload, packed = before['payload'], None
@@ -146,7 +168,7 @@ def compact(db, *, apply=False, restore_plain=False, batch_size=32, max_rows=Non
                     db.execute('UPDATE {vwp} SET payload=%s,payload_bytes=%s,raw_bytes=%s WHERE record_id=%s',
                                (json_value(payload), packed, raw, row['record_id']))
                     saved = db.execute('SELECT * FROM {vwp} WHERE record_id=%s', (row['record_id'],)).fetchone()
-                    if logical_row(saved) != before:
+                    if logical_row(saved, db) != before:
                         raise ReviewError('COMPACTION_INTEGRITY', 'Logical row changed; batch rolled back')
                 after = row['record_id']
         for key, value in pending.items():

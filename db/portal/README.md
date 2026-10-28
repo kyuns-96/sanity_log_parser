@@ -2,6 +2,10 @@
 
 **선택형 압축 저장 011:** `prepare --payload-storage`는 `payload-plan.json`으로 기존 59단계 뒤 60번 단일 ALTER를 추가한다. 010 완료·0행·쓰기 중지 snapshot에서는 60번만 준비한다. 55/59단계 원본 계획은 유지한다. 데이터가 있는 DB의 011·변환·재작성은 [별도 DBA 유지보수](../PAYLOAD_STORAGE.md)이며 이 포털 도구가 실행하지 않는다.
 
+**선택형 묶음 저장 012:** `prepare --evidence-pages`는 `pages-plan.json`으로 기존 60단계 뒤 61번 ALTER·62번 UNIQUE 인덱스를 추가한다. 011 완료·0행·쓰기 중지 snapshot에서는 두 문장만 준비한다. 기존 55/59/60단계 계획과 데이터가 있는 DB의 포털 차단은 유지한다. [012 도입·reader 호환성과 용량 목표](../EVIDENCE_PAGES.md)를 먼저 확인한다.
+
+**선택형 전체 저장 013:** `prepare --shared-source-packets`는 `shared-plan.json`으로 010~013을 포함한다. 기존 62단계 뒤 63~66번에 두 private 참조 컬럼/CHECK/FK, 공유 큐의 발행 gate CHECK와 commit 인덱스를 추가한다. 012 완료·0행·쓰기 중지 snapshot이면 네 문장만 준비하며 기존 55/59/60/62단계 계획은 유지한다. [전체 용량·양쪽 reader 선배포·큐 본문 보존](../TOTAL_STORAGE.md)을 먼저 확인한다.
+
 **원본 DB 보관 010:** 기존 `plan.json`의 55단계는 유지한다. `prepare --raw-sources`가 별도 `raw-plan.json`의 전체 59단계를 선택하며, 009 완료 checkpoint에서는 56~59의 4개 단일 문장만 준비한다. 기존 0행/쓰기 중지/catalog 전후 검증 조건은 그대로다. 데이터가 있는 DB의 원본 010 적용은 DBA 검토 경로다. [원본 DB 보관](../../vwp/DB_ORIGINALS.md)을 참고한다.
 
 사용자가 확인한 회사 포털은 한 요청에 한 DDL 문장만 받으며 FK 설정도 지원한다. owner psql 대신 이 포털을 사용하는 **별도 실행본**을 제공한다. 원본 form과 `002`~`008` SQL은 변경하지 않는다. 2026-10-22 확인된 [SSO 계정 저장 계약](../../oa/SSO_IDENTITY.md)의 `009`를 마지막 한 단계로 추가했다. `003` 역할·권한은 별도 DBA 경로다. 009는 DB 저장 구조이며 JIT 앱 구현·업무 권한 연결은 포함하지 않는다.

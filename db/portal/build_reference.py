@@ -62,6 +62,9 @@ def check_sources(source, before, phase):
                 name = {'sanity_vwp_status_v4':'sanity_vwp_status_v3',
                         'sanity_vwp_submission_parent_v4':'sanity_vwp_submission_parent_v3'}[match[1]]
                 old = next(c['definition'] for c in table_at(before,'sanity_vwp_data')['constraints'] if c['name'] == name)
+            elif phase == '012' and match[1] == 'sanity_vwp_status_v5':
+                old = next(c['definition'] for c in table_at(before,'sanity_vwp_data')['constraints']
+                           if c['name'] == 'sanity_vwp_status_v4')
             else:
                 raise ValueError('Unrecognized format in pinned CHECK')
             expression = expression.replace('%s', old)
@@ -127,7 +130,8 @@ def derive_steps(before, after, phase):
     return steps
 
 
-def capture(connection, schema='portal_reference', *, raw_sources=False, payload_storage=False):
+def capture(connection, schema='portal_reference', *, raw_sources=False, payload_storage=False, evidence_pages=False,
+            shared_packets=False):
     with connection.cursor() as cursor:
         cursor.execute('SELECT current_database()')
         if not cursor.fetchone()[0].startswith('sanity_test_'):
@@ -136,8 +140,10 @@ def capture(connection, schema='portal_reference', *, raw_sources=False, payload
     initial = snapshot(connection, schema)
     state = deepcopy(initial)
     steps = []
-    migrations = (MIGRATIONS + (('010_raw_sources.sql',) if raw_sources or payload_storage else ())
-                  + (('011_payload_storage.sql',) if payload_storage else ()))
+    migrations = (MIGRATIONS + (('010_raw_sources.sql',) if raw_sources or payload_storage or evidence_pages or shared_packets else ())
+                  + (('011_payload_storage.sql',) if payload_storage or evidence_pages or shared_packets else ())
+                  + (('012_source_evidence_pages.sql',) if evidence_pages or shared_packets else ())
+                  + (('013_shared_source_packets.sql',) if shared_packets else ()))
     for filename in migrations:
         source = (ROOT / 'db' / filename).read_text(encoding='utf-8')
         expressions = check_sources(source, state, filename[:3])
@@ -166,6 +172,8 @@ def main():
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--raw-sources',action='store_true',help='include the opt-in 010 raw-storage extension')
     parser.add_argument('--payload-storage',action='store_true',help='include 010 and opt-in 011 lossless payload storage')
+    parser.add_argument('--evidence-pages',action='store_true',help='include 010/011/012 source evidence pages')
+    parser.add_argument('--shared-source-packets',action='store_true',help='include 010..013 shared source packets')
     args = parser.parse_args()
     import psycopg2
     from db.tests.run_mock import MockDatabase, pg_binaries
@@ -176,7 +184,8 @@ def main():
         connection = psycopg2.connect(**database.parameters('admin'))
         connection.autocommit = True
         try:
-            plan = capture(connection,raw_sources=args.raw_sources,payload_storage=args.payload_storage)
+            plan = capture(connection,raw_sources=args.raw_sources,payload_storage=args.payload_storage,
+                           evidence_pages=args.evidence_pages, shared_packets=args.shared_source_packets)
         finally:
             connection.close()
         with args.out.open('x', encoding='utf-8') as stream:

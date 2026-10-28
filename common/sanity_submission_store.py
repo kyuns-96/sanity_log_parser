@@ -1,8 +1,9 @@
 """Private VWP submission controls and immutable source/outbox records."""
-from common.sanity_common import digest
+from common.sanity_common import canonical_json, digest
 from common.sanity_db import json_value, stable_uuid
 from common.sanity_submission import check
 from common.sanity_payload_storage import PrivatePayloadStorage, encode_payload
+from common.sanity_shared_sources import SharedSourcePackets
 
 
 def require_schema(db):
@@ -29,14 +30,20 @@ class SubmissionStore:
         self.db = db
         require_schema(db)
         self.payload_storage = PrivatePayloadStorage(db)
+        self.shared = SharedSourcePackets(db)
 
     def get(self, kind, key, *, lock=False):
         row = self.db.execute("SELECT * FROM {vwp} WHERE record_type=%s AND entity_key=%s"
                               + (" FOR UPDATE" if lock else ""), (kind, key)).fetchone()
-        return self.payload_storage.restore(kind, row) if row else None
+        if row is None:
+            return None
+        row = self.payload_storage.restore(kind, row)
+        return self.shared.restore_outbox(row) if kind == 'SOURCE_OUTBOX' else row
 
     def immutable(self, kind, key, payload):
         check(kind in ('SOURCE_RUN','SOURCE_OUTBOX'))
+        if kind == 'SOURCE_OUTBOX' and payload.get('kind') == 'SOURCE_PART' and self.shared.enabled:
+            return self.shared_outbox(key, payload)
         rid = stable_uuid("submission-v2", kind, key)
         stored, packed = payload, None
         if kind == 'SOURCE_OUTBOX' and self.payload_storage.enabled:
@@ -49,6 +56,22 @@ class SubmissionStore:
         check(existing and existing['record_id'] == rid and existing['payload'] == payload,
               "SOURCE_IDENTITY_CONFLICT" if kind == 'SOURCE_RUN' else "SUBMISSION_CONFLICT")
         return existing
+
+    def shared_outbox(self, key, value):
+        with self.db.transaction():
+            existing = self.get('SOURCE_OUTBOX', key)
+            if existing is not None:
+                check(canonical_json(existing['payload']) == canonical_json(value), 'SUBMISSION_CONFLICT')
+                return existing
+            header, reference = self.shared.stage(value)
+            rid = stable_uuid('submission-v2', 'SOURCE_OUTBOX', key)
+            self.db.execute("INSERT INTO {vwp}(record_id,record_type,analysis_id,entity_key,payload,status,source_packet_ref) "
+                "VALUES (%s,'SOURCE_OUTBOX',NULL,%s,%s,'RECORDED',%s) ON CONFLICT DO NOTHING",
+                (rid, key, json_value(header), reference))
+            saved = self.get('SOURCE_OUTBOX', key)
+            check(saved and saved['record_id'] == rid and canonical_json(saved['payload']) == canonical_json(value),
+                  'SUBMISSION_CONFLICT')
+            return saved
 
     def accept(self, submission, *, node_id):
         sid = submission['submission_id']
@@ -73,9 +96,13 @@ class SubmissionStore:
         return self.get('SUBMISSION',sid)
 
     def outbox(self, sid):
-        rows = self.db.execute("SELECT payload" + self.payload_storage.selection + " FROM {vwp} WHERE record_type='SOURCE_OUTBOX' "
+        selection = '*' if self.shared.enabled else 'payload' + self.payload_storage.selection
+        rows = self.db.execute("SELECT " + selection + " FROM {vwp} WHERE record_type='SOURCE_OUTBOX' "
             "AND payload->>'submission_id'=%s ORDER BY (payload->>'position')::bigint",(sid,)).fetchall()
-        return [{'payload': self.payload_storage.restore('SOURCE_OUTBOX', row)['payload']} for row in rows]
+        restored = [self.payload_storage.restore('SOURCE_OUTBOX', row) for row in rows]
+        if self.shared.enabled:
+            restored = [self.shared.restore_outbox(row) for row in restored]
+        return [{'payload': row['payload']} for row in restored]
 
     def put_outbox(self, sid, position, kind, packet):
         from common.sanity_submission import message_id

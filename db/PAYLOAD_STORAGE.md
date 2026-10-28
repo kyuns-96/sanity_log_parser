@@ -1,5 +1,7 @@
 # VWP 근거·OUTBOX의 무손실 압축 저장
 
+**14MB → 전체 20MB 목표:** [012 근거 묶음](EVIDENCE_PAGES.md)과 [013 전체 공유 저장](TOTAL_STORAGE.md)을 함께 제공한다. 011/012의 VWP 단독 수치를 전체 목표 달성으로 보고하지 않는다. 이 문서는 행별 저장과 기존 데이터 유지보수 경로다. 012를 적용한 DB에는 011의 `--restore-plain`만으로 이전 reader를 배포할 수 없으며 도구도 거부한다. 013 참조 OUTBOX는 011 변환 대상에서 제외한다.
+
 2026-10-27 제공한 선택형 011이다. 기존 네 테이블을 유지하고 VWP private에 `payload_bytes BYTEA` 한 컬럼과 `sanity_vwp_payload_storage_v1` CHECK를 추가한다. 원본 report, 근거 원문, 전체 파싱 로그, AI/사람의 판단 이력은 보존한다. 원본 삭제·보관 기한 변경·별도 DB/스토어 도입은 포함하지 않는다.
 
 ## 저장과 호환성

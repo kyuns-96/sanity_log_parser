@@ -141,6 +141,10 @@ VWP 원천 CLI에는 DB 접속 정보가 없고, 사용자가 SQL을 실행하�
 
 현재 private EVIDENCE의 원문 보존은 유지한다. 기본은 `raw_bytes`이며 선택형 [011](../db/PAYLOAD_STORAGE.md)은 같은 DB의 검증된 압축 본문에 원문을 보존하고 기존 hash로 동일 byte를 복원한다. 원본 report의 전체 byte 동일 파일과 추출/디코딩된 개별 근거 raw는 구분한다. **원본 파일을 OA 파일시스템에 복사하지 않는다.** 공유 결과의 로그는 비밀 마스킹/검증 경계를 따르며 전체 정규화 기록을 V2 parts로 받는다. V2 원본 파일 다운로드는 `SOURCE_FILE_ON_VWP`로 알리고, 기존 legacy 추가 근거 요청을 V2 파일 요청으로 재해석하지 않는다. 회사 정책상 private DB 원문 저장 자체가 불허되면 배포를 중단하고 별도 참조 어댑터를 검토한다.
 
+선택형 [012](../db/EVIDENCE_PAGES.md)는 새 V2 근거를 같은 private DB의 `SOURCE_EVIDENCE_PAGE.page_bytes`에 최대 256건·4MiB씩 무손실 보관한다. 물리 행마다 로그 한 건이라는 가정만 바뀌고, 개별 로그 ID·원문·전체 fields·마스킹/전송·사람의 확정은 유지한다. 기존 행별 분석은 재처리에도 보존하고 자동 합치거나 삭제하지 않는다. 012 적용 후에는 012 호환 reader를 유지한다.
+
+전체 용량 목표는 OA와 양방향 큐를 포함한다. 선택형 [013](../db/TOTAL_STORAGE.md)은 기존 공유 SOURCE_PART의 전체 본문 한 개를 VWP OUTBOX/OA part가 FK로 참조하게 한다. 준비한 본문은 최종 COMMIT 전에는 claim하지 않으며 원본 재검증·preflight·OA 원자 공개/OWNER 확정은 유지한다. 참조된 큐 행은 ACK 뒤에도 삭제하지 않고, 양쪽 호환 코드와 DBA 적용이 필요하다.
+
 ### 4.2. 추가할 논리 레코드와 V2 메시지
 
 다음 종류는 [008_submissions.sql](../db/008_submissions.sql)과 공통 송수신 코드로 제공한다. 기존 007까지만 적용한 DB에서는 사용할 수 없다. 내부 AI가 직접 INSERT하거나 기존 종류로 위장하지 않는다.
