@@ -8,3 +8,12 @@
 .ws-preserved-sources th:nth-child(2) { width: 25%; }
 .ws-preserved-sources small { display: block; margin-top: 4px; color: var(--text-muted); }
 .ws-preserved-sources code { display: block; overflow-wrap: anywhere; white-space: normal; margin-top: 6px; }
+.ws-preserved-dialog { width: min(64rem, calc(100vw - 2rem)); max-width: 64rem; max-height: calc(100dvh - 2rem); overflow-y: auto; }
+.ws-preserved-dialog p { overflow-wrap: anywhere; }
+.ws-preserved-dialog a { color: var(--text); text-decoration: underline; }
+.ws-preserved-segments { display: grid; gap: 16px; }
+.ws-preserved-segments code, .ws-preserved-citations code { display: block; overflow-wrap: anywhere; font-size: 11px; color: var(--text-muted); }
+.ws-preserved-segments pre { padding: 12px; border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 22rem; overflow-y: auto; font-size: 12px; }
+.ws-preserved-citations { margin-block: 12px; font-size: 12px; }
+.ws-preserved-citations summary { cursor: pointer; }
+.ws-preserved-citations li { margin-block: 8px; }

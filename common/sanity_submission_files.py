@@ -136,7 +136,7 @@ def snapshot(prepared, output, *, max_bytes=DEFAULT_TOTAL_BYTES, max_files=DEFAU
     expected |= declared_paths(prepared.plan)
     manifest = {"schema_version": prepared.plan['schema_version'], "plan": prepared.plan, "files": files,
                 "unexpected_files": [f["path"] for f in files if f["path"] not in expected]}
-    if prepared.plan['schema_version'] == 3:
+    if prepared.plan['schema_version'] >= 3:
         manifest['preserved_files'] = metadata(prepared.plan, files)
     write_json_file(output / "collection.json", manifest)
     for parent in sorted((p for p in output.rglob('*') if p.is_dir()),key=lambda p:len(p.parts),reverse=True):
@@ -147,9 +147,9 @@ def snapshot(prepared, output, *, max_bytes=DEFAULT_TOTAL_BYTES, max_files=DEFAU
 
 def validate_manifest(manifest, *, max_bytes=DEFAULT_TOTAL_BYTES, max_files=DEFAULT_FILES):
     check(isinstance(manifest, dict))
-    check(type(manifest.get('schema_version')) is int and manifest['schema_version'] in (2, 3))
+    check(type(manifest.get('schema_version')) is int and manifest['schema_version'] in (2, 3, 4))
     keys = {"schema_version", "plan", "files", "unexpected_files"}
-    if manifest['schema_version'] == 3:
+    if manifest['schema_version'] >= 3:
         keys.add('preserved_files')
     check(set(manifest) == keys)
     validate_plan(manifest["plan"])
@@ -168,7 +168,7 @@ def validate_manifest(manifest, *, max_bytes=DEFAULT_TOTAL_BYTES, max_files=DEFA
     expected = {u['report'] for u in manifest['plan']['inventory']['units']}
     from common.sanity_preserved_sources import declared_paths, metadata
     expected |= declared_paths(manifest['plan'])
-    if manifest['schema_version'] == 3:
+    if manifest['schema_version'] >= 3:
         check(canonical_json(manifest['preserved_files']) == canonical_json(metadata(manifest['plan'], files)),
               'PRESERVED_SOURCE_MISMATCH')
     check(manifest['unexpected_files'] == sorted(set(by_path) - expected))

@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { writeFile } from 'node:fs/promises'
 import type { Page } from '@playwright/test'
 import type { PreservedSource } from '../src/PreservedSources'
-import type { CodexJob, ReportReview, ReviewCase, ReviewProposal } from '../src/workspaceApi'
+import type { ClusterModelMetadata, CodexJob, ReportReview, ReviewCase, ReviewProposal } from '../src/workspaceApi'
 import { makeWorkspaceDemo } from '../src/workspaceDemo'
 
 // All identities, reports and model replies here are synthetic network fixtures.
@@ -16,7 +16,7 @@ const base = '/api/workbench/blocks/b1/versions/v1/reports/report-a'
 const url = '/?page=workbench&project=p1&block=b1&version=v1&eco=ECO-2&item=synthetic_check&tab=reports&review=report-a'
 const emptyPage = { items: [], total: 0, offset: 0, limit: 25 }
 
-type MockOptions = { preserved?: PreservedSource[]; collectionOnly?: boolean; configured?: boolean; personalToken?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
+type MockOptions = { modelMetadata?: Partial<ClusterModelMetadata>; preserved?: PreservedSource[]; collectionOnly?: boolean; configured?: boolean; personalToken?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
 
 async function mockOA(page: Page, options: MockOptions = {}) {
   const actor = options.readOnly ? { ...user, role: 'TOP' } : user
@@ -34,7 +34,7 @@ async function mockOA(page: Page, options: MockOptions = {}) {
   state.reviewRevision = options.currentCase?.revision || 0
   state.proposal = options.proposal || null
   const capability = (job: CodexJob | null) => ({ available: options.configured !== false && (!options.personalToken || credentialReady), supported: true, enabled: options.configured !== false, model: model.model, remaining: null, provider: 'OA_OPENAI_COMPATIBLE', synthetic_only: false, job, ...(options.personalToken ? { credential_required: true, credential_ready: credentialReady, credential_error: credentialReady ? null : 'AI_USER_TOKEN_REQUIRED' } : {}) })
-  const cluster = () => state.revision ? { id: `cluster-${state.revision}`, report_id: report.id, revision: state.revision, action: state.confirmed ? 'CONFIRM' : 'PROPOSE', confirmed: state.confirmed, reusable: false, compatible_versions: false, criteria: '', reason: '전체 로그의 검토 의도에 따라 묶었습니다.', identity_fields: ['mode'], group_count: 1, record_count: sourceRecords.length, at, actor, references: [], advisor: 'OA_OPENAI_COMPATIBLE', model_called: true, model_metadata: model, rationale_counts: { MISSING: 0, DRAFT: Number(!state.confirmed), CONFIRMED: Number(state.confirmed), STALE: 0 } } : null
+  const cluster = () => state.revision ? { id: `cluster-${state.revision}`, report_id: report.id, revision: state.revision, action: state.confirmed ? 'CONFIRM' : 'PROPOSE', confirmed: state.confirmed, reusable: false, compatible_versions: false, criteria: '', reason: '전체 로그의 검토 의도에 따라 묶었습니다.', identity_fields: ['mode'], group_count: 1, record_count: sourceRecords.length, at, actor, references: [], advisor: 'OA_OPENAI_COMPATIBLE', model_called: true, model_metadata: { ...model, ...options.modelMetadata }, rationale_counts: { MISSING: 0, DRAFT: Number(!state.confirmed), CONFIRMED: Number(state.confirmed), STALE: 0 } } : null
   const group = () => ({ id: 'g1', label: '확인이 필요한 합성 대상', record_count: sourceRecords.length, check_status: options.collectionOnly ? 'UNKNOWN' : 'FAIL', status: state.current?.conclusion || 'PENDING', revision: state.reviewRevision, example: {}, rationale: { status: state.confirmed ? 'CONFIRMED' : 'DRAFT', reason: '같은 조건의 확인 대상입니다.', reason_truncated: false, reason_omitted_chars: 0, source: 'AI', evidence_count: 1 } })
   const finish = (job: CodexJob) => {
     job.status = options.fail ? 'FAILED' : 'COMPLETED'; job.error = options.fail || null
@@ -751,5 +751,42 @@ test('OWNER confirms preserved roles and bindings with the exact submission dige
   await dialog.getByRole('button', { name: '범위 확정 후 접수', exact: true }).click()
   await expect(dialog).toHaveCount(0)
   expect(decision).toMatchObject({ decision: 'CONFIRM', confirmed_scope: true, content_sha256: detail.content_sha256, scope_sha256: detail.scope_sha256, manifest_sha256: detail.manifest_sha256 })
+  expect(state.unexpected).toEqual([])
+})
+
+test('preserved text viewer shows masked complete text pages and separate AI citations', async ({ page }) => {
+  const file: PreservedSource = { ...preserved[1], content_available_to_ai: true,
+    binding: { kind: 'units', review_unit_ids: ['u-gca', 'u-other-mode'] },
+    extraction: { line_count: 11, text_sha256: 'd'.repeat(64), text_bytes: 300, redacted: true } }
+  const state = await mockOA(page, { preserved: [file], initialRevision: 1, modelMetadata: {
+    preserved_citations: [{ target_id: 'g1', evidence_ids: ['pe-synthetic-10'], reason: '제공된 클록 입력 제약을 직접 대조했습니다.' }],
+    preserved_citation_sources: [{ id: 'pe-synthetic-10', source_id: file.id, line_start: 11, line_end: 11, source_sha256: 'e'.repeat(64), redacted: true }],
+  } })
+  const reads: number[] = []
+  await page.route(`**${base}/preserved/${file.id}*`, route => {
+    const offset = Number(new URL(route.request().url()).searchParams.get('offset') || 0); reads.push(offset)
+    const items = Array.from({ length: Math.min(10, 11 - offset) }, (_, i) => ({ id: `pe-synthetic-${offset + i}`, source_id: file.id,
+      line_start: offset + i + 1, line_end: offset + i + 1, source_sha256: 'e'.repeat(64), redacted: true,
+      text_sha256: 'f'.repeat(64), text: `create_clock -period ${offset + i + 1} [get_ports clk] # TOKEN=[REDACTED]\n`, byte_start: offset + i, byte_end: offset + i + 1 }))
+    return route.fulfill({ json: { source: file, items, total: 11, offset, limit: 10, complete: true, masked: true } })
+  })
+  await page.goto(url)
+  await page.getByText('보존 근거 파일 1개', { exact: true }).click()
+  await expect(page.getByLabel('보존 근거 파일')).toContainText('u-gca, u-other-mode')
+  await page.getByText('AI가 인용한 보존 본문 근거', { exact: true }).click()
+  await expect(page.locator('.ws-preserved-citations')).toContainText('제공된 클록 입력 제약을 직접 대조했습니다.')
+  await expect(page.locator('.ws-preserved-citations')).toContainText('11–11행')
+  await expect(page.locator('.ws-preserved-citations')).toContainText('pe-synthetic-10')
+  await page.getByRole('button', { name: '마스킹 본문 보기', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByRole('heading', { name: '보존 파일 마스킹 본문' })).toBeVisible()
+  await expect(dialog.locator('pre').first()).toContainText('TOKEN=[REDACTED]')
+  await expect(dialog.getByRole('link', { name: '마스킹 본문 내려받기' })).toHaveAttribute('href', `${base}/preserved/${file.id}?download=true`)
+  await dialog.getByRole('button', { name: '다음 근거', exact: true }).click()
+  await expect(dialog.locator('pre')).toHaveCount(1)
+  await expect(dialog.locator('pre')).toContainText('period 11')
+  await expect(dialog.getByRole('button', { name: '다음 근거', exact: true })).toBeDisabled()
+  expect(reads).toEqual([0, 10])
+  await page.screenshot({ path: test.info().outputPath('preserved-text.png'), fullPage: true })
   expect(state.unexpected).toEqual([])
 })

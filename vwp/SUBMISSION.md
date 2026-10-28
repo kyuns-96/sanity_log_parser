@@ -54,7 +54,7 @@ sanity retry 11111111-1111-4111-8111-111111111111
 
 | 담당 | 허용된 회사 구현 | 계약 |
 |---|---|---|
-| VWP | [corporate_submission.py](integration/corporate_submission.py)의 `CorporateSubmissionInput.prepare` | `target → SubmissionInput(plan, reports)` 반환. plan은 기존 V2 또는 보존 선언 시 V3, reports는 `reports/... → 사내 원본 Path` 대응. 예상 목록과 실제 파일 발견을 분리하고 예상 밖 파일도 보존. 원본/DB 쓰기 없음 |
+| VWP | [corporate_submission.py](integration/corporate_submission.py)의 `CorporateSubmissionInput.prepare` | `target → SubmissionInput(plan, reports)` 반환. plan은 기존 V2 또는 보존 선언 시 V3/본문·다중 대상 선언 시 V4, reports는 `reports/... → 사내 원본 Path` 대응. 예상 목록과 실제 파일 발견을 분리하고 예상 밖 파일도 보존. 원본/DB 쓰기 없음 |
 | VWP | 같은 파일의 `CorporateSubmissionAuthority.current/inbox_owner/authorize/approval_valid`와 명시적 factory | 실제 caller/마운트 신원→`VerifiedSubmitter`; 최신 블록 담당 확인; 실제 승인 참조/approver/범위 digest 검증. CLI 확인을 승인으로 바꾸지 않음 |
 | VWP-bridge | [corporate_submission.py](../vwp_bridge/integration/corporate_submission.py)의 `authenticate_bearer/resolve_actor/authorize/approval_valid` (HTTPS), 기존 `inbox_owner` (폴더 경로) | HTTPS 자격증명 검증·최신 계정 대응, 또는 인증된 마운트 신원. 최신 블록 담당/승인 확인. 입력 actor나 디렉터리명만 신뢰하지 않음 |
 | OA | [corporate_submission.py](../oa/integration/corporate_submission.py)의 `CorporateSourceIdentity.resolve` | 신뢰한 VWP assertion의 issuer/subject를 OA SSO와 같은 영속 사용자 ID로 대응. importer가 현재 활성/블록 담당을 다시 검사 |
@@ -79,6 +79,8 @@ sanity retry 11111111-1111-4111-8111-111111111111
 ### 4.1. 선택형 보존 근거 plan 3
 
 full.rpt/SDC 같은 비-unit 원본은 [PRESERVED_SOURCES.md](PRESERVED_SOURCES.md)의 `inventory.preserved_files`로 명시한다. 이때 plan/collection manifest는 3, source producer는 `postgresql-source-2.3`이며 HTTP/DB envelope는 기존 2다. 파일의 역할·정확한 unit/실행 귀속을 범위와 hash에 결합한다. CLI preview와 OA OWNER 화면은 보존 파일을 따로 보여 주며 선언 없는 파일·기존 누락 차단은 유지한다. OA/bridge 호환본 선배포 후 새 선언을 사용한다. AI에는 검증된 메타데이터가 전달되며 본문은 아직 제공되지 않는다.
+
+본문 제공과 여러 대상 연결은 [plan 4 계약](PRESERVED_TEXT.md)을 따른다. content의 명시 선택·전체 byte/텍스트 검증·마스킹·한도·AI 별도 인용을 사용하며 기존 plan 2/3은 그대로다.
 
 ## 5. 서버 작업자와 OA 조회
 

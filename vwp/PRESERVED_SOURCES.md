@@ -1,5 +1,7 @@
 # 비-unit 보존 근거 — plan 3
 
+본문 제공·다중 대상 연결은 후속 구현된 [plan 4 계약](PRESERVED_TEXT.md)을 따른다. 아래는 기존 plan 3의 메타데이터 전용 계약이며 기존 제출의 동작은 유지한다.
+
 2026-10-28 공통 구현. full.rpt 같은 원천 보고서와 SDC 같은 분석 입력을 원본 그대로 보관하면서, 예상 검사 목록과 구별하는 계약이다. [AI 판단 설계](../AI_DECISION_DESIGN.md), [제출 안내](SUBMISSION.md), [내부 AI 지침](../INTERNAL_AI_GUIDE.md)을 함께 따른다. 이 기능은 파싱·검사 PASS·AI 판단 완료를 뜻하지 않는다.
 
 ## 선언과 버전

@@ -6,6 +6,7 @@ import { RadioGroup, RadioGroupItem } from './studio/components/ui/radio-group'
 import { Textarea } from './studio/components/ui/textarea'
 import { Input } from './studio/components/ui/input'
 import CaseSource from './CaseSource'
+import { PreservedCitations } from './PreservedSources'
 import { aiJobActive, aiJobMessage, WorkspaceError, toolResultStatus, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
 import type { CodexJob, Judgment, ReportReview, ReviewCase, WorkspaceReport, WorkspaceSession, WorkspaceVersion } from './workspaceApi'
 
@@ -157,6 +158,7 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
       {production && data.ai?.credential_required && !data.ai.credential_ready && <p className="ws-notice" role="status">화면 상단의 ‘개인 AI 토큰’에서 본인의 토큰을 등록하거나 교체해 주세요.</p>}
       {production && data.ai?.job && <div className="ws-studio-ai-job"><p role="status" className={['FAILED', 'STALE', 'UNKNOWN'].includes(data.ai.job.status) ? 'ws-error' : 'ws-muted'}>{aiJobMessage(data.ai.job)}{aiRunning && pollPaused && ' 상태 자동 조회를 멈췄습니다. 아래 버튼으로 확인을 이어갈 수 있습니다.'}</p><Button variant="ghost" size="sm" disabled={!!busy} onClick={() => { polls.current.count = 0; setPollPaused(false); reload().catch(fail) }}>AI 판정 상태 다시 조회</Button></div>}
       {proposal ? <div className="ws-review-proposal ws-studio-ai-result">
+        <PreservedCitations files={report.preserved_sources} citations={proposal.model_metadata?.preserved_citations} sources={proposal.model_metadata?.preserved_citation_sources} target="review" />
         <div className="ws-studio-ai-verdict"><Badge variant="outline" className={`ws-status ws-status-${proposal.conclusion.toLowerCase()}`}>제안 {labels[proposal.conclusion]}</Badge><span>{proposal.model_called ? `AI 모델 · ${proposal.model_metadata?.model || proposal.advisor}` : '확정 기준 참고 엔진'} · {time(proposal.at)}</span></div>
         <p className="ws-studio-proposal-reason">{proposal.reason}</p>
         {data.current?.proposal_id === proposal.id ? <p className="ws-muted">이 제안에 대한 사용자 판정을 {labels[data.current.conclusion]}로 저장했습니다. 수정 내역은 아래 이력에서 확인할 수 있습니다.</p> : proposal.stale && <p className="ws-error">판정 또는 참고 기준이 변경되었습니다. 제안을 다시 받아 주세요.</p>}

@@ -18,6 +18,14 @@ def check(ok):
         raise ReviewError('SHARED_SOURCE_CORRUPT', 'Immutable source packet reference failed validation')
 
 
+def part_identity(body):
+    if body.get('kind') == 'preserved-text-v1':
+        from common.sanity_preserved_text import validate_part
+        validate_part(body)
+        return body['source_id'], len(body['segments'])
+    return body['report_id'], len(body['records'])
+
+
 class SharedSourcePackets:
     def __init__(self, db):
         self.db = db
@@ -126,9 +134,10 @@ class SharedSourcePackets:
         key = message_id('SOURCE_PART', packet)
         check(canonical_json(self.packet(key)) == canonical_json(packet))
         body = packet['body']['body']
-        return {'report_id': body['report_id'], 'part_index': body['part_index'],
+        owner, count = part_identity(body)
+        return {'report_id': owner, 'part_index': body['part_index'],
                 MARKER: {'message_id': key, 'packet_sha256': digest(packet),
-                         'body_sha256': digest(body), 'record_count': len(body['records'])}}, key
+                         'body_sha256': digest(body), 'record_count': count}}, key
 
     def restore_part(self, row):
         if MARKER not in row['payload']:
@@ -140,9 +149,10 @@ class SharedSourcePackets:
         packet = self.packet(key)
         value = packet['body']
         body = value['body']
-        expected = {'report_id': body['report_id'], 'part_index': body['part_index'],
+        owner, count = part_identity(body)
+        expected = {'report_id': owner, 'part_index': body['part_index'],
                     MARKER: {'message_id': key, 'packet_sha256': digest(packet),
-                             'body_sha256': digest(body), 'record_count': len(body['records'])}}
+                             'body_sha256': digest(body), 'record_count': count}}
         check(canonical_json(header) == canonical_json(expected) and value['id'] == 'sp-'+digest(body)
               and row['workspace_key'] == value['id']
               and row['workspace_project_ref'] == stable_uuid('workspace-v1', 'WS_PROJECT', packet['scope']['project_key'])

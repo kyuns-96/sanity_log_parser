@@ -163,7 +163,7 @@ Q1 인계에는 제출 대상 REVISION과 각 PRE/POST report의 실제 소속, 
 | COMMON-05 | **미완성:** 대용량 OA AI 분할·조각 간 그룹 정합성·전체 범위와 재개. 현재 한도 초과는 명시적 실패 | 평균 10,000/100,000+건 크기/토큰·고유 그룹 분포와 API 한도·현장 성능 목표 |
 | COMMON-06 | **미검증:** 실제 판단 품질 비교. 사례 미제공/제공, 정정 전후, 검색 적합성·분류 수정량·근거/판정 일치·FAIL 누락·보류 | 사내 독립 정답·반례 집합과 수용 목표. 실제 입력·정답은 사내에 보관 |
 | COMMON-01 | **공통 연결 제공:** 기존 SSO와 운영 AccessStore의 workbench·PoR·V2 대상 권한 검사. 합성 `/workspace`는 운영에 마운트하지 않음 | 현장 활성 계정·관리자 설정·프로젝트/블록 승인·실제 소속·프록시/CSRF 검증 |
-| COMMON-02 | V2 제출·분할 source 수신·receipt와 운영 권한 주입 제공. 아래 02A~G의 제공 범위와 현장 검증을 구분 | 원천/승인/실행 ID·인증된 mount/ACL·동일 계정·parser·운영 DB의 실제 연결 검증, 수집 전용 입력 계약 |
+| COMMON-02 | V2 제출·분할 source 수신·receipt와 운영 권한 주입 제공. 아래 02A~H의 제공 범위와 현장 검증을 구분 | 원천/승인/실행 ID·인증된 mount/ACL·동일 계정·parser·운영 DB의 실제 연결 검증, 수집 전용 입력 계약 |
 
 COMMON-02의 구현 순서와 경계:
 
@@ -175,7 +175,8 @@ COMMON-02의 구현 순서와 경계:
 | COMMON-02D | workspace 원천/분석 개정·누락/감사와 현재 두 단계 UI 연결. 새 수신으로 PoR·사람 판정 자동 변경 없음 |
 | COMMON-02E | 사용자 `sanity submit/status/retry`·PATH/설치·별도 배포 설정, VWP 내부 spool 공개/접수·원본 보관·DB/파일 중단 복구·OA 응답/receipt·상태 조회. [제출 설계](vwp/SUBMISSION_DESIGN.md) 기준 |
 | COMMON-02F | **공통 구현 제공:** 수집 전용 `none`의 명시적 등록·필드/전체 원문 검증, 수집/파싱 완료와 판정 미실행의 별도 상태·집계·직렬화, VWP→OA 수신/준비 상태·화면과 두 단계 검토 연결. 수치 정책 우회 금지·실제 오류 차단·기존 evaluated/봉인 이력 보존 및 합성 회귀를 함께 제공 |
-| COMMON-02G | **공통 구현 제공:** [plan 3 보존 근거](vwp/PRESERVED_SOURCES.md)의 명시 선언·byte 동일 RAW·귀속/해시·OA OWNER 목록 확인·report/analysis 개정·실제 AI 요청 메타데이터 연결. 본문 AI 소비·OA 원문 열람·다중 대상 binding은 후속이며 보존을 검사/판정 완료로 승격하지 않음 |
+| COMMON-02G | **공통 구현 제공:** [plan 3 보존 근거](vwp/PRESERVED_SOURCES.md)의 명시 선언·byte 동일 RAW·귀속/해시·OA OWNER 목록 확인·report/analysis 개정·실제 AI 요청 메타데이터 연결. 본문·다중 대상의 후속 구현은 02H로 구분하며 보존을 검사/판정 완료로 승격하지 않음 |
+| COMMON-02H | **공통 구현 제공:** [plan 4 본문](vwp/PRESERVED_TEXT.md) 전체 UTF-8 추출/마스킹·다중 대상 단일 보관·OA 권한별 본문 조회/다운로드·실제 AI 입력/검증된 인용과 개정 이력. SDC 실행·의미/완료 검증·대용량 모델 분할과 회사 품질 검증은 후속 |
 
 위 02A~E는 **공통 코드·증분 SQL 제공, 합성 검증** 상태다. 실제 회사 어댑터는 기본 차단이며 mount/ACL·원천/실행 ID·승인/계정·운영 DB는 현장 준비/검증이 필요하다. source 실행 ID 정책이 없으면 같은 바이트의 재검사와 재전달을 구별할 수 없으므로 운영 완료를 선언하지 않는다. 상세 ID는 [수집 설계](vwp/SOURCE_COLLECTION_DESIGN.md), 설치/저장/실행은 [SUBMISSION.md](vwp/SUBMISSION.md)를 따른다. 내부 AI에게 공통 코드 수정 권한을 주지 않는다. COMMON-01의 운영 SSO workbench/V2 연결과 COMMON-03·04의 전체 입력 한도 내 첫 순환은 공통 코드로 제공한다. 현장 어댑터/배포 검증, COMMON-05 대용량 모델 처리와 COMMON-06 실제 품질 평가는 남아 있다. 단계 순서는 [AI 판단 설계 8절](AI_DECISION_DESIGN.md#8-현재-구현과-우선-구현-순서)을 따른다.
 

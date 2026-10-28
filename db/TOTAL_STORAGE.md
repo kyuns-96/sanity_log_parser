@@ -90,3 +90,24 @@ PG12.1·011/012/013 적용·신규 제출에서 `pg_total_relation_size`는 다�
 ```
 
 `--preserved-sources`일 때만 source 예산의 30%를 보존 파일에 배정하고 나머지를 PRE/POST에 사용한다. 기본 모드의 기존 POST byte 예산 의미는 유지한다. 어떤 모드도 외부 DSN이나 사내 파일을 받지 않으며 별도 socket-only 합성 DB를 만들고 종료한다.
+
+## plan 4 본문을 OA·AI에도 제공한 측정 — 2026-10-28
+
+[plan 4](../vwp/PRESERVED_TEXT.md)의 마스킹 본문 전달을 켜고 위와 동일한 전체 원본 14,000,000 bytes 구성(보존 4,200,000 bytes, POST 50,000건·PRE 4건)을 다시 측정했다. 최초 구간별 전송에서는 네 테이블 합계 21,438,464 bytes였고, **최대 16개 구간·512KiB를 한 part에 묶은 최종 구현은 19,513,344 bytes(19.51MB)**였다. 입력·로그·본문을 줄이거나 삭제/repack하지 않았다.
+
+| 테이블 | 최종 TOAST·인덱스 포함 bytes |
+|---|---:|
+| sanity_vwp_data | 10,371,072 |
+| sanity_oa_data | 720,896 |
+| sanity_vwp_to_oa | 8,323,072 |
+| sanity_oa_to_vwp | 98,304 |
+| 합계 | **19,513,344** |
+
+모든 원본 hash/byte 복원, 전체 50,004개 VWP/OA 로그, **OA의 보존 본문 전체**, 62개 전송 패킷 일치를 확인했다. PG12.1·011/012/013·신규 제출·정상 receipt 후 측정이고 합성 DB는 종료했다. 14MB CSV에 보존 파일을 추가한 구성이 아니라 원본 전체 합계 14MB다. 사내 입력의 압축률·누적 이력·기존 미회수 공간에 대한 절대 용량 보장은 아니다. plan 3의 17.42MB는 메타데이터만 전달한 별도 결과로 유지한다.
+
+```bash
+.venv/bin/python db/tests/benchmark_total_storage.py \
+  --pg-bin /path/to/postgresql/bin --preserved-text \
+  --rows 50000 --source-bytes 14000000 --layout shared \
+  --out /tmp/synthetic-preserved-text-new.json
+```

@@ -176,7 +176,8 @@ class AIJobService:
     def _context(self, command, *, write):
         store = self._store(command)
         context = store.context(command["user_id"], command["block_id"], command["version_id"], command["report_id"], write=write)
-        return store, context
+        from oa.sanity_preserved_text import enrich
+        return store, enrich(self.db, context)
 
     def _lock(self, job_id):
         # Match human edits' lock order. RBAC's shared lock is taken by caller.
@@ -452,6 +453,8 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
             advice = validate_review_v2(result["advice"], context, cases, criteria)
         check(isinstance(result["metadata"], dict) and result["metadata"].get("model_called") is True
               and result["metadata"].get("provider") == PROVIDER, "INVALID_AI_RESPONSE")
+        from common.sanity_preserved_ai import receipt
+        receipt(result["metadata"], advice, context)
         result = {"advice": advice, "metadata": result["metadata"]}
         if dispatch["credential_revision"] is not None:
             result["metadata"] = {**result["metadata"], "credential_revision": dispatch["credential_revision"]}

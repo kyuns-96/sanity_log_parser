@@ -138,6 +138,21 @@ def create_workbench_router(authorized_actor):
         return Response(value.get("raw_report") or "", media_type="text/plain",
                         headers={"Content-Disposition": f'attachment; filename="{report_id}.rpt"'})
 
+    @router.get(report_path + "/preserved/{source_id}")
+    def preserved_text(block_id: ID, version_id: ID, report_id: ID, source_id: ID,
+                       offset: Annotated[int, Query(ge=0)] = 0,
+                       limit: Annotated[int, Query(ge=1, le=20)] = 10, download: bool = False,
+                       scope=Depends(workspace)):
+        from oa.sanity_preserved_text import read
+        report = scope.ws.report(scope.user_id, block_id, version_id, report_id, hydrate_source=False)
+        file, segments = read(scope.db, report, source_id)
+        if download:
+            return Response(''.join(s['text'] for s in segments), media_type='text/plain',
+                headers={'Content-Disposition': 'attachment; filename="preserved-masked.txt"',
+                         'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, no-store'})
+        return {'source': file, 'items': segments[offset:offset+limit], 'total': len(segments),
+                'offset': offset, 'limit': limit, 'complete': True, 'masked': True}
+
     @router.get(report_path + "/clustering")
     def clustering_detail(block_id: ID, version_id: ID, report_id: ID, scope=Depends(workspace)):
         value = WorkspaceClusteringStore(scope.db, ws=scope.ws).view(scope.user_id, block_id, version_id, report_id)

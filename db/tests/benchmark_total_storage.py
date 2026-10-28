@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
-def _benchmark(rows, source_bytes, output, *, shared=True, preserved=False):
+def _benchmark(rows, source_bytes, output, *, shared=True, preserved=False, preserved_text=False):
     from common.sanity_common import canonical_json, unpack_json
     from common.sanity_db import Database, Queue
     from common.sanity_privacy import SecretGuard
@@ -47,7 +47,11 @@ def _benchmark(rows, source_bytes, output, *, shared=True, preserved=False):
         requested_bytes = source_bytes
         if preserved:
             from tests.test_preserved_sources import preserve
-            preserve(case.f, case.root)
+            if preserved_text:
+                from tests.test_preserved_text import text_plan
+                text_plan(case.f, case.root)
+            else:
+                preserve(case.f, case.root)
             original_pre_bytes = sum(path.stat().st_size for key, path in case.f['prepared'].reports.items()
                                      if key not in ('reports/companion/full.rpt', 'reports/companion/input.sdc')
                                      and key != next(u['report'] for u in case.f['prepared'].plan['inventory']['units']
@@ -119,6 +123,14 @@ def _benchmark(rows, source_bytes, output, *, shared=True, preserved=False):
                     raise RuntimeError('OA logs differ from complete VWP records')
                 total_records += count
                 hashes.append({'layout': report['source']['layout'], 'records': count, 'records_sha256': left.hexdigest()})
+            if preserved_text:
+                from oa.sanity_preserved_text import read
+                for row in headers:
+                    for file in row['payload'].get('preserved_sources', []):
+                        actual, segments = read(oa, row['payload'], file['id'])
+                        text = ''.join(s['text'] for s in segments).encode()
+                        if text != case.f['prepared'].reports[file['path']].read_bytes():
+                            raise RuntimeError('Complete synthetic preserved text changed')
             if total_records != rows + 4:
                 raise RuntimeError('Synthetic POST/PRE record count changed')
             store, packets = SubmissionStore(vwp), 0
@@ -133,7 +145,7 @@ def _benchmark(rows, source_bytes, output, *, shared=True, preserved=False):
 
         total = sum(value['total_bytes'] for value in after.values())
         report = {'synthetic_only': True, 'layout': 'shared_013' if shared else 'pages_012',
-                  'preserved_sources': preserved, 'requested_source_bytes': requested_bytes,
+                  'preserved_sources': preserved, 'preserved_text': preserved_text, 'requested_source_bytes': requested_bytes,
                   'preserved_original_bytes': sum(f['size_bytes'] for f in manifest.get('preserved_files', [])),
                   'preserved_metadata_verified': (not preserved or sum(len(r['payload'].get('preserved_sources', []))
                                                                        for r in headers) == 2),
@@ -161,8 +173,10 @@ def main(argv=None):
     parser.add_argument('--layout', choices=('pages', 'shared'), default='shared')
     parser.add_argument('--preserved-sources', action='store_true',
                         help='plan 3: use 30%% of source bytes for full.rpt/SDC; budget includes all original files')
+    parser.add_argument('--preserved-text', action='store_true', help='plan 4: also verify all masked text on OA')
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args(argv)
+    args.preserved_sources = args.preserved_sources or args.preserved_text
     if not 1 <= args.rows <= 100000 or not args.rows*128 <= args.source_bytes <= 64*1024*1024:
         parser.error('Use 1..100000 rows and rows*128..64MiB synthetic bytes')
     if args.out.exists(): parser.error('--out must be a new file')
@@ -176,10 +190,10 @@ def main(argv=None):
         result = directory/'result.json'
         code = ('from pathlib import Path;from db.tests.benchmark_total_storage import _benchmark;import sys;'
                 '_benchmark(int(sys.argv[1]),int(sys.argv[2]),Path(sys.argv[3]),shared=sys.argv[4]=="shared",'
-                'preserved=sys.argv[5]=="True")')
+                'preserved=sys.argv[5]=="True",preserved_text=sys.argv[6]=="True")')
         with (directory/'benchmark.log').open('wb') as log:
             done = subprocess.run([sys.executable,'-c',code,str(args.rows),str(args.source_bytes),str(result),args.layout,
-                                   str(args.preserved_sources)],
+                                   str(args.preserved_sources),str(args.preserved_text)],
                                   cwd=source,env=database.test_environment(),stdout=log,stderr=subprocess.STDOUT)
         if done.returncode:
             print('status=FAILED artifact_directory='+str(directory)); return done.returncode
