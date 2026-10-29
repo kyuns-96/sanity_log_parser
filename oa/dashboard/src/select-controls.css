@@ -1,0 +1,201 @@
+/* One control style for project, version, filter and model choices. */
+:root {
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236c7788' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+:root[data-theme='dark'], :root.dark {
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a1b5' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+/* Exclude multi-selects and Radix's hidden form controls. Existing labels,
+   values, form validation and keyboard interaction stay native. */
+:root :is(select:not([multiple]):not([size]):not([aria-hidden='true']), [data-slot='select-trigger']) {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid var(--line, var(--border));
+  border-radius: 8px;
+  background-color: var(--surface, var(--background));
+  color: var(--ink, var(--foreground));
+  font-family: var(--font-sans, inherit);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 1px 2px #10182805;
+  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+
+:root select:not([multiple]):not([size]):not([aria-hidden='true']) {
+  appearance: none;
+  padding-inline-end: 36px;
+  background-image: var(--select-chevron);
+  background-position: right 11px center;
+  background-size: 16px;
+  background-repeat: no-repeat;
+}
+
+:root :is(select:not([multiple]):not([size]):not([aria-hidden='true']), [data-slot='select-trigger']):hover:not(:disabled) {
+  border-color: var(--accent-line, var(--input));
+  background-color: var(--surface-soft, var(--muted));
+}
+
+:root :is(select:not([multiple]):not([size]):not([aria-hidden='true']), [data-slot='select-trigger']):focus-visible {
+  border-color: var(--focus, var(--ring));
+  outline: 2px solid var(--focus, var(--ring));
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--focus, var(--ring)) 12%, transparent);
+}
+
+:root :is(select:not([multiple]):not([size]):not([aria-hidden='true']), [data-slot='select-trigger']):disabled {
+  background-color: var(--surface-soft, var(--muted));
+  color: var(--text-muted, var(--muted-foreground));
+  cursor: not-allowed;
+  opacity: .65;
+  box-shadow: none;
+}
+
+/* The browser renders the picker in the top layer, including inside dialogs.
+   Older browsers keep their native picker and the styled trigger above. */
+@supports (appearance: base-select) {
+  :root select:not([multiple]):not([size]):not([aria-hidden='true']),
+  :root select:not([multiple]):not([size]):not([aria-hidden='true'])::picker(select) {
+    appearance: base-select;
+  }
+
+  :root select:not([multiple]):not([size]):not([aria-hidden='true']) {
+    /* Constrain the selected text independently of the option list. A flex
+       trigger lets its anonymous text push the arrow outside narrow fields. */
+    display: block;
+    overflow: hidden;
+  }
+
+  :root select:not([multiple]):not([size]):not([aria-hidden='true'])::picker-icon {
+    display: none;
+  }
+
+  :root select:not([multiple]):not([size]):not([aria-hidden='true']):open {
+    border-color: var(--focus, var(--ring));
+    background-color: var(--surface, var(--background));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus, var(--ring)) 12%, transparent);
+  }
+
+  :root select:not([multiple]):not([size]):not([aria-hidden='true'])::picker(select) {
+    min-width: anchor-size(width);
+    max-width: min(36rem, calc(100vw - 24px));
+    max-height: min(22rem, 60dvh);
+    margin-block: 6px;
+    padding: 5px;
+    border: 1px solid var(--line, var(--border));
+    border-radius: 10px;
+    background: var(--surface, var(--popover));
+    color: var(--ink, var(--foreground));
+    font-family: var(--font-sans, inherit);
+    font-size: 12px;
+    line-height: 1.5;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--accent-line, var(--border)) transparent;
+    box-shadow: 0 12px 32px #10182824, 0 2px 6px #1018280a;
+  }
+
+  :root select:not([multiple]):not([size]):not([aria-hidden='true']) option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 36px;
+    padding: 9px 11px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary, var(--foreground));
+    font: inherit;
+    text-align: start;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+  }
+
+  :root select:not([multiple]):not([size]):not([aria-hidden='true']) option:is(:hover, :focus-visible) {
+    outline: none;
+    background: var(--surface-soft, var(--muted));
+    color: var(--ink, var(--foreground));
+  }
+
+  :root select:not([multiple]):not([size]):not([aria-hidden='true']) option:checked {
+    background: var(--accent-soft, var(--accent));
+    color: var(--ink, var(--foreground));
+    font-weight: 600;
+  }
+
+  :root select:not([multiple]):not([size]):not([aria-hidden='true']) option::checkmark {
+    order: 1;
+    margin-inline-start: auto;
+    color: var(--ink, var(--foreground));
+    font-weight: 600;
+  }
+
+  :root select:not([multiple]):not([size]):not([aria-hidden='true']) option:disabled {
+    color: var(--text-muted, var(--muted-foreground));
+    cursor: not-allowed;
+    opacity: .6;
+  }
+}
+
+/* Studio's Radix menu follows the same spacing, selection and text wrapping. */
+:root [data-slot='select-trigger'] { gap: 12px; }
+:root [data-slot='select-value'] { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+:root [data-slot='select-content'] {
+  max-width: calc(100vw - 24px);
+  max-height: min(22rem, var(--radix-select-content-available-height));
+  padding: 1px;
+  border: 1px solid var(--line, var(--border));
+  border-radius: 10px;
+  background: var(--surface, var(--popover));
+  color: var(--ink, var(--foreground));
+  box-shadow: 0 12px 32px #10182824, 0 2px 6px #1018280a;
+}
+:root [data-slot='select-item'] {
+  min-height: 36px;
+  padding: 9px 32px 9px 11px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+:root [data-slot='select-item'][data-highlighted] { background: var(--surface-soft, var(--muted)); }
+:root [data-slot='select-item'][data-state='checked'] {
+  background: var(--accent-soft, var(--accent));
+  color: var(--ink, var(--foreground));
+  font-weight: 600;
+}
+
+@media (pointer: coarse) {
+  :root :is(select:not([multiple]):not([size]):not([aria-hidden='true']), [data-slot='select-trigger']),
+  :root select:not([multiple]):not([size]):not([aria-hidden='true']) option,
+  :root [data-slot='select-item'] { min-height: 44px !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root :is(select:not([multiple]):not([size]):not([aria-hidden='true']), [data-slot='select-trigger']),
+  :root select:not([multiple]):not([size]):not([aria-hidden='true'])::picker-icon { transition: none; }
+}
+
+@media (forced-colors: active) {
+  :root select:not([multiple]):not([size]):not([aria-hidden='true']) {
+    appearance: auto;
+    background-image: none;
+    padding-inline-end: 12px;
+  }
+  :root :is(select:not([multiple]):not([size]):not([aria-hidden='true']), [data-slot='select-trigger']) {
+    border-color: ButtonText;
+    box-shadow: none;
+  }
+}

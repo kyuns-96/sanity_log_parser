@@ -14,6 +14,7 @@ import './studio-system.css'
 import './live-workbench.css'
 import './button-motion.css'
 import './color-mode.css'
+import './select-controls.css'
 
 document.documentElement.classList.add('studio-system')
 initializeColorMode()
