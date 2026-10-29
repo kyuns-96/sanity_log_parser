@@ -461,6 +461,8 @@ def create_app(*, auth_mode: AuthMode | None = None,
     app.include_router(create_workbench_router(authorized_actor))
     from oa.ai_tokens_api import create_ai_credentials_router
     app.include_router(create_ai_credentials_router(authorized_actor))
+    from oa.ai_connections_api import create_ai_connections_router
+    app.include_router(create_ai_connections_router(authorized_actor))
 
     # Company login/callback/logout routes must precede the root static mount.
     if auth_router is not None:

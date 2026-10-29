@@ -7,6 +7,7 @@ import { Input } from './studio/components/ui/input'
 import { Textarea } from './studio/components/ui/textarea'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog'
 import { AccessLayout } from './AccessWelcome'
+import AIConnectionsAdmin from './AIConnectionsAdmin'
 import type { AccessScreenProps } from './AccessWelcome'
 import { accessError, requestStatus, roleLabel, scopeName } from './accessApi'
 import type { AccessCatalog, AccessGrant, AccessRequest, AdminAccess } from './accessApi'
@@ -22,6 +23,7 @@ export default function AccessAdmin(props: AccessScreenProps) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [showAI, setShowAI] = useState(false)
   const [projectId, setProjectId] = useState('')
   const [projectName, setProjectName] = useState('')
   const [description, setDescription] = useState('')
@@ -83,6 +85,8 @@ export default function AccessAdmin(props: AccessScreenProps) {
   const completed = access?.requests.filter(request => request.status !== 'PENDING') || []
   return <AccessLayout {...props} page="admin" title="프로젝트·권한 관리" description="프로젝트와 블록을 등록하고, 사용자의 담당 범위를 승인하거나 회수합니다.">
     <p className="am-admin-note"><ShieldCheck size={17} />관리자는 등록과 권한을 관리합니다. 검사 결과를 보려면 본인의 TOP 또는 OWNER 권한도 승인해 주세요.</p>
+    <div className="am-section-heading"><Button variant="outline" aria-expanded={showAI} onClick={() => setShowAI(!showAI)}>AI 연결·모델 관리</Button></div>
+    {showAI && <AIConnectionsAdmin api={api} />}
     {error && !decision && <p className="am-error" role="alert">{error}</p>}{notice && <p className="am-notice" role="status">{notice}</p>}
     <div className="am-section-heading"><h2>승인 대기 <span>{pending.length}건</span></h2><Button variant="outline" size="sm" disabled={busy || loading} onClick={() => void command(refresh)}><RefreshCw size={15} />관리 상태 새로고침</Button></div>
     {loading ? <p role="status" className="am-loading">프로젝트와 권한 요청을 확인하고 있습니다.</p> : <>

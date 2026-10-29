@@ -12,6 +12,7 @@ async function setup(page: Page, options: { registered?: boolean; expired?: bool
   await page.route('**/api/**', async route => {
     const request = route.request()
     const path = new URL(request.url()).pathname
+    if (path === '/api/ai/connections') return route.fulfill({ json: { items: [] } })
     if (path === '/api/workbench/session') return route.fulfill({ json: { user: actor, csrf: '', expires_at: '', environment: 'PRODUCTION_SSO' } })
     if (path === '/api/workbench/overview') return route.fulfill({ json: { user: actor, data_origin: 'PRODUCTION', projects: [] } })
     if (path.startsWith('/api/ai/credentials')) {
@@ -36,6 +37,46 @@ async function setup(page: Page, options: { registered?: boolean; expired?: bool
   await expect(page.getByRole('dialog')).toBeVisible()
   return state
 }
+
+test('users save separate Bearer and x-client credentials with separate issuance links', async ({ page }) => {
+  const state = await setup(page, { disabled: true })
+  await page.getByRole('dialog').press('Escape')
+  const connections = [
+    { id: '20000000-0000-4000-8000-000000000001', label: 'Bearer 연결', enabled: true, auth_mode: 'bearer', model: 'model-a', models: ['model-a'], issuance_url: 'https://identity.example.test/bearer', credential: { registered: false, revision: 0 }, credential_error: null },
+    { id: '20000000-0000-4000-8000-000000000002', label: 'x-client 연결', enabled: true, auth_mode: 'x_client_api_key', model: 'model-b', models: ['model-b'], issuance_url: 'https://identity.example.test/client', credential: { registered: false, revision: 0 }, credential_error: null },
+  ]
+  await page.route('**/api/ai/connections**', async route => {
+    const request = route.request(); const path = new URL(request.url()).pathname
+    if (path === '/api/ai/connections') return route.fulfill({ json: { items: connections } })
+    const entry = connections.find(value => value.id === path.split('/')[4])!
+    const body = request.postDataJSON() as Record<string, unknown>
+    expect(request.headers()['x-sanity-request']).toBe('1')
+    expect(request.headers().authorization).toBeUndefined()
+    expect(body.expected_revision).toBe(entry.credential.revision)
+    state.writes.push({ path, body })
+    entry.credential = { registered: !path.endsWith('/remove'), revision: entry.credential.revision + 1 }
+    return route.fulfill({ json: entry.credential })
+  })
+  await page.getByRole('button', { name: '개인 AI 토큰', exact: true }).click()
+  const bearer = page.getByRole('article', { name: 'Bearer 연결 개인 인증값' })
+  const client = page.getByRole('article', { name: 'x-client 연결 개인 인증값' })
+  await expect(bearer.getByRole('link')).toHaveAttribute('href', connections[0].issuance_url)
+  await expect(client.getByRole('link')).toHaveAttribute('href', connections[1].issuance_url)
+  const bearerInput = bearer.getByLabel('Bearer 연결 개인 Bearer 토큰')
+  await bearerInput.fill('synthetic-personal-bearer')
+  await bearer.getByRole('button', { name: '인증값 저장' }).click()
+  await expect(bearerInput).toHaveValue('')
+  await expect(bearer.getByText('등록됨', { exact: true })).toBeVisible()
+  await client.getByLabel('x-client 연결 개인 API 키').fill('synthetic-personal-client-key')
+  await client.getByRole('button', { name: '인증값 저장' }).click()
+  await expect(client.getByText('등록됨', { exact: true })).toBeVisible()
+  expect(state.writes.map(value => value.body.expected_revision)).toEqual([0, 0])
+  await bearer.getByRole('button', { name: '연결 해제' }).click()
+  await expect(bearer.getByText('미등록', { exact: true })).toBeVisible()
+  await expect(client.getByText('등록됨', { exact: true })).toBeVisible()
+  expect(await page.evaluate(() => [localStorage.length, sessionStorage.length])).toEqual([0, 0])
+  expect(state.unexpected).toEqual([])
+})
 
 test('personal JWT is masked, saved only for self, and never retained in browser storage', async ({ page }) => {
   const state = await setup(page)

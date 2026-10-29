@@ -99,6 +99,48 @@ test('new SSO account requests its block without fetching business data or borro
   expect(state.calls).not.toContain('GET /api/admin/access')
 })
 
+test('administrator adds Bearer and gateway model connections without a client key for Bearer', async ({ page }) => {
+  const state = await accessServer(page, true, true)
+  const entries: { id: string; revision: number; config: Record<string, unknown>; client_key_registered: boolean }[] = []
+  await page.route('**/api/admin/ai/connections**', async route => {
+    const request = route.request(); const path = new URL(request.url()).pathname
+    if (request.method() === 'GET') return route.fulfill({ json: { items: entries, credentials_ready: true } })
+    const body = request.postDataJSON() as Record<string, unknown>; const id = path.split('/').at(-1)!
+    const previous = entries.find(entry => entry.id === id)
+    expect(body.expected_revision).toBe(previous?.revision || 0)
+    state.writes.push({ path, body, marker: request.headers()['x-sanity-request'] })
+    const entry = { id, revision: (previous?.revision || 0) + 1, config: body.config as Record<string, unknown>, client_key_registered: !!body.client_api_key || !!previous?.client_key_registered }
+    if (previous) entries[entries.indexOf(previous)] = entry; else entries.push(entry)
+    return route.fulfill({ json: entry })
+  })
+  await page.goto('/?page=admin')
+  await page.getByRole('button', { name: 'AI 연결·모델 관리', exact: true }).click()
+  const panel = page.getByRole('region', { name: 'AI 연결·모델 관리', exact: true })
+  await panel.getByRole('button', { name: 'AI 연결 추가', exact: true }).click()
+  await panel.getByLabel('AI 연결 이름', { exact: true }).fill('합성 Bearer 연결')
+  await panel.getByLabel('AI API URL', { exact: true }).fill('https://one.example.test/v1/chat/completions')
+  await expect(panel.getByLabel('공통 x-client-api-key', { exact: true })).toHaveCount(0)
+  await panel.getByLabel('AI 인증값 발급 URL').fill('https://identity.example.test/one')
+  await panel.getByLabel('허용 AI 모델 목록').fill('model-a\nmodel-b')
+  await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
+  await expect(panel.getByText('합성 Bearer 연결', { exact: true })).toBeVisible()
+  expect(entries[0].config).toMatchObject({ auth_mode: 'bearer', model: 'model-a', models: ['model-a', 'model-b'], client_name: '', session_mode: 'disabled' })
+  expect(state.writes[0].body.client_api_key).toBeUndefined()
+  await panel.getByRole('button', { name: 'AI 연결 추가', exact: true }).click()
+  await panel.getByLabel('AI 연결 이름', { exact: true }).fill('합성 게이트웨이 연결')
+  await panel.getByLabel('AI API URL', { exact: true }).fill('https://two.example.test/v1/chat/completions')
+  await panel.getByLabel('AI 인증 방식').selectOption('bearer_x_client')
+  await panel.getByLabel('공통 x-client-api-key', { exact: true }).fill('synthetic-shared-client-key')
+  await panel.getByLabel('AI 클라이언트 이름').fill('synthetic-app')
+  await panel.getByLabel('AI 클라이언트 버전').fill('1')
+  await panel.getByLabel('허용 AI 모델 목록').fill('model-c')
+  await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
+  await expect(panel.getByText('합성 게이트웨이 연결', { exact: true })).toBeVisible()
+  expect(entries[1].client_key_registered).toBe(true)
+  await expect(panel.getByText('synthetic-shared-client-key', { exact: true })).toHaveCount(0)
+  expect(state.writes.every(write => write.marker === '1')).toBe(true)
+})
+
 test('administrator creates project and block, approves own request, and revokes the separate business grant', async ({ page }) => {
   const state = await accessServer(page, true, true)
   await page.goto('/?page=admin')

@@ -1,0 +1,14 @@
+.ai-connections-admin { margin-bottom: 24px; }
+.ai-connections-admin h2 { display: flex; align-items: center; gap: 7px; }
+.ai-connection-list { margin-bottom: 16px; }
+.ai-connection-form { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 18px; }
+.ai-connection-fields { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(220px,100%),1fr)); gap: 12px; }
+.ai-connection-gateway { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
+.ai-checkbox { display: flex !important; align-items: center; gap: 8px; }
+.ai-personal-connections { display: grid; gap: 14px; }
+.ai-personal-connection { border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: grid; gap: 10px; }
+.ai-personal-connection header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.ai-personal-connection small { color: var(--text-muted); }
+.ai-personal-connection form { display: grid; gap: 8px; }
+.ai-connection-selectors { display: flex; flex-wrap: wrap; gap: 8px; }
+.personal-ai-token-dialog { max-height: 90dvh; overflow-y: auto; }

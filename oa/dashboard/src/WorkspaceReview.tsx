@@ -6,9 +6,9 @@ import { RadioGroup, RadioGroupItem } from './studio/components/ui/radio-group'
 import { Textarea } from './studio/components/ui/textarea'
 import { Input } from './studio/components/ui/input'
 import CaseSource from './CaseSource'
-import AiModelSelect, { selectedAiModel } from './AiModelSelect'
+import AiModelSelect, { selectedAiModel, selectedAiConnection } from './AiModelSelect'
 import { PreservedCitations } from './PreservedSources'
-import { aiJobActive, aiJobMessage, WorkspaceError, toolResultStatus, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
+import { aiJobActive, aiJobMessage, aiExecutionLabel, WorkspaceError, toolResultStatus, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
 import type { CodexJob, Judgment, ReportReview, ReviewCase, WorkspaceReport, WorkspaceSession, WorkspaceVersion } from './workspaceApi'
 
 const factNames: Record<string, string> = { rule: '검사 규칙', mode: '모드', object: '대상', check_point: '검사 지점', severity: '심각도', code: '메시지 코드', design: '설계' }
@@ -25,6 +25,7 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
   const inputId = useId()
   const [data, setData] = useState<ReportReview | null>(null)
   const [selectedModel, setSelectedModel] = useState('')
+  const [selectedConnection, setSelectedConnection] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [conclusion, setConclusion] = useState<Judgment>('DEFER')
@@ -37,7 +38,9 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
   const [pollPaused, setPollPaused] = useState(false)
   const polls = useRef({ id: '', count: 0 })
   const aiRunning = aiJobActive(data?.ai?.job)
-  const modelId = aiRunning ? data!.ai!.job!.model : selectedAiModel(data?.ai, selectedModel)
+  const connectionId = aiRunning ? data!.ai!.job!.connection_id || '' : data?.ai?.connections?.some(value => value.id === selectedConnection) ? selectedConnection : data?.ai?.connection_id || ''
+  const choice = selectedAiConnection(data?.ai, connectionId)
+  const modelId = aiRunning ? data!.ai!.job!.model : selectedAiModel(choice, selectedModel)
   const [busy, setBusy] = useState<'save' | 'proposal' | null>(null)
   const saveId = useRef<string | null>(null)
   const adviceId = useRef<string | null>(null)
@@ -125,13 +128,14 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
     if (!data) return
     const command = { expected_revision: data.revision,
       ...(group ? { expected_cluster_revision: group.cluster_revision } : {}),
-      ...(production && data.ai?.models?.length ? { model_id: modelId } : {}) }
+      ...(production && choice?.models?.length ? { model_id: modelId } : {}),
+      ...(production && connectionId ? { connection_id: connectionId } : {}) }
     const key = JSON.stringify(command)
     if (adviceKey.current !== key) { adviceId.current = null; adviceKey.current = key }
     setBusy('proposal'); setError(''); adviceId.current ||= crypto.randomUUID()
     try {
       if (production) {
-        if (!group || !data.ai?.available || aiRunning) return
+        if (!group || !choice?.available || aiRunning) return
         const job = await request<CodexJob>(`${base}/review/ai`, { csrf: session.csrf, body: { ...command, request_id: adviceId.current } })
         polls.current = { id: job.id, count: 0 }; setPollPaused(false)
         if (alive.current) setNotice('AI 판정 요청을 등록했습니다.')
@@ -161,15 +165,15 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
     {!data.current_stale && data.current?.exception && <div className="ws-review-current-exception" aria-label="현재 확정된 규칙 예외"><ExceptionEvidence value={data.current.exception} /></div>}
     <section className="ws-review-advice ws-studio-ai-card" aria-label="AI review와 누적 기준 제안">
       <header className="ws-studio-ai-title"><div><h4><Sparkles size={16} />AI 판정 제안</h4><p>{production ? group ? data.ai?.enabled ? `OA AI · ${modelId}` : 'OA AI 연결 설정이 필요합니다.' : '분류 확정 후 각 그룹에서 AI 판정을 요청하세요.' : demo ? '합성 데모 · AI 호출 없음' : '사내 AI 미연결 · 확정 사례 참고 엔진'}</p></div>
-        {production && group && data.can_review && <AiModelSelect ai={data.ai} value={modelId} onChange={setSelectedModel} disabled={!!busy || aiRunning} label="판정 AI 모델" />}
-        <Button variant="outline" size="sm" onClick={propose} disabled={demo || !!busy || !data.can_review || production && (!group || !data.ai?.available || aiRunning)}><RefreshCw size={14} className={aiRunning ? 'ws-spin' : undefined} />{production ? aiRunning || busy === 'proposal' ? 'AI 판정 중…' : 'AI 판정 받기' : busy === 'proposal' ? '기준 확인 중…' : '판정 제안 받기'}</Button>
+        {production && group && data.can_review && <AiModelSelect ai={data.ai} connectionValue={connectionId} onConnectionChange={value => { setSelectedConnection(value); setSelectedModel('') }} value={modelId} onChange={setSelectedModel} disabled={!!busy || aiRunning} label="판정 AI 모델" />}
+        <Button variant="outline" size="sm" onClick={propose} disabled={demo || !!busy || !data.can_review || production && (!group || !choice?.available || aiRunning)}><RefreshCw size={14} className={aiRunning ? 'ws-spin' : undefined} />{production ? aiRunning || busy === 'proposal' ? 'AI 판정 중…' : 'AI 판정 받기' : busy === 'proposal' ? '기준 확인 중…' : '판정 제안 받기'}</Button>
       </header>
       {production && data.can_review && data.ai?.enabled && !data.ai.supported && <p className="ws-notice">분류 확정과 전체 로그·필수 근거의 준비 상태를 확인해 주세요.</p>}
-      {production && data.ai?.credential_required && !data.ai.credential_ready && <p className="ws-notice" role="status">화면 상단의 ‘개인 AI 토큰’에서 본인의 토큰을 등록하거나 교체해 주세요.</p>}
-      {production && data.ai?.job && <div className="ws-studio-ai-job"><p role="status" className={['FAILED', 'STALE', 'UNKNOWN'].includes(data.ai.job.status) ? 'ws-error' : 'ws-muted'}>{data.ai.job.model} · {aiJobMessage(data.ai.job)}{aiRunning && pollPaused && ' 상태 자동 조회를 멈췄습니다. 아래 버튼으로 확인을 이어갈 수 있습니다.'}</p><Button variant="ghost" size="sm" disabled={!!busy} onClick={() => { polls.current.count = 0; setPollPaused(false); reload().catch(fail) }}>AI 판정 상태 다시 조회</Button></div>}
+      {production && choice?.credential_required && !choice.credential_ready && <p className="ws-notice" role="status">화면 상단의 ‘개인 AI 토큰’에서 본인의 토큰을 등록하거나 교체해 주세요.</p>}
+      {production && data.ai?.job && <div className="ws-studio-ai-job"><p role="status" className={['FAILED', 'STALE', 'UNKNOWN'].includes(data.ai.job.status) ? 'ws-error' : 'ws-muted'}>{aiExecutionLabel(data.ai.job)} · {aiJobMessage(data.ai.job)}{aiRunning && pollPaused && ' 상태 자동 조회를 멈췄습니다. 아래 버튼으로 확인을 이어갈 수 있습니다.'}</p><Button variant="ghost" size="sm" disabled={!!busy} onClick={() => { polls.current.count = 0; setPollPaused(false); reload().catch(fail) }}>AI 판정 상태 다시 조회</Button></div>}
       {proposal ? <div className="ws-review-proposal ws-studio-ai-result">
         <PreservedCitations files={report.preserved_sources} citations={proposal.model_metadata?.preserved_citations} sources={proposal.model_metadata?.preserved_citation_sources} target="review" />
-        <div className="ws-studio-ai-verdict"><Badge variant="outline" className={`ws-status ws-status-${proposal.conclusion.toLowerCase()}`}>제안 {labels[proposal.conclusion]}</Badge><span>{proposal.model_called ? `AI 모델 · ${proposal.model_metadata?.model || proposal.advisor}` : '확정 기준 참고 엔진'} · {time(proposal.at)}</span></div>
+        <div className="ws-studio-ai-verdict"><Badge variant="outline" className={`ws-status ws-status-${proposal.conclusion.toLowerCase()}`}>제안 {labels[proposal.conclusion]}</Badge><span>{proposal.model_called ? `AI 모델 · ${proposal.model_metadata ? aiExecutionLabel(proposal.model_metadata) : proposal.advisor}` : '확정 기준 참고 엔진'} · {time(proposal.at)}</span></div>
         <p className="ws-studio-proposal-reason">{proposal.reason}</p>
         {data.current?.proposal_id === proposal.id ? <p className="ws-muted">이 제안에 대한 사용자 판정을 {labels[data.current.conclusion]}로 저장했습니다. 수정 내역은 아래 이력에서 확인할 수 있습니다.</p> : proposal.stale && <p className="ws-error">판정 또는 참고 기준이 변경되었습니다. 제안을 다시 받아 주세요.</p>}
         <div className="ws-studio-ai-references">

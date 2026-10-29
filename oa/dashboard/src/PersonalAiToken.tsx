@@ -4,6 +4,7 @@ import { Button } from './studio/components/ui/button'
 import { Input } from './studio/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog'
 import './personal-ai-token.css'
+import ConnectionCredentials from './ConnectionCredentials'
 
 type TokenStatus = { enabled: boolean; registered?: boolean; revision?: number; expires_at?: string | null; expired?: boolean; expires_soon?: boolean; issuance_url?: string | null }
 const messages: Record<string, string> = {
@@ -39,6 +40,8 @@ function issuanceUrl(value?: string | null): string | null {
 
 export default function PersonalAiToken() {
   const [open, setOpen] = useState(false)
+  const [managedCount, setManagedCount] = useState(0)
+  const [managedBusy, setManagedBusy] = useState(false)
   const [status, setStatus] = useState<TokenStatus | null>(null)
   const [token, setToken] = useState('')
   const [loading, setLoading] = useState(false)
@@ -78,14 +81,16 @@ export default function PersonalAiToken() {
 
   return <>
     <Button variant="outline" size="sm" className="personal-ai-token-trigger" aria-label="개인 AI 토큰" title="개인 AI 토큰" onClick={() => setOpen(true)}><KeyRound size={14} /><span>개인 AI 토큰</span></Button>
-    <Dialog open={open} onOpenChange={value => { if (!busy) { setOpen(value); setToken('') } }}>
+    <Dialog open={open} onOpenChange={value => { if (!busy && !managedBusy) { setOpen(value); setToken('') } }}>
       <DialogContent className="personal-ai-token-dialog">
         <DialogHeader><DialogTitle>개인 AI 토큰</DialogTitle><DialogDescription>내가 요청한 AI 분류·판정에 사용할 토큰을 등록합니다. 발급받은 토큰은 암호화해 저장하며 다시 표시하지 않습니다.</DialogDescription></DialogHeader>
+        {open && <ConnectionCredentials onLoaded={setManagedCount} onBusyChange={setManagedBusy} />}
         {loading && <p role="status"><LoaderCircle className="spin" size={16} />등록 상태를 확인하고 있습니다.</p>}
         {error && <p className="ws-error" role="alert">{error}</p>}
         {notice && <p className="ws-notice" role="status">{notice}</p>}
-        {status && !status.enabled && <p>개인 AI 토큰 등록이 활성화되어 있지 않습니다. 운영 담당자에게 문의해 주세요.</p>}
+        {status && !status.enabled && !managedCount && <p>기존 서버 연결의 개인 AI 토큰 등록이 활성화되어 있지 않습니다. 운영 담당자에게 문의해 주세요.</p>}
         {status?.enabled && <form className="personal-ai-token-form" onSubmit={event => { event.preventDefault(); void change(false) }}>
+          {!!managedCount && <strong>기존 서버 연결</strong>}
           <div className="personal-ai-token-status" aria-label="AI 토큰 등록 상태">
             <strong>{status.registered ? '등록됨' : '미등록'}</strong>
             {status.expires_at && <span>토큰에 기재된 만료일: {new Date(status.expires_at).toLocaleDateString('ko-KR')}</span>}
