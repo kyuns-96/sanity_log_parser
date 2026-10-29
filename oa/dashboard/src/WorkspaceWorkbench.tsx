@@ -7,6 +7,7 @@ import { Input } from './studio/components/ui/input'
 import Records from './live-workbench/Records'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog'
 import WorkspaceReview from './WorkspaceReview'
+import AiModelSelect, { selectedAiModel } from './AiModelSelect'
 import GroupRationale, { rationaleLabels } from './GroupRationale'
 import CaseSource from './CaseSource'
 import PreservedSources, { PreservedCitations } from './PreservedSources'
@@ -54,6 +55,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
   const [busy, setBusy] = useState(false)
   const [groupNavigating, setGroupNavigating] = useState(false)
   const [aiSubmitting, setAiSubmitting] = useState(false)
+  const [selectedModel, setSelectedModel] = useState('')
   const [pollPaused, setPollPaused] = useState(false)
   const polls = useRef({ id: '', count: 0 })
   const [error, setError] = useState('')
@@ -80,6 +82,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
   const newGroup = useRef<string | null>(null)
   const lastRevision = useRef(-1)
   const aiRunning = aiJobActive(data?.ai?.job)
+  const modelId = aiRunning ? data!.ai!.job!.model : selectedAiModel(data?.ai, selectedModel)
   const confirmed = !!data?.summary.confirmed && !activeTask(data.task) && !aiRunning
   const dirtyName = !!member?.group && groupName !== member.group.label
   const identityChanged = !!data?.current && JSON.stringify([...fields].sort()) !== JSON.stringify([...data.current.identity_fields].sort())
@@ -248,7 +251,8 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
   async function proposeAI(saveOnly = false) {
     if (!data?.ai) return
     const previous = data.ai.job
-    const command = { expected_revision: saveOnly && previous ? previous.expected_revision : data.revision }
+    const command = { expected_revision: saveOnly && previous ? previous.expected_revision : data.revision,
+      ...(production && data.ai.models?.length ? { model_id: modelId } : {}) }
     const key = `AI:${JSON.stringify(command)}`
     if (saveOnly && previous) pending.current = { key, id: previous.id }
     else if (pending.current?.key !== key) pending.current = { key, id: crypto.randomUUID() }
@@ -352,6 +356,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
         <button type="button" aria-current={step === 2 ? 'step' : undefined} disabled={transitionBlocked} aria-describedby={transitionBlocked && step === 1 && !confirmed ? `${inputId}-step-hint` : undefined} onClick={beginJudgment}><b>2</b><span>그룹별 판정</span><small>{n(data.summary.reviewed)}/{n(data.summary.total)}</small></button>
       </nav>
       <div className="ws-workbench-stage-actions">
+        {production && step === 1 && !data.current && data.can_edit && !historyEvent && <AiModelSelect ai={data.ai} value={modelId} onChange={setSelectedModel} disabled={!writable || !data.ready || aiSubmitting} label="분류 AI 모델" />}
         {step === 1 && confirmed && <Button disabled={transitionBlocked} onClick={beginJudgment}>{data.can_edit ? '그룹 판정 계속' : '판정 보기'}<ArrowRight size={16} /></Button>}
         {step === 1 && data.current && data.can_edit && !historyEvent && !confirmed && <Button aria-describedby={`${inputId}-confirm-hint`} disabled={confirmBlocked} onClick={() => mutate('/clustering?compact=true', { action: 'CONFIRM', reason, reusable, compatible_versions: reusable && compatible, criteria: reusable ? criteria : '' }, '전체 분류를 확정했습니다. 그룹별 사용자 판정을 저장하세요.')}>분류 확정 · 판정 시작<ArrowRight size={16} /></Button>}
         {step === 1 && !data.current && data.can_edit && !historyEvent && <>
@@ -380,7 +385,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
     {production && data.ai?.credential_required && !data.ai.credential_ready && <p className="ws-notice" role="status">개인 AI 토큰을 사용할 수 없습니다. 화면 상단의 ‘개인 AI 토큰’에서 등록 상태와 만료일을 확인해 주세요.</p>}
     {production && data.can_edit && data.ai?.enabled && !data.ai.supported && <p className="ws-notice" role="status">AI 분류 요청 조건을 충족하지 못했습니다. 보고서 수신·파싱과 전체 로그의 준비 상태를 확인해 주세요.</p>}
     {pollPaused && aiRunning && <p className="ws-notice" role="status">상태 자동 조회를 잠시 멈췄습니다. 서버 작업은 계속됩니다. ‘최신 구성 다시 조회’로 상태 확인을 이어가세요.</p>}
-    {data.ai?.job && data.ai.job.status !== 'COMPLETED' && <div role="status" aria-live="polite" className={['FAILED', 'STALE', 'UNKNOWN', 'SAVE_FAILED'].includes(data.ai.job.status) ? 'ws-error' : 'ws-notice'}>{production ? aiJobMessage(data.ai.job) : aiRunning ? 'AI가 전체 로그와 확정 사례로 분류 초안을 생성·저장하고 있습니다. 새로고침 후에도 상태를 확인할 수 있습니다.' : data.ai.job.status === 'UNKNOWN' ? 'AI 호출 결과를 확인하지 못했습니다. 자동 재호출하지 않습니다. 새 요청은 추가 사용량이 발생할 수 있습니다.' : data.ai.job.status === 'SAVE_FAILED' ? '받은 AI 결과를 저장하지 못했습니다. 모델을 다시 호출하지 않고 저장을 재시도할 수 있습니다.' : data.ai.job.status === 'STALE' ? '검토 개정이나 참고 사례가 바뀌어 AI 결과를 적용하지 않았습니다. 최신 상태를 확인하고 새 초안을 요청하세요.' : `AI 분류를 완료하지 못했습니다. 기존 구성은 유지됩니다. (${data.ai.job.error || 'AI_CALL_FAILED'})`}{data.ai.job.status === 'SAVE_FAILED' && data.can_edit && <Button variant="outline" disabled={busy} onClick={() => proposeAI(true)}>받은 AI 결과 저장</Button>}</div>}
+    {data.ai?.job && data.ai.job.status !== 'COMPLETED' && <div role="status" aria-live="polite" className={['FAILED', 'STALE', 'UNKNOWN', 'SAVE_FAILED'].includes(data.ai.job.status) ? 'ws-error' : 'ws-notice'}>{production ? `${data.ai.job.model} · ${aiJobMessage(data.ai.job)}` : aiRunning ? 'AI가 전체 로그와 확정 사례로 분류 초안을 생성·저장하고 있습니다. 새로고침 후에도 상태를 확인할 수 있습니다.' : data.ai.job.status === 'UNKNOWN' ? 'AI 호출 결과를 확인하지 못했습니다. 자동 재호출하지 않습니다. 새 요청은 추가 사용량이 발생할 수 있습니다.' : data.ai.job.status === 'SAVE_FAILED' ? '받은 AI 결과를 저장하지 못했습니다. 모델을 다시 호출하지 않고 저장을 재시도할 수 있습니다.' : data.ai.job.status === 'STALE' ? '검토 개정이나 참고 사례가 바뀌어 AI 결과를 적용하지 않았습니다. 최신 상태를 확인하고 새 초안을 요청하세요.' : `AI 분류를 완료하지 못했습니다. 기존 구성은 유지됩니다. (${data.ai.job.error || 'AI_CALL_FAILED'})`}{data.ai.job.status === 'SAVE_FAILED' && data.can_edit && <Button variant="outline" disabled={busy} onClick={() => proposeAI(true)}>받은 AI 결과 저장</Button>}</div>}
     {!data.ready && <p className="ws-notice">원문 수신·파싱과 필수 근거가 준비되어야 분류를 확정할 수 있습니다.</p>}
     {identityChanged && <p className="ws-notice">분류 필드를 변경했습니다. 새 초안을 생성하거나 필드를 현재 분류 기준으로 되돌린 뒤 진행하세요.</p>}
     {task && activeTask(task) && <div className="ws-workbench-task" aria-label="전체 로그 분류 진행"><div><strong>{task.status === 'FAILED' ? '분류 작업 실패' : task.status === 'STALE' ? '참조 변경 · 작업 재검토' : '전체 로그 분류 진행'}</strong><span>{n(task.processed)} / {n(task.record_count)}건</span></div><progress max={Math.max(task.record_count, 1)} value={task.processed} />{task.error && <p>{task.error} · 부분 결과는 확정되지 않았습니다.</p>}{busy && ['PENDING', 'RUNNING'].includes(task.status) ? <Button variant="outline" onClick={() => { run.current++ }}>현재 작업 뒤 일시정지</Button> : !busy && data.can_edit && activeTask(task) && <div><Button variant="outline" disabled={task.status === 'STALE'} onClick={() => propose(true)}>저장한 위치에서 이어서 처리</Button><Button variant="outline" onClick={cancelTask}>분류 작업 취소</Button></div>}</div>}

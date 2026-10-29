@@ -16,6 +16,7 @@ PROFILES = ("quick", "full")
 # layouts here; the compressed/page variants and legacy HTTPS replay stay in
 # full rather than repeating the same workflow in every everyday run.
 QUICK_TESTS = (
+    "tests.test_ai_routing", "tests.test_ai_workbench_api",
     "tests.test_ai_batches.BatchPureTests", "tests.test_ai_batches.BatchDatabaseTests",
     "tests.test_ai_evidence_batches.EvidenceBatchPureTests", "tests.test_ai_evidence_batches.EvidenceBatchDatabaseTests",
     "tests.test_ai_evidence_batches.EvidenceTextDatabaseTests",

@@ -110,6 +110,12 @@ context/output·chat framing/reasoning·게이트웨이 body 제한과 출력 �
 별도 테이블·DDL·GRANT·큐 재전송은 없다. plan·자식 결과는 압축 JSON으로 보관하고 작은 호출
 이벤트를 hash chain으로 연결한다. 원문이나 인증 header를 감사 행에 복제하지 않는다.
 
+사용자가 고른 허용 모델은 부모와 모든 자식·통합·재개에 고정한다. 선택형 보조 URL은 같은 모델의
+POST 전 연결 실패에만 한 번 사용하며 동일한 body hash 예약과 timeout 예산을 유지한다.
+HTTP 오류·읽기/쓰기 실패·결과 불명은 자동 전환하지 않는다. 자식 `routing`과 최종
+`routing_summary`로 사용 경로를 기록한다. 모델 목록·보조 URL 변경은 기존 작업을 STALE로 중단한다.
+설정과 경계는 [모델 선택·보조 URL](AI_RUNTIME.md#23-사용자-모델-선택과-보조-url--2026-10-29)을 따른다.
+
 새 라운드 계획은 `plan_format=2`로 전체 descriptor 목록을 한 압축 레코드에
 보존한다. 기록 범위·원본 hash·통합 대상 참조는 생략하지 않으며, 각 호출 예약에는
 해당 descriptor와 실제 HTTP body hash를 계속 남긴다. 첫 라운드의 hash는 부모가
