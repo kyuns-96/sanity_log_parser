@@ -9,13 +9,14 @@ from __future__ import annotations
 import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
+import re
 
 from cryptography.fernet import Fernet, InvalidToken
 
 from common.sanity_clustering import check
 from common.sanity_common import ReviewError, _decode_json, canonical_json
 from common.sanity_config import load_environment
-from common.sanity_db import lock_key
+from common.sanity_db import lock_key, uuid_value
 from oa.sanity_workspace import WorkspaceStore, record_id
 
 NAMESPACE = "oa-ai-user-token-v1"
@@ -45,18 +46,25 @@ def expiry_hint(token):
 
 
 class UserTokenStore:
-    def __init__(self, db, settings=None):
+    def __init__(self, db, settings=None, *, connection_id=None, credential_scope=None):
         self.db = db
         self.settings = load_environment() if settings is None else settings
-        check(token_source(self.settings) == "user", "AI_PERSONAL_TOKEN_DISABLED")
+        self.connection_id = str(uuid_value(connection_id)) if connection_id is not None else None
+        self.credential_scope = credential_scope
+        check((self.connection_id is None and credential_scope is None) or
+              (self.connection_id is not None and isinstance(credential_scope, str)
+               and re.fullmatch(r"[0-9a-f]{64}", credential_scope)), "AI_CONFIG")
+        self.namespace = "oa-ai-user-token-v2" if self.connection_id else NAMESPACE
+        check(self.connection_id is not None or token_source(self.settings) == "user", "AI_PERSONAL_TOKEN_DISABLED")
         try:
             self.cipher = Fernet(self.settings.get("SANITY_OA_AI_TOKEN_STORE_SECRET", "").encode("ascii"))
         except (ValueError, TypeError, AttributeError, UnicodeError):
             raise ReviewError("AI_TOKEN_STORE_NOT_CONFIGURED", "Configure the personal AI token store") from None
 
-    @staticmethod
-    def _prefix(user_id):
+    def _prefix(self, user_id):
         check(isinstance(user_id, str) and 1 <= len(user_id) <= 200, "UNAUTHORIZED")
+        if self.connection_id:
+            return "ait2." + hashlib.sha256(canonical_json([user_id, self.connection_id])).hexdigest() + "."
         return PREFIX + hashlib.sha256(user_id.encode("utf-8")).hexdigest() + "."
 
     def _latest(self, user_id):
@@ -66,8 +74,11 @@ class UserTokenStore:
         if row is None:
             return None
         value = row["payload"]
-        check(isinstance(value, dict) and set(value) == {"namespace", "schema_version", "user_id", "revision", "ciphertext"}
-              and value["namespace"] == NAMESPACE and type(value["schema_version"]) is int and value["schema_version"] == 1
+        fields = {"namespace", "schema_version", "user_id", "revision", "ciphertext"}
+        if self.connection_id:fields.update(("connection_id", "credential_scope"))
+        check(isinstance(value, dict) and set(value) == fields
+              and value["namespace"] == self.namespace and value.get("connection_id") == self.connection_id
+              and type(value["schema_version"]) is int and value["schema_version"] == 1
               and value["user_id"] == user_id and type(value["revision"]) is int
               and 1 <= value["revision"] <= 9999999999, "AI_TOKEN_UNAVAILABLE")
         key = prefix + f"{value['revision']:010d}"
@@ -76,6 +87,8 @@ class UserTokenStore:
               and row["project"] is None and row["workspace_project_ref"] is None and row["workspace_block_ref"] is None,
               "AI_TOKEN_UNAVAILABLE")
         encrypted = value["ciphertext"]
+        if self.connection_id:
+            check(isinstance(value["credential_scope"], str) and re.fullmatch(r"[0-9a-f]{64}", value["credential_scope"]), "AI_TOKEN_UNAVAILABLE")
         check(encrypted is None or isinstance(encrypted, str) and 1 <= len(encrypted) <= 20000, "AI_TOKEN_UNAVAILABLE")
         return row
 
@@ -83,7 +96,11 @@ class UserTokenStore:
         value = row["payload"]
         try:
             content = _decode_json(self.cipher.decrypt(value["ciphertext"].encode("ascii")).decode("utf-8"))
-            check(isinstance(content, dict) and set(content) == {"user_id", "revision", "token"}
+            fields = {"user_id", "revision", "token"}
+            if self.connection_id:fields.update(("connection_id", "credential_scope"))
+            check(isinstance(content, dict) and set(content) == fields
+                  and content.get("connection_id") == self.connection_id
+                  and content.get("credential_scope") == value.get("credential_scope")
                   and content["user_id"] == value["user_id"] and content["revision"] == value["revision"],
                   "AI_TOKEN_UNAVAILABLE")
             token = content["token"]
@@ -96,9 +113,10 @@ class UserTokenStore:
     def status(self, user_id):
         row = self._latest(user_id)
         registered = bool(row and row["payload"]["ciphertext"] is not None)
-        expiry = expiry_hint(self._decrypt(row)) if registered else None
+        changed = bool(registered and self.connection_id and row["payload"]["credential_scope"] != self.credential_scope)
+        expiry = expiry_hint(self._decrypt(row)) if registered and not changed else None
         now = datetime.now(timezone.utc)
-        return {"enabled": True, "registered": registered,
+        return {"enabled": True, "registered": registered, **({"connection_changed":changed} if self.connection_id else {}),
                 "revision": row["payload"]["revision"] if row else 0,
                 "updated_at": row["created_at"].isoformat() if row else None,
                 "expires_at": expiry.isoformat() if expiry else None,
@@ -111,6 +129,8 @@ class UserTokenStore:
         self.db.execute("SELECT pg_advisory_xact_lock_shared(%s)", (lock_key(self._prefix(user_id)),))
         row = self._latest(user_id)
         check(row is not None and row["payload"]["ciphertext"] is not None, "AI_USER_TOKEN_REQUIRED")
+        if self.connection_id:
+            check(row["payload"]["credential_scope"] == self.credential_scope, "AI_CREDENTIAL_SCOPE_CHANGED")
         token = self._decrypt(row)
         expiry = expiry_hint(token)
         check(expiry is None or expiry > datetime.now(timezone.utc), "AI_USER_TOKEN_EXPIRED")
@@ -130,9 +150,10 @@ class UserTokenStore:
         check(revision == expected_revision, "REVISION_CONFLICT")
         check(revision < 9999999999, "AI_TOKEN_UNAVAILABLE")
         revision += 1
+        binding = {"connection_id": self.connection_id, "credential_scope":self.credential_scope} if self.connection_id else {}
         encrypted = None if token is None else self.cipher.encrypt(canonical_json(
-            {"user_id": user_id, "revision": revision, "token": token})).decode("ascii")
+            {"user_id": user_id, "revision": revision, "token": token, **binding})).decode("ascii")
         WorkspaceStore(self.db).put("WS_CONFIG", prefix + f"{revision:010d}",
-            {"namespace": NAMESPACE, "schema_version": 1, "user_id": user_id,
-             "revision": revision, "ciphertext": encrypted})
+            {"namespace": self.namespace, "schema_version": 1, "user_id": user_id,
+             "revision": revision, "ciphertext": encrypted, **binding})
         return self.status(user_id)

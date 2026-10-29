@@ -16,7 +16,7 @@ const base = '/api/workbench/blocks/b1/versions/v1/reports/report-a'
 const url = '/?page=workbench&project=p1&block=b1&version=v1&eco=ECO-2&item=synthetic_check&tab=reports&review=report-a'
 const emptyPage = { items: [], total: 0, offset: 0, limit: 25 }
 
-type MockOptions = { models?: string[]; modelMetadata?: Partial<ClusterModelMetadata>; preserved?: PreservedSource[]; collectionOnly?: boolean; configured?: boolean; personalToken?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
+type MockOptions = { connections?: { id: string; label: string; model: string; models: string[]; available: boolean; enabled: boolean; credential_required?: boolean; credential_ready?: boolean }[]; models?: string[]; modelMetadata?: Partial<ClusterModelMetadata>; preserved?: PreservedSource[]; collectionOnly?: boolean; configured?: boolean; personalToken?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
 
 async function mockOA(page: Page, options: MockOptions = {}) {
   const actor = options.readOnly ? { ...user, role: 'TOP' } : user
@@ -33,7 +33,7 @@ async function mockOA(page: Page, options: MockOptions = {}) {
   state.current = options.currentCase || null
   state.reviewRevision = options.currentCase?.revision || 0
   state.proposal = options.proposal || null
-  const capability = (job: CodexJob | null) => ({ available: options.configured !== false && (!options.personalToken || credentialReady), supported: true, enabled: options.configured !== false, model: model.model, ...(options.models ? { models: options.models } : {}), remaining: null, provider: 'OA_OPENAI_COMPATIBLE', synthetic_only: false, job, ...(options.personalToken ? { credential_required: true, credential_ready: credentialReady, credential_error: credentialReady ? null : 'AI_USER_TOKEN_REQUIRED' } : {}) })
+  const capability = (job: CodexJob | null) => ({ available: options.configured !== false && (!options.personalToken || credentialReady), supported: true, enabled: options.configured !== false, model: model.model, ...(options.models ? { models: options.models } : {}), remaining: null, provider: 'OA_OPENAI_COMPATIBLE', synthetic_only: false, job, ...(options.connections ? { connections: options.connections, connection_id: options.connections[0]?.id || '' } : {}), ...(options.personalToken ? { credential_required: true, credential_ready: credentialReady, credential_error: credentialReady ? null : 'AI_USER_TOKEN_REQUIRED' } : {}) })
   const cluster = () => state.revision ? { id: `cluster-${state.revision}`, report_id: report.id, revision: state.revision, action: state.confirmed ? 'CONFIRM' : 'PROPOSE', confirmed: state.confirmed, reusable: false, compatible_versions: false, criteria: '', reason: '전체 로그의 검토 의도에 따라 묶었습니다.', identity_fields: ['mode'], group_count: 1, record_count: sourceRecords.length, at, actor, references: [], advisor: 'OA_OPENAI_COMPATIBLE', model_called: true, model_metadata: { ...model, model: state.clusterJob?.model || model.model, ...options.modelMetadata }, rationale_counts: { MISSING: 0, DRAFT: Number(!state.confirmed), CONFIRMED: Number(state.confirmed), STALE: 0 } } : null
   const group = () => ({ id: 'g1', label: '확인이 필요한 합성 대상', record_count: sourceRecords.length, check_status: options.collectionOnly ? 'UNKNOWN' : 'FAIL', status: state.current?.conclusion || 'PENDING', revision: state.reviewRevision, example: {}, rationale: { status: state.confirmed ? 'CONFIRMED' : 'DRAFT', reason: '같은 조건의 확인 대상입니다.', reason_truncated: false, reason_omitted_chars: 0, source: 'AI', evidence_count: 1 } })
   const finish = (job: CodexJob) => {
@@ -48,6 +48,7 @@ async function mockOA(page: Page, options: MockOptions = {}) {
       if (options.readOnly) return route.fulfill({ status: 403, json: { code: 'FORBIDDEN' } })
     }
     if (path.startsWith('/workspace/api/')) { state.unexpected.push(path); return route.fulfill({ status: 404, json: { code: 'NOT_FOUND' } }) }
+    if (path === '/api/ai/connections') return route.fulfill({ json: { items: [] } })
     if (path === '/api/ai/credentials' && options.personalToken) {
       if (body) { expect(body.expected_revision).toBe(credentialRevision); credentialReady = true; credentialRevision++ }
       return route.fulfill({ json: { enabled: true, registered: credentialReady, revision: credentialRevision, expires_at: null, expired: false, expires_soon: false } })
@@ -66,7 +67,7 @@ async function mockOA(page: Page, options: MockOptions = {}) {
     if (path === base) return route.fulfill({ json: currentReport })
     if (path === base+'/clustering/ai' && body) {
       expect(body.expected_revision).toBe(state.revision)
-      state.clusterJob = { id: String(body.request_id), status: 'PENDING', error: null, model: String(body.model_id || model.model), created_at: at, expected_revision: state.revision, input_case_count: 0 }
+      state.clusterJob = { id: String(body.request_id), status: 'PENDING', error: null, model: String(body.model_id || model.model), ...(body.connection_id ? { connection_id: String(body.connection_id), connection_label: options.connections?.find(value => value.id === body.connection_id)?.label } : {}), created_at: at, expected_revision: state.revision, input_case_count: 0 }
       state.clusterReads = 0
       return route.fulfill({ status: 202, json: state.clusterJob })
     }
@@ -97,7 +98,7 @@ async function mockOA(page: Page, options: MockOptions = {}) {
     if (path === base+'/groups/g1/review/ai' && body) {
       expect(body.expected_cluster_revision).toBe(state.revision)
       expect(body.expected_revision).toBe(state.reviewRevision)
-      state.reviewJob = { id: String(body.request_id), status: 'PENDING', error: null, model: String(body.model_id || model.model), created_at: at, expected_revision: state.reviewRevision, input_case_count: 0 }
+      state.reviewJob = { id: String(body.request_id), status: 'PENDING', error: null, model: String(body.model_id || model.model), ...(body.connection_id ? { connection_id: String(body.connection_id), connection_label: options.connections?.find(value => value.id === body.connection_id)?.label } : {}), created_at: at, expected_revision: state.reviewRevision, input_case_count: 0 }
       return route.fulfill({ status: 202, json: state.reviewJob })
     }
     if (path === base+'/groups/g1/review') {
@@ -141,6 +142,25 @@ test('batch progress distinguishes complete-record classification from group int
     await expect(page.getByRole('status').filter({ hasText: message })).toBeVisible()
   }
   expect(state.writes).toHaveLength(0)
+  expect(state.unexpected).toEqual([])
+})
+
+test('connection selection is distinct from model ID and respects its personal credential readiness', async ({ page }) => {
+  const connections = [
+    { id: '10000000-0000-4000-8000-000000000001', label: '합성 Bearer 연결', model: model.model, models: [model.model], enabled: true, available: true, credential_required: true, credential_ready: true },
+    { id: '10000000-0000-4000-8000-000000000002', label: '합성 x-client 연결', model: model.model, models: [model.model], enabled: true, available: false, credential_required: true, credential_ready: false },
+  ]
+  const state = await mockOA(page, { connections, models: [model.model] })
+  await page.goto(url)
+  const selector = page.getByRole('combobox', { name: '분류 AI 연결', exact: true })
+  await selector.selectOption(connections[1].id)
+  await expect(page.getByRole('button', { name: 'AI로 그룹 만들기', exact: true })).toBeDisabled()
+  connections[1].available = true; connections[1].credential_ready = true
+  await page.getByRole('button', { name: '최신 구성 다시 조회', exact: true }).click()
+  await expect(selector).toHaveValue(connections[1].id)
+  await page.getByRole('button', { name: 'AI로 그룹 만들기', exact: true }).click()
+  await expect(page.locator('.ws-rationale-text').first()).toBeVisible()
+  expect(state.writes.find(write => write.path.endsWith('/clustering/ai'))?.body).toMatchObject({ connection_id: connections[1].id, model_id: model.model })
   expect(state.unexpected).toEqual([])
 })
 

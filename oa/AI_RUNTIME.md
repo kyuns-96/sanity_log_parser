@@ -126,6 +126,66 @@ API/인증/토크나이저 계약의 모델을 한 목록에 등록하지 않는
 보조 URL이 없는 기존 설정·작업의 config hash와 이력 읽기는 유지한다. 새 설정은 웹과 worker에
 같은 release로 반영한다. 이 설정 추가에는 DDL/GRANT가 없다.
 
+### 2.4. 관리 화면에서 여러 AI 연결 등록
+
+SSO 서비스 관리자의 **프로젝트·권한 관리 → AI 연결·모델 관리**에서 연결을 추가·수정·사용 중지한다.
+연결 이름, 전체 HTTPS API URL, 선택형 보조 URL, API 종류, 인증 방식, 모델 ID 목록·기본 모델,
+개인 인증값 발급 URL과 처리 한도를 연결마다 등록한다. 최대 100개 연결·연결당 100개 모델이며,
+사용 중지한 연결도 이력 보존 대상이다. 모델별 발급 경로가 다르면 같은 API URL이라도 연결을 나누어
+등록할 수 있다. 주소와 공통 클라이언트 정보는 관리자에게만 반환하며 일반 사용자에게는 연결 이름·
+모델·인증 방식·발급 링크와 본인의 등록 상태만 전달한다.
+
+| 인증 방식 | 개인 입력값을 보내는 위치 | 관리자 공통 설정 |
+|---|---|---|
+| Bearer | `Authorization: Bearer <개인 토큰>` | x-client 키·extraData 불필요 |
+| Bearer + x-client | 개인 토큰은 Authorization, 공통 키는 `x-client-api-key` | 공통 클라이언트 키·이름·버전·세션 정책. 기존 사내 Chat Completions 게이트웨이 계약 |
+| x-client-api-key 단독 | `x-client-api-key: <개인 API 키>` | Authorization·extraData 불필요 |
+
+관리 연결의 인증값은 사용자별로 입력한다. 화면 상단 **개인 AI 토큰**에서 등록된 각 연결의 발급
+링크를 열어 개인 토큰/API 키를 등록·교체·해제한다. 사용자 간·연결 간 인증값은 공유하거나 대체하지
+않는다. 등록된 비밀값은 재표시하지 않으며 공통 클라이언트 키도 등록 여부만 표시한다.
+
+초기 운영 준비에는 웹·AI worker의 기존 SSO/DB 설정과 동일한 비공개
+`SANITY_OA_AI_TOKEN_STORE_SECRET`이 필요하다. 이것은 모델의 x-client 키와 다른 서버 암호화 키다.
+필요한 사내 CA는 기존 `SANITY_OA_AI_CA_PATH`로 운영 담당자가 설정한다. 브라우저에서 임의 인증
+헤더·CA 파일 경로·TLS 검증 해제를 입력하는 기능은 없다. 이 초기 준비 후 연결·모델 추가는 DB에서
+반영하며 프로세스 재시작이 필요하지 않다. `SANITY_OA_AI_ENABLED=false`여도 관리자 등록 연결을
+사용할 수 있고 AI worker가 작업을 처리한다. 이 플래그와 기존 URL/모델/토큰 설정은 기존 환경 연결을
+제어한다. 기존 연결을 켜 둔 경우 사용자 선택 목록의 **기존 서버 연결**로 함께 제공한다.
+
+연결별 공통 키와 사용자별 개인 인증값은 기존 OA private의 `WS_CONFIG`에 암호화된 불변 개정으로
+보존한다. 새 연결은 `oa-ai-connections-v1`, 연결별 개인 인증값은 `oa-ai-user-token-v2`이며 기존
+`oa-ai-user-token-v1` 이력은 그대로 읽는다. 새 테이블·DDL·GRANT나 기존 토큰 자동 이전은 없다.
+사용 중지는 기록·토큰 삭제가 아니며, 사용자는 중지된 연결의 개인 인증값도 해제할 수 있다.
+
+개인 인증값은 사용자·연결 ID와 주소/보조 주소·API 종류·인증 방식·발급 링크·클라이언트 이름/키에
+결합한다. 이 경계가 바뀌면 **새 연결에 맞는 개인 인증값 재등록**을 요구하며 기존 토큰을 새 주소나
+다른 인증 헤더로 보내지 않는다. 모델 목록·표시 이름·처리 한도만 바뀌면 개인 토큰은 유지한다.
+모든 연결 설정 개정은 진행 작업의 config hash를 바꾸며 이전 작업은 STALE로 중단한다.
+
+분류·그룹 판정 화면에서 연결과 모델을 선택한다. 요청의 선택형 `connection_id`는 등록된 활성 연결의
+UUID이며 생략은 기존 환경 연결이다. 서버는 현재 대상의 기존 권한과 해당 연결의 본인 인증값을
+확인한 뒤 연결 ID·개정·모델을 작업/배치 전체에 고정한다. 다른 연결의 키 교체로는 이 작업을
+중단하거나 다른 연결로 전환하지 않는다. 같은 작업 ID로 연결을 바꾸면 `REQUEST_CONFLICT`다.
+실제 모델과 연결 ID·이름·개정·인증 모드 및 주/보조 사용 이력을 보존한다.
+
+새 관리 연결은 기본 단일 호출이며, 필요하면 **처리 한도와 전체 로그 배치 설정**에서 배치를
+명시적으로 켠다. 입력은 보수적인 UTF-8 byte 계수를 사용하며 모든 허용 모델에 안전한 공통
+context·입출력·오버헤드·호출/라운드/기한을 확인한다. 기존 환경 연결의 offline tokenizer 설정은
+유지한다. 현재 전체 로그·그룹·본문 coverage와 기준/사례·사람 확정 검사는 바뀌지 않는다.
+보조 URL은 같은 연결의 동일 요청에만 2.3절의 전송 전 연결 실패 정책으로 사용한다.
+
+관리 API는 `GET /api/admin/ai/connections`, `POST /api/admin/ai/connections/{connection_id}`이며
+`expected_revision`, 고정 `config`와 선택형 비공개 `client_api_key`를 사용한다. 키 입력을 비우면 화면은
+이 필드를 생략해 기존 공통 키를 유지한다. API의 생략/null은 유지, 빈 문자열은 게이트웨이에서 오류이며
+새 게이트웨이에는 키를 입력해야 한다. 사용자 목록은 `GET /api/ai/connections`,
+개인 인증값 상태/저장은 `/api/ai/connections/{connection_id}/credentials`, 해제는 그 아래 `/remove`다.
+서버가 확정한 본인 ID만 사용하고 호출자는 다른 사용자나 임의 endpoint·헤더를 지정할 수 없다.
+
+운영 반영은 사용자/승인 운영 담당자가 관리한다. 내부 개발 AI는 허용된 설정 자료와 검증 결과를
+준비하며 관리 DB 이벤트 직접 작성이나 공통 코드·SQL·UI·기존 테스트 수정 권한을 새로 받지 않는다.
+예상 밖 오류 시 기존 `WAITING_FOR_CODEX`·수정/재시도 중단 규칙을 유지한다.
+
 ## 3. 최초 판정을 위한 확인된 점검 기준
 
 **점검 기준과 사람의 확정 사례는 서로 다른 입력이다.** 점검 기준은 해당 sanity item에서 무엇을 확인하고 어떤 조건으로 판단해야 하는지 운영 담당자가 승인한 규칙/설명이다. 확정 사례는 특정 report의 로그·AI 원안·사람의 최종 구성/판정·정정 이유를 DB에 보존한 기록이다. AI나 브라우저가 점검 기준을 자동 승인하지 않는다.
@@ -228,10 +288,16 @@ root 소유 설정 준비 2건이다. 두 보안 항목은 사내 독립 Linux �
 구분한다. 프런트엔드 타입 검사·production 빌드는 통과했지만 이번 브라우저 E2E는 실행 환경이 없어
 실행하지 않았다. 실제 사내 API·모델 품질·배포 완료로 해석하지 않는다.
 
+2026-10-29 관리자 등록 연결 후속 검증은 전용 197개 실행·197개 통과·실패/오류/skip 0건이다.
+`quick`은 434개 실행·427개 통과·기존 5개 실패·2개 오류·skip 0건이며 실패/오류 이름은 이전과 같다.
+연결별 토큰·암호화 경계, 인증 헤더 구분, 주소/공통 키 변경 시 재등록, 연결별 작업·배치 재개를
+합성 PostgreSQL/HTTP로 검증했다. 타입 검사와 production 빌드는 통과했다. 브라우저 E2E·실제 사내 API·
+모델 품질·배포는 미검증이며 사내 Linux 보안 2건과 PG18 호환 문제도 별도 미해결 상태로 유지한다.
+
 일상 `quick`에는 최초 직접 근거 판정·A→B 순환의 대표 시험과 모델 선택·연결 전환의 합성 회귀를 포함한다. 전체 100,000건 회귀를 매번 실행하지 않는다. HTTP/기준 파일/순수 계약만 확인할 때는 다음 전용 명령을 사용할 수 있다.
 
 ```bash
-.venv/bin/python -m unittest tests.test_ai_routing.RoutingConfigurationTests tests.test_ai_routing.RoutingTransportTests tests.test_ai_gateway tests.test_ai_model tests.test_ai_criteria tests.test_ai_workbench_api tests.test_ai_credentials.CredentialConfigurationTests tests.test_ai_credentials.CredentialApiTests -v
+.venv/bin/python -m unittest tests.test_ai_connections.ConnectionConfigurationTests tests.test_ai_connections.ConnectionApiTests tests.test_ai_routing.RoutingConfigurationTests tests.test_ai_routing.RoutingTransportTests tests.test_ai_gateway tests.test_ai_model tests.test_ai_criteria tests.test_ai_workbench_api tests.test_ai_credentials.CredentialConfigurationTests tests.test_ai_credentials.CredentialApiTests -v
 ```
 
 일상 검증은 변경 전용 시험과 `quick`을 사용하고 실제 실행 수·skip을 보고한다. 선택형 분류·확정 그룹 판정·보존 본문 분할의 범위와 한도는 [배치 계약](BATCHED_CLUSTERING.md)으로 구분한다. 분류·대용량 계약 변경은 full과 10만 건 검증도 수행한다. 오류·보호 파일 변경 필요는 [비식별 문의 절차](../INTERNAL_AI_GUIDE.md#6-디버깅이-필요하면-codex에게-문의)로 전달한다. 실제 URL·토큰·report·기준 원문·사람 계정은 외부 자료에 포함하지 않는다.

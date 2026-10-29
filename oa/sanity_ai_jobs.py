@@ -67,7 +67,9 @@ def _error_code(error):
 
 def _public(event):
     data = event["data"]
-    return {"id": event["job_id"], "status": event["status"], "error": data.get("error"),
+    connection = ({"connection_id":data["command"]["connection_id"], "connection_label":data["connection_label"]}
+                  if "connection_id" in data["command"] else {})
+    return {"id": event["job_id"], "status": event["status"], "error": data.get("error"), **connection,
             "model": data["model"], "created_at": data["created_at"], "finished_at": data.get("finished_at"),
             "expected_revision": data["command"]["expected_revision"],
             "input_case_count": len(data["pins"]["cases"]), "event_id": data.get("event_id"),
@@ -93,12 +95,17 @@ def _validate_data(event):
     """Fail closed on malformed application-owned ledger links, before use."""
     data = event.get("data")
     required = {"command", "target", "pins", "retrieval", "model", "created_at", "model_called"}
-    optional = {"model_attempted", "call_token", "started_at", "deadline", "result", "error", "finished_at", "event_id", "cancelled_by", "batch", "result_ref"}
+    optional = {"model_attempted", "call_token", "started_at", "deadline", "result", "error", "finished_at", "event_id", "cancelled_by", "batch", "result_ref", "connection_label"}
     check(isinstance(data, dict) and required <= set(data) <= required | optional, "AI_JOB_CORRUPT")
     command, pins = data["command"], data["pins"]
     command_keys = {"user_id", "block_id", "version_id", "report_id", "expected_revision",
                     "request_id", "group_id", "expected_cluster_revision"}
-    check(isinstance(command, dict) and command_keys <= set(command) <= command_keys | {"model_id"}, "AI_JOB_CORRUPT")
+    check(isinstance(command, dict) and command_keys <= set(command) <= command_keys | {"model_id", "connection_id"}, "AI_JOB_CORRUPT")
+    if "connection_id" in command:
+        check(isinstance(command["connection_id"], str) and re.fullmatch(r"[0-9a-f-]{36}", command["connection_id"])
+              and isinstance(data.get("connection_label"), str) and 1 <= len(data["connection_label"]) <= 100, "AI_JOB_CORRUPT")
+    else:
+        check("connection_label" not in data, "AI_JOB_CORRUPT")
     if "model_id" in command:
         check(isinstance(command["model_id"], str) and command["model_id"] == data["model"], "AI_JOB_CORRUPT")
     check(all(isinstance(command[key], str) and 1 <= len(command[key]) <= 100 for key in
@@ -174,12 +181,20 @@ class AIJobService:
             settings = OASettings.from_env(load_environment())
             advisor = OAAdvisor(settings) if settings.enabled else None
         self.advisor = advisor
+        from oa.sanity_ai_connections import ConnectionStore
+        self.connections = ConnectionStore(db)
         if criteria_provider is None:
             from oa.sanity_ai_criteria import load_criteria
             criteria_provider = load_criteria
         self.criteria_provider = criteria_provider
 
-    def _description(self, model_id=None):
+    def _connection_advisor(self, connection_id, model_id=None):
+        return self.connections.advisor(connection_id, model_id,
+            transport=getattr(self.advisor, "transport", None))
+
+    def _description(self, model_id=None, connection_id=None):
+        if connection_id is not None:
+            return self._connection_advisor(connection_id, model_id).describe()
         if self.advisor is None:
             return {"enabled": False, "model": "", "provider": PROVIDER}
         advisor = self.advisor if model_id is None else self.advisor.for_model(model_id)
@@ -189,11 +204,14 @@ class AIJobService:
         return value
 
     def _job_advisor(self, event):
-        check(self.advisor is not None, "AI_CONFIG_CHANGED")
         try:
+            connection_id = event["data"]["command"].get("connection_id")
+            if connection_id:
+                return self._connection_advisor(connection_id, event["data"]["model"])
+            check(self.advisor is not None, "AI_CONFIG_CHANGED")
             return self.advisor.for_model(event["data"]["model"])
         except ReviewError as error:
-            if error.code != "AI_MODEL_NOT_ALLOWED":
+            if error.code not in ("AI_MODEL_NOT_ALLOWED", "AI_CONNECTION_UNAVAILABLE"):
                 raise
             raise ReviewError("AI_CONFIG_CHANGED", "The selected OA model is no longer available") from None
 
@@ -203,10 +221,14 @@ class AIJobService:
             return public(self,event)
         return _public(event)
 
-    def _personal_tokens(self):
+    def _personal_tokens(self, event=None, *, connection_id=None):
+        if connection_id or event and event["data"]["command"].get("connection_id"):
+            return True
         return getattr(getattr(self.advisor, "settings", None), "token_source", "server") == "user"
 
-    def _user_token(self, user_id):
+    def _user_token(self, user_id, connection_id=None):
+        if connection_id:
+            return self.connections.tokens(self.connections.get(connection_id)).get_token(user_id)
         return UserTokenStore(self.db).get_token(user_id)
 
     def _store(self, command):
@@ -315,13 +337,26 @@ class AIJobService:
                 error_code = error.code
             credential = {"credential_required": True, "credential_ready": error_code is None,
                           "credential_error": error_code}
+        connections = self.connections.user_connections(user_id)
+        for connection in connections:
+            connection.update(available=bool(supported and connection["credential_ready"]), enabled=True,
+                              supported=supported, credential_required=True)
+        if self.advisor is not None:
+            connections.insert(0, {"id":"", "label":"기존 서버 연결", "model":model["model"],
+                "models":self.advisor.model_choices(), "enabled":True, "supported":supported,
+                "available":bool(supported and credential.get("credential_ready", True)), **credential})
+        if self.advisor is None and connections:
+            first = connections[0]
+            model = {**model, "enabled":True, "model":first["model"]}
+            credential = {key:first[key] for key in ("credential_required", "credential_ready", "credential_error")}
         return {"available": bool(model["enabled"] and supported and credential.get("credential_ready", True)), "supported": supported,
                 "enabled": model["enabled"], "model": model["model"], "remaining": None,
-                "models": self.advisor.model_choices() if self.advisor else [],
+                "models": self.advisor.model_choices() if self.advisor else connections[0]["models"] if connections else [],
+                "connections":connections, "connection_id":"" if self.advisor else connections[0]["id"] if connections else "",
                 "provider": PROVIDER, "synthetic_only": False, "job": self.public(latest) if latest else None, **credential}
 
     def enqueue(self, user_id, block_id, version_id, report_id, *, expected_revision, request_id,
-                group_id=None, expected_cluster_revision=None, model_id=None):
+                group_id=None, expected_cluster_revision=None, model_id=None, connection_id=None):
         check(type(expected_revision) is int and expected_revision >= 0, "INVALID_REQUEST")
         check(group_id is None or isinstance(group_id, str) and 1 <= len(group_id) <= 100, "INVALID_REQUEST")
         check(group_id is None or type(expected_cluster_revision) is int and expected_cluster_revision >= 1, "INVALID_REQUEST")
@@ -332,16 +367,19 @@ class AIJobService:
                    "group_id": group_id, "expected_cluster_revision": expected_cluster_revision}
         if model_id is not None:
             command["model_id"] = model_id
+        if connection_id is not None:
+            connection_id = str(uuid_value(connection_id))
+            command["connection_id"] = connection_id
         self._lock(request_id)
         store, context = self._context(command, write=True)
         previous = self._load(request_id, required=False)
         if previous:
             check(previous["data"]["command"] == command, "REQUEST_CONFLICT")
             return self.public(previous)
-        model = self._description(model_id)
+        model = self._description(model_id, connection_id)
         check(model["enabled"], "AI_NOT_CONFIGURED")
-        if self._personal_tokens():
-            self._user_token(user_id)
+        if self._personal_tokens(connection_id=connection_id):
+            self._user_token(user_id, connection_id)
         check(context["ready"] and context["can_review"], "CLUSTER_NOT_CONFIRMED" if group_id else "CLUSTER_BLOCKED")
         _, revision = store.current(report_id)
         check(revision == expected_revision, "REVISION_CONFLICT")
@@ -366,6 +404,7 @@ class AIJobService:
         now = _db_now(self.db)
         data = {"command": command, "target": target, "pins": pins, "retrieval": selected["metadata"],
                 "model": model["model"], "created_at": now.isoformat(), "model_called": False}
+        if connection_id:data["connection_label"] = model["connection_label"]
         if model.get('batch',{}).get('enabled'):
             from common.sanity_preserved_ai import available
             data['batch']={'version':2 if group_id is not None or available(context) else 1}
@@ -402,8 +441,8 @@ class AIJobService:
               _case_pins(selected["cases"]) == pins["cases"], "AI_CASES_STALE")
         criteria = self.criteria_provider(context) if command["group_id"] is not None else []
         check(digest(criteria) == pins["criteria_sha256"], "AI_CRITERIA_STALE")
-        if self._personal_tokens():
-            _, credential_revision = self._user_token(command["user_id"])
+        if self._personal_tokens(event):
+            _, credential_revision = self._user_token(command["user_id"], command.get("connection_id"))
             if 'credential_revision' in data.get('batch',{}):
                 check(data['batch']['credential_revision']==credential_revision,'AI_CREDENTIAL_CHANGED')
             if "result" in data:
@@ -494,13 +533,13 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
         try:
             _, context, cases, criteria = service._inputs(event)
             dispatch_advisor, credential_revision = service._job_advisor(event), None
-            if service._personal_tokens():
-                token, credential_revision = service._user_token(event["data"]["command"]["user_id"])
+            if service._personal_tokens(event):
+                token, credential_revision = service._user_token(event["data"]["command"]["user_id"], event["data"]["command"].get("connection_id"))
                 dispatch_advisor = dispatch_advisor.with_user_token(token)
         except ReviewError as error:
             return _public(service._failed(event, error, now=now))
         started = now or _db_now(service.db)
-        deadline = started + timedelta(seconds=service._description().get("timeout", 120) + 60)
+        deadline = started + timedelta(seconds=dispatch_advisor.settings.timeout + 60)
         event = service._append(event, "RUNNING", {**event["data"], "call_token": str(uuid4()),
                    "model_attempted": True, "model_called": None,
                    "started_at": started.isoformat(), "deadline": deadline.isoformat()}, now=started)
@@ -544,7 +583,7 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
         try:
             service._inputs(current)
             if dispatch["credential_revision"] is not None:
-                _, revision = service._user_token(event["data"]["command"]["user_id"])
+                _, revision = service._user_token(event["data"]["command"]["user_id"], event["data"]["command"].get("connection_id"))
                 check(revision == dispatch["credential_revision"], "AI_CREDENTIAL_CHANGED")
         except ReviewError as error:
             return _public(service._failed(current, error, called=True))

@@ -25,6 +25,7 @@ from oa.workspace_api import (ID, ClusterChange, ClusterEdit, CodexProposal,
 
 class AIProposal(CodexProposal):
     model_id: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+    connection_id: UUID | None = None
 
 
 class GroupAIProposal(AIProposal):

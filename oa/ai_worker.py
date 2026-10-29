@@ -26,7 +26,8 @@ def main(argv=None):
         admin = administrator_id(settings)
         if admin is None:
             raise ReviewError("AUTHORIZATION_NOT_IMPLEMENTED", "Production authorization is required")
-        advisor = OAAdvisor(OASettings.from_env(settings))
+        legacy = OASettings.from_env(settings)
+        advisor = OAAdvisor(legacy) if legacy.enabled else None
 
         def workspace(db):
             return ProductionWorkspaceStore(db, AccessStore(db, admin))

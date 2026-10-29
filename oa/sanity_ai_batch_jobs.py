@@ -195,8 +195,8 @@ def _prepare(service,event,advisor,now):
     _,context,cases,criteria=service._inputs(event)
     advisor=service._job_advisor(event)
     revision=None
-    if service._personal_tokens():
-        token,revision=service._user_token(event['data']['command']['user_id'])
+    if service._personal_tokens(event):
+        token,revision=service._user_token(event['data']['command']['user_id'],event['data']['command'].get('connection_id'))
         advisor=advisor.with_user_token(token)
     model=_model(advisor,event,context,cases,criteria)
     ledger=Ledger(service,event)
@@ -336,7 +336,7 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
             reserved,reserved_ref=ledger.step(step,ref,'RESERVED',state,descriptor_sha256=digest(descriptor),
                 input_sha256=hashlib.sha256(request_bytes).hexdigest(),input_bytes=len(request_bytes),
                 prompt_version=prepared_call[0][2],
-                call_token=str(uuid4()),deadline=(current+timedelta(seconds=advisor.settings.timeout+60)).isoformat())
+                call_token=str(uuid4()),deadline=(current+timedelta(seconds=model.advisor.settings.timeout+60)).isoformat())
             dispatch=(event,reserved,reserved_ref,model,descriptor,nodes,revision,prepared_call)
         except ReviewError as error:
             stale=error.code in ('AI_INPUT_STALE','AI_CASES_STALE','AI_CRITERIA_STALE','REVISION_CONFLICT','AI_CONFIG_CHANGED','AI_CREDENTIAL_CHANGED','UNAUTHORIZED','FORBIDDEN')
@@ -359,8 +359,8 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
             return public(service,service._failed(current,failure,status='UNKNOWN' if unknown else 'FAILED',called=getattr(failure,'model_called',None)))
         try:
             service._inputs(current)
-            if service._personal_tokens():
-                check(service._user_token(current['data']['command']['user_id'])[1]==revision,'AI_CREDENTIAL_CHANGED')
+            if service._personal_tokens(current):
+                check(service._user_token(current['data']['command']['user_id'],current['data']['command'].get('connection_id'))[1]==revision,'AI_CREDENTIAL_CHANGED')
             state=step['state'];actual=result['metadata']['model']
             check(result['metadata']['input_sha256']==step['input_sha256'],'AI_BATCH_CORRUPT')
             check(state['actual_model'] is None or state['actual_model']==actual,'AI_MODEL_CHANGED')

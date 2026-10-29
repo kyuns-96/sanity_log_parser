@@ -156,6 +156,10 @@ class OASettings:
     batch: BatchSettings = field(default_factory=BatchSettings)
     fallback_endpoint: str = field(default="", repr=False)
     models: tuple[str, ...] = ()
+    auth_mode: str = "legacy"
+    connection_id: str = ""
+    connection_revision: int = 0
+    connection_label: str = ""
 
     def __post_init__(self):
         check(isinstance(self.batch, BatchSettings), 'AI_BATCH_CONFIG')
@@ -173,6 +177,10 @@ class OASettings:
                  and all(isinstance(value, str) for value in
                          (self.client_api_key, self.client_name, self.client_version, self.session_id)))
         check(valid, "AI_CONFIG", "Invalid OA AI settings")
+        check(self.auth_mode in ("legacy", "bearer", "bearer_x_client", "x_client_api_key"), "AI_CONFIG")
+        check(isinstance(self.connection_id, str) and len(self.connection_id) <= 100
+              and type(self.connection_revision) is int and self.connection_revision >= 0
+              and isinstance(self.connection_label, str) and len(self.connection_label) <= 100, "AI_CONFIG")
         check(isinstance(self.fallback_endpoint, str)
               and (not self.fallback_endpoint or _endpoint(self.fallback_endpoint)
                    and self.fallback_endpoint != self.endpoint), "AI_CONFIG", "Invalid OA fallback endpoint")
@@ -188,6 +196,10 @@ class OASettings:
         check(_model_id(self.model), "AI_CONFIG", "Invalid OA model ID")
         gateway = any((self.client_api_key, self.client_name, self.client_version,
                        self.session_id, self.session_mode != "disabled"))
+        if self.auth_mode in ("bearer", "x_client_api_key"):
+            check(not gateway, "AI_CONFIG", "This authentication mode does not use gateway fields")
+        if self.auth_mode == "bearer_x_client":
+            check(gateway, "AI_CONFIG", "Configure the gateway client fields")
         if gateway:
             check(self.api == "chat_completions", "AI_CONFIG", "OA gateway requires chat_completions")
             check(1 <= len(self.client_api_key) <= 8192
@@ -333,6 +345,11 @@ class OAAdvisor:
                   "json_mode": settings.json_mode, "timeout": settings.timeout,
                   "max_input_bytes": settings.max_input_bytes, "max_output_bytes": settings.max_output_bytes,
                   "prompt_versions": {"clustering": CLUSTER_PROMPT_VERSION, "review": REVIEW_PROMPT_VERSION}}
+        if settings.auth_mode != "legacy":
+            public["auth_mode"] = settings.auth_mode
+        if settings.connection_id:
+            public.update(connection_id=settings.connection_id, connection_revision=settings.connection_revision,
+                          connection_label=settings.connection_label)
         if settings.batch.enabled:
             from oa.sanity_ai_budget import TokenBudget
             TokenBudget(settings.batch)  # Recheck the actual file, not just its configured hash.
@@ -437,6 +454,9 @@ class OAAdvisor:
         headers = {"Authorization": "Bearer " + settings.token,
                    "Content-Type": "application/json", "Accept": "application/json",
                    "Accept-Encoding": "identity"}
+        if settings.auth_mode == "x_client_api_key":
+            del headers["Authorization"]
+            headers["x-client-api-key"] = settings.token
         if settings.client_api_key:
             headers["x-client-api-key"] = settings.client_api_key
             body["extraData"] = {"clientName": settings.client_name, "clientVersion": settings.client_version,
