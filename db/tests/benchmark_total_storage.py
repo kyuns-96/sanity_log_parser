@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
-def _benchmark(rows, source_bytes, output, *, shared=True, preserved=False, preserved_text=False, measure_reads=False):
+def _benchmark(rows, source_bytes, output, *, shared=True, preserved=False, preserved_text=False, measure_reads=False, measure_ai=False):
     from common.sanity_common import canonical_json, unpack_json
     from common.sanity_db import Database, Queue
     from common.sanity_privacy import SecretGuard
@@ -148,6 +148,15 @@ def _benchmark(rows, source_bytes, output, *, shared=True, preserved=False, pres
                     raise RuntimeError('Retained OUTBOX packet differs from exact shared message')
                 packets += 1
 
+        ai_performance=None
+        if measure_ai:
+            from db.tests.benchmark_ai_batches import measure
+            target=next(r['payload'] for r in headers if r['payload']['source']['layout']=='POST')
+            ai_performance=measure(target)
+            expected=next(r['records_sha256'] for r in hashes if r['layout']=='POST')
+            if ai_performance['complete_input_sha256']!=expected:raise RuntimeError('Actual model input lost source content')
+            ai_performance['all_four_bytes_before_ai']=sum(v['total_bytes'] for v in after.values())
+            after=sizes()
         total = sum(value['total_bytes'] for value in after.values())
         report = {'synthetic_only': True, 'layout': 'shared_013' if shared else 'pages_012',
                   'preserved_sources': preserved, 'preserved_text': preserved_text, 'requested_source_bytes': requested_bytes,
@@ -165,6 +174,7 @@ def _benchmark(rows, source_bytes, output, *, shared=True, preserved=False, pres
         if preserved and (report['all_original_bytes'] != requested_bytes or not report['preserved_metadata_verified']):
             raise RuntimeError('Preserved source budget or metadata changed')
         if measure_reads: report['read_performance'] = read_performance
+        if measure_ai: report['ai_performance']=ai_performance
         with output.open('x') as stream:
             json.dump(report, stream, indent=2); stream.write('\n')
     finally:
@@ -181,6 +191,7 @@ def main(argv=None):
                         help='plan 3: use 30%% of source bytes for full.rpt/SDC; budget includes all original files')
     parser.add_argument('--preserved-text', action='store_true', help='plan 4: also verify all masked text on OA')
     parser.add_argument('--measure-reads', action='store_true', help='compare exact legacy, cold and warm complete hydration')
+    parser.add_argument('--measure-ai',action='store_true',help='include synthetic batched AI classification and its durable audit storage')
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args(argv)
     args.preserved_sources = args.preserved_sources or args.preserved_text
@@ -197,10 +208,10 @@ def main(argv=None):
         result = directory/'result.json'
         code = ('from pathlib import Path;from db.tests.benchmark_total_storage import _benchmark;import sys;'
                 '_benchmark(int(sys.argv[1]),int(sys.argv[2]),Path(sys.argv[3]),shared=sys.argv[4]=="shared",'
-                'preserved=sys.argv[5]=="True",preserved_text=sys.argv[6]=="True",measure_reads=sys.argv[7]=="True")')
+                'preserved=sys.argv[5]=="True",preserved_text=sys.argv[6]=="True",measure_reads=sys.argv[7]=="True",measure_ai=sys.argv[8]=="True")')
         with (directory/'benchmark.log').open('wb') as log:
             done = subprocess.run([sys.executable,'-c',code,str(args.rows),str(args.source_bytes),str(result),args.layout,
-                                   str(args.preserved_sources),str(args.preserved_text),str(args.measure_reads)],
+                                   str(args.preserved_sources),str(args.preserved_text),str(args.measure_reads),str(args.measure_ai)],
                                   cwd=source,env=database.test_environment(),stdout=log,stderr=subprocess.STDOUT)
         if done.returncode:
             print('status=FAILED artifact_directory='+str(directory)); return done.returncode

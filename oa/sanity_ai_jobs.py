@@ -93,7 +93,7 @@ def _validate_data(event):
     """Fail closed on malformed application-owned ledger links, before use."""
     data = event.get("data")
     required = {"command", "target", "pins", "retrieval", "model", "created_at", "model_called"}
-    optional = {"model_attempted", "call_token", "started_at", "deadline", "result", "error", "finished_at", "event_id", "cancelled_by"}
+    optional = {"model_attempted", "call_token", "started_at", "deadline", "result", "error", "finished_at", "event_id", "cancelled_by", "batch", "result_ref"}
     check(isinstance(data, dict) and required <= set(data) <= required | optional, "AI_JOB_CORRUPT")
     command, pins = data["command"], data["pins"]
     check(isinstance(command, dict) and set(command) == {"user_id", "block_id", "version_id", "report_id", "expected_revision",
@@ -130,9 +130,32 @@ def _validate_data(event):
               and _timestamp(data.get("deadline")) > _timestamp(data.get("started_at")), "AI_JOB_CORRUPT")
     if event["status"] in ("RUNNING", "RESULT_READY", "COMPLETED"):
         check("call_token" in data, "AI_JOB_CORRUPT")
-    if event["status"] in ("RESULT_READY", "COMPLETED"):
+    if 'batch' in data:
+        batch=data['batch']
+        check(isinstance(batch,dict) and type(batch.get('version'))is int and batch['version'] in (1,2)
+              and (batch['version']==2 or command['group_id'] is None)
+              and set(batch) in ({'version'},{'version','total_records','leaf_count','plan','credential_revision'}), 'AI_JOB_CORRUPT')
+        if 'plan' in batch:
+            check(type(batch['total_records'])is int and 1<=batch['total_records']<=1000000
+                  and type(batch['leaf_count'])is int and 1<=batch['leaf_count']<=100000
+                  and isinstance(batch['plan'],dict) and set(batch['plan'])=={'key','sha256'}
+                  and batch['plan']['key']=='round.000' and isinstance(batch['plan']['sha256'],str)
+                  and re.fullmatch('[0-9a-f]{64}',batch['plan']['sha256'])
+                  and (batch['credential_revision'] is None or type(batch['credential_revision'])is int
+                       and batch['credential_revision']>=1),'AI_JOB_CORRUPT')
+        if event['status'] in ('RUNNING','RESULT_READY','COMPLETED'): check('plan' in batch,'AI_JOB_CORRUPT')
+        if 'result_ref' in data:
+            check(isinstance(data['result_ref'],dict) and set(data['result_ref'])=={'key','sha256'}
+                  and data['result_ref']['key']=='final' and isinstance(data['result_ref']['sha256'],str)
+                  and re.fullmatch('[0-9a-f]{64}',data['result_ref']['sha256']), 'AI_JOB_CORRUPT')
+        check('result' not in data,'AI_JOB_CORRUPT')
+    else:
+        check('result_ref' not in data,'AI_JOB_CORRUPT')
+    if event["status"] in ("RESULT_READY", "COMPLETED") and 'batch' not in data:
         check(isinstance(data.get("result"), dict) and set(data["result"]) == {"advice", "metadata"}
               and all(isinstance(value, dict) for value in data["result"].values()) and data["model_called"] is True, "AI_JOB_CORRUPT")
+    if event['status'] in ('RESULT_READY','COMPLETED') and 'batch' in data:
+        check('result_ref' in data and data['model_called'] is True,'AI_JOB_CORRUPT')
     if event["status"] == "COMPLETED":
         check(data.get("event_id") == event["job_id"], "AI_JOB_CORRUPT")
     if event["status"] in TERMINAL:
@@ -160,6 +183,12 @@ class AIJobService:
         check(value.get("provider") == PROVIDER and value.get("enabled") is True
               and isinstance(value.get("config_sha256"), str), "AI_CONFIG")
         return value
+
+    def public(self, event):
+        if 'batch' in event['data']:
+            from oa.sanity_ai_batch_jobs import public
+            return public(self,event)
+        return _public(event)
 
     def _personal_tokens(self):
         return getattr(getattr(self.advisor, "settings", None), "token_source", "server") == "user"
@@ -208,6 +237,9 @@ class AIJobService:
                 check(_timestamp(event["created_at"]) >= _timestamp(previous["created_at"]), "AI_JOB_CORRUPT")
                 for key in ("command", "target", "pins", "retrieval", "model", "created_at"):
                     check(event["data"][key] == previous["data"][key], "AI_JOB_CORRUPT")
+                check(('batch' in event['data'])==('batch' in previous['data']),'AI_JOB_CORRUPT')
+                if 'plan' in previous['data'].get('batch',{}):
+                    check(event['data']['batch']==previous['data']['batch'],'AI_JOB_CORRUPT')
             check(event["data"]["command"]["request_id"] == job_id, "AI_JOB_CORRUPT")
             previous = event
         check(previous is not None or not required, "NOT_FOUND")
@@ -239,7 +271,7 @@ class AIJobService:
             params.append(target)
         if work:
             query += "AND (payload->>'status' IN ('PENDING','RESULT_READY') OR (payload->>'status'='RUNNING' " \
-                "AND (payload->'data'->>'deadline')::timestamptz<=COALESCE(%s::timestamptz,clock_timestamp()))) ORDER BY created_at,workspace_key LIMIT 1"
+                "AND (payload->'data' ? 'batch' OR (payload->'data'->>'deadline')::timestamptz<=COALESCE(%s::timestamptz,clock_timestamp())))) ORDER BY created_at,workspace_key LIMIT 1"
             params.append(now)
         else:
             query += "ORDER BY created_at DESC,workspace_key DESC LIMIT 1"
@@ -272,7 +304,7 @@ class AIJobService:
                           "credential_error": error_code}
         return {"available": bool(model["enabled"] and supported and credential.get("credential_ready", True)), "supported": supported,
                 "enabled": model["enabled"], "model": model["model"], "remaining": None,
-                "provider": PROVIDER, "synthetic_only": False, "job": _public(latest) if latest else None, **credential}
+                "provider": PROVIDER, "synthetic_only": False, "job": self.public(latest) if latest else None, **credential}
 
     def enqueue(self, user_id, block_id, version_id, report_id, *, expected_revision, request_id,
                 group_id=None, expected_cluster_revision=None):
@@ -289,7 +321,7 @@ class AIJobService:
         previous = self._load(request_id, required=False)
         if previous:
             check(previous["data"]["command"] == command, "REQUEST_CONFLICT")
-            return _public(previous)
+            return self.public(previous)
         model = self._description()
         check(model["enabled"], "AI_NOT_CONFIGURED")
         if self._personal_tokens():
@@ -304,6 +336,8 @@ class AIJobService:
         check(not latest or latest["status"] not in ACTIVE, "AI_JOB_ACTIVE")
         stage = "REVIEW" if group_id is not None else "CLUSTER"
         case_budget = max(1, min(1024 * 1024, model.get("max_input_bytes", 1024 * 1024) // 3))
+        if model.get('batch',{}).get('enabled'):
+            case_budget=min(case_budget,max(1,model['batch']['input_tokens']//4))
         selected = CaseRetriever(self.db, workspace=self.ws).select(context, stage=stage, max_bytes=case_budget)
         criteria = self.criteria_provider(context) if group_id is not None else []
         fields = []
@@ -316,13 +350,16 @@ class AIJobService:
         now = _db_now(self.db)
         data = {"command": command, "target": target, "pins": pins, "retrieval": selected["metadata"],
                 "model": model["model"], "created_at": now.isoformat(), "model_called": False}
-        return _public(self._append(None, "PENDING", data, now=now))
+        if model.get('batch',{}).get('enabled'):
+            from common.sanity_preserved_ai import available
+            data['batch']={'version':2 if group_id is not None or available(context) else 1}
+        return self.public(self._append(None, "PENDING", data, now=now))
 
     def status(self, user_id, job_id):
         event = self._load(job_id)
         command = {**event["data"]["command"], "user_id": user_id}
         self.ws.report(user_id, command["block_id"], command["version_id"], command["report_id"], hydrate_source=False)
-        return _public(event)
+        return self.public(event)
 
     def cancel(self, user_id, job_id):
         job_id = str(uuid_value(job_id, "job_id"))
@@ -332,8 +369,8 @@ class AIJobService:
         self.ws.access(user_id, command["block_id"], write=True)
         self.ws.report(user_id, command["block_id"], command["version_id"], command["report_id"], hydrate_source=False)
         if event["status"] in TERMINAL:
-            return _public(event)
-        return _public(self._append(event, "CANCELLED", {**event["data"], "cancelled_by": user_id}))
+            return self.public(event)
+        return self.public(self._append(event, "CANCELLED", {**event["data"], "cancelled_by": user_id}))
 
     def _inputs(self, event):
         data, model = event["data"], self._description()
@@ -351,6 +388,8 @@ class AIJobService:
         check(digest(criteria) == pins["criteria_sha256"], "AI_CRITERIA_STALE")
         if self._personal_tokens():
             _, credential_revision = self._user_token(command["user_id"])
+            if 'credential_revision' in data.get('batch',{}):
+                check(data['batch']['credential_revision']==credential_revision,'AI_CREDENTIAL_CHANGED')
             if "result" in data:
                 check(data["result"]["metadata"].get("credential_revision") == credential_revision,
                       "AI_CREDENTIAL_CHANGED")
@@ -369,7 +408,12 @@ class AIJobService:
         except ReviewError as error:
             return self._failed(event, error)
         data, command = event["data"], event["data"]["command"]
-        result = data["result"]
+        if 'batch' in data:
+            from oa.sanity_ai_batch_jobs import load_result
+            try: result=load_result(self,event,context,cases,criteria)
+            except ReviewError as error: return self._failed(event,error,status='FAILED')
+        else:
+            result = data["result"]
         kwargs = {"expected_revision": command["expected_revision"], "request_id": command["request_id"],
                   "advice": result["advice"], "cases": cases, "metadata": result["metadata"],
                   "retrieval": data["retrieval"]}
@@ -415,6 +459,11 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
         event = service._latest(work=True, now=now)
         if event is None:
             return None
+        batch_job = event['job_id'] if 'batch' in event['data'] else None
+    if batch_job is not None:
+        from oa.sanity_ai_batch_jobs import run_step
+        return run_step(db_factory,workspace_factory,advisor,criteria_provider,batch_job,now=now)
+    with _transaction(db_factory, workspace_factory, advisor, criteria_provider) as service:
         service._lock(event["job_id"])
         event = service._load(event["job_id"])
         if event["status"] == "RESULT_READY":

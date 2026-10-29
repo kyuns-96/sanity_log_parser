@@ -8,6 +8,8 @@ OA API·화면은 `oa/`, 회사 구현은 `oa/integration/`에 있다. Git 저�
 
 원천 로그의 복원 캐시·묶음 조회와 합성 측정/현장 확인 범위는 [읽기 성능 안내](SOURCE_READ_PERFORMANCE.md)를 따른다. 추가 DDL은 없으며 공통 캐시·비밀 검사·권한 코드를 현장 AI가 직접 수정하는 권한은 부여하지 않는다.
 
+선택형 [대용량 분류](BATCHED_CLUSTERING.md)는 지원된 비공개 배치 설정과 확인한 모델/게이트웨이 한도로 활성화한다. UTF-8 byte 추정과 실제 tokenizer 계수를 구분하고, 실제 판단 품질을 현장에서 검증한다. 확정 그룹의 전체 기록 분할 판정·본문 분할/분석 통합도 제공한다. 하위 반례/보류의 PASS 승격 차단과 전체 근거 검증을 유지한다. 공통 코드/보호 수정 허용 범위는 그대로다.
+
 ## 1. 먼저 읽을 문서
 
 [AGENTS.md](../AGENTS.md) → [INTERNAL_AI_GUIDE.md](../INTERNAL_AI_GUIDE.md) 전체 → [통합 인계 명세](../INTERNAL_AI_HANDOFF.md) → 이 문서 → [AI_RUNTIME.md](AI_RUNTIME.md) → [SSO_INTEGRATION.md](SSO_INTEGRATION.md) → [DB 연결 인계](../db/CONNECTION_HANDOFF.md)를 읽는다. 업무 범위/담당/PoR 기준은 [요구사항](../requirement.md)의 15·17·18절을 따른다.
@@ -42,7 +44,7 @@ OA API·화면은 `oa/`, 회사 구현은 `oa/integration/`에 있다. Git 저�
 - item별 확인된 점검 기준, 사례 없는 최초 분류·판정 정답/반례, 사람 수정 후 다음 report에서 참고해야 하는 사례와 조건 차이. VWP 담당자와 사내 승인 절차로 준비한다.
 - 실제 모델 평가에 쓸 독립 정답 집합과 비식별 규모 분포. 검증 대상 자신의 정답을 모델 참고 입력에 넣지 않는다.
 
-제공된 [OA 실행 계약](AI_RUNTIME.md)에 맞춰 private 모델 설정과 승인된 점검 기준 파일을 준비한다. 기준은 현재 로그를 평가하는 확인된 업무 기준이며, DB에 쌓인 사람 확정 사례와 구분한다. 기준/사례가 모두 없으면 판정은 DEFER다. 웹과 worker에 같은 설정·release를 배치하고 사용자 관리 아래 report A → 사람 정정/확정 → report B 입력의 사례 반영을 검증한다. `company_sso/`에 모델 실행을 추가하거나 VWP 어댑터를 복사하지 않는다. 전체 입력 한도 초과는 명시적 실패이며 COMMON-05 모델 분할과 COMMON-06 사내 품질 실측을 완료로 표시하지 않는다.
+제공된 [OA 실행 계약](AI_RUNTIME.md)에 맞춰 private 모델 설정과 승인된 점검 기준 파일을 준비한다. 기준은 현재 로그를 평가하는 확인된 업무 기준이며, DB에 쌓인 사람 확정 사례와 구분한다. 기준/사례가 모두 없으면 판정은 DEFER다. 웹과 worker에 같은 설정·release를 배치하고 사용자 관리 아래 report A → 사람 정정/확정 → report B 입력의 사례 반영을 검증한다. `company_sso/`에 모델 실행을 추가하거나 VWP 어댑터를 복사하지 않는다. 전체 입력 한도 초과는 명시적 실패이며 COMMON-05 공통 분할 구현을 사내 실환경 검증이나 COMMON-06 실제 품질 완료로 표시하지 않는다.
 
 **기존 SSO/source 연동이 필요한 경우** 아래 절차를 자기 허용 지점에서 수행한다. 이미 검증한 작업을 AI 연동 준비 때문에 반복하지 않는다.
 
@@ -95,4 +97,4 @@ Q1의 [분산 수집 설계](../vwp/SOURCE_COLLECTION_DESIGN.md)에 필요한 �
 
 ## 7. 그대로 전달할 시작 명령
 
-> 너는 OA 회사 연동 담당이다. AI_DECISION_DESIGN.md, AGENTS.md, INTERNAL_AI_GUIDE.md 전체와 oa/INTERNAL_AI_TASK.md를 읽어라. 최우선 목표는 AI 최초 분류·그룹 판정과 사람 확정 근거의 검색·피드백 순환이다. 우선 OA OpenAI 호환 API의 세부 요청/응답·인증·모델·JSON/도구 지원·입출력/동시성/timeout/조회·취소 한도와 item별 기준·정답/반례를 비공개 위치에 준비해 비식별 계약을 인계하라. oa/AI_RUNTIME.md와 oa/.env.example의 지원 설정 및 승인된 비공개 기준 catalog를 준비하고 제공된 공통 실행으로 첫 판단 순환을 검증하라. 모델 실행·검색·검증·worker/저장 공통 코드는 읽기 전용이다. 대량 모델 분할과 사내 실제 품질 검증의 미완료 상태를 구분하라. 기존 SSO/source 작업이 필요하면 위 허용 파일/메서드만 사용하고 완료한 작업을 반복하지 말라. VWP 전용 자격증명·원본 파일과 외부 합성 모델 경로를 사용하지 않는다. 공통 코드·SQL·UI·기존 테스트·보호 장치를 수정하지 말고 예상 밖 오류는 WAITING_FOR_CODEX로 문의하라. API 접속·사례 준비·실제 판단 품질·운영 적용 완료를 구분해 보고하라.
+> 너는 OA 회사 연동 담당이다. AI_DECISION_DESIGN.md, AGENTS.md, INTERNAL_AI_GUIDE.md 전체와 oa/INTERNAL_AI_TASK.md를 읽어라. 최우선 목표는 AI 최초 분류·그룹 판정과 사람 확정 근거의 검색·피드백 순환이다. 우선 OA OpenAI 호환 API의 세부 요청/응답·인증·모델·JSON/도구 지원·입출력/동시성/timeout/조회·취소 한도와 item별 기준·정답/반례를 비공개 위치에 준비해 비식별 계약을 인계하라. oa/AI_RUNTIME.md와 oa/.env.example의 지원 설정 및 승인된 비공개 기준 catalog를 준비하고 제공된 공통 실행으로 첫 판단 순환을 검증하라. 모델 실행·검색·검증·worker/저장 공통 코드는 읽기 전용이다. 대량 모델 분할 공통 구현과 사내 실제 품질 검증 상태를 구분하라. 기존 SSO/source 작업이 필요하면 위 허용 파일/메서드만 사용하고 완료한 작업을 반복하지 말라. VWP 전용 자격증명·원본 파일과 외부 합성 모델 경로를 사용하지 않는다. 공통 코드·SQL·UI·기존 테스트·보호 장치를 수정하지 말고 예상 밖 오류는 WAITING_FOR_CODEX로 문의하라. API 접속·사례 준비·실제 판단 품질·운영 적용 완료를 구분해 보고하라.

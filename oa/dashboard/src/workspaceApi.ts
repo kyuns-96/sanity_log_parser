@@ -29,7 +29,7 @@ export type ClusterEvent = { id: string; report_id: string; revision: number; ac
 export type PipelineView = { current: ClusterEvent | null; revision: number; ready: boolean; can_edit: boolean; stale: boolean; history: ClusterEvent[]; case_count: number; reusable_count: number; summary: PipelineSummary | null; corporate_ai_connected: boolean; record_count: number }
 export type ClusterBrief = Omit<ClusterEvent, 'groups'> & { group_count: number; record_count: number; rationale_counts: Record<RationaleStatus, number> }
 export type PipelineTask = { id: string; status: 'PENDING' | 'RUNNING' | 'FAILED' | 'STALE' | 'CANCELLED' | 'COMPLETED'; record_count: number; processed: number; next_chunk: number; error: string | null; chunks: { index: number; start: number; stop: number; record_count: number; input_sha256: string; status: string }[] }
-export type CodexJob = { id: string; status: 'PENDING' | 'RUNNING' | 'RESULT_READY' | 'COMPLETED' | 'FAILED' | 'STALE' | 'UNKNOWN' | 'CANCELLED' | 'SAVE_FAILED'; error: string | null; model: string; created_at: string; finished_at?: string; expected_revision: number; input_case_count: number; event_id?: string }
+export type CodexJob = { id: string; status: 'PENDING' | 'RUNNING' | 'RESULT_READY' | 'COMPLETED' | 'FAILED' | 'STALE' | 'UNKNOWN' | 'CANCELLED' | 'SAVE_FAILED'; error: string | null; model: string; created_at: string; finished_at?: string; expected_revision: number; input_case_count: number; event_id?: string; progress?: { mode: 'BATCH'; phase: 'TEXT' | 'TEXT_MERGE' | 'CLASSIFY' | 'MERGE' | 'REVIEW' | 'REVIEW_MERGE'; completed_records: number; total_records: number; completed_calls: number; round: number; waiting: boolean } }
 export type CodexCapability = { available: boolean; supported: boolean; enabled: boolean; model: string; remaining: number | null; job: CodexJob | null; provider?: string; synthetic_only?: boolean; credential_required?: boolean; credential_ready?: boolean; credential_error?: string | null }
 export type WorkbenchView = { report: WorkspaceReport; version: WorkspaceVersion; current: ClusterBrief | null; revision: number; ready: boolean; can_edit: boolean; stale: boolean; task: PipelineTask | null; ai?: CodexCapability; record_count: number; raw_line_count: number; source_sha256: string; case_count: number; reusable_count: number; removed_count: number; corporate_ai_connected: boolean; summary: { confirmed: boolean; total: number; reviewed: number; pending: number; complete: boolean; rationale_counts: Record<RationaleStatus, number>; counts: Record<string, number> } }
 export type GroupBrief = { id: string; ordinal?: number; label: string; record_count: number; status: string; revision: number; example: Record<string, unknown>; rationale: { status: RationaleStatus; reason: string; reason_truncated: boolean; reason_omitted_chars: number; source: string | null; evidence_count: number } }
@@ -67,6 +67,9 @@ const messages: Record<string, string> = {
   AI_CONTEXT_LIMIT: '전체 로그 또는 참고 사례가 AI 입력 한도를 넘었습니다. 일부만 처리하지 않았습니다. 운영 담당자가 처리 한도를 확인해야 합니다.',
   AI_INPUT_LIMIT: '전체 AI 입력이 처리 한도를 넘었습니다. 로그를 생략하지 않았습니다. 운영 담당자에게 확인해 주세요.',
   AI_OUTPUT_LIMIT: 'AI 응답이 출력 한도를 넘었습니다. 전체 결과가 검증되지 않아 적용하지 않았습니다.',
+  AI_BATCH_COVERAGE: '분할 검토에서 전체 근거의 처리를 확인하지 못해 결과를 적용하지 않았습니다.',
+  AI_BATCH_CONFLICT: 'AI 통합 판정이 하위 반례나 보류와 충돌하여 적용하지 않았습니다.',
+  AI_BATCH_UNRESOLVED: '보존 본문의 미확인 조건이 남아 있어 AI의 PASS 제안을 적용하지 않았습니다.',
   AI_CALL_FAILED: '사내 AI 호출에 실패했습니다. 기존 검토 내용은 유지됩니다.',
   AI_RESULT_UNKNOWN: 'AI 호출 결과가 불명확합니다. 자동 재호출하지 않습니다. 작업 상태를 확인해 주세요.',
   AI_OUTCOME_UNKNOWN: 'AI 호출 결과가 불명확합니다. 자동 재호출하지 않습니다. 작업 상태를 확인해 주세요.',
@@ -104,6 +107,15 @@ export const workspaceApiBase = () => productionWorkbench() ? '/api/workbench' :
 export const aiJobActive = (job?: CodexJob | null) => !!job && ['PENDING', 'RUNNING', 'RESULT_READY'].includes(job.status)
 export const aiJobMessage = (job: CodexJob) => {
   if (job.status === 'PENDING') return 'AI 작업을 등록했습니다. 처리 시작을 기다리고 있습니다.'
+  if (job.status === 'RUNNING' && job.progress) {
+    const p = job.progress
+    if (p.phase === 'TEXT' || p.phase === 'TEXT_MERGE') return `AI가 보존 본문을 나누어 읽고 조건·예외를 통합하고 있습니다. ${p.completed_calls.toLocaleString()}회 검토 완료. 로그 검토와 최종 검증이 남아 있습니다.`
+    if (p.phase === 'REVIEW') return `AI가 확정 그룹의 전체 로그를 나누어 판정하고 있습니다. ${p.completed_records.toLocaleString()} / ${p.total_records.toLocaleString()}건 완료. 통합 판정은 아직 저장되지 않았습니다.`
+    if (p.phase === 'REVIEW_MERGE') return `전체 ${p.total_records.toLocaleString()}건의 분할 판정을 비교하고 있습니다. 반례·보류와 근거를 검증한 뒤 판정 제안을 저장합니다.`
+    return p.phase === 'CLASSIFY'
+      ? `AI가 전체 로그를 나누어 검토하고 있습니다. ${p.completed_records.toLocaleString()} / ${p.total_records.toLocaleString()}건 완료. 전체 검증 후 분류 초안을 공개합니다.`
+      : `전체 ${p.total_records.toLocaleString()}건의 개별 분류를 마치고 그룹의 의미·조건을 비교하고 있습니다. 통합과 전체 배정 검증이 남아 있습니다.`
+  }
   if (job.status === 'RUNNING') return 'AI가 전체 로그와 관련 확정 사례를 검토하고 있습니다.'
   if (job.status === 'RESULT_READY') return 'AI 응답의 근거와 현재 개정을 검증하고 있습니다.'
   if (job.status === 'UNKNOWN') return 'AI 호출 결과가 불명확합니다. 자동 재호출하지 않습니다. 운영 담당자에게 작업 상태를 확인해 주세요.'

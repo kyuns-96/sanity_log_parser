@@ -19,6 +19,16 @@ def validate_ai_receipt(metadata, retrieval, cases):
           and isinstance(metadata.get("prompt_version"), str) and metadata["prompt_version"]
           and isinstance(metadata.get("input_sha256"), str)
           and re.fullmatch(r"[0-9a-f]{64}", metadata["input_sha256"]), "INVALID_AI_RECEIPT")
+    if 'batch_receipt' in metadata or 'input_hash_kind' in metadata:
+        value=metadata.get('batch_receipt')
+        check(metadata.get('input_hash_kind')=='BATCH_MANIFEST' and isinstance(value,dict)
+              and set(value)=={'version','root','calls','records','plan'}
+              and type(value['version'])is int and value['version']==1
+              and type(value['calls'])is int and value['calls']>0
+              and type(value['records'])is int and value['records']>0
+              and isinstance(value['root'],str) and re.fullmatch('[0-9a-f]{64}',value['root'])
+              and isinstance(value['plan'],dict) and set(value['plan'])=={'key','sha256'}
+              and metadata['input_sha256']==digest([value['plan'],value['root']]),'INVALID_AI_RECEIPT')
     check(isinstance(retrieval, dict) and isinstance(cases, list)
           and all(isinstance(case, dict) and isinstance(case.get("id"), str) for case in cases)
           and len({case["id"] for case in cases}) == len(cases), "INVALID_AI_RECEIPT")
