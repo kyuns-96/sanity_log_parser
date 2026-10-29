@@ -96,8 +96,11 @@ def _validate_data(event):
     optional = {"model_attempted", "call_token", "started_at", "deadline", "result", "error", "finished_at", "event_id", "cancelled_by", "batch", "result_ref"}
     check(isinstance(data, dict) and required <= set(data) <= required | optional, "AI_JOB_CORRUPT")
     command, pins = data["command"], data["pins"]
-    check(isinstance(command, dict) and set(command) == {"user_id", "block_id", "version_id", "report_id", "expected_revision",
-        "request_id", "group_id", "expected_cluster_revision"}, "AI_JOB_CORRUPT")
+    command_keys = {"user_id", "block_id", "version_id", "report_id", "expected_revision",
+                    "request_id", "group_id", "expected_cluster_revision"}
+    check(isinstance(command, dict) and command_keys <= set(command) <= command_keys | {"model_id"}, "AI_JOB_CORRUPT")
+    if "model_id" in command:
+        check(isinstance(command["model_id"], str) and command["model_id"] == data["model"], "AI_JOB_CORRUPT")
     check(all(isinstance(command[key], str) and 1 <= len(command[key]) <= 100 for key in
               ("user_id", "block_id", "version_id", "report_id", "request_id"))
           and command["request_id"] == event["job_id"] and type(command["expected_revision"]) is int
@@ -176,13 +179,23 @@ class AIJobService:
             criteria_provider = load_criteria
         self.criteria_provider = criteria_provider
 
-    def _description(self):
+    def _description(self, model_id=None):
         if self.advisor is None:
             return {"enabled": False, "model": "", "provider": PROVIDER}
-        value = self.advisor.describe()
+        advisor = self.advisor if model_id is None else self.advisor.for_model(model_id)
+        value = advisor.describe()
         check(value.get("provider") == PROVIDER and value.get("enabled") is True
               and isinstance(value.get("config_sha256"), str), "AI_CONFIG")
         return value
+
+    def _job_advisor(self, event):
+        check(self.advisor is not None, "AI_CONFIG_CHANGED")
+        try:
+            return self.advisor.for_model(event["data"]["model"])
+        except ReviewError as error:
+            if error.code != "AI_MODEL_NOT_ALLOWED":
+                raise
+            raise ReviewError("AI_CONFIG_CHANGED", "The selected OA model is no longer available") from None
 
     def public(self, event):
         if 'batch' in event['data']:
@@ -304,10 +317,11 @@ class AIJobService:
                           "credential_error": error_code}
         return {"available": bool(model["enabled"] and supported and credential.get("credential_ready", True)), "supported": supported,
                 "enabled": model["enabled"], "model": model["model"], "remaining": None,
+                "models": self.advisor.model_choices() if self.advisor else [],
                 "provider": PROVIDER, "synthetic_only": False, "job": self.public(latest) if latest else None, **credential}
 
     def enqueue(self, user_id, block_id, version_id, report_id, *, expected_revision, request_id,
-                group_id=None, expected_cluster_revision=None):
+                group_id=None, expected_cluster_revision=None, model_id=None):
         check(type(expected_revision) is int and expected_revision >= 0, "INVALID_REQUEST")
         check(group_id is None or isinstance(group_id, str) and 1 <= len(group_id) <= 100, "INVALID_REQUEST")
         check(group_id is None or type(expected_cluster_revision) is int and expected_cluster_revision >= 1, "INVALID_REQUEST")
@@ -316,13 +330,15 @@ class AIJobService:
         command = {"user_id": user_id, "block_id": block_id, "version_id": version_id, "report_id": report_id,
                    "expected_revision": expected_revision, "request_id": request_id,
                    "group_id": group_id, "expected_cluster_revision": expected_cluster_revision}
+        if model_id is not None:
+            command["model_id"] = model_id
         self._lock(request_id)
         store, context = self._context(command, write=True)
         previous = self._load(request_id, required=False)
         if previous:
             check(previous["data"]["command"] == command, "REQUEST_CONFLICT")
             return self.public(previous)
-        model = self._description()
+        model = self._description(model_id)
         check(model["enabled"], "AI_NOT_CONFIGURED")
         if self._personal_tokens():
             self._user_token(user_id)
@@ -373,7 +389,7 @@ class AIJobService:
         return self.public(self._append(event, "CANCELLED", {**event["data"], "cancelled_by": user_id}))
 
     def _inputs(self, event):
-        data, model = event["data"], self._description()
+        data, model = event["data"], self._job_advisor(event).describe()
         pins, command = data["pins"], data["command"]
         check(model.get("enabled") and model.get("config_sha256") == pins["config_sha256"], "AI_CONFIG_CHANGED")
         store, context = self._context(command, write=True)
@@ -477,10 +493,10 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
             return _public(event)
         try:
             _, context, cases, criteria = service._inputs(event)
-            dispatch_advisor, credential_revision = advisor, None
+            dispatch_advisor, credential_revision = service._job_advisor(event), None
             if service._personal_tokens():
                 token, credential_revision = service._user_token(event["data"]["command"]["user_id"])
-                dispatch_advisor = advisor.with_user_token(token)
+                dispatch_advisor = dispatch_advisor.with_user_token(token)
         except ReviewError as error:
             return _public(service._failed(event, error, now=now))
         started = now or _db_now(service.db)

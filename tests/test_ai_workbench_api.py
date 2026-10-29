@@ -79,6 +79,36 @@ class ProductionWorkbenchApiTests(unittest.TestCase):
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
 
+    def test_model_choice_is_forwarded_for_classification_and_group_judgment(self):
+        for suffix, extra in (("/clustering/ai", {}),
+                              ("/groups/group-a/review/ai", {"expected_cluster_revision": 2})):
+            self.service.enqueue.reset_mock()
+            request_id = uuid4()
+            response = self.client.post(BASE + suffix, headers=HEADERS, json={
+                "request_id": str(request_id), "expected_revision": 0,
+                "model_id": "synthetic-second-model", **extra})
+            self.assertEqual(202, response.status_code)
+            self.service.enqueue.assert_called_once_with(*TARGET, request_id=request_id,
+                expected_revision=0, model_id="synthetic-second-model",
+                **({"group_id": "group-a", **extra} if extra else {}))
+
+    def test_model_choice_cannot_supply_private_routing_credentials_or_invalid_types(self):
+        for extra in ({"model_id": ""}, {"model_id": "a" * 201}, {"model_id": ["model"]},
+                      {"model_id": 123}, {"endpoint": "https://arbitrary.example.test/api"},
+                      {"fallback_url": "https://arbitrary.example.test/api"}, {"token": "synthetic-private"}):
+            response = self.client.post(BASE + "/clustering/ai", headers=HEADERS,
+                json={"request_id": str(uuid4()), "expected_revision": 0, **extra})
+            self.assertEqual(400, response.status_code)
+            self.assertEqual({"code": "INVALID_REQUEST"}, response.json())
+        self.service.enqueue.assert_not_called()
+
+    def test_capability_returns_only_model_choices_and_no_endpoint(self):
+        self.capability["models"] = ["synthetic-model", "synthetic-second-model"]
+        response = self.client.get(BASE + "/clustering/ai")
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(self.capability["models"], response.json()["models"])
+        self.assertNotIn("endpoint", response.json())
+
     def test_only_authorized_sso_actor_can_open_workbench(self):
         for actor in (Actor("local-reviewer", "합성", "local_token"),
                       Actor(TARGET[0], "합성", "sso")):

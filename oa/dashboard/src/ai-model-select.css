@@ -1,0 +1,5 @@
+.ws-ai-model-select { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; font-size: 11px; color: var(--text-muted); }
+.ws-ai-model-select select { max-width: min(260px, 100%); min-width: 0; min-height: 32px; border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; color: var(--ink); background: var(--surface); font: inherit; }
+.ws-ai-model-select select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.ws-ai-model-select select:disabled { opacity: .6; }
+.ws-workbench-stage-actions { flex-wrap: wrap; max-width: 100%; }

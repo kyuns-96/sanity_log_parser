@@ -164,7 +164,10 @@ def public(service,event):
         'waiting':bool(step and step['status']=='RESERVED')}
     if state.get('calls',0): value['model_called']=True;value['model_attempted']=True
     elif step and step['status']=='RESERVED':
-        if value['model_called'] is not True:value['model_called']=None
+        # A terminal pre-send failure is known unsent even though its immutable
+        # reservation remains. An active/abandoned reservation is still unknown.
+        known_unsent=event['status']=='FAILED' and value['model_called'] is False
+        if value['model_called'] is not True and not known_unsent:value['model_called']=None
         value['model_attempted']=True
     return value
 
@@ -190,6 +193,7 @@ def _prepare(service,event,advisor,now):
     """Inside a short authorization transaction. Never performs HTTP."""
     from oa.sanity_ai_jobs import _db_now
     _,context,cases,criteria=service._inputs(event)
+    advisor=service._job_advisor(event)
     revision=None
     if service._personal_tokens():
         token,revision=service._user_token(event['data']['command']['user_id'])
@@ -257,10 +261,15 @@ def _finish_round(service,event,ledger,model,step,ref):
             'input_hash_kind':'BATCH_MANIFEST','output_sha256':digest(advice),'batch_receipt':{
                 'version':1,'root':chain,'calls':state['calls'],'records':state['records'],
                 'plan':event['data']['batch']['plan']}}
-        usage={}
+        usage={};routing={'primary_calls':0,'fallback_calls':0,'connect_failures':0}
         for result,_ in ledger.rows('result.'):
             for key,value in (result['metadata'] or {}).get('usage',{}).items():usage[key]=usage.get(key,0)+value
+            route=(result['metadata'] or {}).get('routing')
+            if route:
+                routing[route['endpoint']+'_calls']+=1
+                routing['connect_failures']+=len(route['attempted_endpoints'])-1
         metadata['usage']=usage
+        if model.advisor.settings.fallback_endpoint:metadata['routing_summary']=routing
         metadata=model_metadata(metadata,citations if available(model.context) else None,advice,model.context)
         if event['data']['batch']['credential_revision'] is not None:
             metadata['credential_revision']=event['data']['batch']['credential_revision']
@@ -287,7 +296,7 @@ def load_result(service,event,context,cases,criteria=None):
     check(set(result)=={'nodes','metadata'} and result['metadata'].get('input_hash_kind')=='BATCH_MANIFEST'
           and result['metadata']['batch_receipt']['root']==ledger.audit()
           and result['metadata']['input_sha256']==digest([event['data']['batch']['plan'],ledger.last()[1]['sha256']]),'AI_BATCH_CORRUPT')
-    model=_model(service.advisor,event,context,cases,criteria or [])
+    model=_model(service._job_advisor(event),event,context,cases,criteria or [])
     _bind_preserved(model,ledger,ledger.last()[0]['state'])
     advice,citations=model.advice(ledger.nodes(result['nodes']))
     check(digest(advice)==result['metadata']['output_sha256'],'AI_BATCH_CORRUPT')

@@ -23,7 +23,11 @@ from oa.workspace_api import (ID, ClusterChange, ClusterEdit, CodexProposal,
                               GroupReviewChange, PorChange, RationaleChange)
 
 
-class GroupAIProposal(CodexProposal):
+class AIProposal(CodexProposal):
+    model_id: Annotated[str, Field(min_length=1, max_length=200)] | None = None
+
+
+class GroupAIProposal(AIProposal):
     expected_cluster_revision: Annotated[StrictInt, Field(ge=1)]
 
 
@@ -179,9 +183,9 @@ def create_workbench_router(authorized_actor):
         return jobs(scope).capability(scope.user_id, block_id, version_id, report_id)
 
     @router.post(report_path + "/clustering/ai", status_code=202)
-    def cluster_ai_enqueue(block_id: ID, version_id: ID, report_id: ID, body: CodexProposal,
+    def cluster_ai_enqueue(block_id: ID, version_id: ID, report_id: ID, body: AIProposal,
                            scope=Depends(workspace)):
-        return jobs(scope).enqueue(scope.user_id, block_id, version_id, report_id, **body.model_dump())
+        return jobs(scope).enqueue(scope.user_id, block_id, version_id, report_id, **body.model_dump(exclude_none=True))
 
     @router.get(report_path + "/clustering/groups")
     def groups_page(block_id: ID, version_id: ID, report_id: ID, expected_revision: Annotated[int, Query(ge=0)],
@@ -262,6 +266,6 @@ def create_workbench_router(authorized_actor):
     @router.post(report_path + "/groups/{group_id}/review/ai", status_code=202)
     def group_ai_enqueue(block_id: ID, version_id: ID, report_id: ID, group_id: ID, body: GroupAIProposal,
                          scope=Depends(workspace)):
-        return jobs(scope).enqueue(scope.user_id, block_id, version_id, report_id, group_id=group_id, **body.model_dump())
+        return jobs(scope).enqueue(scope.user_id, block_id, version_id, report_id, group_id=group_id, **body.model_dump(exclude_none=True))
 
     return router

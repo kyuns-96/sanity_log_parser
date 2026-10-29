@@ -30,7 +30,7 @@ export type PipelineView = { current: ClusterEvent | null; revision: number; rea
 export type ClusterBrief = Omit<ClusterEvent, 'groups'> & { group_count: number; record_count: number; rationale_counts: Record<RationaleStatus, number> }
 export type PipelineTask = { id: string; status: 'PENDING' | 'RUNNING' | 'FAILED' | 'STALE' | 'CANCELLED' | 'COMPLETED'; record_count: number; processed: number; next_chunk: number; error: string | null; chunks: { index: number; start: number; stop: number; record_count: number; input_sha256: string; status: string }[] }
 export type CodexJob = { id: string; status: 'PENDING' | 'RUNNING' | 'RESULT_READY' | 'COMPLETED' | 'FAILED' | 'STALE' | 'UNKNOWN' | 'CANCELLED' | 'SAVE_FAILED'; error: string | null; model: string; created_at: string; finished_at?: string; expected_revision: number; input_case_count: number; event_id?: string; progress?: { mode: 'BATCH'; phase: 'TEXT' | 'TEXT_MERGE' | 'CLASSIFY' | 'MERGE' | 'REVIEW' | 'REVIEW_MERGE'; completed_records: number; total_records: number; completed_calls: number; round: number; waiting: boolean } }
-export type CodexCapability = { available: boolean; supported: boolean; enabled: boolean; model: string; remaining: number | null; job: CodexJob | null; provider?: string; synthetic_only?: boolean; credential_required?: boolean; credential_ready?: boolean; credential_error?: string | null }
+export type CodexCapability = { available: boolean; supported: boolean; enabled: boolean; model: string; models?: string[]; remaining: number | null; job: CodexJob | null; provider?: string; synthetic_only?: boolean; credential_required?: boolean; credential_ready?: boolean; credential_error?: string | null }
 export type WorkbenchView = { report: WorkspaceReport; version: WorkspaceVersion; current: ClusterBrief | null; revision: number; ready: boolean; can_edit: boolean; stale: boolean; task: PipelineTask | null; ai?: CodexCapability; record_count: number; raw_line_count: number; source_sha256: string; case_count: number; reusable_count: number; removed_count: number; corporate_ai_connected: boolean; summary: { confirmed: boolean; total: number; reviewed: number; pending: number; complete: boolean; rationale_counts: Record<RationaleStatus, number>; counts: Record<string, number> } }
 export type GroupBrief = { id: string; ordinal?: number; label: string; record_count: number; status: string; revision: number; example: Record<string, unknown>; rationale: { status: RationaleStatus; reason: string; reason_truncated: boolean; reason_omitted_chars: number; source: string | null; evidence_count: number } }
 export type PageResult<T> = { items: T[]; total: number; offset: number; limit: number }
@@ -71,6 +71,8 @@ const messages: Record<string, string> = {
   AI_BATCH_CONFLICT: 'AI 통합 판정이 하위 반례나 보류와 충돌하여 적용하지 않았습니다.',
   AI_BATCH_UNRESOLVED: '보존 본문의 미확인 조건이 남아 있어 AI의 PASS 제안을 적용하지 않았습니다.',
   AI_CALL_FAILED: '사내 AI 호출에 실패했습니다. 기존 검토 내용은 유지됩니다.',
+  AI_CONNECT_FAILED: 'AI 주소에 연결하지 못해 이번 호출을 전송하지 못했습니다. 연결 상태를 확인해 주세요. 앞서 처리한 일부 결과는 확정되지 않았습니다.',
+  AI_MODEL_NOT_ALLOWED: '선택한 AI 모델을 사용할 수 없습니다. 최신 모델 목록에서 다시 선택해 주세요.',
   AI_RESULT_UNKNOWN: 'AI 호출 결과가 불명확합니다. 자동 재호출하지 않습니다. 작업 상태를 확인해 주세요.',
   AI_OUTCOME_UNKNOWN: 'AI 호출 결과가 불명확합니다. 자동 재호출하지 않습니다. 작업 상태를 확인해 주세요.',
   AI_INVALID_RESPONSE: 'AI 응답의 형식 또는 근거를 검증하지 못해 적용하지 않았습니다.',
@@ -119,7 +121,9 @@ export const aiJobMessage = (job: CodexJob) => {
   if (job.status === 'RUNNING') return 'AI가 전체 로그와 관련 확정 사례를 검토하고 있습니다.'
   if (job.status === 'RESULT_READY') return 'AI 응답의 근거와 현재 개정을 검증하고 있습니다.'
   if (job.status === 'UNKNOWN') return 'AI 호출 결과가 불명확합니다. 자동 재호출하지 않습니다. 운영 담당자에게 작업 상태를 확인해 주세요.'
-  if (job.status === 'STALE') return '로그·분류·판정 또는 참고 사례가 변경되어 결과를 적용하지 않았습니다. 최신 내용을 확인해 주세요.'
+  if (job.status === 'STALE') return job.error === 'AI_CONFIG_CHANGED'
+    ? 'AI 모델 목록이나 연결 설정이 변경되어 작업을 중단했습니다. 최신 설정을 확인한 뒤 다시 요청해 주세요.'
+    : '로그·분류·판정 또는 참고 사례가 변경되어 결과를 적용하지 않았습니다. 최신 내용을 확인해 주세요.'
   if (job.status === 'CANCELLED') return 'AI 작업이 취소되었습니다. 이전 검토 내용은 유지됩니다.'
   if (job.status === 'COMPLETED') return 'AI 제안을 저장했습니다. 내용을 검토한 뒤 사람이 확정해 주세요.'
   return `${messages[job.error || ''] || 'AI 작업을 완료하지 못했습니다. 기존 검토 내용은 유지됩니다.'}${job.error ? ` (${job.error})` : ''}`

@@ -34,11 +34,13 @@ flowchart TD
 |---|---|
 | `SANITY_OA_AI_ENABLED` | 기본 `false`. 사용자가 승인한 사내 모델 연결에만 `true` |
 | `SANITY_OA_AI_URL` | API 메서드까지 포함한 전체 HTTPS URL. base URL만 입력하지 않음 |
+| `SANITY_OA_AI_FALLBACK_URL` | 선택형 보조 HTTPS 메서드 URL. 기본 빈 값. 같은 모델·API·인증을 제공하며 요청 전 연결 실패에만 1회 전환 |
 | `SANITY_OA_AI_TOKEN` | 해당 OA API의 Bearer 토큰 |
 | `SANITY_OA_AI_TOKEN_SOURCE` | 기본 `server`. `user`는 SSO 사용자별 등록 토큰을 사용하며 서버 공용 토큰을 무시 |
 | `SANITY_OA_AI_TOKEN_STORE_SECRET` | `user` 모드의 서버 전용 Fernet 암호화 키. 웹과 worker에 동일한 비공개 값 주입 |
 | `SANITY_OA_AI_TOKEN_ISSUE_URL` | 선택형 개인 JWT 발급 페이지의 절대 HTTPS 주소. OA 웹 서버의 실행 환경에서 읽어 개인 토큰 입력창에 링크로 표시 |
-| `SANITY_OA_AI_MODEL` | 사내에서 확인한 모델 ID |
+| `SANITY_OA_AI_MODEL` | 사내에서 확인한 기본 모델 ID |
+| `SANITY_OA_AI_MODELS` | 선택형 모델 ID의 JSON 배열. 1~100개, 중복·공백 없는 ID이며 기본 모델을 포함. 빈 값은 기존 모델 하나만 허용 |
 | `SANITY_OA_AI_API` | `chat_completions`(기본) 또는 `responses`; 실제 지원 API를 선택 |
 | `SANITY_OA_AI_JSON_MODE` | 기본 `false`. JSON object 출력 옵션을 실제 지원할 때만 `true` |
 | `SANITY_OA_AI_TIMEOUT` | 기본 120초, 1~600초 |
@@ -87,6 +89,42 @@ flowchart TD
 6. 토큰의 `exp`를 해석할 수 있으면 개인 설정 화면에서 만료일·30일 이내 만료 경고를 표시한다. **서명 검증 전의 exp는 만료 참고 정보이며 인증 성공 근거가 아니다.** 실제 인증은 게이트웨이가 판단한다. 등록 성공도 게이트웨이 호출 성공을 뜻하지 않는다. 만료 시 본인이 새로 발급받아 교체한다.
 
 사용자별 JWT 선택은 호출 계정의 분리다. 실제 rate limit이 사용자 JWT·클라이언트 키·모델 중 무엇을 기준으로 하는지는 별도 현장 확인 항목이며 처리량 증가를 보장하지 않는다. 사용자 토큰 저장소 키가 없으면 `AI_TOKEN_STORE_NOT_CONFIGURED`, 개인 JWT가 없으면 `AI_USER_TOKEN_REQUIRED`, 만료되면 `AI_USER_TOKEN_EXPIRED`, 게이트웨이가 401을 반환하면 `AI_AUTH_FAILED`로 처리한다.
+
+### 2.3. 사용자 모델 선택과 보조 URL — 2026-10-29
+
+운영 담당자가 허용할 모델을 `SANITY_OA_AI_MODELS='["synthetic-model-a","synthetic-model-b"]'`처럼
+등록하고 `SANITY_OA_AI_MODEL=synthetic-model-a`로 기본값을 정한다. 실제 값은 비공개 환경에만 둔다.
+분류 화면의 **분류 AI 모델**, 그룹 판정 화면의 **판정 AI 모델**에서 사용자가 실행할 모델을 각각
+고른다. 작업 등록 API의 선택형 `model_id`는 서버 목록 안의 ID만 허용한다. 생략하면 기본 모델이다.
+목록은 로그인·대상 조회 권한 검사 후 제공하며 브라우저가 URL·키·기준·임의 모델을 추가하지 않는다.
+외부 `/models` 자동 조회나 사용자별 영속 기본값 설정은 제공하지 않는다.
+
+선택한 모델은 부모 작업에 고정하며 단일 호출·보존 본문 분석·분할 분류/그룹 판정·통합·재개와
+결과 복구까지 유지한다. 동일 요청 ID에 다른 명시적 모델을 넣으면 `REQUEST_CONFLICT`다.
+허용 목록·보조 URL·호출 설정이 바뀌거나 선택 모델이 제거되면 기존 작업은 STALE로 중단한다.
+같은 허용 목록에서 서버 기본 모델만 바뀌어도 등록된 작업의 모델은 바뀌지 않는다. 이력의
+`requested_model`과 응답의 실제 `model`을 보존하며, 배치 중 실제 모델 버전이 달라지면 거부한다.
+
+보조 URL은 같은 API 형식·전체 모델 목록·Bearer/게이트웨이 인증·TLS 신뢰·처리 한도를 제공하는
+승인된 주소여야 한다. 별도 보조 토큰이나 모델 자동 변경은 없다. 개인 토큰 모드는 동일 요청자의
+토큰을 그대로 사용한다. 모든 선택 모델에 공통 설정을 적용하므로 가장 작은 실제 context/출력
+한도에 맞추고, 로컬 tokenizer를 쓰면 모든 모델에서 같은 계수가 유효함을 확인한다. 서로 다른
+API/인증/토크나이저 계약의 모델을 한 목록에 등록하지 않는다.
+
+주 URL의 `ConnectError`/`ConnectTimeout`처럼 **POST를 전송하기 전 연결 수립 실패가 확인된 경우**에만
+보조 URL을 한 번 시도한다. 실제 요청 byte·모델·인증·게이트웨이 sessionId는 동일하며 두 연결에
+하나의 전체 timeout 예산을 적용한다. 주 URL의 연결 수립에는 남은 예산의 최대 절반만 사용해
+보조 연결 시간을 남긴다. HTTP 401/403/429/5xx·redirect, 읽기/쓰기 timeout·전송 오류,
+불완전/잘못된 응답·출력 초과에는 전환하지 않는다. 결과가 불명확하면 UNKNOWN으로 남기고 자동
+재호출하지 않는다. 두 주소 모두 연결할 수 없으면 `FAILED / AI_CONNECT_FAILED`이며 해당 호출의
+`model_called=false`다. 앞서 완료한 배치 자식의 호출 이력은 그대로 보존한다.
+
+주소는 공개 메타데이터에 남기지 않는다. 성공한 호출은 `routing.endpoint=primary|fallback`과
+`attempted_endpoints` 역할 목록을 기록한다. 배치 자식에도 같은 이력을 남기고 최종 결과의
+`routing_summary`에 주/보조 호출 수와 연결 실패 수를 합산한다. 한 배치 step의 논리 모델 호출은
+최대 하나이며, 전송 전 실패한 주 연결을 보조 연결로 대체한 경우에도 같은 입력 hash 예약을 사용한다.
+보조 URL이 없는 기존 설정·작업의 config hash와 이력 읽기는 유지한다. 새 설정은 웹과 worker에
+같은 release로 반영한다. 이 설정 추가에는 DDL/GRANT가 없다.
 
 ## 3. 최초 판정을 위한 확인된 점검 기준
 
@@ -183,10 +221,17 @@ OA 담당 개발 AI는 위 지원 환경변수, 승인된 비공개 기준 파�
 
 2026-10-22 공통 구현 검증은 격리 PostgreSQL 12.1에서 변경 전용 92개와 `quick` 172개가 각각 통과했으며 skip은 없다. 변경 전용 시험에는 실제 `OAAdvisor`의 HTTP 경계를 합성 `MockTransport`로 교체한 A→사람 정정→B 순환과 운영 SSO API 경유 검토가 포함된다. 신규 운영 브라우저 시나리오 6개, 기존 데모·내비게이션·권한 시나리오 17개 및 frontend 빌드도 통과했다. 이 수치는 사내 모델 호출이나 의미 판단 정확도의 실측값이 아니다.
 
-일상 `quick`에는 최초 직접 근거 판정과 A→B 순환의 대표 시험만 추가했다. 전체 100,000건 회귀를 매번 실행하지 않는다. HTTP/기준 파일/순수 계약만 확인할 때는 다음 전용 명령을 사용할 수 있다.
+2026-10-29 모델 선택·보조 URL은 Termux의 격리 PostgreSQL 18.6과 합성 HTTP로 전용 174개를 실행해
+174개 통과·실패/오류/skip 0건을 확인했다. `quick`은 411개 실행, 404개 통과·5개 실패·2개 오류·skip 0건이다.
+실패/오류 이름은 이전 검증과 같으며 PostgreSQL 18 포털 카탈로그 비교 5건과 Termux의 실제 하드링크/
+root 소유 설정 준비 2건이다. 두 보안 항목은 사내 독립 Linux 실환경 검증 대기이며 PG18 호환 문제와
+구분한다. 프런트엔드 타입 검사·production 빌드는 통과했지만 이번 브라우저 E2E는 실행 환경이 없어
+실행하지 않았다. 실제 사내 API·모델 품질·배포 완료로 해석하지 않는다.
+
+일상 `quick`에는 최초 직접 근거 판정·A→B 순환의 대표 시험과 모델 선택·연결 전환의 합성 회귀를 포함한다. 전체 100,000건 회귀를 매번 실행하지 않는다. HTTP/기준 파일/순수 계약만 확인할 때는 다음 전용 명령을 사용할 수 있다.
 
 ```bash
-.venv/bin/python -m unittest tests.test_ai_gateway tests.test_ai_model tests.test_ai_criteria tests.test_ai_workbench_api tests.test_ai_credentials.CredentialConfigurationTests tests.test_ai_credentials.CredentialApiTests -v
+.venv/bin/python -m unittest tests.test_ai_routing.RoutingConfigurationTests tests.test_ai_routing.RoutingTransportTests tests.test_ai_gateway tests.test_ai_model tests.test_ai_criteria tests.test_ai_workbench_api tests.test_ai_credentials.CredentialConfigurationTests tests.test_ai_credentials.CredentialApiTests -v
 ```
 
 일상 검증은 변경 전용 시험과 `quick`을 사용하고 실제 실행 수·skip을 보고한다. 선택형 분류·확정 그룹 판정·보존 본문 분할의 범위와 한도는 [배치 계약](BATCHED_CLUSTERING.md)으로 구분한다. 분류·대용량 계약 변경은 full과 10만 건 검증도 수행한다. 오류·보호 파일 변경 필요는 [비식별 문의 절차](../INTERNAL_AI_GUIDE.md#6-디버깅이-필요하면-codex에게-문의)로 전달한다. 실제 URL·토큰·report·기준 원문·사람 계정은 외부 자료에 포함하지 않는다.

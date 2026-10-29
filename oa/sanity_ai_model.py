@@ -1,4 +1,4 @@
-"""Bounded OA OpenAI-compatible inference with no DB or implicit retry/fallback.
+"""Bounded OA inference with server-approved models and pre-send failover.
 
 Only server-selected complete evidence and authorized historical cases belong
 in this adapter. Configuration is server-private; neither the URL nor token is
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 import hashlib
+import json
 import logging
 import os
 from pathlib import Path
@@ -32,6 +33,24 @@ CLUSTER_PROMPT_VERSION = "oa-semantic-clustering-v3"
 REVIEW_PROMPT_VERSION = "oa-direct-evidence-review-v5"
 PROVIDER = "OA_OPENAI_COMPATIBLE"
 MAX_BYTES = 64 * 1024 * 1024
+
+
+def _model_id(value):
+    return (isinstance(value, str) and 1 <= len(value) <= 200
+            and not any(ch.isspace() or ord(ch) < 32 or 0xD800 <= ord(ch) <= 0xDFFF for ch in value))
+
+
+def _endpoint(value):
+    try:
+        parsed = urlsplit(value)
+        return (isinstance(value, str) and parsed.scheme == "https" and bool(parsed.hostname)
+                and parsed.port != 0 and parsed.path not in ("", "/")
+                and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
+                and not any(ch.isspace() or ord(ch) < 32 for ch in value)
+                and "\\" not in value)
+    except (ValueError, TypeError, AttributeError):
+        return False
+
 
 _PRESERVED_PROMPT = """
 report.preserved_sources는 보존된 관련 파일의 목록·역할·귀속·크기·해시 메타데이터입니다.
@@ -135,6 +154,8 @@ class OASettings:
     session_mode: str = field(default="disabled", repr=False)
     session_id: str = field(default="", repr=False)
     batch: BatchSettings = field(default_factory=BatchSettings)
+    fallback_endpoint: str = field(default="", repr=False)
+    models: tuple[str, ...] = ()
 
     def __post_init__(self):
         check(isinstance(self.batch, BatchSettings), 'AI_BATCH_CONFIG')
@@ -152,21 +173,19 @@ class OASettings:
                  and all(isinstance(value, str) for value in
                          (self.client_api_key, self.client_name, self.client_version, self.session_id)))
         check(valid, "AI_CONFIG", "Invalid OA AI settings")
+        check(isinstance(self.fallback_endpoint, str)
+              and (not self.fallback_endpoint or _endpoint(self.fallback_endpoint)
+                   and self.fallback_endpoint != self.endpoint), "AI_CONFIG", "Invalid OA fallback endpoint")
+        check(isinstance(self.models, tuple) and len(self.models) <= 100
+              and all(_model_id(value) for value in self.models)
+              and len(set(self.models)) == len(self.models)
+              and (not self.models or self.model in self.models), "AI_CONFIG", "Invalid OA model choices")
         if not self.enabled:
             return
-        try:
-            parsed = urlsplit(self.endpoint)
-            valid_url = (isinstance(self.endpoint, str) and parsed.scheme == "https"
-                         and parsed.hostname and parsed.port != 0 and parsed.path not in ("", "/")
-                         and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
-                         and not any(ch.isspace() or ord(ch) < 32 for ch in self.endpoint))
-        except (ValueError, TypeError, AttributeError):
-            valid_url = False
-        check(valid_url, "AI_CONFIG", "Configure a full HTTPS OA model endpoint")
+        check(_endpoint(self.endpoint), "AI_CONFIG", "Configure a full HTTPS OA model endpoint")
         check(isinstance(self.token, str) and (self.token or self.token_source == "user")
               and all(33 <= ord(ch) <= 126 for ch in self.token), "AI_CONFIG", "Invalid OA AI credentials")
-        check(isinstance(self.model, str) and 1 <= len(self.model) <= 200
-              and not any(ch.isspace() or ord(ch) < 32 for ch in self.model), "AI_CONFIG", "Invalid OA model ID")
+        check(_model_id(self.model), "AI_CONFIG", "Invalid OA model ID")
         gateway = any((self.client_api_key, self.client_name, self.client_version,
                        self.session_id, self.session_mode != "disabled"))
         if gateway:
@@ -203,6 +222,16 @@ class OASettings:
             except ValueError:
                 raise ReviewError("AI_CONFIG", "Invalid OA AI integer setting") from None
 
+        raw_models = env.get("SANITY_OA_AI_MODELS", "")
+        models = ()
+        if raw_models:
+            try:
+                check(isinstance(raw_models, str) and len(raw_models) <= 24000, "AI_CONFIG")
+                parsed_models = json.loads(raw_models)
+                check(isinstance(parsed_models, list) and bool(parsed_models), "AI_CONFIG")
+                models = tuple(parsed_models)
+            except (ReviewError, ValueError, TypeError, RecursionError):
+                raise ReviewError("AI_CONFIG", "Configure OA model choices as a JSON array") from None
         return cls(enabled=boolean("ENABLED", "false"), endpoint=env.get("SANITY_OA_AI_URL", ""),
                    token="" if env.get("SANITY_OA_AI_TOKEN_SOURCE", "server") == "user" else env.get("SANITY_OA_AI_TOKEN", ""),
                    model=env.get("SANITY_OA_AI_MODEL", ""),
@@ -215,7 +244,8 @@ class OASettings:
                    client_name=env.get("SANITY_OA_AI_CLIENT_NAME", ""),
                    client_version=env.get("SANITY_OA_AI_CLIENT_VERSION", ""),
                    session_mode=env.get("SANITY_OA_AI_SESSION_MODE", "disabled"),
-                   session_id=env.get("SANITY_OA_AI_SESSION_ID", ""), batch=BatchSettings.from_env(env))
+                   session_id=env.get("SANITY_OA_AI_SESSION_ID", ""), batch=BatchSettings.from_env(env),
+                   fallback_endpoint=env.get("SANITY_OA_AI_FALLBACK_URL", ""), models=models)
 
 
 def _strict_json(raw):
@@ -290,7 +320,8 @@ class OAAdvisor:
         self.transport = transport
         self._guard = SecretGuard({"SANITY_OA_AI_TOKEN": self.settings.token,
                                    "SANITY_OA_AI_CLIENT_API_KEY": self.settings.client_api_key,
-                                   "OA_ENDPOINT_SECRET": self.settings.endpoint})
+                                   "OA_ENDPOINT_SECRET": self.settings.endpoint,
+                                   "OA_FALLBACK_ENDPOINT_SECRET": self.settings.fallback_endpoint})
         try:
             self._tls = ssl.create_default_context(cafile=self.settings.ca_path or None)
         except (OSError, ValueError, ssl.SSLError):
@@ -312,6 +343,10 @@ class OAAdvisor:
         # Preserve existing pins without a gateway. Credentials may rotate;
         # routing/session policy changes must invalidate queued model work.
         config = {**public, "endpoint": settings.endpoint}
+        if settings.models:
+            config["models"] = list(settings.models)
+        if settings.fallback_endpoint:
+            config["fallback"] = {"endpoint": settings.fallback_endpoint, "policy": "connect-only-v1"}
         if settings.token_source == "user":
             config["token_source"] = "user"
         if settings.client_api_key:
@@ -319,6 +354,18 @@ class OAAdvisor:
                                  "session_mode": settings.session_mode, "session_id": settings.session_id}
         self._guard.ensure_public(public)
         return {**public, "config_sha256": digest(config)}
+
+    def model_choices(self):
+        choices = list(self.settings.models or (self.settings.model,))
+        self._guard.ensure_public(choices)
+        return choices
+
+    def for_model(self, model_id):
+        check(_model_id(model_id) and model_id in self.model_choices(), "AI_MODEL_NOT_ALLOWED",
+              "Choose an available OA model")
+        if model_id == self.settings.model:
+            return self
+        return OAAdvisor(replace(self.settings, model=model_id), transport=self.transport)
 
     def with_user_token(self, token):
         check(self.settings.token_source == "user", "AI_CONFIG")
@@ -409,32 +456,55 @@ class OAAdvisor:
             if name in ("httpx", "httpcore") or name.startswith(("httpx.", "httpcore.")):
                 logging.getLogger(name).setLevel(logging.CRITICAL + 1)
         started = time.monotonic()
-        try:
-            with httpx.Client(timeout=settings.timeout, trust_env=False, follow_redirects=False,
-                              verify=self._tls, transport=self.transport) as client:
-                attempt["model_called"] = True
-                with client.stream("POST", settings.endpoint, content=data,
-                                   headers=headers) as response:
-                    if settings.token_source == "user" and response.status_code == 401:
-                        raise ReviewError("AI_AUTH_FAILED", "Check personal token and gateway authentication")
-                    check(response.status_code == 200, "AI_CALL_FAILED", "OA AI call did not succeed")
-                    # Never allocate an unbounded decompressed body before
-                    # enforcing the configured output budget.
-                    check(response.headers.get("content-encoding", "identity").lower() == "identity",
-                          "INVALID_AI_RESPONSE", "Compressed OA AI responses are not supported")
-                    raw = bytearray()
-                    # Do not buffer small arrivals into a 64 KiB chunk: a
-                    # continuously trickling response must reach the deadline
-                    # check even when the socket's idle timeout never fires.
-                    for chunk in response.iter_bytes():
-                        check(len(raw) + len(chunk) <= settings.max_output_bytes, "AI_OUTPUT_LIMIT",
-                              "OA AI response exceeds its configured bound")
-                        check(time.monotonic() - started <= settings.timeout, "AI_OUTCOME_UNKNOWN",
-                              "OA AI call exceeded its deadline; automatic retry is disabled")
-                        raw.extend(chunk)
-                    check(time.monotonic() - started <= settings.timeout, "AI_OUTCOME_UNKNOWN")
-        except (httpx.HTTPError, ValueError, OSError):
-            raise ReviewError("AI_OUTCOME_UNKNOWN", "OA AI transport failed; automatic retry is disabled") from None
+        endpoints = [("primary", settings.endpoint)]
+        if settings.fallback_endpoint:
+            endpoints.append(("fallback", settings.fallback_endpoint))
+        attempted_endpoints = []
+        for role, endpoint in endpoints:
+            remaining = settings.timeout - (time.monotonic() - started)
+            check(remaining > 0, "AI_CONNECT_FAILED", "OA AI connection deadline exceeded before dispatch")
+            response_started = False
+            attempted_endpoints.append(role)
+            # Reserve time for the backup when the primary connection stalls.
+            # Read/write retain the remaining inference budget; only connection
+            # establishment can qualify for another endpoint.
+            timeout = (httpx.Timeout(remaining, connect=remaining / 2)
+                       if role == "primary" and settings.fallback_endpoint else remaining)
+            try:
+                with httpx.Client(timeout=timeout, trust_env=False, follow_redirects=False,
+                                  verify=self._tls, transport=self.transport) as client:
+                    attempt["model_called"] = True
+                    with client.stream("POST", endpoint, content=data, headers=headers) as response:
+                        response_started = True
+                        if settings.token_source == "user" and response.status_code == 401:
+                            raise ReviewError("AI_AUTH_FAILED", "Check personal token and gateway authentication")
+                        check(response.status_code == 200, "AI_CALL_FAILED", "OA AI call did not succeed")
+                        # Never allocate an unbounded decompressed body before
+                        # enforcing the configured output budget.
+                        check(response.headers.get("content-encoding", "identity").lower() == "identity",
+                              "INVALID_AI_RESPONSE", "Compressed OA AI responses are not supported")
+                        raw = bytearray()
+                        # Inspect every arrival, including trickled small chunks.
+                        for chunk in response.iter_bytes():
+                            check(len(raw) + len(chunk) <= settings.max_output_bytes, "AI_OUTPUT_LIMIT",
+                                  "OA AI response exceeds its configured bound")
+                            check(time.monotonic() - started <= settings.timeout, "AI_OUTCOME_UNKNOWN",
+                                  "OA AI call exceeded its deadline; automatic retry is disabled")
+                            raw.extend(chunk)
+                        check(time.monotonic() - started <= settings.timeout, "AI_OUTCOME_UNKNOWN")
+            except (httpx.ConnectError, httpx.ConnectTimeout):
+                # Only connection establishment failures prove that this POST
+                # was not sent. Read/write errors and any HTTP response never
+                # qualify; neither does a failure after response headers.
+                if response_started:
+                    raise ReviewError("AI_OUTCOME_UNKNOWN", "OA AI transport failed; automatic retry is disabled") from None
+                attempt["model_called"] = False
+                if role == endpoints[-1][0]:
+                    raise ReviewError("AI_CONNECT_FAILED", "Cannot connect to an approved OA AI endpoint") from None
+                continue
+            except (httpx.HTTPError, ValueError, OSError):
+                raise ReviewError("AI_OUTCOME_UNKNOWN", "OA AI transport failed; automatic retry is disabled") from None
+            break
         envelope = _strict_json(bytes(raw))
         content = _content(envelope, settings.api)
         try:
@@ -450,6 +520,8 @@ class OAAdvisor:
                     "response_sha256": hashlib.sha256(bytes(raw)).hexdigest(),
                     "output_sha256": digest(value), "input_bytes": len(data), "output_bytes": len(raw),
                     "usage": _usage(envelope.get("usage")), "model_called": True}
+        if settings.fallback_endpoint:
+            metadata["routing"] = {"endpoint": role, "attempted_endpoints": attempted_endpoints}
         if budget is not None:
             metadata['token_budget'] = {'input_units': input_tokens, 'counter': budget.settings.tokenizer_mode,
                 'overhead_tokens': budget.settings.overhead_tokens, 'output_tokens': budget.settings.output_tokens,
