@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from 'react'
-import { ExternalLink, RefreshCw } from 'lucide-react'
+import { ExternalLink, Save } from 'lucide-react'
 import { Button } from './studio/components/ui/button'
+import { Badge } from './studio/components/ui/badge'
 import { Input } from './studio/components/ui/input'
 import './ai-connections.css'
 
@@ -29,7 +30,7 @@ function issuance(value: string | null) {
   try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password ? value : null } catch { return null }
 }
 
-export default function ConnectionCredentials({ onLoaded, onBusyChange }: { onLoaded: (count: number) => void; onBusyChange: (busy: boolean) => void }) {
+export default function ConnectionCredentials({ onBusyChange }: { onBusyChange: (busy: boolean) => void }) {
   const [entries, setEntries] = useState<Connection[]>([])
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -38,11 +39,11 @@ export default function ConnectionCredentials({ onLoaded, onBusyChange }: { onLo
   useEffect(() => {
     const controller = new AbortController()
     request<{ items: Connection[] }>('', undefined, controller.signal).then(value => {
-      if (!controller.signal.aborted) { setEntries(value.items); onLoaded(value.items.length) }
+      if (!controller.signal.aborted) setEntries(value.items)
     }).catch(() => { if (!controller.signal.aborted) setError('등록된 AI 연결을 불러오지 못했습니다. 연결 상태와 운영 설정을 확인해 주세요.') })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [onLoaded])
+  }, [])
   async function change(connection: Connection, token: string | null) {
     setBusy(true); onBusyChange(true); setError(''); setNotice('')
     try {
@@ -58,6 +59,7 @@ export default function ConnectionCredentials({ onLoaded, onBusyChange }: { onLo
   return <section className="ai-personal-connections" aria-label="AI 연결별 개인 인증값">
     {loading && <p role="status">등록된 AI 연결을 확인하고 있습니다.</p>}
     {error && <p role="alert" className="ws-error">{error}</p>}{notice && <p role="status" className="ws-notice">{notice}</p>}
+    {!loading && !error && !entries.length && <p>등록된 AI 연결이 없습니다. 관리자에게 AI 연결 등록을 요청해 주세요.</p>}
     {entries.map(entry => <Credentials key={entry.id} connection={entry} busy={busy} onSave={token => void change(entry, token)} />)}
   </section>
 }
@@ -68,18 +70,18 @@ function Credentials({ connection, busy, onSave }: { connection: Connection; bus
   const url = issuance(connection.issuance_url)
   const status = connection.credential
   const name = connection.auth_mode === 'x_client_api_key' ? '개인 API 키' : '개인 Bearer 토큰'
-  return <article className="ai-personal-connection" aria-label={`${connection.label} 개인 인증값`}>
-    <header><strong>{connection.label}</strong><span>{connection.enabled ? status.registered ? '등록됨' : '미등록' : '사용 중지'}</span></header>
+  return <article className="ai-personal-connection" data-enabled={connection.enabled} aria-label={`${connection.label} 개인 인증값`}>
+    <header><strong>{connection.label}</strong><Badge variant="outline" className={`ai-credential-status${connection.enabled && status.registered ? ' is-registered' : ''}`}>{connection.enabled ? status.registered ? '등록됨' : '미등록' : '사용 중지'}</Badge></header>
     <small>{connection.models.join(' · ')}</small>
     {status.connection_changed && <p role="status" className="ws-notice">주소나 인증 방식이 바뀌었습니다. 인증값을 다시 등록해야 합니다.</p>}
-    {status.expired && <p className="ws-error">인증값이 만료됐습니다.</p>}
+    {status.expired && <p role="alert" className="ws-error">인증값이 만료됐습니다. 새로 발급받아 교체해 주세요.</p>}
     {status.expires_soon && <p role="status">30일 안에 만료됩니다. 새 인증값을 발급받아 교체해 주세요.</p>}
     {status.expires_at && <small>토큰에 기재된 만료일: {new Date(status.expires_at).toLocaleDateString('ko-KR')}</small>}
     {!status.connection_changed && !status.expired && connection.credential_error && errors[connection.credential_error] && <p className="ws-notice">{errors[connection.credential_error]}</p>}
     {url && connection.enabled && <a href={url} className="personal-ai-token-issue-link" target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{connection.label} 인증값 발급받기<ExternalLink size={14} /><span className="sr-only"> (새 탭)</span></a>}
     <form onSubmit={event => { event.preventDefault(); const value = token.trim(); if (!value) return; setToken(''); onSave(value) }}>
       <label htmlFor={inputId}>{name}</label><Input id={inputId} aria-label={`${connection.label} ${name}`} type="password" autoComplete="off" spellCheck={false} autoCapitalize="none" maxLength={8192} disabled={busy || !connection.enabled} value={token} onChange={event => setToken(event.target.value)} />
-      <div className="am-row-actions">{status.registered && <Button type="button" variant="outline" disabled={busy} onClick={() => { setToken(''); onSave(null) }}>연결 해제</Button>}<Button type="submit" disabled={busy || !connection.enabled || !token.trim()}><RefreshCw size={13} />{status.registered ? '인증값 교체' : '인증값 저장'}</Button></div>
+      <div className="am-row-actions">{status.registered && <Button type="button" variant="outline" disabled={busy} onClick={() => { setToken(''); onSave(null) }}>연결 해제</Button>}<Button type="submit" disabled={busy || !connection.enabled || !token.trim()}><Save size={14} />{status.registered ? '인증값 교체' : '인증값 저장'}</Button></div>
     </form>
   </article>
 }

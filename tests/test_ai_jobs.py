@@ -369,7 +369,8 @@ class AIJobDatabaseTests(PgTestCase):
         with self.service() as service:
             capability = service.capability(*self.path)
         self.assertFalse(capability["available"])
-        self.assertEqual("AI_USER_TOKEN_REQUIRED", capability["credential_error"])
+        self.assertFalse(capability["enabled"])
+        self.assertEqual([], capability["connections"])
         self.save_personal_token("owner", "synthetic-owner-token", 0)
         self.enqueue()
         self.save_personal_token("owner", None, 1)

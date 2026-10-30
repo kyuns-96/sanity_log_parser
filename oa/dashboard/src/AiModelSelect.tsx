@@ -29,9 +29,9 @@ export default function AiModelSelect({ ai, value, onChange, disabled, label, co
     </label>}
     <label className="ws-ai-model-select" htmlFor={id}>
     <span>{label}</span>
-    <select id={id} value={value} disabled={disabled} onChange={event => onChange(event.target.value)}>
+    <select id={id} value={value} title={value} disabled={disabled} onChange={event => onChange(event.target.value)}>
       {value && !choice.models.includes(value) && <option value={value} disabled>{value} · 현재 작업</option>}
-      {choice.models.map(model => <option key={model} value={model}>{model}</option>)}
+      {choice.models.map(model => <option key={model} value={model}>{model}{model === choice.model ? ' · 기본' : ''}</option>)}
     </select>
   </label></div>
 }

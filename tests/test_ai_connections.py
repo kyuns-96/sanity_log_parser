@@ -43,8 +43,14 @@ class ConnectionConfigurationTests(unittest.TestCase):
             self.assertEqual(mode, validate_config(configuration(auth_mode=mode))["auth_mode"])
         with self.assertRaises(ReviewError):validate_config(configuration(auth_mode="bearer_x_client"))
 
+    def test_unsupported_auth_modes_are_rejected(self):
+        for mode in ("arbitrary", "", None, True, 0, [], {}):
+            with self.subTest(mode=mode), self.assertRaises(ReviewError) as caught:
+                validate_config(configuration(auth_mode=mode))
+            self.assertEqual("AI_CONNECTION_CONFIG", caught.exception.code)
+
     def test_invalid_settings_cannot_add_auth_headers_urls_or_files(self):
-        for changes in ({"auth_mode":"arbitrary"}, {"endpoint":"http://one.example.test/api"},
+        for changes in ({"endpoint":"http://one.example.test/api"},
                         {"endpoint":"https://one.example.test/api?private=secret"}, {"models":[]},
                         {"models":["model-a","model-a"]}, {"model":"not-in-catalog"},
                         {"issuance_url":"javascript:alert(1)"}, {"timeout":True},
@@ -279,6 +285,36 @@ class ConnectionDatabaseTests(PgTestCase):
             result=run_once(lambda:Database("oa"),SyntheticAIWorkspace,None,criteria_provider=lambda _:self.c.criteria)
             self.assertEqual("COMPLETED",result["status"],result)
         self.assertEqual(1,len(self.wire))
+
+
+    def test_capability_uses_the_admin_default_and_never_adds_the_environment_connection(self):
+        connection=self.create(configuration(model="model-b"))
+        with self.c.service() as service:
+            self.assertIsNotNone(service.advisor)
+            value=service.capability(*self.c.path)
+            self.assertEqual([connection],[item["id"] for item in value["connections"]])
+            self.assertEqual((connection,"model-b",["model-a","model-b"]),
+                             (value["connection_id"],value["model"],value["models"]))
+            self.assertTrue(value["enabled"])
+            self.assertFalse(value["available"])
+            self.assertEqual("AI_USER_TOKEN_REQUIRED",value["credential_error"])
+        self.token(connection)
+        with self.c.service() as service:
+            self.assertTrue(service.capability(*self.c.path)["available"])
+        self.assertEqual("model-b",self.c.enqueue(connection_id=connection)["model"])
+        self.assertEqual("COMPLETED",self.c.run_job()["status"])
+        self.assertEqual("model-b",json.loads(self.wire[0].content)["model"])
+
+    def test_empty_or_disabled_catalog_does_not_offer_the_environment_connection(self):
+        with self.c.service() as service:
+            self.assertFalse(service.capability(*self.c.path)["enabled"])
+        self.create(configuration(enabled=False))
+        with self.c.service() as service:
+            self.assertIsNotNone(service.advisor)
+            value=service.capability(*self.c.path)
+            self.assertFalse(value["enabled"])
+            self.assertFalse(value["available"])
+            self.assertEqual(([],[],"",""),(value["connections"],value["models"],value["connection_id"],value["model"]))
 
 
 class ConnectionApiTests(unittest.TestCase):

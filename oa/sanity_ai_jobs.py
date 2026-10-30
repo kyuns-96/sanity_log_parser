@@ -321,38 +321,19 @@ class AIJobService:
         command = {"user_id": user_id, "block_id": block_id, "version_id": version_id,
                    "report_id": report_id, "group_id": group_id, "expected_cluster_revision": expected_cluster_revision}
         _, context = self._context(command, write=False)
-        model = self._description()
         latest = self._latest(target=self._target(report_id, group_id))
         supported = bool(context["ready"] and context["can_review"] and
                          (context.get("group_evidence") if group_id is not None else evidence(context)))
-        credential = {}
-        if self._personal_tokens():
-            error_code = None
-            try:
-                self._user_token(user_id)
-            except ReviewError as error:
-                if error.code not in {"AI_USER_TOKEN_REQUIRED", "AI_USER_TOKEN_EXPIRED", "AI_TOKEN_UNAVAILABLE",
-                                      "AI_TOKEN_STORE_NOT_CONFIGURED", "AI_PERSONAL_TOKEN_DISABLED"}:
-                    raise
-                error_code = error.code
-            credential = {"credential_required": True, "credential_ready": error_code is None,
-                          "credential_error": error_code}
         connections = self.connections.user_connections(user_id)
         for connection in connections:
             connection.update(available=bool(supported and connection["credential_ready"]), enabled=True,
                               supported=supported, credential_required=True)
-        if self.advisor is not None:
-            connections.insert(0, {"id":"", "label":"기존 서버 연결", "model":model["model"],
-                "models":self.advisor.model_choices(), "enabled":True, "supported":supported,
-                "available":bool(supported and credential.get("credential_ready", True)), **credential})
-        if self.advisor is None and connections:
-            first = connections[0]
-            model = {**model, "enabled":True, "model":first["model"]}
-            credential = {key:first[key] for key in ("credential_required", "credential_ready", "credential_error")}
-        return {"available": bool(model["enabled"] and supported and credential.get("credential_ready", True)), "supported": supported,
-                "enabled": model["enabled"], "model": model["model"], "remaining": None,
-                "models": self.advisor.model_choices() if self.advisor else connections[0]["models"] if connections else [],
-                "connections":connections, "connection_id":"" if self.advisor else connections[0]["id"] if connections else "",
+        first = connections[0] if connections else {}
+        credential = {key:first[key] for key in ("credential_required", "credential_ready", "credential_error") if key in first}
+        return {"available": first.get("available", False), "supported": supported,
+                "enabled": bool(connections), "model": first.get("model", ""), "remaining": None,
+                "models": first.get("models", []),
+                "connections":connections, "connection_id":first.get("id", ""),
                 "provider": PROVIDER, "synthetic_only": False, "job": self.public(latest) if latest else None, **credential}
 
     def enqueue(self, user_id, block_id, version_id, report_id, *, expected_revision, request_id,

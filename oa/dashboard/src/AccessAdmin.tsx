@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Check, FolderKanban, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react'
 import { Button } from './studio/components/ui/button'
@@ -24,6 +24,7 @@ export default function AccessAdmin(props: AccessScreenProps) {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [showAI, setShowAI] = useState(false)
+  const viewId = useId()
   const [projectId, setProjectId] = useState('')
   const [projectName, setProjectName] = useState('')
   const [description, setDescription] = useState('')
@@ -83,11 +84,15 @@ export default function AccessAdmin(props: AccessScreenProps) {
   const userName = (userId: string) => access?.users.find(user => user.user_id === userId)?.display_name || userId
   const pending = access?.requests.filter(request => request.status === 'PENDING') || []
   const completed = access?.requests.filter(request => request.status !== 'PENDING') || []
-  return <AccessLayout {...props} page="admin" title="프로젝트·권한 관리" description="프로젝트와 블록을 등록하고, 사용자의 담당 범위를 승인하거나 회수합니다.">
-    <p className="am-admin-note"><ShieldCheck size={17} />관리자는 등록과 권한을 관리합니다. 검사 결과를 보려면 본인의 TOP 또는 OWNER 권한도 승인해 주세요.</p>
-    <div className="am-section-heading"><Button variant="outline" aria-expanded={showAI} onClick={() => setShowAI(!showAI)}>AI 연결·모델 관리</Button></div>
-    {showAI && <AIConnectionsAdmin api={api} />}
+  return <AccessLayout {...props} page="admin" title={showAI ? 'AI 연결·모델 관리' : '프로젝트·권한 관리'} description={showAI ? '사용할 AI 연결과 기본 모델, 사용자 인증값 발급 경로를 관리합니다.' : '프로젝트와 블록을 등록하고, 사용자의 담당 범위를 승인하거나 회수합니다.'}>
+    <nav className="am-view-switch" aria-label="관리 항목">
+      <Button variant="ghost" aria-pressed={!showAI} aria-controls={`${viewId}-access`} onClick={() => setShowAI(false)}><FolderKanban size={16} />프로젝트·권한</Button>
+      <Button variant="ghost" aria-pressed={showAI} aria-expanded={showAI} aria-controls={`${viewId}-ai`} onClick={() => setShowAI(true)}>AI 연결·모델 관리</Button>
+    </nav>
+    <div id={`${viewId}-ai`} hidden={!showAI}>{showAI && <AIConnectionsAdmin api={api} />}</div>
     {error && !decision && <p className="am-error" role="alert">{error}</p>}{notice && <p className="am-notice" role="status">{notice}</p>}
+    <div id={`${viewId}-access`} hidden={showAI}>
+    <p className="am-admin-note"><ShieldCheck size={17} />관리자는 등록과 권한을 관리합니다. 검사 결과를 보려면 본인의 TOP 또는 OWNER 권한도 승인해 주세요.</p>
     <div className="am-section-heading"><h2>승인 대기 <span>{pending.length}건</span></h2><Button variant="outline" size="sm" disabled={busy || loading} onClick={() => void command(refresh)}><RefreshCw size={15} />관리 상태 새로고침</Button></div>
     {loading ? <p role="status" className="am-loading">프로젝트와 권한 요청을 확인하고 있습니다.</p> : <>
       <section className="am-panel" aria-label="승인 대기 요청">{pending.length ? <ul className="am-list am-admin-requests">{pending.map(request => <li key={request.request_id}><div><strong>{userName(request.user_id)}{request.user_id === props.session.user_id && <Badge variant="secondary" className="am-self">내 요청</Badge>}</strong><span>{scopeName(catalog, request)} · {roleLabel(request.role)}</span><p>{request.reason}</p></div><div className="am-row-actions"><Button variant="outline" size="sm" disabled={busy} onClick={() => openDecision({ kind: 'request', value: request, decision: 'REJECT' })}><X size={14} />거절</Button><Button size="sm" disabled={busy} onClick={() => openDecision({ kind: 'request', value: request, decision: 'APPROVE' })}><Check size={14} />승인</Button></div></li>)}</ul> : <div className="am-empty am-empty-small"><Check size={25} /><p>승인을 기다리는 요청이 없습니다.</p></div>}</section>
@@ -106,5 +111,6 @@ export default function AccessAdmin(props: AccessScreenProps) {
       {completed.length > 0 && <section className="am-panel"><div className="am-panel-heading"><h2>처리한 요청</h2><span>{completed.length}건</span></div><ul className="am-list">{completed.map(request => <li key={request.request_id}><div><strong>{userName(request.user_id)}</strong><span>{scopeName(catalog, request)} · {roleLabel(request.role)}</span>{request.decision_reason && <p>{request.decision_reason}</p>}</div><Badge variant="outline" className={`am-status am-status-${request.status.toLowerCase()}`}>{requestStatus[request.status]}</Badge></li>)}</ul></section>}
     </>}
     <Dialog open={!!decision} onOpenChange={open => { if (!open && !busy) setDecision(null) }}><DialogContent><DialogHeader><DialogTitle>{decision?.kind === 'revoke' ? '권한 회수' : decision?.decision === 'APPROVE' ? '권한 요청 승인' : '권한 요청 거절'}</DialogTitle><DialogDescription>{decision && `${userName(decision.value.user_id)} · ${scopeName(catalog, decision.value)} · ${roleLabel(decision.value.role)}`}</DialogDescription></DialogHeader><form className="am-form am-dialog-form" onSubmit={decide}>{error && <p className="am-error" role="alert">{error}</p>}<label>처리 사유<Textarea aria-label="처리 사유" value={reason} required rows={3} maxLength={1000} disabled={busy} onChange={event => { setReason(event.target.value); setCommandId(crypto.randomUUID()) }} /></label><DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => setDecision(null)}>취소</Button><Button type="submit" disabled={busy || !reason.trim()}>{busy ? '저장 중…' : decision?.kind === 'revoke' ? '회수 확정' : decision?.decision === 'APPROVE' ? '승인 확정' : '거절 확정'}</Button></DialogFooter></form></DialogContent></Dialog>
+    </div>
   </AccessLayout>
 }

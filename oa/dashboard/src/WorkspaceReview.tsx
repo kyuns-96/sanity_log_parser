@@ -164,7 +164,7 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
     <div className="ws-judgment-summary ws-studio-meta-row"><div><span>도구 판정</span><Badge variant="outline" className={`ws-status ws-status-${report.check_status.toLowerCase()}`}>{labels[toolResultStatus(report)]}</Badge></div><div><span>사용자 판정</span><Badge variant="secondary">{data.current_stale ? `재검토 · 이전 ${labels[data.current!.conclusion]}` : data.current ? labels[data.current.conclusion] : '미판정'}</Badge></div></div>
     {!data.current_stale && data.current?.exception && <div className="ws-review-current-exception" aria-label="현재 확정된 규칙 예외"><ExceptionEvidence value={data.current.exception} /></div>}
     <section className="ws-review-advice ws-studio-ai-card" aria-label="AI review와 누적 기준 제안">
-      <header className="ws-studio-ai-title"><div><h4><Sparkles size={16} />AI 판정 제안</h4><p>{production ? group ? data.ai?.enabled ? `OA AI · ${modelId}` : 'OA AI 연결 설정이 필요합니다.' : '분류 확정 후 각 그룹에서 AI 판정을 요청하세요.' : demo ? '합성 데모 · AI 호출 없음' : '사내 AI 미연결 · 확정 사례 참고 엔진'}</p></div>
+      <header className="ws-studio-ai-title"><div><h4><Sparkles size={16} />AI 판정 제안</h4>{(!production || !group || !data.can_review || !data.ai?.enabled) && <p>{production ? group ? data.ai?.enabled ? `OA AI · ${modelId}` : 'OA AI 연결 설정이 필요합니다.' : '분류 확정 후 각 그룹에서 AI 판정을 요청하세요.' : demo ? '합성 데모 · AI 호출 없음' : '사내 AI 미연결 · 확정 사례 참고 엔진'}</p>}</div>
         {production && group && data.can_review && <AiModelSelect ai={data.ai} connectionValue={connectionId} onConnectionChange={value => { setSelectedConnection(value); setSelectedModel('') }} value={modelId} onChange={setSelectedModel} disabled={!!busy || aiRunning} label="판정 AI 모델" />}
         <Button variant="outline" size="sm" onClick={propose} disabled={demo || !!busy || !data.can_review || production && (!group || !choice?.available || aiRunning)}><RefreshCw size={14} className={aiRunning ? 'ws-spin' : undefined} />{production ? aiRunning || busy === 'proposal' ? 'AI 판정 중…' : 'AI 판정 받기' : busy === 'proposal' ? '기준 확인 중…' : '판정 제안 받기'}</Button>
       </header>
@@ -182,7 +182,7 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
           {proposal.references.length > 0 && <details><summary>{production ? 'AI가 인용한 공유 확정 사례' : '참고한 확정 기준'} {proposal.references.length}건</summary>{production && <p className="ws-muted">과거 확정 근거를 참고하며 원문은 기존 조회 권한을 따릅니다.</p>}{proposal.references.map(reference => <CaseEvidence key={reference.id} value={reference} report={report} version={version} />)}</details>}
         </div>
         <div className="ws-studio-ai-apply"><small>사용자 판정 저장 시 확정됩니다.</small>{data.can_review && <Button variant="outline" size="sm" disabled={!!busy || !!proposal.stale || aiRunning} onClick={() => { edit(); setConclusion(proposal.conclusion); setReason(proposal.reason); setProposalId(proposal.id); if (proposal.conclusion === 'DEFER') setExceptionEnabled(false) }}><Check size={14} />제안 적용</Button>}</div>
-      </div> : <div className="ws-studio-empty"><Sparkles size={20} /><p>{demo ? '원문을 확인하고 최종 판정과 근거를 작성하세요.' : '아직 판정 제안이 없습니다.'}</p>{!demo && <small>제안을 요청하거나 직접 사용자 판정을 기록하세요.</small>}</div>}
+      </div> : <p className="ws-studio-empty-note">{demo ? '원문을 확인하고 최종 판정과 근거를 작성하세요.' : 'AI 판정을 받거나 직접 사용자 판정을 기록하세요.'}</p>}
     </section>
     {data.can_review ? <form className="ws-human-review ws-studio-human-form" onSubmit={save} aria-label="사용자 판정 기록">
       <div className="ws-studio-form-heading"><h4><UserRound size={16} />사용자 판정</h4><span>최종 확정</span></div>

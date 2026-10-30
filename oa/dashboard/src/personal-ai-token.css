@@ -1,8 +1,4 @@
-.personal-ai-token-dialog { max-width: min(520px, calc(100vw - 32px)); }
-.personal-ai-token-form { display: flex; flex-direction: column; gap: 12px; }
-.personal-ai-token-form label { font-size: 14px; font-weight: 600; }
-.personal-ai-token-form p { font-size: 13px; line-height: 1.65; margin: 0; }
-.personal-ai-token-status { display: flex; flex-direction: column; gap: 6px; padding-block: 8px; font-size: 14px; }
+.personal-ai-token-dialog { max-width: min(640px, calc(100vw - 48px)); }
 .personal-ai-token-issue-link { display: inline-flex; align-items: center; align-self: flex-start; gap: 6px; min-height: 36px; color: var(--accent); font-size: 13px; text-underline-offset: 3px; }
 .personal-ai-token-issue-link:hover { text-decoration: underline; }
 @media (max-width: 640px) {
