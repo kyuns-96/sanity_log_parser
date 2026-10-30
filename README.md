@@ -1,312 +1,180 @@
-# Sanity Reviewer — AI 분류·판정과 사람의 근거 축적
+# Sanity Lens AI
 
-**AI가 report의 로그를 분류하고 그룹별 판정·근거를 제안하며, 사람이 확정한 구성·판정·근거를 다음 AI 판단에 활용하는 시스템입니다.** 가장 중요한 완료 기준은 AI 판단 품질과 사람의 정정이 다음 판단에 반영되는지입니다. 수집·파서·DB·인증·대시보드는 이 순환을 지원합니다.
+**AI 로그 분석 · 판정 지원**
 
-현재 목표·실행 구조·사례 검색·품질 수용 기준은 [AI 판단 설계](AI_DECISION_DESIGN.md)를 먼저 읽습니다. 흐름은 **전체 로그 + 관련 확정 사례 → AI 초기 분류 → 사람 확정 → AI 그룹 판정 → 사람 확정 → DB 사례 축적 → 다음 판단**입니다. 첫 report도 기존 사례 없이 AI가 제안할 수 있어야 합니다.
+Sanity report의 전체 로그를 AI가 분류하고 그룹별 판정과 근거를 제안합니다. 사람이 그룹 구성과 판정을 수정·확정하면 그 근거를 DB에 보존하고, 다음 report의 AI 판단에 참고 사례로 제공합니다. 수집부터 검토까지의 목표는 **이번 판단을 설명하고, 사람의 정정이 다음 판단에 반영되게 하는 것**입니다.
 
-이번 연동은 **사내 OA의 OpenAI 호환 AI API를 우선 사용**합니다. 기존 OA 프로그램이 DB에서 로그·사례를 조회해 모델을 호출하고 결과를 검증·저장하는 구조이며, AI용 HTTP 서버나 새 서버 장비를 필수로 추가하지 않습니다. VWP-bridge와 OA는 **같은 PostgreSQL DB의 4개 테이블로만 통신**합니다. OA의 자기 모델 API 호출은 이 브리지 간 경계와 구분합니다. 공유 폴더가 없는 VWP 사용자 환경에서 bridge로의 제출은 [HTTPS 경로](vwp/HTTPS_SUBMISSION.md)를 사용합니다. 원본은 [VWP 전용 DB에 분할 보관](vwp/DB_ORIGINALS.md)하고 파서 실행 때만 임시 파일로 복원합니다. bridge의 영구 원본/receipt 볼륨은 필요 없습니다. VWP 제출용 토큰은 사용하지 않습니다. 허용된 내부 IP에서 미확인 제출로 받고, OA에 로그인한 현재 블록 OWNER가 범위를 확정해야 보고서를 공개합니다. [현재 설정과 처리 흐름](vwp/HTTPS_SUBMISSION.md)을 따릅니다.
+[AI 판단 설계](AI_DECISION_DESIGN.md) · [모델 연결·실행](oa/AI_RUNTIME.md) · [VWP AI 작업자](vwp_bridge/AI_WORKER.md) · [설치·배포](DEPLOYMENT.md)
 
-**현재 제공 범위:** OA OpenAI 호환 호출·영속 작업·현재 사람 확정 사례 검색·직접 근거 판정 V2와 운영 SSO/V2 검토 연결을 구현했습니다. 운영 진입점은 `/?page=workbench`, API는 `/api/workbench/*`입니다. 첫 순환은 **전체 report 또는 선택 그룹이 설정한 모델 입출력 한도에 들어가는 경우**를 처리합니다. 실제 사내 API·자료의 정확도/성능은 미검증이며, 10,000건·100,000건 이상의 실제 모델 분할·그룹 통합은 COMMON-05 후속입니다. 설정·실행·한계는 [OA AI 실행 안내](oa/AI_RUNTIME.md)를 따릅니다.
+![Sanity Lens AI의 인디고·바이올렛 테마와 프로젝트 현황](docs/images/sanity-lens-ai-demo.png)
 
-서버별 코드는 아래 위치에 있습니다. 각 사내 AI는 자기 `integration/`의 허용 파일만 구현합니다. 실행·의존성·설정 위치는 [소스 구조와 실행 안내](DEPLOYMENT.md)를 따릅니다.
+*현재 UI의 합성 데모 화면입니다. 표시된 사용자·프로젝트·검사 수치는 예시이며, 이 화면에서는 실제 DB·SSO·모델을 호출하지 않습니다.*
 
-| 담당 | 실제 코드 | 회사 연동 구현 |
+## 무엇을 할 수 있나요?
+
+| 기능 | 현재 제공하는 동작 |
+|---|---|
+| AI 로그 분류 | 전체 로그로 초기 그룹·이름·분류 근거를 제안합니다. 사람이 이동·분리·병합·수정한 뒤 분류를 확정합니다. |
+| 그룹별 AI 판정 | 확정 그룹의 전체 근거와 승인된 점검 기준·관련 사례를 비교해 PASS / FAIL / 보류와 이유를 제안합니다. 도구 원본 결과·AI 제안·사람 최종 판정을 각각 보존합니다. |
+| 확정 사례 활용 | 사람이 확정한 분류·판정·정정 이유·조건·예외를 다음 판단에 제공합니다. 프로젝트·블록·버전이 다른 사례도 조건 차이를 비교하며, 과거 원문 열람 권한은 유지합니다. |
+| OA·VWP 모델 관리 | 관리자가 연결과 허용 모델·기본 모델을 등록하고 사용자가 연결·모델을 선택합니다. OA 개인 인증과 VWP 서버 관리형 프로필을 구분합니다. |
+| 대량 입력 처리 | 선택형 배치로 전체 로그·확정 그룹·보존 본문을 모델 예산에 맞춰 나누고 통합합니다. 전체 범위와 근거 검증을 통과한 뒤 최종 제안을 공개합니다. |
+| 작업 현황·복구 | 카드에서 준비·전송·응답·검증 단계, 완료량, 실측 호출 시간·건당 속도를 확인합니다. 안전한 실패의 재시도와 저장된 배치부터의 재개를 제공합니다. |
+| 검토 워크스페이스 | 프로젝트·블록·NET_VER / REVISION·ECO·PoR, 권한별 검토와 변경 이력을 관리합니다. 인디고·바이올렛 테마, 밝은/어두운 모드와 홈으로 돌아가는 브랜드 로고를 제공합니다. |
+| 원본·근거 보존 | HTTPS 제출, 원본의 VWP private DB 보관, item별 파싱, 원문 위치·해시 검증을 연결합니다. 선택형 무손실 압축·근거 페이지·공유 본문 저장을 지원합니다. |
+
+AI 제안은 사람이 확정한 결과와 구분합니다. 과거 사례가 없는 첫 report도 현재 로그와 확인된 기준으로 판단할 수 있어야 하며, 모델 호출 성공만으로 판단 품질 검증을 대신하지 않습니다.
+
+## AI와 사람이 함께 만드는 판단 순환
+
+1. **AI 초기 분류:** 현재 report의 전체 로그와 관련된 유효 확정 사례로 그룹과 분류 근거를 제안합니다.
+2. **사람의 분류 확정:** 구성·이름·이동/분리/병합 이유를 수정하고 확정합니다.
+3. **AI 그룹 판정 → 사람 확정:** 확정 그룹의 근거로 판정을 제안하고, 사람이 채택·정정한 이유와 적용 조건을 기록합니다.
+4. **다음 판단에 활용:** 현재 유효한 사람 확정 사례를 검색해 다음 report에 제공합니다. 미확정 AI 초안을 정답 사례로 사용하지 않습니다.
+
+현재 사례 검색은 단어·한글 n-gram 관련도와 유효성 검사에 기반합니다. 임베딩 기반 의미 검색이나 모델의 재학습을 완료한 것으로 표시하지 않습니다. 설계와 수용 기준은 [AI 판단 설계](AI_DECISION_DESIGN.md)에 있습니다.
+
+## 실행 구조
+
+**AI 작업자 전체는 중앙 VWP에서 실행하고, OA 웹은 인증·작업 등록·현황·사람의 검토를 담당합니다.** 코드의 `oa` 패키지는 작업·권한·결과의 논리적 소유자를 뜻하며, 물리적 AI 실행 서버를 뜻하지 않습니다.
+
+```mermaid
+flowchart LR
+    C["VWP 사용자 · 제출 CLI"] -->|HTTPS 제출| B["중앙 VWP-bridge · 원본 보관·파싱"]
+    B --> D[("기존 PostgreSQL · 네 테이블")]
+    O["OA 웹 · SSO·검토 화면"] -->|작업 요청·사람 확정| D
+    D --> W["VWP AI 작업자 · 입력·사례·배치 준비"]
+    W --> M["선택한 OA / VWP 모델 API"]
+    M --> W
+    W -->|검증된 제안·진행 상태| D
+    D -->|현황·결과 조회| O
+```
+
+VWP-bridge와 OA의 업무 데이터 전달은 기존 PostgreSQL 네 테이블을 사용합니다. 모델 API 호출과 사용자 CLI의 HTTPS 제출은 이 DB 경계와 별도입니다. AI 작업자를 옮기기 위해 새 HTTP 중계 서버·테이블·권한을 추가하지 않습니다.
+
+| 실행 위치 / 역할 | 코드 | 책임 |
 |---|---|---|
-| VWP | [vwp/](vwp/README.md) — 원천 수집 | `vwp/integration/` |
-| VWP-bridge | [vwp_bridge/](vwp_bridge/README.md) — parser·원본 검증·DB 전달·기존 VWP 실행 | `vwp_bridge/integration/` |
-| OA | [oa/](oa/README.md) — 모델 호출·작업·사례 검색·검토·SSO·dashboard | `oa/integration/`의 허용 SSO/source 지점. 모델은 제공된 공통 설정 사용 |
-| 공통 | [common/](common/README.md) — 계약·DB·설정·검증 | 사내 AI 읽기 전용 |
-| 개발 시험 | [devtools/](devtools/README.md), `tools/`, `tests/` | 합성 자료·mock·회귀 |
+| VWP 사용자 환경 | [`vwp/`](vwp/README.md), `bin/sanity` | 완료된 report 수집과 `submit / status / retry`. DB·모델 계정을 사용자에게 배포하지 않습니다. |
+| 중앙 VWP-bridge | [`vwp_bridge/`](vwp_bridge/README.md) | HTTPS 접수, 원본 DB 보관, parser 실행, 전체 근거 검증·전달 |
+| 중앙 VWP AI 작업자 | [`oa/ai_worker.py`](oa/ai_worker.py) | 전체 입력 복원, 사례 검색, 배치 계획, OA/VWP 모델 호출, 결과 검증·저장 |
+| OA 웹·수신기 | [`oa/`](oa/README.md), [`oa/dashboard/`](oa/dashboard/README.md) | SSO·현재 권한, 제출 범위 확정, 작업 등록·조회, 사람 검토·이력 |
+| 공통 계약·DB | [`common/`](common/README.md), [`db/`](db/README.md) | 설정·검증·DB 계약과 승인된 증분 SQL |
+| 개발·합성 검증 | [`devtools/`](devtools/README.md), `tests/`, `tools/` | 독립 mock DB, 합성 report·모델 응답, 회귀·화면 검증 |
 
-사내 Q1 검토의 [분산 수집·PRE/POST 인계 설계](vwp/SOURCE_COLLECTION_DESIGN.md)에 사용자별 REVISION 제출, 여러 원천 루트, 예상 범위 승인, 버전/실행/원문 중복 기준을 정리했습니다. 기존 schema 1 collector와 별도 V2 제출 경로를 제공합니다.
+### 모델 연결과 실패 처리
 
-[현재 HTTPS 안내](vwp/HTTPS_SUBMISSION.md)의 `bin/sanity submit/status/retry`, DB 원본 보관·분할 송수신과 OA OWNER 접수 확정 화면/API를 구현했습니다. **회사 입력/parser·실제 SSO/OWNER 설정·운영 DB/TLS 연결은 사내에서 검증**합니다. 새 모드에는 VWP 제출 토큰이나 인증 SDK·공유 폴더가 필요하지 않습니다. schema 1의 `collect`와 기존 제출 설정은 호환 경로이며 DB 원본 보관은 `db/010_raw_sources.sql`까지 적용합니다.
+- **관리자:** OA 연결에는 전체 모델 URL·같은 모델의 보조 URL·인증 방식·모델 목록·기본 모델·토큰 발급 링크·한도를 설정합니다. Bearer, `x-client-api-key`, 둘을 함께 쓰는 게이트웨이를 지원하며 Bearer 단독 연결에 클라이언트 키는 필요하지 않습니다.
+- **VWP 연결:** 실제 URL·토큰·클라이언트 키·CA는 VWP의 비공개 프로필 파일에 보관합니다. 작업자가 비밀 없는 목록을 게시하면 관리자가 프로필·허용 모델·기본 모델을 선택합니다. 사용자는 허용된 연결과 모델을 고릅니다.
+- **전송:** 모델 API는 HTTP/HTTPS와 지원되는 Chat Completions / Responses 형식을 사용합니다. 추가 클라이언트 식별이 필요한 게이트웨이는 Chat Completions만 지원합니다. HTTPS 인증서·호스트명 검증은 유지하며, 보조 URL은 요청 전 연결 수립 실패에만 사용합니다. 제출 전송과 토큰 발급 URL은 계속 HTTPS입니다.
+- **재시도:** 최초 시도 이후 실패한 호출당 최대 5회 추가 시도합니다. 전송 전 연결 실패, 명확한 HTTP 429/500/502/503/504, 완전히 수신한 응답의 지원되는 형식·검증 오류가 대상입니다. 성공한 배치는 재사용하고 실패한 시도도 전체 호출 한도에 포함합니다.
+- **재개:** 조건을 충족한 실패나 호출 중이 아닌 취소는 원래 요청자가 최대 5회 재개할 수 있습니다. 배치는 완료한 저장 지점부터, 단일 호출은 전체 입력으로 다시 실행합니다. 현재 권한·입력·설정·사례를 재검증하고 전체 호출 예산을 유지합니다. 생성 중인 토큰부터 이어 쓰지는 않으며, `UNKNOWN`과 `AI_BATCH_LIMIT`은 재개하지 않습니다.
+- **진행률:** 배치의 현재 단계/라운드를 기준으로 표시합니다. 완료 호출이 2회 이상 쌓였을 때만 해당 단계의 예상 종료 시간을 계산하며, 작업자 응답 없음·조회 실패·재시도 대기에는 ETA를 숨깁니다. 전체 작업의 종료 시간을 보장하지 않습니다.
 
-AI와 사람이 함께 만드는 분류 루프, 대량 report 처리, 그룹별 evidence 추가의 **확장 설계**는
-[요구사항 14절](requirement.md#ai-clustering)에 정리했습니다. 알려진 두 report 형식에 대해 AI 규칙 제안·전체 시험·사람 확정 루프를 구현했습니다.
-실제 사내 AI/DB 연결과 새 report 형식·의미 기반 후보 검색은 아직 검증/확장 대상입니다.
+정확한 설정·제한은 [AI 실행 계약](oa/AI_RUNTIME.md), [배치 처리 계약](oa/BATCHED_CLUSTERING.md), [VWP 작업자·프로필·복구 안내](vwp_bridge/AI_WORKER.md)를 따릅니다.
 
-프로젝트 등록·SSO 사용자 연결·담당 권한·블록별 NET_VER/REVISION·ECO·PoR의 최신 기준은
-[요구사항 15절](requirement.md#dashboard-domain-spec)에 정리했습니다. PoR은 각 블록 담당자가 지정합니다.
-기존 데모와 별도로 **`/workspace`에서 로그인·프로젝트·블록·버전·검사·PoR을 서버에 연결**했습니다.
-10개 테스트 계정의 범위를 서버에서 검사하고 PoR·변경 이력을 PostgreSQL에 저장합니다. 새로고침/다른 계정 조회/서버 재시작에도 유지됩니다.
-검사별 사용자 판정·사유·재사용 조건과 제안을 따로 저장합니다. 원본 FAIL에 사용자 PASS를 기록할 수 있고,
-확정한 조건을 다음 보고서의 제안에 재사용합니다. 이 독립 합성 환경의 일반 제안은 조건 적용 엔진이며 운영 OA AI 경로와 구분합니다.
-별도 [Codex 합성 mock 시험](oa/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)은 `gpt-6-luna`를 실제 호출해 AI 초기 분류 → 사람 수정·DB 확정 → 다음 AI 입력의 사례 활용을 검증합니다. 명시적으로 활성화한 합성 workspace의 **AI로 그룹 만들기** 버튼에서도 호출할 수 있으며 일반 회귀 테스트는 외부 모델을 호출하지 않습니다.
-sanity item의 **검토 시작**에서는 단일 report의 평균 10,000건·100,000건 이상 로그를 1단계 분류·확정 후 2단계 그룹별 판정으로 검토합니다.
-그룹/원문은 페이지로 조회하며 분류 작업은 저장한 위치에서 이어갈 수 있습니다. 분류 확정 전에 판정을 시작할 수 없습니다.
-확정 분류 사례와 그룹 판정 근거를 각각 재사용하고, 재분류된 그룹의 이전 판정은 재검토 대상으로 남깁니다.
-[워크스페이스 실행 안내](oa/WORKSPACE.md)를 따릅니다. 운영 화면은 같은 검토 흐름에 SSO의 현재 프로젝트/블록 권한을 적용합니다. 합성 환경의 대량 참고 엔진 검증은 OA 모델의 대량 처리 검증을 대신하지 않으며 실제 회사 SDK·원천·DB 배포는 사내 검증 대상입니다.
+## 빠르게 화면 보기
 
-SSO의 인증 검증·내부 사용자 연결은 교체 가능한 추상 인터페이스로 분리했습니다.
-사내 AI는 먼저 [내부 AI 작업 범위](INTERNAL_AI_GUIDE.md)와 [AGENTS.md](AGENTS.md)를 읽습니다.
-[사내 AI 통합 인계 명세](INTERNAL_AI_HANDOFF.md)에 작업별 선행 정보·허용 파일/메서드·입출력·수용 기준·실행 명령·Codex 후속 연결과 복사 가능한 시작 지시문을 정리했습니다.
-사내 개발 AI 세 명에게는 [VWP 원천 입력 지시문](vwp/INTERNAL_AI_TASK.md), [VWP-bridge parser·원천 전달 지시문](vwp_bridge/INTERNAL_AI_TASK.md), [OA 사용자 연결·모델 연동 준비 지시문](oa/INTERNAL_AI_TASK.md)을 각각 전달합니다. 각 문서 마지막에 복사할 시작 명령이 있습니다.
-DB 설정 키·모드별 권한·서버별 확인 명령·비공개 접속 인계 양식은 [DB 연결 인계](db/CONNECTION_HANDOFF.md)에 있습니다. VWP 원천 수집에는 DB 계정이 없고, 두 bridge만 기본적으로 별도 제한 로그인을 사용합니다. 별도 계정이 없는 환경에는 명시적 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`의 [단일 계정 모드](db/CONNECTION_HANDOFF.md#31-단일-계정-모드)를 제공합니다. 단일 모드는 DB의 private/큐 컬럼 격리를 제공하지 않습니다.
-코드는 서버별로 **`vwp/`·`vwp_bridge/`·`oa/`**, 공통 계약은 **`common/`**, 합성 시험은 **`devtools/`**에 분리했습니다. 각 서버는 Git 저장소 루트에서 자기 모듈만 실행합니다. [서버별 코드·실행 안내](DEPLOYMENT.md)에 디렉터리 책임·의존성·실행 명령·설정 위치를 정리했습니다.
+회사 DB·SSO·모델 없이 합성 화면을 확인할 수 있습니다. Node.js는 [`oa/dashboard/.nvmrc`](oa/dashboard/.nvmrc)의 **20.18.0**을 기준으로 하며, 의존성은 lockfile로 고정합니다.
 
-GCA·VC LP·SpyGlass의 공개 문서를 참고한 **초기 추출 파서와 1,000개 합성 데이터 대시보드**도 제공합니다.
-가상 이용자 10명·프로젝트 3개·블록 9개를 구성하고, 독립 mock PostgreSQL에서 실제 수집/파싱/수신/저장을 검증한
-읽기 전용 스냅샷을 `/?demo=1&dataset=reports`에서 확인합니다. 생성·실행 방법과 사내 AI의 후속 구현 범위는
-[공개 report 형식 인계](vwp_bridge/integration/PUBLIC_REPORT_FORMATS.md)에 정리했습니다. native 현행 버전의 완료/정확성 검증과 구분합니다.
+```bash
+npm --prefix oa/dashboard ci
+npm --prefix oa/dashboard run dev
+```
 
-사용자가 **psycopg2로 PostgreSQL 직접 접속 가능**함을 확인했습니다. 기본 접근 모드는 postgresql입니다.
-실제 호스트·DB 이름·계정·비밀번호는 각 서버의 비공개 `.env`/환경변수에서 설정합니다.
-이전 DBaaS HTTP는 임시 읽기 전용으로만 유지하며, 명시적으로 선택하면 저장은 차단합니다.
-SQLite, 브리지 간 직접 HTTP/RPC·파일 전달, 로컬 DB fallback은 없습니다.
-대시보드의 OA 로컬 API 접속과 공통 DBaaS API는 브리지 간 직접 통신과 구분합니다.
+브라우저에서 **http://127.0.0.1:5173/?demo=1** 에 접속합니다. 데모의 변경은 탭 메모리에만 보관하고 새로고침하면 초기화합니다. 별도의 API 서버나 모델 인증값은 필요하지 않습니다. 운영 접속 오류를 데모로 자동 대체하지 않습니다.
 
-## 1. 설치와 DB 준비
+운영 SSO 화면은 `/?page=workbench`, 업무 API는 `/api/workbench/*`입니다. `/workspace`는 [별도로 실행하는 합성 검증 앱](oa/WORKSPACE.md)이며 운영에 자동 마운트하지 않습니다. 기존 번들 검토·CLI와 합성 자료 예시는 [화면 안내](oa/dashboard/README.md)와 [개발 도구](devtools/README.md)를 참고하세요.
 
-Python 3.10 이상, PostgreSQL 12.1 이상·UTF-8을 전제로 합니다. DB 실검증 버전은 12.1과 16.15이며,
-포털 적용·검증 방법은 [DB 안내](db/README.md)를 따릅니다. 프런트엔드 의존성은
-oa/dashboard/package-lock.json에 고정되어 있습니다. 현재 Vite의 Node.js 조건은
-20.19 이상인 20.x 또는 22.12 이상입니다.
+## 설치와 사내 배포
+
+Python **3.10 이상**, PostgreSQL **12.1 이상·UTF-8**을 전제로 합니다. Node.js는 화면 빌드·개발에 사용합니다. PostgreSQL 18의 알려진 호환 문제는 아래 검증 상태를 확인하세요.
+
+### 1. 의존성과 비공개 설정 준비
+
+아래는 전체 개발·검증 환경의 설치 예입니다. 서버 배포에서는 [역할별 의존성](DEPLOYMENT.md)을 사용합니다.
 
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 ```
 
-테이블은 기존 form으로 신청한 상태입니다. 신청 원본은 유지하고 이후 변경은 별도 SQL로 적용합니다.
-자세한 순서는 [DB 안내](db/README.md)를 따릅니다.
+설정 예제는 [OA](oa/.env.example), [VWP-bridge](vwp_bridge/.env.example), [VWP AI 작업자](vwp_bridge/ai-worker.env.example)에 있습니다. 실제 설정은 **각 서버의 저장소 루트 `.env` 또는 프로세스 환경**에 두며, 예제 디렉터리 안의 `.env`는 자동으로 읽지 않습니다. 실제 접속 정보·토큰·인증서·회사 report는 Git이나 `VITE_*`에 넣지 않습니다.
+
+기본 DB 모드는 `SANITY_DB_ACCESS=postgresql`이며 psycopg2로 직접 접속합니다. 제한 계정을 분리하는 기본 계약과 별도로, 사용자가 확인한 공유 계정을 활용하는 VWP AI 작업자 배포 구성에는 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`를 명시합니다. 공유 계정 모드는 OA/VWP 간 DB 권한 격리를 제공하지 않습니다. TLS·DSN 우선순위·권한은 [DB 연결 인계](db/CONNECTION_HANDOFF.md)를 따릅니다.
+
+### 2. 기존 DB의 적용 상태 확인
 
 | 테이블 | 역할 |
 |---|---|
-| sanity_vwp_data | PASS 포함 전체 근거와 봉인된 분석 |
-| sanity_oa_data | 수신본·전체 검토 단위·검토 개정·불변 보고서 |
-| sanity_vwp_to_oa | 분석 번들·추가 근거 응답·분류 결과 조각 |
-| sanity_oa_to_vwp | 추가 근거·AI 분류 요청 |
+| `sanity_vwp_data` | VWP 원본·파싱 근거·분석 |
+| `sanity_oa_data` | 수신·작업·검토·확정 사례·변경 이력 |
+| `sanity_vwp_to_oa` | 분석·전체 근거·응답 전달 |
+| `sanity_oa_to_vwp` | 요청·수신 응답 전달 |
 
-**신청한 form으로 생성 → db/002_indexes.sql → 역할 준비 → db/003_grants.sql → db/004_clustering.sql**.
-GUI에는 컬럼 정의 전체만 넣고 CREATE TABLE이나 바깥 괄호를 붙이지 않습니다.
-이미 `002`·`003`까지 완료했다면 [004_clustering.sql](db/004_clustering.sql)만 적용합니다.
-완료한 단계를 반복하거나 테이블을 재신청·재생성하지 않습니다. `004`는 기존 행을 보존하는 증분 변경이며,
-owner/DBA가 작업을 중지한 점검 시간에 파일 전체를 한 번 실행합니다.
-앱은 DDL이나 자동 테이블 생성을 하지 않습니다.
+최초 신청 form과 증분 SQL을 구분하고, **이미 적용한 SQL이나 테이블 생성을 반복하지 않습니다.** HTTPS 제출·DB 원본 보관은 010까지의 관련 계약을 사용하며, 011~013은 무손실 압축·근거 페이지·공유 본문 저장의 선택형 변경입니다. 호환 코드 선배포와 DBA의 적용 검토가 필요하며 앱이 DDL·기존 데이터 변환을 자동 실행하지 않습니다.
 
-각 서버는 [서버별 코드·실행 안내](DEPLOYMENT.md)에 따라 자기 역할의 `requirements.txt`를 설치하고 자기 진입점만 실행합니다. `common/`은 공유 계약이며 서버 앱을 import하지 않습니다. 기본 모드에서 VWP-bridge/OA는 별도 제한 로그인과 각각 `sanity_vwp_app`/`sanity_oa_app` 역할을 사용합니다. 단일 모드는 위 별도 계약을 따릅니다. 모델 자격증명은 해당 모델을 호출하는 서버의 비공개 설정에만 두며, OA 모델 설정 키와 별도 작업자 실행은 [OA AI 실행 안내](oa/AI_RUNTIME.md)를 따릅니다. 두 모드 모두 owner·superuser 등 금지 권한을 검사합니다.
+실제 순서와 설치 상태 확인은 [DB 안내](db/README.md)와 [읽기 전용 설치 점검](db/INSTALLATION_CHECKS.md)을 따릅니다. 모델·작업자 업데이트 자체에는 새 migration이 필요하지 않습니다.
 
-## 2. 비공개 PostgreSQL 접속 설정
-
-VWP-bridge는 [자기 설정 예제](vwp_bridge/.env.example), OA는 [자기 설정 예제](oa/.env.example)의 키를 각 서버의 **저장소 루트 private `.env`**에 설정합니다. `vwp_bridge/.env`, `oa/.env`, `common/.env`는 자동으로 읽지 않습니다. `.env`·실제 접속 문서 `dbaccess.md`는 Git 제외 대상이며 실행 계정만 읽도록 관리합니다. 공개 저장소에는 [접속 인계 예시](dbaccess.example.md)만 남깁니다. 브라우저나 `VITE_*`에는 비밀값을 넣지 않습니다.
-
-- `SANITY_DB_ACCESS=postgresql`: 기본값. 드라이버는 `psycopg2`입니다.
-- `SANITY_DB_ALLOW_SINGLE_ACCOUNT=false`: 기본 제한 모드. 정확한 `true`만 공유 로그인 모드이며 빈 값·`yes`·`1` 등은 오류입니다.
-- `SANITY_DB_HOST`, `SANITY_DB_NAME`: 같은 DB 서버와 DB 이름. DB 이름과 스키마는 다릅니다.
-- `SANITY_DB_PORT`: 실제 발급된 포트, 생략 시 5432.
-- `SANITY_DB_USER_NAME`, `SANITY_DB_PASSWORD`: **해당 환경의 제한된 계정**. VWP/OA 각 서버의 `.env`에 서로 다른 값을 둡니다.
-- `SANITY_DB_SCHEMA`: 기본 public, 실제 테이블 스키마로 맞춥니다.
-- `SANITY_DB_SSLMODE`: 기본 verify-full. DBA의 TLS 정책과 서버 인증서 호스트 이름을 확인합니다.
-- `SANITY_DB_SSLROOTCERT`: 필요하면 신뢰할 CA 파일의 절대 경로. TLS 실패 시 자동으로 검증 수준을 낮추지 않습니다.
-
-환경변수가 `.env`보다 우선하며 변수 보간은 하지 않습니다. 비밀번호는 드라이버의 별도 인자로 전달합니다.
-값에 `#`·공백 등이 있으면 `.env` 문법에 맞춰 인용합니다. 실제 값을 명령행에 넣지 않습니다.
-기존의 비어 있지 않은 `SANITY_VWP_DSN`/`SANITY_OA_DSN`이 있으면 **해당 side의 DSN이 위 연결 필드보다 우선**합니다.
-필드 방식으로 바꾸려면 기존 DSN을 제거하거나 비웁니다. 실패 시 다른 계정/방식으로 자동 재접속하지 않습니다.
-기존 `.env`에 `SANITY_DB_ACCESS=dbaas_http`가 있으면 직접 `postgresql`로 변경해야 합니다.
-
-테이블·인덱스·역할 준비 후 각 서버에서 읽기 전용으로 연결과 권한을 확인합니다.
+### 3. 화면과 작업자 실행
 
 ```bash
-# VWP 서버
-.venv/bin/python -m common.sanity_db check --side vwp
-# OA 서버
-.venv/bin/python -m common.sanity_db check --side oa
+# OA: 화면 빌드 후, 회사 SSO 어댑터·권한 설정이 준비된 환경에서 실행
+npm --prefix oa/dashboard ci
+npm --prefix oa/dashboard run build
+.venv/bin/python -m oa.sso_app
 ```
 
-이 명령은 데이터나 DDL을 쓰지 않습니다. 접속 가능해도 기존 권한/스키마 계약과 다르면 실패합니다.
-사내 DB의 실제 역할·잠금·트랜잭션·TLS·DDL 적용 경로는 현장에서 검증해야 합니다.
-방화벽은 VWP/OA 실행 서버 → DB 실제 호스트·포트 연결이 필요합니다. DB가 브리지로 새 연결을 열지는 않습니다.
-
-기존 `python -m common.sanity_dbaas check --resources`는 임시 HTTP 읽기 확인용으로 남습니다.
-별도 `DBAAS_BASE_URL`, `DBAAS_TOKEN`, `DBAAS_CA_PATH`를 사용하며 PostgreSQL 연결에는 필요하지 않습니다.
-`dbaas_http` 모드의 저장은 `DBAAS_SQL_CONTRACT_REQUIRED`로 중단하고 직접 접속으로 우회하지 않습니다.
-
-## 3. 로컬 대시보드 실행
-
-private .env에 SANITY_DASHBOARD_TOKEN(최소 32자 무작위 값)과
-SANITY_DASHBOARD_REVIEWER(서버가 고정할 검토자 이름)를 설정합니다.
-로그인 토큰은 브라우저 메모리에만 유지하며 localStorage·URL·로그에 저장하지 않습니다.
+직접 실행은 loopback의 `http://127.0.0.1:8000`을 사용합니다. 사내 Nginx 뒤의 OA 배포는 [CI/CD Docker 안내](docker/README.md), 제출·파싱·OA 수신기는 [HTTPS 제출 실행 안내](vwp/HTTPS_SUBMISSION.md)를 따릅니다. SSO·OWNER·회사 parser의 미구현 보호 상태는 유지합니다.
 
 ```bash
-cd oa/dashboard
-npm ci
-npm run build
-cd ../..
-.venv/bin/python oa/dashboard_api.py
+# 중앙 VWP: 같은 릴리스·DB·승인 기준과 필요한 인증 설정을 준비한 뒤 별도 실행
+.venv/bin/python -m oa.ai_worker --site vwp --interval 2
 ```
 
-브라우저에서 http://127.0.0.1:8000 에 접속합니다. 빌드된 dist와 API가 같은 origin으로 제공됩니다.
-단일 사용자 로컬 prototype이므로 **외부 bind를 하지 않습니다**.
-이 명령은 local_token 방식의 로컬 검증용입니다. 운영 SSO·현재 권한 검사는 별도 `oa.sso_app` 진입점을 사용합니다. 서버 검토자 이름은 UI에서 바꿀 수 없습니다.
+OA 개인 토큰을 처리한다면 웹과 작업자에 같은 암호화 키를 안전하게 주입합니다. VWP 모델은 `SANITY_VWP_AI_PROFILES_FILE`의 비공개 프로필과 허용 사용자 설정을 사용합니다. 직접 실행에서 OA 모델만 사용하면 VWP 프로필은 선택 사항이지만, 제공된 Compose 구성은 빈 목록이라도 올바른 프로필 파일이 필요합니다.
 
-프런트엔드 개발 시 Python API를 실행한 상태에서 별도 터미널로 다음을 실행합니다.
+기존 OA AI 작업자를 전환할 때는 진행 중 호출과 저장 상태를 확인하고 같은 버전으로 교체합니다. `oa.main work`, 제출·파싱·수신기는 별도 프로세스입니다. 전용 컨테이너·프로필 권한·전환·복구 절차는 [VWP AI 작업자 배포 안내](vwp_bridge/AI_WORKER.md)에 있습니다.
+
+## 검증과 현재 확인 범위
+
+일상 수정은 관련 전용 테스트와 기본 **`quick`** 프로필로 확인합니다. `full`은 전체 회귀·포털 전체 단계·10만 건 검사가 필요한 경우에 실행합니다.
 
 ```bash
-cd oa/dashboard
-npm run dev
-```
+# 선택 대상 확인 / 기본 회귀
+.venv/bin/python run_tests.py --profile quick --list
+.venv/bin/python run_tests.py --profile quick
 
-개발 주소는 http://127.0.0.1:5173 이고 /api는 8000으로 proxy합니다.
-임시 DBaaS 모드를 명시적으로 선택한 경우에만 세션에 읽기 전용 안내가 표시되며 업무 DB 작업은 차단합니다.
-UI demo는 사용자가 명시적으로 선택하는 합성 메모리 상태이며 새로고침하면 초기화됩니다.
-`/?demo=1`과 `/workspace?demo=1`은 최신 워크스페이스 UI에서 프로젝트·버전·PoR·로그 분류·그룹 판정을 체험합니다.
-이전 번들 검토 대장은 `/?demo=1&flow=legacy`에서 확인합니다. [데모 사용법](oa/dashboard/README.md)을 참고하세요.
-접속 오류를 demo로 자동 대체하지 않으며 demo 검토는 DB에 저장되지 않습니다.
+# 별도의 새 로컬 PostgreSQL + 합성 입력·모의 AI 응답으로 통합 검증
+.venv/bin/python db/tests/run_mock.py --profile quick
 
-## 4. PostgreSQL 분석·수신 실행
-
-2절에 따라 VWP/OA 각각의 비공개 `.env`를 설정합니다. 두 환경은 같은 DB·스키마를
-기본적으로 서로 다른 제한 로그인으로 사용하며 명시적 단일 계정 모드는 위 별도 계약을 따릅니다. HTTP URL·Bearer 토큰은 PostgreSQL 접속 정보가 아닙니다.
-
-비밀번호는 CLI 인자·소스·결과물에 넣지 않고 승인된 libpq/TLS 설정을 사용합니다.
-SANITY_TEST_ADMIN_DSN은 테스트에만 사용하며 실제 앱 환경에 설정하지 않습니다.
-
-```bash
-.venv/bin/python vwp/main.py collect --plan plan.json --reports /path/to/reports --out /tmp/sanity-source
-.venv/bin/python vwp_bridge/main.py analyze --input /tmp/sanity-source/run.json --out /tmp/sanity-receipt
-.venv/bin/python oa/main.py receive --message-id BUNDLE_ID --brief
-.venv/bin/python oa/main.py status --bundle-id BUNDLE_ID --brief
-.venv/bin/python oa/main.py report --bundle-id BUNDLE_ID --out review.md
-```
-
-BUNDLE_ID는 분석 결과의 실제 ID입니다. VWP의 --out은 로컬 접수증일 뿐 전송 경로가 아닙니다.
-OA 대시보드에서도 다음 메시지 한 건을 수동 수신할 수 있습니다. NO_MESSAGE는 대기 작업이 없거나
-다른 작업자가 처리 중이라는 뜻입니다. 수신은 사람 검토를 승인하지 않습니다.
-
-## 5. 사람 검토와 추가 근거
-
-대시보드는 모든 예상 단위를 보여주고 페이지별로 단위·그룹·요청을 조회합니다.
-최근 50개 검토 개정과 전체 개정 수를 표시합니다. 모든 판정은 PASS/FAIL·사유·요청 UUID와
-expected_revision을 보내며 개정이 바뀌면 최신 상태 확인이 필요합니다.
-blocker 면제와 알려진 FAIL→PASS는 금지합니다. review=COMPLETE와 check=PASS는 별도 상태입니다.
-이 절은 legacy bundle/CLI 검토 계약입니다. 운영 `/api/workbench`의 그룹 판정과 독립 `/workspace`의 사용자 판정은 원본 FAIL에 PASS를 저장할 수 있으며 원본 결과를 보존합니다.
-새 번들은 기존 승인을 상속하지 않으며 A→B→A도 서로 다른 개정으로 남습니다.
-보고서 다운로드는 저장된 현재 개정의 불변 바이트를 검증해서 제공합니다.
-
-운영 CLI의 검토자 인자는 로컬 수동 작업용이며 대시보드의 서버 인증을 대체하지 않습니다.
-같은 요청 재시도에는 같은 UUID, 새 판단에는 새 UUID를 사용합니다.
-
-```bash
-.venv/bin/python oa/main.py review --bundle-id BUNDLE_ID --unit-id u-numeric --request-id REQUEST_UUID --reviewer NAME --conclusion FAIL --reason '전체 판정과 근거 확인' --brief
-.venv/bin/python oa/main.py request-evidence --bundle-id BUNDLE_ID --unit-id u-numeric --record-id RECORD_ID --request-id REQUEST_UUID --reason '원문 추가 확인'
-.venv/bin/python vwp_bridge/main.py respond --request-id REQUEST_UUID
-.venv/bin/python oa/main.py receive-evidence --request-id REQUEST_UUID --out evidence.json
-```
-
-근거 요청은 단위별 record ID 1~100개, TTL 기본 3,600초·최대 24시간입니다.
-DB 요청만 전달하며 VWP 작업자가 범위·유효 기간·봉인·원문 해시를 검증하고 일반 report를 응답합니다.
-요청별 수동 반출 승인은 필요 없고 `--reject`로 명시적 거부는 가능합니다. `--approve-export`는 호환용 선택 옵션입니다.
-자격증명은 원문 응답에서 마스킹하며 원본/전송본 해시와 마스킹 여부를 보존합니다.
-목록은 4,000자 미리보기, 상세는 8,000자씩 페이지 조회합니다. 원문은 VWP에 그대로 남습니다.
-FULFILLED/REJECTED/EXPIRED는 최종 결과이고 일부만 성공으로 내보내지 않습니다.
-근거 수신이 기존 판정을 자동 변경하지 않습니다.
-
-폐지된 publish 명령은 --simulate와 --dry-run을 포함해 항상 JIRA_DISABLED로 실패합니다.
---jira-context는 지원하지 않습니다. Jira 작업이나 로컬 게시 시뮬레이터를 만들지 않습니다.
-
-## 6. VWP AI 분류 루프
-
-이 절은 **현재 legacy VWP 실행의 설정·명령**입니다. 이번 우선 연동인 OA 모델 호출·사례 검색·직접 근거 판정은 [OA AI 실행 안내](oa/AI_RUNTIME.md)를 따릅니다. 아래 legacy 키·worker와 별도로 실행합니다.
-
-VWP의 비공개 `.env`에 다음 변수를 설정합니다. 실제 값은 저장소에 올리지 않습니다.
-
-```dotenv
-SANITY_AI_MODE=api
-SANITY_AI_URL=https://your-internal-host/v1/chat/completions
-SANITY_AI_TOKEN=YOUR_PRIVATE_TOKEN
-SANITY_AI_MODEL=YOUR_INTERNAL_MODEL
-SANITY_AI_API=chat_completions
-SANITY_AI_JSON_MODE=off
-SANITY_AI_TIMEOUT=120
-```
-
-URL은 전체 HTTP 또는 HTTPS 모델 엔드포인트입니다. Responses 서버는 URL과 `SANITY_AI_API=responses`를 함께 설정합니다.
-JSON object 모드 지원을 확인한 경우에만 `SANITY_AI_JSON_MODE=on`을 사용합니다.
-사내 PEM CA가 필요하면 `SANITY_AI_CA_PATH`에 절대 경로를 지정합니다. TLS 검증을 끄지 않습니다.
-CLI는 `SANITY_AI_MODE=cli`와 절대 실행 파일 경로를 포함한 `SANITY_AI_ARGV` JSON 배열로 명시적으로 선택합니다.
-API 실패 시 CLI·다른 모델·합성 응답으로 우회하지 않습니다.
-
-각 환경에서 별도 프로세스로 작업자를 실행합니다. 브라우저를 열어도 작업자가 자동 기동되지는 않습니다.
-
-```bash
-# VWP에서: 분류 요청 + 일반 원문 요청 처리
-.venv/bin/python vwp_bridge/main.py work --interval 2
-# OA에서: 분류 결과 조각 수신 (화면의 수동 수신으로 대체 가능)
-.venv/bin/python oa/main.py work --interval 2
-```
-
-`--once`는 한 번만 처리합니다. OA 작업자는 최초 분석 번들/원문 응답을 자동 수신하지 않으므로 기존 화면의 수신 버튼을 사용합니다.
-
-1. 분석 번들을 수신한 뒤 **AI 분류** 탭에서 item과 자연어 요청을 선택합니다.
-2. VWP는 최대 64건의 표본으로 선언형 identity 규칙을 제안하고 **전체 기록**에 적용합니다. 규칙만 시험하는 모드도 있습니다.
-3. 결과 수신 후 미분류·그룹 소속 변경·모든 FAIL 연관 후보·표본/출처를 확인합니다. 원문은 ‘추가 근거’에서 조회합니다.
-4. 사유를 기록하고 **제안 적용 → 후보별 판단 → 분류 확정 → 규칙 재사용 저장**을 각각 수행합니다.
-5. 피드백으로 다시 요청하면 새 작업/개정을 만들고 과거 결과는 보존합니다. sanity PASS/FAIL 검토는 기존 대장에서 별도로 합니다.
-
-같은 scope의 확정 규칙은 다음 run에 재사용합니다. 후보 비교는 현재 정확한 필드 대조이며 확률·공통 원인을 추론한 결과가 아닙니다.
-기존 FAIL 기록을 포함하는 확정 그룹을 후보 대상으로 삼고, 한 scope의 비교 그룹이 100개를 넘으면 `CATALOG_LIMIT`로 명시적으로 중단합니다.
-이 legacy 경로의 AI 표본 수와 전체 적용 건수는 별도입니다. 새 파서 자동 생성·의미 기반 검색·대규모 성능 보증은 후속 범위입니다. 임의 구성원 이동/병합·분리 UI는 별도 workbench에서 제공합니다.
-
-## 7. 합성 demo와 검증
-
-사내 DB 없이 **새 로컬 mock DB를 생성하고 빠른 기본 검사**를 하려면 다음을 실행합니다.
-Linux/Unix와 PostgreSQL 12.1 이상 서버 바이너리(`initdb`, `pg_ctl`, `postgres`), Python 의존성이 필요합니다.
-바이너리 경로가 PATH에 없으면 `--pg-bin /path/to/postgresql/bin`을 추가합니다. 자동 다운로드/설치는 하지 않습니다.
-
-```bash
-.venv/bin/python db/tests/run_mock.py
-# 전체 회귀·포털 전체 단계·10만 건 검사는 필요할 때 별도로 실행
+# 필요할 때 전체 검증 (기존 DB나 회사 자료를 사용하지 않음)
 .venv/bin/python db/tests/run_mock.py --profile full
 ```
 
-이 mock은 SQLite/가짜 SQL 응답이 아니라 **실제 PostgreSQL 엔진 + 합성 report + 모의 AI 응답**입니다.
-매번 별도 `/tmp/sanity-mock-pg-*`에 새 DB를 만들고, TCP 수신 없이 전용 로컬 소켓·SCRAM 인증을 사용합니다.
-VWP/OA 로그인은 서로 다르며 임시 비밀번호를 자동 생성합니다. root 실행 시 PostgreSQL만 `nobody`로 실행합니다.
-코드/SQL만 임시 폴더에 복사하고 접속 관련 환경변수를 제거하므로 원래 `.env`·사내 접속 문서·실제 report는 사용하지 않습니다.
-기존 form → `002`~`009` → SQL smoke → 양쪽 접속/권한 검사는 모든 프로필에서 수행합니다.
-기본 `quick`은 인증·파서·권한·핵심 분류/판정 회귀, complete CLI demo 하나,
-100건/10그룹 파싱·저장 검사를 실행합니다. `full`은 기존 전체 테스트와 포털 전체 단계 반복 검증,
-10,000/100,000건 보고서·그룹 사례, 4종 CLI demo, 10,000건/100그룹 규모 검사를 포함합니다.
-선택한 프로필과 실제 실행 건수를 stdout·`tests.json`·`summary.json`에 기록합니다.
-`quick` 성공은 선택한 기본 검사의 성공이며 전체 검증 성공을 뜻하지 않습니다.
-`--rows`, `--groups`는 마지막 파싱·저장 검사 규모만 조정하며 기존 대용량 테스트의 입력·기대값은 바꾸지 않습니다.
-모의 AI는 분류 회귀 테스트에서만 사용합니다. 파싱·저장 규모 검사는 AI 품질 검증이 아닙니다.
-정상 완료와 일반 오류 시 DB 프로세스를 종료하고 결과 경로를 출력합니다. `summary.json`, `tests.json`,
-`tests.log`, `scale.json`, demo별 보고서와 정지된 DB는 조사할 수 있도록 남기며 자동 삭제하지 않습니다.
-강제 종료/전원 차단 시에는 자동 정지를 보장하지 않습니다. 이 도구는 운영 DB 접속 실패 시의 자동 대체 경로가 아닙니다.
+mock 실행에는 로컬 PostgreSQL 서버 바이너리(`initdb`, `pg_ctl`, `postgres`)가 필요합니다. PATH에 없으면 `--pg-bin /path/to/postgresql/bin`을 지정합니다. 독립 DB를 만들며 사내 `.env`·접속 정보·실제 report는 읽지 않습니다. 일반 회귀는 외부 모델을 호출하지 않습니다. 별도로 명시하는 [실제 모델 합성 시험](oa/WORKSPACE.md)은 일반 회귀와 구분합니다. DB 테스트의 skip이나 `quick` 통과를 전수·운영 검증 성공으로 표시하지 않습니다.
 
-CLI demo는 준비된 별도 테스트 DB와 양쪽 제한된 앱 DSN이 필요하며 UI 메모리 demo와 다릅니다.
+**2026-10-30 기준 최근 검증:** 프런트엔드 빌드와 화면·테마 전용 79건은 통과했습니다. `quick`은 **497건 실행, 490건 통과, 기존 실패 5건·오류 2건**이며 전체 성공 상태가 아닙니다. 이는 이전 기능 변경의 검증 기록이며, 이번 README 수정에서 애플리케이션 테스트를 재실행한 결과는 아닙니다.
 
-```bash
-.venv/bin/python devtools/demo.py --out demo-output-postgresql
-.venv/bin/python devtools/demo.py --scenario missing --out demo-output-postgresql-missing
-.venv/bin/python run_tests.py
-# 별도 sanity_test_* DB의 admin/VWP/OA DSN과 postgresql 모드를 설정한 뒤
-.venv/bin/python run_tests.py --require-db
-# 전체 검사 또는 실행 대상 확인(목록만 출력)
-.venv/bin/python run_tests.py --profile full --require-db
-.venv/bin/python run_tests.py --profile full --list
-```
+- **PostgreSQL 18:** 포털 카탈로그 비교 5건의 기존 호환 문제가 미해결입니다.
+- **Termux:** 실제 하드링크 생성과 root 소유 설정 파일이 필요한 기존 보안 테스트 2건은 사내 독립 Linux 실환경 검증 대기입니다. [`tests/test_submission_files.py`](tests/test_submission_files.py)의 로컬 합성 stat/소유권 검증 통과는 실제 하드링크·소유권 검증 완료를 뜻하지 않습니다. 보안 검사·기대값은 유지합니다.
+- **사내 확인 대상:** 실제 report parser·SSO/OWNER·운영 DB/TLS·VWP 작업자 배포·컨테이너 실행·모델 API 호환성 및 판단 품질·속도·대량 처리 한도는 현장 검증이 필요합니다. 합성 데이터의 저장 규모나 모델 응답 mock만으로 운영 성능을 보장하지 않습니다.
 
-CLI demo는 complete/missing/malformed/unsupported를 지원합니다.
-새 complete 실행은 expected=3, approved_na=1, unresolved=2, review=INCOMPLETE, check=FAIL입니다.
-동일 DB의 동일 번들은 기존 검토 이력을 유지합니다. AI는 NOT_CONFIGURED입니다.
-테스트는 자신이 만든 임시 스키마만 정리하며 운영 DB를 초기화하지 않습니다.
-DB 테스트 skip은 통합 검증 성공이 아니고 --require-db는 조건 누락 시 실패합니다.
-UI 검증 명령과 실제 실행 결과는 [OA 안내](oa/README.md)와 [REVIEW.md](REVIEW.md)를 확인합니다.
+세부 검증 원칙은 [AGENTS.md](AGENTS.md), 테스트 방법과 누적 기록은 [DB 검증 안내](db/README.md)·[REVIEW.md](REVIEW.md)를 참고하세요.
 
-## 복구와 제한
+## 더 알아보기
 
-- 분석은 같은 snapshot으로 전체 재계산·대조합니다. 봉인된 근거 손상은 EVIDENCE_CONFLICT로 중단하며 자동 수리하지 않습니다.
-- 수신 lease 기본 300초, CLI 설정 범위 1~3600초입니다. 분류 작업은 페이지 처리/AI 대기 중 heartbeat를 갱신하고 만료·탈취된 token의 완료를 거부합니다.
-- DB 오류를 SQLite·로컬 파일·직접 bridge 통신으로 우회하지 않습니다.
-- 코드만 같아도 같은 문제는 아닙니다. 객체·조건·규칙까지 비교하고 정보 부족은 독립 UNDECIDED로 보존합니다.
-- 최초 예시 3개·원문 2,048문자만 전송하지만 PASS 포함 전체 기록은 VWP DB에 보존합니다. 대표 예시 검토로 전체 완료를 대신하지 않습니다.
-- summary JSON 16MiB, 전송 압축 전후 각각 64MiB, 원문 한 건 64MiB 제한입니다. 분류는 128건/약 512KiB씩 분할하지만 최초 분석 번들의 전체 그룹 목록과 원문 응답 전체에는 기존 상한이 남습니다.
-- 실제 report 계약·기준 목록 자동 수집·사내 AI 호환성·배포 DB 권한/연결 검증·다중 사용자 인증은 확인 대기입니다.
-- sanity 원문·객체 경로·측정값·관련 설정의 OA 조회는 허용됩니다. 자격증명 보호는 등록된 비밀값과 명시적 패턴 검사이며 모든 비밀을 탐지하는 DLP는 아닙니다.
-- 봉인 번들/분류 입력·결과에서 자격증명을 발견하면 해당 전달을 중단합니다. 원문 응답의 마스킹과 구분합니다. 과거 SQLite/16테이블 자동 이전은 없습니다.
+| 문서 | 내용 |
+|---|---|
+| [AI 판단 설계](AI_DECISION_DESIGN.md) | 초기 판단·확정 사례 검색·피드백·품질 수용 기준 |
+| [AI 실행 계약](oa/AI_RUNTIME.md) / [VWP 작업자](vwp_bridge/AI_WORKER.md) | 모델·인증·개인 토큰·작업·프로필·현황·재시도·복구 |
+| [배치 처리](oa/BATCHED_CLUSTERING.md) | 전체 로그·그룹 판정·보존 본문의 분할·통합·예산·coverage |
+| [HTTPS 제출](vwp/HTTPS_SUBMISSION.md) / [원본 DB 보관](vwp/DB_ORIGINALS.md) | 토큰 없는 접수·OWNER 범위 확정·파싱용 임시 복원 |
+| [보존 원천](vwp/PRESERVED_SOURCES.md) / [본문 전달](vwp/PRESERVED_TEXT.md) | full.rpt·SDC 등의 불변 참조와 선택형 본문 분석 |
+| [설치·배포](DEPLOYMENT.md) / [DB 연결](db/CONNECTION_HANDOFF.md) | 서버별 실행·설정·계정·권한·TLS |
+| [DB 설치](db/README.md) / [저장 용량](db/TOTAL_STORAGE.md) | 기존 네 테이블·증분 SQL·선택형 무손실 저장·합성 측정 |
+| [워크스페이스](oa/WORKSPACE.md) / [데이터 계약](PROTOCOL.md) / [요구사항](requirement.md) | 합성 앱·업무 모델·전송/검토 계약 |
+| [사내 AI 작업 가이드](INTERNAL_AI_GUIDE.md) / [통합 인계](INTERNAL_AI_HANDOFF.md) | 역할별 허용 파일·회사 어댑터·오류 문의·수용 기준 |
 
-[데이터 계약](PROTOCOL.md) · [요구사항](requirement.md) · [DB 신청](db/README.md) · [검증 기록](REVIEW.md)
+사내 연동 AI는 작업 전에 [AGENTS.md](AGENTS.md)와 [INTERNAL_AI_GUIDE.md](INTERNAL_AI_GUIDE.md)를 읽고 자기 역할의 허용 어댑터만 구현합니다. 실제 회사 자료·비밀값은 외부 대화나 공개 Git에 올리지 않습니다. 예상 밖 오류나 보호 코드 변경이 필요하면 기존 문의 절차를 따릅니다.
+
+수집·접수·파싱 성공은 검토 완료나 sanity PASS를 뜻하지 않습니다. 전체 근거·권한·개정·해시 검증이 실패하면 중단하며, 일부 결과·로컬 DB·다른 모델·데모로 자동 우회하지 않습니다. 원문 조회 권한과 자격증명 보호를 유지하고, SDC는 분석 자료로만 취급해 실행하지 않습니다. legacy 번들·CLI·VWP 규칙 제안 경로는 호환 기능이며 현재 전체 로그 AI 작업자와 구분합니다.
