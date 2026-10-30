@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import shutil
 import unittest
 from unittest.mock import Mock, patch
 
@@ -15,6 +16,88 @@ spec.loader.exec_module(runner)
 
 
 class MockRunnerTests(unittest.TestCase):
+    def shard_reports(self):
+        manifest = {"profile": "full", "test_ids": ["test-d", "test-a", "test-c", "test-b"]}
+        reports = []
+        for index, ids in enumerate((["test-a", "test-c"], ["test-b", "test-d"])):
+            reports.append({"profile": "full", "shard": f"{index+1}/2", "tests_total": 4,
+                "test_ids": ids, "tests_selected": 2, "tests_run": 2, "failures": 0,
+                "errors": 0, "skipped": 0, "successful": True, "failed_tests": [],
+                "timings": [{"test": name, "seconds": 0.1} for name in ids]})
+        return manifest, reports
+
+    def test_parallel_reports_require_exact_complete_nonduplicated_execution(self):
+        manifest, reports = self.shard_reports()
+        report = runner.combine_shards(manifest, reports, [0, 0], 1.2)
+        self.assertTrue(report["successful"])
+        self.assertTrue(report["complete"])
+        self.assertEqual((4, 0, 0, 0), tuple(report[key] for key in ("tests_run", "failures", "errors", "skipped")))
+        self.assertCountEqual(manifest["test_ids"], [row["test"] for row in report["timings"]])
+        empty=runner.combine_shards({"profile":"full","test_ids":[]},[],[],0)
+        self.assertFalse(empty["successful"])
+        self.assertFalse(empty["complete"])
+        for defect in ("missing", "duplicate", "partial", "exit", "profile"):
+            with self.subTest(defect=defect):
+                manifest, reports = self.shard_reports()
+                codes = [0, 0]
+                if defect == "missing": reports[1] = None
+                elif defect == "duplicate": reports[1] = reports[0]
+                elif defect == "partial": reports[1]["timings"].pop()
+                elif defect == "exit": codes[1] = -9
+                elif defect == "profile": reports[1]["profile"] = "quick"
+                report = runner.combine_shards(manifest, reports, codes, 1.2)
+                self.assertFalse(report["successful"])
+                self.assertFalse(report["complete"])
+                self.assertTrue(report["worker_errors"])
+
+    def test_parallel_failure_and_skip_counts_cannot_become_success(self):
+        for key in ("failures", "errors", "skipped"):
+            with self.subTest(key=key):
+                manifest, reports = self.shard_reports()
+                reports[1][key] = 1
+                reports[1]["successful"] = key == "skipped"
+                reports[1]["failed_tests"] = [] if key == "skipped" else ["test-d"]
+                codes = [0, 0 if key == "skipped" else 1]
+                report = runner.combine_shards(manifest, reports, codes, 1.2)
+                self.assertTrue(report["complete"])
+                self.assertFalse(report["successful"])
+                self.assertEqual(1, report[key])
+
+    def test_fast_cluster_is_explicit_and_preserves_scram_and_private_socket(self):
+        from types import SimpleNamespace
+        # Runner wall budgets must count suspend on systems with BOOTTIME.
+        for boot_clock in (True, False):
+            clock = SimpleNamespace(monotonic=Mock(side_effect=[100, 107]))
+            if boot_clock:
+                clock.CLOCK_BOOTTIME = 9
+                clock.clock_gettime = Mock(side_effect=[100, 131])
+            with patch.object(runner, "time", clock):
+                began = runner.elapsed_time()
+                self.assertEqual(31 if boot_clock else 7, runner.elapsed_time() - began)
+        for durability in ("ephemeral", "durable"):
+            with self.subTest(durability=durability), patch.object(runner.os, "geteuid", return_value=1000):
+                database = runner.MockDatabase(Path("/synthetic/bin"), durability=durability)
+                self.addCleanup(shutil.rmtree, database.root)
+                database.pg = Mock()
+                database.start()
+                init = database.pg.call_args_list[0].args
+                self.assertIn("--auth-local=scram-sha-256", init)
+                self.assertIn("--auth-host=reject", init)
+                self.assertEqual(durability == "ephemeral", "--no-sync" in init)
+                start = database.pg.call_args_list[1].args
+                options = start[start.index("-o") + 1]
+                self.assertIn("listen_addresses=''", options)
+                self.assertIn("unix_socket_permissions=0700", options)
+                self.assertEqual(durability == "ephemeral", "fsync=off" in options)
+                self.assertFalse((database.root / "init-password").exists())
+
+    def test_invalid_worker_count_is_rejected_before_creating_a_database(self):
+        for value in ("0", "17", "-1"):
+            with self.subTest(jobs=value), patch.object(runner, "MockDatabase") as database, redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    runner.main(["--jobs", value])
+                database.assert_not_called()
+
     def test_profiles_forward_scope_and_keep_large_probes_explicit(self):
         for profile, arguments, rows, groups, scenario_count in (
             ("quick", [], 100, 10, 1), ("regression", ["--profile", "regression"], 100, 10, 1),
@@ -41,7 +124,7 @@ class MockRunnerTests(unittest.TestCase):
                         patch.object(runner, "MockDatabase", return_value=database), \
                         patch.object(runner, "stage_source"), patch.object(runner, "execute", side_effect=execute), \
                         redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                    self.assertEqual(0, runner.main(arguments))
+                    self.assertEqual(0, runner.main(["--jobs", "1", *arguments]))
                 database.stop.assert_called_once()
                 result = json.loads((root / "summary.json").read_text())
                 self.assertEqual(profile, result["profile"])
@@ -68,7 +151,7 @@ class MockRunnerTests(unittest.TestCase):
                     patch.object(runner, "MockDatabase", return_value=database), \
                     patch.object(runner, "stage_source"), patch.object(runner, "execute", side_effect=execute), \
                     redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                self.assertEqual(1, runner.main([]))
+                self.assertEqual(1, runner.main(["--jobs", "1"]))
             summary = json.loads((root / "summary.json").read_text())
             self.assertEqual("FAILED", summary["status"])
             self.assertEqual(report, summary["tests"])

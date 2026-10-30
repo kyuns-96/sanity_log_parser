@@ -7,7 +7,7 @@ import time
 import uuid
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
+from tests.http_support import TestClient
 
 from common.sanity_common import ReviewError, digest, pack_json
 from common.sanity_db import Database, Queue, json_value, stable_uuid

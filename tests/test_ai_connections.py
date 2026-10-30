@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from cryptography.fernet import Fernet
 from fastapi import Request
-from fastapi.testclient import TestClient
+from tests.http_support import TestClient
 import httpx
 
 from common.sanity_common import ReviewError, digest

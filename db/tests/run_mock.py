@@ -5,6 +5,8 @@ Never accepts an external DB endpoint. Requires local PostgreSQL 12.1+ binaries 
 the project's Python requirements. Runtime artifacts are retained after shutdown.
 """
 import argparse
+from collections import Counter
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -25,6 +27,23 @@ SOURCE_PATTERNS = ("*.py", "common/*.py", "devtools/*.py", "tests/*.py", "vwp/*.
                    "db/*.sql", "db/form/*.sql", "db/maintenance/*.sql", "db/tests/*.sql", "db/tests/*.py",
                    "db/portal/*.py", "db/portal/*.json")
 DB_NAME = "sanity_test_mock"
+ELAPSED_CLOCK = "CLOCK_BOOTTIME" if hasattr(time, "CLOCK_BOOTTIME") else "monotonic"
+
+
+def elapsed_time():
+    if hasattr(time, "CLOCK_BOOTTIME"):
+        return time.clock_gettime(time.CLOCK_BOOTTIME)
+    return time.monotonic()
+
+
+def default_jobs():
+    # Respect the app's actual CPU affinity. Workers spend much of their time
+    # waiting on SQL, so half the available CPUs needlessly serializes them.
+    try:
+        cpus = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        cpus = os.cpu_count() or 1
+    return max(1, min(4, cpus))
 
 
 class MockError(RuntimeError):
@@ -71,7 +90,10 @@ def pg_binaries(explicit):
 
 
 class MockDatabase:
-    def __init__(self, binaries):
+    def __init__(self, binaries, *, durability="durable"):
+        if durability not in ("durable", "ephemeral"):
+            raise MockError("Unknown fixture durability")
+        self.durability = durability
         self.binaries = binaries
         self.root = Path(tempfile.mkdtemp(prefix="sanity-mock-pg-"))
         self.data = self.root / "data"
@@ -99,14 +121,19 @@ class MockDatabase:
             os.chown(password_file, self.identity["user"], self.identity["group"])
         try:
             self.pg("initdb", "-D", self.data, "-U", "sanity_mock_admin", "--encoding=UTF8", "--locale=C",
-                    "--auth-local=scram-sha-256", "--auth-host=reject", "--pwfile", password_file)
+                    "--auth-local=scram-sha-256", "--auth-host=reject", "--pwfile", password_file,
+                    *(["--no-sync"] if self.durability == "ephemeral" else []))
         finally:
             password_file.unlink()
         self.attempted_start = True
         # A unique private socket directory permits concurrent fixtures using the
         # same port number. No TCP listener, even on localhost.
-        self.pg("pg_ctl", "-D", self.data, "-l", self.root / "server.log", "-o",
-                f"-k {self.root} -p 55439 -c listen_addresses='' -c unix_socket_permissions=0700",
+        options = f"-k {self.root} -p 55439 -c listen_addresses='' -c unix_socket_permissions=0700"
+        if self.durability == "ephemeral":
+            # Only this newly-created disposable cluster. Application settings,
+            # SQL, SCRAM authentication and permission checks remain unchanged.
+            options += " -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c jit=off"
+        self.pg("pg_ctl", "-D", self.data, "-l", self.root / "server.log", "-o", options,
                 "-w", "-t", "30", "start")
 
     def parameters(self, side, database=DB_NAME):
@@ -157,13 +184,27 @@ class MockDatabase:
         invalid.close()
         raise MockError("Fixture accepted an invalid password")
 
-    def test_environment(self):
+    def worker_environment(self, index):
+        import psycopg2
+        from psycopg2 import sql
+        name = f"sanity_test_worker_{index}"
+        connection = psycopg2.connect(**self.parameters("admin", "postgres"))
+        connection.autocommit = True
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(sql.SQL("CREATE DATABASE {} TEMPLATE {}").format(
+                    sql.Identifier(name), sql.Identifier(DB_NAME)))
+        finally:
+            connection.close()
+        return self.test_environment(name)
+
+    def test_environment(self, database=DB_NAME):
         from psycopg2.extensions import make_dsn
         return {**self.env, "SANITY_DB_ACCESS": "postgresql", "SANITY_DB_SCHEMA": "public",
                 "SANITY_AI_MODE": "disabled",
-                "SANITY_TEST_ADMIN_DSN": make_dsn(**self.parameters("admin")),
-                "SANITY_VWP_DSN": make_dsn(**self.parameters("vwp")),
-                "SANITY_OA_DSN": make_dsn(**self.parameters("oa"))}
+                "SANITY_TEST_ADMIN_DSN": make_dsn(**self.parameters("admin", database)),
+                "SANITY_VWP_DSN": make_dsn(**self.parameters("vwp", database)),
+                "SANITY_OA_DSN": make_dsn(**self.parameters("oa", database))}
 
     def stop(self):
         if self.attempted_start and (self.data / "postmaster.pid").exists():
@@ -180,6 +221,93 @@ def execute(staged, environment, log, script, *args):
         raise MockError(f"{script} failed; see {log.name}")
 
 
+def combine_shards(manifest, reports, returncodes, seconds):
+    """A missing/duplicate shard or incomplete execution can never become green."""
+    profile, expected = manifest["profile"], manifest["test_ids"]
+    jobs = len(returncodes)
+    result = {"profile": profile, "full_suite": profile == "full", "tests_selected": len(expected),
+              "tests_run": 0, "failures": 0, "errors": 0, "skipped": 0, "successful": False,
+              "seconds": round(seconds, 3), "elapsed_clock": ELAPSED_CLOCK, "failed_tests": [], "timings": [],
+              "test_ids": expected, "jobs": jobs, "worker_errors": [], "complete": False}
+    selected, executed = [], []
+    ordered = sorted(expected)
+    if not expected or len(set(expected)) != len(expected) or jobs < 1:
+        result["worker_errors"].append("An explicit nonempty test manifest and workers are required")
+    for index, (report, returncode) in enumerate(zip(reports, returncodes)):
+        valid = (isinstance(report, dict) and report.get("profile") == profile
+                 and report.get("shard") == f"{index + 1}/{jobs}"
+                 and report.get("tests_total") == len(expected)
+                 and report.get("test_ids") == ordered[index::jobs]
+                 and report.get("tests_selected") == len(ordered[index::jobs])
+                 and isinstance(report.get("timings"), list))
+        if not valid:
+            result["worker_errors"].append(f"Invalid or missing report for worker {index + 1}")
+            continue
+        selected.extend(report["test_ids"])
+        ids = [row["test"] for row in report["timings"]]
+        executed.extend(ids)
+        if report["tests_run"] != len(ids) or Counter(ids) != Counter(report["test_ids"]):
+            result["worker_errors"].append(f"Incomplete execution in worker {index + 1}")
+        for key in ("tests_run", "failures", "errors", "skipped"):
+            result[key] += report[key]
+        result["failed_tests"].extend(report["failed_tests"])
+        result["timings"].extend(report["timings"])
+        if returncode not in (0, 1) or (returncode == 0) != report["successful"]:
+            result["worker_errors"].append(f"Exit status mismatch in worker {index + 1}")
+    if len(reports) != jobs or Counter(selected) != Counter(expected) or Counter(executed) != Counter(expected):
+        result["worker_errors"].append("Workers did not execute the exact selected test set")
+    result["complete"] = not result["worker_errors"]
+    result["successful"] = (result["complete"] and not any(returncodes)
+                            and not any(result[key] for key in ("failures", "errors", "skipped")))
+    result["timings"].sort(key=lambda row: row["seconds"], reverse=True)
+    return result
+
+
+def parallel_regression(staged, environment, database, profile, jobs):
+    manifest_path = database.root / "manifest.json"
+    execute(staged, environment, database.root / "discovery.log", "run_tests.py", "--profile", profile,
+            "--require-db", "--manifest-json", manifest_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if (manifest["profile"] != profile or not manifest["test_ids"]
+            or manifest["tests_selected"] != len(manifest["test_ids"])
+            or len(set(manifest["test_ids"])) != len(manifest["test_ids"])):
+        raise MockError("Invalid test manifest")
+    jobs = min(jobs, len(manifest["test_ids"]))
+    started = elapsed_time()
+    environments = [database.worker_environment(index + 1) for index in range(jobs)]
+    children = []
+    with ExitStack() as files:
+        try:
+            for index, worker_env in enumerate(environments):
+                log = files.enter_context((database.root / f"tests-worker-{index + 1}.log").open("wb"))
+                command = [sys.executable, str(staged / "run_tests.py"), "--profile", profile, "--require-db",
+                           "--shard", f"{index + 1}/{jobs}", "--report-json", str(database.root / f"tests-worker-{index + 1}.json")]
+                children.append(subprocess.Popen(command, cwd=staged, env=worker_env, stdout=log, stderr=subprocess.STDOUT))
+                print(f"phase=worker_started shard={index + 1}/{jobs}", flush=True)
+            returncodes = [child.wait() for child in children]
+        finally:
+            for child in children:
+                if child.poll() is None:
+                    child.terminate()
+            for child in children:
+                try:
+                    child.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait()
+    reports = []
+    for index in range(jobs):
+        try:
+            reports.append(json.loads((database.root / f"tests-worker-{index + 1}.json").read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            reports.append(None)
+    report = combine_shards(manifest, reports, returncodes, elapsed_time() - started)
+    with (database.root / "tests.json").open("x", encoding="utf-8") as stream:
+        json.dump(report, stream, indent=2)
+        stream.write("\n")
+    return report
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pg-bin", help="directory containing initdb, pg_ctl and postgres")
@@ -187,18 +315,24 @@ def main(argv=None):
                         help="quick: three-minute core checks + 100-row probe; regression: broader checks + 100-row probe; full: all tests + 10,000-row probe")
     parser.add_argument("--rows", type=int, help="override parser/storage probe rows; does not change test fixtures")
     parser.add_argument("--groups", type=int, help="override parser/storage probe groups")
+    parser.add_argument("--jobs", type=int, default=default_jobs(), help="isolated test worker databases (default: available CPUs, up to 4; 1: serial)")
+    parser.add_argument("--durability", choices=("ephemeral", "durable"), default="ephemeral",
+                        help="ephemeral: disposable cluster without disk sync (default); durable: PostgreSQL disk sync")
     args = parser.parse_args(argv)
+    if not 1 <= args.jobs <= 16:
+        parser.error("--jobs must be between 1 and 16")
     args.rows = args.rows if args.rows is not None else (10000 if args.profile == "full" else 100)
     args.groups = args.groups if args.groups is not None else min(args.rows, 100 if args.profile == "full" else 10)
     if not 1 <= args.groups <= args.rows <= 100000:
         parser.error("Require 1 <= groups <= rows <= 100000")
     database = None
     summary = {"status": "FAILED", "db_stopped": False, "profile": args.profile,
-               "full_suite": args.profile == "full"}
-    started = time.monotonic()
+               "full_suite": args.profile == "full", "jobs": args.jobs, "durability": args.durability,
+               "elapsed_clock": ELAPSED_CLOCK}
+    started = elapsed_time()
     try:
         import psycopg2
-        database = MockDatabase(pg_binaries(args.pg_bin))
+        database = MockDatabase(pg_binaries(args.pg_bin), durability=args.durability)
         print(f"artifacts={database.root}", flush=True)
         staged = database.root / "source"
         stage_source(ROOT, staged)
@@ -211,12 +345,17 @@ def main(argv=None):
         for side in ("vwp", "oa"):
             execute(staged, environment, database.root / f"check-{side}.log", "common.sanity_db", "check", "--side", side)
         print(f"phase=regression_tests profile={args.profile}", flush=True)
-        try:
-            execute(staged, environment, database.root / "tests.log", "run_tests.py", "--require-db",
-                    "--profile", args.profile, "--report-json", database.root / "tests.json")
-        finally:
-            if (database.root / "tests.json").is_file():
-                summary["tests"] = json.loads((database.root / "tests.json").read_text(encoding="utf-8"))
+        if args.jobs == 1:
+            try:
+                execute(staged, environment, database.root / "tests.log", "run_tests.py", "--require-db",
+                        "--profile", args.profile, "--report-json", database.root / "tests.json")
+            finally:
+                if (database.root / "tests.json").is_file():
+                    summary["tests"] = json.loads((database.root / "tests.json").read_text(encoding="utf-8"))
+        else:
+            summary["tests"] = parallel_regression(staged, environment, database, args.profile, args.jobs)
+            if not summary["tests"]["successful"]:
+                raise MockError("Regression tests failed; see tests.json and tests-worker-*.log")
         if summary["tests"].get("profile") != args.profile:
             raise MockError("Test report profile does not match the requested scope")
         if summary["tests"]["skipped"]:
@@ -250,11 +389,11 @@ def main(argv=None):
             except (Exception, KeyboardInterrupt) as exc:
                 summary.update(status="FAILED", stop_error_type=type(exc).__name__)
                 print("Database shutdown failed; check retained runtime before cleanup", file=sys.stderr)
-            summary["seconds"] = round(time.monotonic() - started, 3)
+            summary["seconds"] = round(elapsed_time() - started, 3)
             with (database.root / "summary.json").open("x", encoding="utf-8") as stream:
                 json.dump(summary, stream, ensure_ascii=False, indent=2)
                 stream.write("\n")
-            print(f"status={summary['status']} profile={args.profile} db_stopped={summary['db_stopped']} report={database.root / 'summary.json'}", flush=True)
+            print(f"status={summary['status']} profile={args.profile} jobs={args.jobs} seconds={summary['seconds']:.3f} elapsed_clock={ELAPSED_CLOCK} db_stopped={summary['db_stopped']} report={database.root / 'summary.json'}", flush=True)
     return 0 if summary["status"] == "PASSED" else 1
 
 

@@ -195,6 +195,9 @@ UUID 재시도·개정 충돌, 읽기 전용, 판단 기록, 근거 요청·응�
 390px 모바일 화면을 확인합니다. 데모 및 API 모킹 기반 UI 테스트이며 실제 DB·API 통합
 검증은 상위 프로젝트 테스트와 별도로 수행합니다. 화면 캡처는 `artifacts/`,
 결과 보고서는 `playwright-report/`에 생성됩니다.
+기본 mock UI 검사는 브라우저 context별로 격리하고 가용 CPU 수에 따라 최대 4개 작업자로 병렬 실행합니다.
+`SANITY_DASHBOARD_TEST_WORKERS=1 npm run test:e2e`로 직렬 실행하거나 1~16개를 명시할 수 있습니다.
+실제 합성 DB를 공유하는 workspace·Codex·drag·rationale·guidance 전용 설정은 계속 직렬입니다.
 1,000개 preview의 테스트는 미리 생성한 합성 스냅샷도 필요합니다. 테스트 포트를 지정하면 해당 디렉터리의 개발 서버를
 새로 시작하고 종료하며, 다른 worktree의 기존 5173 서버와 섞이지 않습니다.
 
