@@ -14,6 +14,7 @@ import './studio-system.css'
 import './live-workbench.css'
 import './button-motion.css'
 import './color-mode.css'
+import './select-controls.css'
 import './sidebar-layout.css'
 
 document.documentElement.classList.add('studio-system')
