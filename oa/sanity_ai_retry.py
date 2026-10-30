@@ -17,6 +17,8 @@ def annotate(error, attempt):
         error.http_status = attempt["http_status"]
     if "retry_after_seconds" in attempt:
         error.retry_after_seconds = attempt["retry_after_seconds"]
+    if "unknown_reason" in attempt:
+        error.unknown_reason = attempt["unknown_reason"]
 
 
 def response_headers(attempt, response):

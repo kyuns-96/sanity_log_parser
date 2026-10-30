@@ -4,8 +4,9 @@ from common.sanity_clustering_advice import evidence, partition, validate_cluste
 from common.sanity_ai_knowledge import shared_case
 from common.sanity_preserved_ai import split_reply, model_metadata
 from common.sanity_submission import check
+from common.sanity_ai_projection import policy_for, project_rows, instruction as projection_instruction, alias_rows, restore_clustering
 from oa.sanity_ai_budget import TokenBudget, BATCH_PROMPT_VERSION
-from oa.sanity_ai_model import _CLUSTER_PROMPT, source_instruction
+from oa.sanity_ai_model import _CLUSTER_PROMPT, source_instruction, project_context_facts
 
 VERSION = BATCH_PROMPT_VERSION
 LEAF_PROMPT = _CLUSTER_PROMPT + """
@@ -34,13 +35,18 @@ class BatchModel:
         self.settings = advisor.settings.batch
         self.budget = TokenBudget(self.settings)
         self.records = evidence(context)
+        self.policy = policy_for(context)
 
     def model_context(self):
         return self.context
 
     def instruction(self, context, stage):
-        return source_instruction(context, LEAF_PROMPT if stage == 'LEAF' else MERGE_PROMPT,
-                                  VERSION+'.'+stage.lower())
+        prompt = LEAF_PROMPT if stage == 'LEAF' else MERGE_PROMPT
+        if self.policy is not None and stage == 'LEAF':
+            prompt = prompt.replace('batch.record_aliases가 원본 ID와의 대응입니다. 배치 밖 원본을 배정하지 마세요.',
+                                    '제공된 짧은 ID는 이번 배치의 식별자입니다. 제공되지 않은 ID를 배정하지 마세요.')
+        prompt, version = source_instruction(context, prompt, VERSION+'.'+stage.lower())
+        return projection_instruction(self.policy, prompt, version) if self.policy is not None else (prompt, version)
 
     def citation_context(self, context):
         return context
@@ -50,11 +56,12 @@ class BatchModel:
 
     def packet(self, rows, *, stage, details):
         context = self.advisor._context(self.model_context())
+        if self.policy is not None: context = project_context_facts(context, self.policy)
         report = {**context['report'], 'records':rows, 'record_count':len(rows)}
         # SOURCE_PART manifests remain audit metadata on the server; they are
         # not another copy of the original records for the model to classify.
         report.pop('source_parts',None)
-        context = {**context,'report':report}
+        context = {**context,'report':report, **({'ai_input_policy':self.policy} if self.policy is not None else {})}
         packet = {'context':context,'cases':[shared_case(c) for c in self.cases],
                   'identity_fields':self.fields,'batch':{'version':getattr(self,'version',VERSION),'stage':stage,
                   'source_record_count':len(self.records),'source_sha256':self.context['source_sha256'],**details}}
@@ -62,6 +69,9 @@ class BatchModel:
         return packet, instruction, version, context
 
     def leaf(self, start, stop):
+        if self.policy is not None:
+            rows, _ = alias_rows(project_rows(self.records[start:stop], self.policy))
+            return self.packet(rows,stage='LEAF',details={'start':start,'stop':stop})
         aliases = {'r'+str(i):r['id'] for i,r in enumerate(self.records[start:stop])}
         rows = [{**r,'id':'r'+str(i)} for i,r in enumerate(self.records[start:stop])]
         return self.packet(rows,stage='LEAF',details={'start':start,'stop':stop,'record_aliases':aliases})
@@ -143,10 +153,16 @@ class BatchModel:
             value,citations = split_reply(value,citation_context)
             self.check_citations(citations)
             advice = validate_clustering_advice(value,context,self.cases,require_rationales=True)
+            if leaf and self.policy is not None:
+                original = self.records[descriptor['start']:descriptor['stop']]
+                _, aliases = alias_rows(project_rows(original, self.policy))
+                source_context = {**context, 'report': {**context['report'], 'records': original, 'record_count': len(original)}}
+                validate_clustering_advice(restore_clustering(advice, aliases),source_context,self.cases,require_rationales=True)
             metadata = model_metadata(metadata,citations,advice,citation_context)
             rationales = {r['group_id']:r for r in advice['group_rationales']}
             cites = {c['target_id']:c for c in citations or []}
             by_id = {n['id']:n for n in nodes or []}
+            visible_rows = project_rows(self.records[descriptor['start']:descriptor['stop']], self.policy) if leaf and self.policy is not None else None
             results = []
             for group in advice['groups']:
                 rationale = rationales[group['id']]
@@ -156,7 +172,9 @@ class BatchModel:
                     selected = [index(k) for k in rationale['evidence_ids']]
                     # Conditions are source facts; bounded summaries retain the
                     # exact set or fail, rather than silently clipping modes.
-                    conditions = sorted({str(self.records[i]['fields'].get('mode','')) for i in members})
+                    conditions = (sorted({str(visible_rows[i-descriptor['start']]['fields']['mode']) for i in members
+                                          if 'mode' in visible_rows[i-descriptor['start']]['fields']}) if visible_rows is not None
+                                  else sorted({str(self.records[i]['fields'].get('mode','')) for i in members}))
                 else:
                     members = sorted(i for key in group['record_ids'] for i in by_id[key]['members'])
                     selected = list(dict.fromkeys(i for key in rationale['evidence_ids'] for i in by_id[key]['evidence']))[:20]

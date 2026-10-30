@@ -11,6 +11,12 @@ from common.sanity_privacy import SecretGuard
 from common.sanity_vwp_ai import require, strict_json
 
 
+def _unknown(reason):
+    error = ReviewError("AI_OUTCOME_UNKNOWN", "VWP model completion is unknown")
+    error.unknown_reason = reason
+    return error
+
+
 def validate_body(raw, profile):
     require(len(raw) <= profile["max_input_bytes"], "AI_INPUT_LIMIT")
     body = strict_json(raw, profile["max_input_bytes"])
@@ -105,20 +111,26 @@ def _invoke(raw, profile, *, timeout, max_output_bytes, transport,observer,attem
                     body = bytearray()
                     for chunk in response.iter_bytes():
                         require(len(body) + len(chunk) <= limit, "AI_OUTPUT_LIMIT")
-                        require(time.monotonic() - started <= timeout, "AI_OUTCOME_UNKNOWN")
+                        if time.monotonic() - started > timeout:raise _unknown("RESPONSE_DEADLINE")
                         body.extend(chunk)
-                    require(time.monotonic() - started <= timeout, "AI_OUTCOME_UNKNOWN")
+                    if time.monotonic() - started > timeout:raise _unknown("RESPONSE_DEADLINE")
                     attempt["response_complete"]=True
         except (httpx.ConnectError, httpx.ConnectTimeout):
             if response_started:
-                raise ReviewError("AI_OUTCOME_UNKNOWN", "VWP model completion is unknown") from None
+                raise _unknown("TRANSPORT_ERROR") from None
             attempt["model_called"]=False
             if role == endpoints[-1][0]:
                 raise ReviewError("AI_CONNECT_FAILED", "Cannot connect to the configured VWP model") from None
             continue
+        except httpx.ReadTimeout:
+            attempt["model_called"]=None
+            raise _unknown("READ_TIMEOUT") from None
+        except httpx.WriteTimeout:
+            attempt["model_called"]=None
+            raise _unknown("WRITE_TIMEOUT") from None
         except (httpx.HTTPError, ValueError, OSError):
             attempt["model_called"]=None
-            raise ReviewError("AI_OUTCOME_UNKNOWN", "VWP model completion is unknown; no automatic repeat") from None
+            raise _unknown("TRANSPORT_ERROR") from None
         break
     if observer:observer("RESPONSE_RECEIVED")
     SecretGuard({"VWP_MODEL_SECRET":profile["token"], "VWP_CLIENT_SECRET":profile["client_api_key"],

@@ -48,7 +48,8 @@ def observer(db_factory,workspace_factory,advisor,criteria_provider,event,call_i
                 # Only read this job's latest small display snapshot. Do not
                 # acquire review locks while a model connection is open.
                 previous = Monitor(service).latest(identity=event["job_id"])
-                if previous and previous["job"]["status"] == "RUNNING":
+                if (previous and previous["job"]["status"] == "RUNNING"
+                        and previous['job'].get('resume_count',0)==event['data'].get('resume_count',0)):
                     record(service,event["job_id"],event["data"]["command"],event["data"]["target"],
                            previous["job"],phase=phase,call_id=call_id)
         except Exception:
@@ -69,7 +70,39 @@ def validate(row):
 
 
 class Monitor:
-    def __init__(self,service):self.service,self.db=service,service.db
+    def __init__(self,service):
+        self.service,self.db=service,service.db
+        self._unknown_events={}
+
+    def display_unknown(self,value):
+        """Project UNKNOWN snapshots using the authoritative small job ledger.
+
+        This is display-only: no source, cases or model inputs are hydrated and
+        no new observation is written. Other snapshot states remain unchanged.
+        """
+        job=value['job']
+        if job.get('status')!='UNKNOWN':
+            return value
+        identity=value.get('id',job.get('id'))
+        event=self.service._load(identity,required=False)
+        require(event is not None and event['job_id']==identity
+                and event['data']['command']['user_id']==value.get('actor_id')
+                and event['data']['target']==value.get('target'),'AI_MONITOR_CORRUPT')
+        command=value.get('command')
+        if command is not None:
+            require(all(command.get(k)==event['data']['command'].get(k) for k in
+                        ('block_id','version_id','report_id','group_id')),'AI_MONITOR_CORRUPT')
+        self._unknown_events[identity]=event
+        return {**value,'job':self.service.public(event)}
+
+    def unknown_availability(self,value,user_id,meta):
+        job=value['job']
+        if job.get('status')!='UNKNOWN':return job
+        event=self._unknown_events.get(value.get('id',job.get('id')))
+        require(event is not None,'AI_MONITOR_CORRUPT')
+        from oa.sanity_ai_unknown_recovery import unknown_availability
+        available,error=unknown_availability(self.service,event,user_id,meta,job)
+        return {**job,'can_retry_unknown':available,**({'unknown_recovery_error':error} if error else {})}
 
     def latest(self, *, identity=None,target=None):
         query="SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s "
@@ -78,11 +111,12 @@ class Monitor:
             query+="AND payload->>'target'=%s ";params.append(target)
         row=self.db.execute(query+"ORDER BY workspace_key DESC LIMIT 1" if identity else
             query+"ORDER BY created_at DESC,workspace_key DESC LIMIT 1",params).fetchone()
-        return validate(row) if row else None
+        return self.display_unknown(validate(row)) if row else None
 
     def legacy(self,target):
         """Bounded display projection for jobs written before snapshots existed."""
         row=self.db.execute("SELECT payload->>'job_id' AS id,payload->>'status' AS status,"
+            "payload->'data'->'command'->>'user_id' AS actor_id,payload->'data'->>'target' AS target,"
             "jsonb_build_object('model',payload->'data'->'model','created_at',payload->'data'->'created_at',"
             "'finished_at',payload->'data'->'finished_at','error',payload->'data'->'error',"
             "'connection_id',payload->'data'->'command'->'connection_id','connection_label',payload->'data'->'connection_label',"
@@ -92,7 +126,8 @@ class Monitor:
             "FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s "
             "AND payload->>'namespace'='oa-ai-v1' AND payload->'data'->>'target'=%s "
             "ORDER BY created_at DESC,workspace_key DESC LIMIT 1",("ai1.job.%",target)).fetchone()
-        return {"job":{**row["job"],"id":row["id"],"status":row["status"]}} if row else None
+        return self.display_unknown({"id":row['id'],"actor_id":row['actor_id'],"target":row['target'],
+            "job":{**row["job"],"id":row["id"],"status":row["status"]}}) if row else None
 
     def items(self,user_id,*,limit=12):
         from oa.sanity_ai_submissions import header
@@ -103,12 +138,12 @@ class Monitor:
             (PREFIX+"%",user_id,limit)).fetchall()
         items=[]
         for row in rows:
-            value=validate(row)
+            value=self.display_unknown(validate(row))
             try:meta=header(self.service,{**value["command"],"user_id":user_id})
             except ReviewError as error:
                 if error.code in ("FORBIDDEN","UNAUTHORIZED","NOT_FOUND","RESOURCE_NOT_FOUND"):continue
                 raise
-            job=value["job"]
+            job=self.unknown_availability(value,user_id,meta)
             items.append({**job,"observed_at":value["at"],"phase":value.get("phase"),
                 "report":{**value["command"],**{k:meta[k] for k in ("project_id","item_id","family")}},
                 "can_cancel":meta["can_review"] and job["status"] in ("PENDING","RUNNING","RESULT_READY"),

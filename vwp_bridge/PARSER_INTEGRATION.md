@@ -12,6 +12,8 @@
 
 [plan 4](../vwp/PRESERVED_TEXT.md)는 별도 공통 UTF-8 전체 텍스트 추출·마스킹·AI 인용을 제공한다. 사내 parser의 자동 호출이나 SDC 실행은 아니며 기존 허용 parser 지점은 유지한다.
 
+2026-10-30 [AI 입력 필드 선택](../oa/AI_INPUT_FIELDS.md)은 plan unit의 `ai_fields`·`include_raw`·`include_details`를 모델 요청에 적용한다. 파서는 선택 설정과 관계없이 전체 fields/raw/span을 추출하고, source 전달·DB 보관도 전체를 유지한다. parser registry 계약이나 허용된 회사 구현 범위는 변경하지 않는다.
+
 **비-unit 보존 근거(plan 3):** full.rpt/SDC의 명시 보존은 별도 [plan 3 계약](../vwp/PRESERVED_SOURCES.md)을 따른다. 보존 선언만으로 이 parser가 호출되거나 본문이 OA AI에 전달되지는 않는다. 이번 연결은 전체 byte RAW 보관과 귀속·hash 메타데이터까지이며, 본문 추출/마스킹/AI 인용 연결은 후속 공통 작업이다. 기존 허용 회사 parser/등록 범위는 그대로다.
 
 ## 1. 제공 파일과 수정 책임

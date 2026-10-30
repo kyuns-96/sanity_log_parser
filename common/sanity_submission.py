@@ -22,8 +22,10 @@ COLLECTION_KEYS = {"source_namespace", "project_key", "block_key", "net_ver", "s
                    "layout", "target_eco", "pre_revision", "stage", "profile_id", "profile_version"}
 SOURCE_KEYS = {"net_ver", "revision", "layout", "eco", "mode", "execution_ref", "execution_order",
                "source_stage", "tool", "tool_version"}
-UNIT_KEYS = {"review_unit_id", "item_id", "report", "parser", "rule_version", "condition", "identity_fields",
-             "execution_status", "applicable", "exclusion", "evaluation", "family", "source"}
+AI_INPUT_KEYS = ('ai_fields', 'include_raw', 'include_details')
+UNIT_REQUIRED_KEYS = {"review_unit_id", "item_id", "report", "parser", "rule_version", "condition", "identity_fields",
+                      "execution_status", "applicable", "family", "source"}
+UNIT_KEYS = UNIT_REQUIRED_KEYS | {"exclusion", "evaluation"} | set(AI_INPUT_KEYS)
 HEX = re.compile(r"[0-9a-f]{64}\Z")
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\Z")
 
@@ -212,8 +214,9 @@ def validate_plan(plan):
     check(isinstance(inv["units"], list) and 1 <= len(inv["units"]) <= MAX_UNITS)
     ids, paths, units = set(), set(), set()
     for unit in inv["units"]:
-        check(isinstance(unit, dict) and set(unit) <= UNIT_KEYS
-              and UNIT_KEYS - {"evaluation", "exclusion"} <= set(unit))
+        check(isinstance(unit, dict) and set(unit) <= UNIT_KEYS and UNIT_REQUIRED_KEYS <= set(unit))
+        from common.sanity_ai_projection import declaration
+        declaration(unit,code='INVALID_SUBMISSION')
         uid = identifier(unit["review_unit_id"]); identifier(unit["item_id"])
         path = relative_report(unit["report"])
         check(uid not in ids and path not in paths)

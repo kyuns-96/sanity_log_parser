@@ -76,6 +76,17 @@ class RetryPolicyTests(unittest.TestCase):
                 self.assertEqual("AI_OUTCOME_UNKNOWN",error.code)
                 self.assertIsNone(receipt(error))
 
+    def test_unknown_transport_reason_is_bounded_without_enabling_auto_retry(self):
+        for client in ("oa","vwp"):
+            for kind,reason in ((httpx.ReadTimeout,"READ_TIMEOUT"),(httpx.WriteTimeout,"WRITE_TIMEOUT"),
+                                (httpx.ReadError,"TRANSPORT_ERROR")):
+                def fail(request,kind=kind):raise kind("synthetic transport interruption",request=request)
+                with self.subTest(client=client,reason=reason):
+                    error=self.failure(client,fail)
+                    self.assertEqual("AI_OUTCOME_UNKNOWN",error.code)
+                    self.assertEqual(reason,error.unknown_reason)
+                    self.assertIsNone(receipt(error))
+
     def test_resume_needs_safe_checkpoint_and_never_replays_unknown_or_result(self):
         proof={"kind":"HTTP","error":"AI_CALL_FAILED","model_called":True,"http_status":503}
         failed={"status":"FAILED","data":{"fail_safe":True,"error":"AI_CALL_FAILED","retry_failure":proof,"batch":{"version":1}}}

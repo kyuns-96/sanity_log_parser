@@ -205,6 +205,6 @@ class VwpAdvisor(OAAdvisor):
         except ReviewError as error:
             if hasattr(error, "model_called"):
                 attempt["model_called"] = error.model_called
-            for key in ("response_complete","http_status","retry_after_seconds"):
+            for key in ("response_complete","http_status","retry_after_seconds","unknown_reason"):
                 if hasattr(error,key):attempt[key]=getattr(error,key)
             raise

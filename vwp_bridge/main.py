@@ -16,6 +16,7 @@ from common.sanity_db import Database
 from vwp_bridge.sanity_evidence import PgEvidence, PRODUCER_VERSION
 from common.sanity_parsers import ParseContext, ParserRegistry, checked_records, extraction_reasons, NOT_PERFORMED
 from common.sanity_scope import run_scope
+from common.sanity_submission import AI_INPUT_KEYS
 
 HEADER = ["object", "check_point", "mode", "code", "severity", "observed", "unit"]
 JSON_LIMIT = 16 * 1024 * 1024
@@ -298,9 +299,12 @@ def summary_records(path, unit, blockers):
 
 
 def analyze_unit(unit, source, root, evidence, parser_registry=None):
+    from common.sanity_ai_projection import declaration
+    declaration(unit,code='INVALID_PLAN')
     result = {key: unit.get(key) for key in ("review_unit_id", "item_id", "report",
               "execution_status", "applicable", "exclusion", "rule_version", "parser", "condition",
               "evaluation", "identity_fields")}
+    result.update({key:unit[key] for key in AI_INPUT_KEYS if key in unit})
     result.update(parse_status="COMPLETE", check_status="UNKNOWN", blockers=[],
                   record_count=0, evaluated_count=0, unknown_count=0,
                   status_counts={"PASS": 0, "FAIL": 0, "UNKNOWN": 0})

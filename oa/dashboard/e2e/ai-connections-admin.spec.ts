@@ -72,6 +72,24 @@ async function fillVwp(panel: ReturnType<Page['getByRole']>) {
   return form
 }
 
+test('batch settings expose the effective output-bound cap before saving', async ({ page }) => {
+  const state = await adminFixture(page); const panel = await openPanel(page)
+  await fillOa(panel)
+  await panel.locator('summary').filter({ hasText: '처리 한도와 전체 로그 배치 설정' }).click()
+  await panel.getByLabel('전체 로그·그룹 판정·보존 본문 배치 사용').check()
+  const estimate = panel.getByRole('status').filter({ hasText: '현재 설정의 분류 배치 상한' })
+  await expect(estimate).toContainText('21건 / 호출')
+  await expect(estimate).toContainText('최소 2,381회')
+  await panel.getByLabel('조각별 최대 로그', { exact: true }).fill('1000')
+  await expect(estimate).toContainText('21건 / 호출')
+  await panel.getByLabel('출력 예약', { exact: true }).fill('8192')
+  await expect(estimate).toContainText('42건 / 호출')
+  await expect(estimate).toContainText('최소 1,191회')
+  await panel.getByLabel('조각별 최대 로그', { exact: true }).fill('10')
+  await expect(estimate).toContainText('10건 / 호출')
+  expect(state.writes).toHaveLength(0)
+})
+
 for (const site of ['OA', 'VWP'] as const) {
   test(`${site} save succeeds even when the subsequent list refresh fails`, async ({ page }) => {
     const state = await adminFixture(page); const panel = await openPanel(page)

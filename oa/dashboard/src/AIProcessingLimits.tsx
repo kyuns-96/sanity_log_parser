@@ -3,6 +3,9 @@ import type { BatchConfig, ProcessingConfig } from './aiConnectionTypes'
 
 export default function AIProcessingLimits({ config, busy, onChange }: { config: ProcessingConfig; busy: boolean; onChange: (value: Partial<ProcessingConfig>) => void }) {
   const batch = (value: Partial<BatchConfig>) => onChange({ batch: { ...config.batch, ...value } })
+  // Keep the planning reservation in sync with BatchModel.leaf_plan().
+  const classificationCap = Number.isInteger(config.batch.output_tokens) && config.batch.output_tokens > 0 && Number.isInteger(config.batch.max_records) && config.batch.max_records > 0
+    ? Math.min(config.batch.max_records, Math.max(1, Math.floor(config.batch.output_tokens / 192))) : null
   return <details className="ai-processing-limits">
     <summary><span className="ai-limits-summary"><strong>처리 한도와 전체 로그 배치 설정</strong><span className="ai-limits-summary-description">요청 크기와 배치 처리 기준을 설정합니다.</span></span></summary>
     <div className="ai-limits-content">
@@ -24,6 +27,8 @@ export default function AIProcessingLimits({ config, busy, onChange }: { config:
         <div className="ai-limits-section">
           <h4>분할과 실행 한도</h4>
           <p>로그 분할 크기와 전체 작업의 실행 범위를 정합니다.</p>
+          {classificationCap != null && <p className="ai-availability-note" role="status">현재 설정의 분류 배치 상한: <strong>{classificationCap.toLocaleString()}건 / 호출</strong>. 5만 항목이라면 최초 분류만 최소 {Math.ceil(50000 / classificationCap).toLocaleString()}회 호출합니다. 입력 크기에 따라 더 작게 나뉠 수 있고, 이후 통합 호출은 별도입니다. 조각별 최대 로그와 출력 예약을 함께 확인하세요.</p>}
+          <p>응답 제한 시간이 짧으면 정상 생성 중에도 결과를 확인하지 못할 수 있습니다. 실제 모델·게이트웨이의 응답 시간과 허용 한도를 확인해 설정하세요. 실행 중인 작업의 연결 설정 변경은 해당 작업을 중단시킬 수 있습니다.</p>
           <div className="ai-connection-fields ai-limits-grid">
             {([['max_records','조각별 최대 로그',1,1000], ['merge_groups','통합별 최대 그룹',2,100], ['max_calls','전체 호출 한도',1,100000], ['max_rounds','통합 라운드 한도',1,32], ['deadline_seconds','전체 작업 제한 시간(초)',60,604800]] as const).map(([key,label,min,max]) => <label key={key}>{label}<Input type="number" aria-label={label} required min={min} max={max} disabled={busy} value={config.batch[key]} onChange={event => batch({ [key]: Number(event.target.value) })} /></label>)}
           </div>

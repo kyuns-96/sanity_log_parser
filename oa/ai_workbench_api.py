@@ -37,6 +37,12 @@ class AIResume(BaseModel):
     request_id: UUID
 
 
+class AIRetryUnknown(AIResume):
+    expected_event_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_step_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    acknowledge_duplicate: StrictBool
+
+
 class IntakeDecision(BaseModel):
     model_config = ConfigDict(extra='forbid')
     decision: Literal['CONFIRM','REJECT']
@@ -96,6 +102,12 @@ def create_workbench_router(authorized_actor):
     @router.post("/ai/jobs/{job_id}/resume",status_code=202)
     def resume_ai_job(job_id: UUID,body: AIResume,scope=Depends(workspace)):
         return jobs(scope).resume(scope.user_id,str(job_id),body.request_id)
+
+    @router.post("/ai/jobs/{job_id}/retry-unknown",status_code=202)
+    def retry_unknown_ai_job(job_id: UUID,body: AIRetryUnknown,scope=Depends(workspace)):
+        check(body.acknowledge_duplicate is True, "AI_UNKNOWN_CONFIRM_REQUIRED")
+        return jobs(scope).retry_unknown(scope.user_id,str(job_id),body.request_id,
+            body.expected_event_sha256,body.expected_step_sha256,body.acknowledge_duplicate)
 
     @router.get("/blocks/{block_id}/versions")
     def versions(block_id: ID, scope=Depends(workspace)):

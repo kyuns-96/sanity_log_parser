@@ -17,6 +17,8 @@ PROFILES = ("quick", "full")
 # full rather than repeating the same workflow in every everyday run.
 QUICK_TESTS = (
     "tests.test_vwp_inference", "tests.test_vwp_worker", "tests.test_vwp_personal_credentials",
+    "tests.test_ai_unknown_recovery",
+    "tests.test_ai_input_projection", "tests.test_ai_projection_submission",
     "tests.test_ai_http", "tests.test_ai_retry_resume",
     "tests.test_retry_policy", "tests.test_ai_resume_cancellation", "tests.test_clustering.ClusterUnitTests",
     "tests.test_ai_connections",

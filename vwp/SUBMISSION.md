@@ -8,6 +8,8 @@
 
 설계는 [SUBMISSION_DESIGN.md](SUBMISSION_DESIGN.md), 원천 ID·PRE 재사용은 [SOURCE_COLLECTION_DESIGN.md](SOURCE_COLLECTION_DESIGN.md), 수정 소유권은 [사내 AI 가이드](../INTERNAL_AI_GUIDE.md)를 따른다.
 
+2026-10-30: `prepare()`의 V2/V3/V4 `inventory.units[]`에 `ai_fields`·`include_raw`·`include_details`를 선택 선언해 item별 AI 전송 내용을 정할 수 있다. [AI 입력 필드 선택](../oa/AI_INPUT_FIELDS.md)의 기본값·예시를 따른다. 파싱·원본 DB 보관은 전체를 유지하며 기존 회사 입력 어댑터의 반환값에서만 선언한다.
+
 ## 1. 사용자의 호출
 
 배포 담당자가 Git release의 `.venv`와 `bin/sanity`를 배치하고 `/opt/sanity/current/bin`을 사용자의 PATH에 등록한다. 진입점은 실제 release 경로를 한 번 고정하고 그 release의 `.venv/bin/python`이 있으면 사용한다. 원본 report를 읽을 수 있는 VWP 터미널의 어느 작업 폴더에서든 실행한다.

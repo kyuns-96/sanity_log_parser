@@ -29,7 +29,8 @@ export type ClusterEvent = { id: string; report_id: string; revision: number; ac
 export type PipelineView = { current: ClusterEvent | null; revision: number; ready: boolean; can_edit: boolean; stale: boolean; history: ClusterEvent[]; case_count: number; reusable_count: number; summary: PipelineSummary | null; corporate_ai_connected: boolean; record_count: number }
 export type ClusterBrief = Omit<ClusterEvent, 'groups'> & { group_count: number; record_count: number; rationale_counts: Record<RationaleStatus, number> }
 export type PipelineTask = { id: string; status: 'PENDING' | 'RUNNING' | 'FAILED' | 'STALE' | 'CANCELLED' | 'COMPLETED'; record_count: number; processed: number; next_chunk: number; error: string | null; chunks: { index: number; start: number; stop: number; record_count: number; input_sha256: string; status: string }[] }
-export type CodexJob = { worker_site?: 'oa' | 'vwp'; preparation_phase?: string; total_records?: number; call_seconds?: number; retry_count?: number; retry_limit?: number; retry_after?: string | null; resume_count?: number; resumable?: boolean; started_at?: string; connection_id?: string; connection_label?: string; id: string; status: 'PENDING' | 'RUNNING' | 'RESULT_READY' | 'COMPLETED' | 'FAILED' | 'STALE' | 'UNKNOWN' | 'CANCELLED' | 'SAVE_FAILED'; error: string | null; model: string; created_at: string; finished_at?: string; expected_revision: number; input_case_count: number; event_id?: string; progress?: { mode: 'BATCH'; phase: 'TEXT' | 'TEXT_MERGE' | 'CLASSIFY' | 'MERGE' | 'REVIEW' | 'REVIEW_MERGE'; completed_records: number; total_records: number; completed_calls: number; round: number; waiting: boolean; round_completed?: number; round_total?: number; average_call_seconds?: number | null; seconds_per_record?: number | null; stage_eta_seconds?: number | null; retry_count?: number; child_retries?: number; retry_limit?: number; retry_error?: string | null; retry_http_status?: number | null; retry_after?: string | null } }
+export type UnknownRecovery = { event_sha256: string; step_sha256: string; call_token: string; phase: string; round: number; index: number; total: number; input_bytes?: number }
+export type CodexJob = { can_retry_unknown?: boolean; unknown_recovery?: UnknownRecovery; unknown_recovery_error?: string; unknown_reason?: string; worker_site?: 'oa' | 'vwp'; preparation_phase?: string; total_records?: number; call_seconds?: number; retry_count?: number; retry_limit?: number; retry_after?: string | null; resume_count?: number; resumable?: boolean; started_at?: string; connection_id?: string; connection_label?: string; id: string; status: 'PENDING' | 'RUNNING' | 'RESULT_READY' | 'COMPLETED' | 'FAILED' | 'STALE' | 'UNKNOWN' | 'CANCELLED' | 'SAVE_FAILED'; error: string | null; model: string; created_at: string; finished_at?: string; expected_revision: number; input_case_count: number; event_id?: string; progress?: { mode: 'BATCH'; phase: 'TEXT' | 'TEXT_MERGE' | 'CLASSIFY' | 'MERGE' | 'REVIEW' | 'REVIEW_MERGE'; completed_records: number; total_records: number; completed_calls: number; round: number; waiting: boolean; round_completed?: number; round_total?: number; average_call_seconds?: number | null; seconds_per_record?: number | null; stage_eta_seconds?: number | null; retry_count?: number; child_retries?: number; retry_limit?: number; retry_error?: string | null; retry_http_status?: number | null; retry_after?: string | null } }
 export type AIConnectionChoice = { id: string; label: string; execution_site?: 'vwp'; model: string; models: string[]; available: boolean; enabled: boolean; credential_required?: boolean; credential_ready?: boolean; credential_error?: string | null }
 export type CodexCapability = { connection_id?: string; connection_label?: string; execution_site?: 'vwp'; connections?: AIConnectionChoice[]; available: boolean; supported: boolean; enabled: boolean; model: string; models?: string[]; remaining: number | null; job: CodexJob | null; provider?: string; synthetic_only?: boolean; credential_required?: boolean; credential_ready?: boolean; credential_error?: string | null }
 export type WorkbenchView = { report: WorkspaceReport; version: WorkspaceVersion; current: ClusterBrief | null; revision: number; ready: boolean; can_edit: boolean; stale: boolean; task: PipelineTask | null; ai?: CodexCapability; record_count: number; raw_line_count: number; source_sha256: string; case_count: number; reusable_count: number; removed_count: number; corporate_ai_connected: boolean; summary: { confirmed: boolean; total: number; reviewed: number; pending: number; complete: boolean; rationale_counts: Record<RationaleStatus, number>; counts: Record<string, number> } }
@@ -65,8 +66,11 @@ const messages: Record<string, string> = {
   AI_TOKEN_STORE_NOT_CONFIGURED: '개인 AI 토큰 저장 설정이 준비되지 않았습니다. 운영 담당자에게 문의해 주세요.',
   AI_TOKEN_UNAVAILABLE: '등록된 개인 AI 토큰을 사용할 수 없습니다. 운영 담당자에게 문의해 주세요.',
   AI_CREDENTIAL_CHANGED: 'AI 호출 중 개인 토큰이 변경되어 결과를 적용하지 않았습니다.',
+  AI_CONFIG_CHANGED: 'AI 연결이나 모델 설정이 변경되었습니다. 최신 설정을 확인해 주세요.',
+  AI_BATCH_LIMIT: 'AI 작업의 호출 한도에 도달해 이 배치를 재시도할 수 없습니다.',
   AI_CONTEXT_LIMIT: '전체 로그 또는 참고 사례가 AI 입력 한도를 넘었습니다. 일부만 처리하지 않았습니다. 운영 담당자가 처리 한도를 확인해야 합니다.',
   AI_INPUT_LIMIT: '전체 AI 입력이 처리 한도를 넘었습니다. 로그를 생략하지 않았습니다. 운영 담당자에게 확인해 주세요.',
+  AI_INPUT_POLICY: '이 항목의 AI 입력 필드 설정을 확인해 주세요. 선택한 필드와 원문이 모두 없는 로그는 전송하지 않았습니다.',
   AI_OUTPUT_LIMIT: 'AI 응답이 출력 한도를 넘었습니다. 전체 결과가 검증되지 않아 적용하지 않았습니다.',
   AI_BATCH_COVERAGE: '분할 검토에서 전체 근거의 처리를 확인하지 못해 결과를 적용하지 않았습니다.',
   AI_BATCH_CONFLICT: 'AI 통합 판정이 하위 반례나 보류와 충돌하여 적용하지 않았습니다.',
@@ -112,6 +116,27 @@ export const productionWorkbench = () => productionDocument
 export const workspaceApiBase = () => productionWorkbench() ? '/api/workbench' : '/workspace/api'
 export const aiExecutionLabel = (value: { model: string; connection_label?: string }) => [value.connection_label, value.model].filter(Boolean).join(' / ')
 export const aiJobActive = (job?: CodexJob | null) => !!job && ['PENDING', 'RUNNING', 'RESULT_READY'].includes(job.status)
+const unknownRecoveryErrors: Record<string, string> = {
+  AI_CREDENTIAL_CHANGED: '개인 인증값이 변경되어 이 배치를 현재 설정으로 재시도할 수 없습니다.',
+  AI_CREDENTIAL_SCOPE_CHANGED: '개인 인증값의 연결 범위가 변경되었습니다. 인증값을 확인해 주세요.',
+  AI_USER_TOKEN_REQUIRED: '개인 인증값이 필요합니다. 등록 상태를 확인해 주세요.',
+  AI_USER_TOKEN_EXPIRED: '개인 인증값이 만료되었습니다. 등록 상태를 확인해 주세요.',
+  AI_CONFIG_CHANGED: 'AI 연결이나 모델 설정이 변경되어 이 배치를 현재 설정으로 재시도할 수 없습니다.',
+  AI_CONNECTION_UNAVAILABLE: 'AI 연결을 현재 사용할 수 없습니다. 연결 상태를 확인해 주세요.',
+  AI_MODEL_NOT_ALLOWED: '이 작업의 AI 모델을 현재 사용할 수 없습니다. 연결 설정을 확인해 주세요.',
+  AI_INPUT_STALE: '작업의 로그나 검토 입력이 변경되어 이 배치를 현재 입력으로 재시도할 수 없습니다.',
+  AI_CASES_STALE: '작업의 참고 사례가 변경되어 이 배치를 현재 입력으로 재시도할 수 없습니다.',
+  AI_CRITERIA_STALE: '작업의 판정 기준이 변경되어 이 배치를 현재 입력으로 재시도할 수 없습니다.',
+  AI_BATCH_LIMIT: '이 작업의 호출 한도에 도달해 배치를 재시도할 수 없습니다.',
+  AI_BATCH_DEADLINE: '이 작업의 처리 기한이 지나 배치를 재시도할 수 없습니다.',
+  AI_VWP_PROFILE_UNAVAILABLE: 'VWP 실행 프로필을 현재 확인할 수 없습니다. 잠시 후 상태를 다시 확인해 주세요.',
+  AI_TOKEN_STORE_NOT_CONFIGURED: '개인 인증값 저장 설정을 현재 확인할 수 없습니다. 운영 담당자에게 확인해 주세요.',
+  AI_TOKEN_UNAVAILABLE: '저장된 개인 인증값을 현재 사용할 수 없습니다. 운영 담당자에게 확인해 주세요.',
+  DATABASE_UNAVAILABLE: '저장소에 연결할 수 없습니다. 잠시 후 상태를 다시 확인해 주세요.',
+  DATABASE_ERROR: '저장소 상태를 확인하지 못했습니다. 잠시 후 다시 확인해 주세요.',
+  FORBIDDEN: '현재 사용자에게 이 작업의 재시도 권한이 없습니다.',
+  UNAUTHORIZED: '로그인 상태를 확인해 주세요.',
+}
 export const aiJobMessage = (job: CodexJob) => {
   if (job.status === 'PENDING' && job.preparation_phase === 'PREPARING') return 'VWP 작업자가 전체 로그와 참고 사례를 준비하고 있습니다.'
   if (aiJobActive(job) && (job.retry_after || job.progress?.retry_after)) return job.progress ? 'AI 요청을 다시 처리하기 전 잠시 대기 중입니다. 완료된 배치는 유지합니다.' : 'AI 요청을 다시 처리하기 전 잠시 대기 중입니다.'
@@ -127,7 +152,12 @@ export const aiJobMessage = (job: CodexJob) => {
   }
   if (job.status === 'RUNNING') return 'AI가 전체 로그와 관련 확정 사례를 검토하고 있습니다.'
   if (job.status === 'RESULT_READY') return 'AI 응답의 근거와 현재 개정을 검증하고 있습니다.'
-  if (job.status === 'UNKNOWN') return 'AI 호출 결과가 불명확합니다. 자동 재호출하지 않습니다. 운영 담당자에게 작업 상태를 확인해 주세요.'
+  if (job.status === 'UNKNOWN') {
+    const warning = '원격 AI가 원 호출을 계속 실행 중일 수 있습니다. 새 작업은 추가 계산과 비용을 발생시킬 수 있습니다.'
+    if (job.can_retry_unknown && job.unknown_recovery && job.progress?.mode === 'BATCH') return `마지막 배치의 호출 결과가 불명확합니다. 완료된 배치는 유지되며 자동 재호출하지 않습니다. ${warning}`
+    const reason = job.unknown_recovery_error ? unknownRecoveryErrors[job.unknown_recovery_error] || '배치 재시도 조건을 현재 확인할 수 없습니다. 작업 상태를 다시 확인해 주세요.' : '운영 담당자에게 작업 상태를 확인해 주세요.'
+    return `AI 호출 결과가 불명확합니다. 자동 재호출하지 않습니다. ${reason} ${warning}`
+  }
   if (job.status === 'STALE') return job.error === 'AI_CONFIG_CHANGED'
     ? 'AI 모델 목록이나 연결 설정이 변경되어 작업을 중단했습니다. 최신 설정을 확인한 뒤 다시 요청해 주세요.'
     : '로그·분류·판정 또는 참고 사례가 변경되어 결과를 적용하지 않았습니다. 최신 내용을 확인해 주세요.'

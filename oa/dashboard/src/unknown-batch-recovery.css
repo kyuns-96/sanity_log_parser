@@ -1,0 +1,6 @@
+.unknown-batch-details { display: grid; gap: 10px; margin: 0; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
+.unknown-batch-details > div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 12px; font-size: 12px; }
+.unknown-batch-details dt { color: var(--text-muted); }
+.unknown-batch-details dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.unknown-batch-warning { padding: 12px 14px; border: 1px solid var(--warning-line); border-radius: 7px; background: var(--warning-soft); color: var(--warning); font-size: 12px; line-height: 1.7; }
+.unknown-batch-inline-error { color: var(--danger); font-size: 11px; }

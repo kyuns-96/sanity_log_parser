@@ -459,6 +459,66 @@ test('pending jobs resume with GET only and unknown outcomes never auto-submit',
   expect(state.writes).toEqual([])
 })
 
+test('recoverable unknown classification blocks a new job and retries only the confirmed batch', async ({ page }) => {
+  const recoveryJob: CodexJob = { id: '30000000-0000-4000-8000-000000000075', status: 'UNKNOWN', error: 'AI_OUTCOME_UNKNOWN', model: model.model, created_at: at, expected_revision: 0, input_case_count: 0,
+    can_retry_unknown: true, unknown_recovery: { event_sha256: 'a'.repeat(64), step_sha256: 'b'.repeat(64), call_token: 'synthetic-call', phase: 'CLASSIFY', round: 0, index: 1, total: 2 },
+    progress: { mode: 'BATCH', phase: 'CLASSIFY', completed_records: 1, total_records: 2, completed_calls: 1, round: 0, waiting: true, round_completed: 1, round_total: 2 } }
+  const state = await mockOA(page, { initialJob: recoveryJob, holdJob: true })
+  let retries = 0
+  await page.route('**/api/workbench/ai/jobs/*/retry-unknown', route => {
+    retries++
+    expect(route.request().postDataJSON()).toMatchObject({ expected_event_sha256: 'a'.repeat(64), expected_step_sha256: 'b'.repeat(64), acknowledge_duplicate: true })
+    state.clusterJob = { ...recoveryJob, status: 'RUNNING', error: null, can_retry_unknown: false }
+    return route.fulfill({ json: state.clusterJob })
+  })
+  await page.goto(url)
+  await expect(page.getByRole('button', { name: 'AI로 그룹 만들기', exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: '결과 불명 배치 재시도' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toContainText('1 / 2건')
+  await dialog.getByRole('button', { name: '취소', exact: true }).click()
+  expect(retries).toBe(0)
+  await page.getByRole('button', { name: '결과 불명 배치 재시도' }).click()
+  await dialog.getByRole('button', { name: '확인하고 이 배치 재시도' }).click()
+  await expect(page.getByText('AI가 전체 로그를 나누어 검토하고 있습니다.', { exact: false })).toBeVisible()
+  expect(retries).toBe(1)
+  expect(state.writes.filter(value => value.path.endsWith('/clustering/ai'))).toHaveLength(0)
+})
+
+test('changed AI configuration explains unavailable batch recovery without blocking a new job', async ({ page }) => {
+  const state = await mockOA(page, { initialJob: { id: '30000000-0000-4000-8000-000000000077', status: 'UNKNOWN', error: 'AI_OUTCOME_UNKNOWN', model: model.model, created_at: at, expected_revision: 0, input_case_count: 0,
+    can_retry_unknown: false, unknown_recovery_error: 'AI_CONFIG_CHANGED',
+    unknown_recovery: { event_sha256: 'a'.repeat(64), step_sha256: 'b'.repeat(64), call_token: 'synthetic-call', phase: 'CLASSIFY', round: 0, index: 1, total: 2 },
+    progress: { mode: 'BATCH', phase: 'CLASSIFY', completed_records: 1, total_records: 2, completed_calls: 1, round: 0, waiting: true, round_completed: 1, round_total: 2 } } })
+  await page.goto(url)
+  await expect(page.getByText('AI 연결이나 모델 설정이 변경되어', { exact: false })).toBeVisible()
+  await expect(page.getByText('원격 AI가 원 호출을 계속 실행 중일 수 있습니다.', { exact: false })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'AI로 그룹 만들기', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: '결과 불명 배치 재시도' })).toHaveCount(0)
+  expect(state.writes).toEqual([])
+})
+
+test('recoverable unknown group judgment offers the confirmed batch action instead of a new judgment', async ({ page }) => {
+  const state = await mockOA(page, { initialRevision: 1, confirmed: true, holdJob: true })
+  state.reviewJob = { id: '30000000-0000-4000-8000-000000000076', status: 'UNKNOWN', error: 'AI_OUTCOME_UNKNOWN', model: model.model, created_at: at, expected_revision: 0, input_case_count: 0,
+    can_retry_unknown: true, unknown_recovery: { event_sha256: 'c'.repeat(64), step_sha256: 'd'.repeat(64), call_token: 'synthetic-review', phase: 'REVIEW', round: 0, index: 0, total: 2 },
+    progress: { mode: 'BATCH', phase: 'REVIEW', completed_records: 0, total_records: 2, completed_calls: 0, round: 0, waiting: true, round_completed: 0, round_total: 2 } }
+  let retries = 0
+  await page.route('**/api/workbench/ai/jobs/*/retry-unknown', route => {
+    retries++
+    state.reviewJob = { ...state.reviewJob!, status: 'RUNNING', error: null, can_retry_unknown: false }
+    return route.fulfill({ json: state.reviewJob })
+  })
+  await page.goto(url)
+  await page.getByRole('button', { name: '그룹 판정 계속', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'AI 판정 받기', exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: '결과 불명 배치 재시도' }).click()
+  await expect(page.getByRole('dialog')).toContainText('그룹 판정')
+  await page.getByRole('dialog').getByRole('button', { name: '확인하고 이 배치 재시도' }).click()
+  await expect.poll(() => retries).toBe(1)
+  expect(state.writes.filter(value => value.path.endsWith('/review/ai'))).toHaveLength(0)
+})
+
 test('model limit failure shows rejected whole-input work and preserves manual request boundary', async ({ page }) => {
   const state = await mockOA(page, { fail: 'AI_INPUT_LIMIT' })
   await page.goto(url)

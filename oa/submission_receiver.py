@@ -16,7 +16,7 @@ from common.sanity_db import Database, Queue, json_value, lock_key
 from common.sanity_parsers import (valid_json_pointer, validate_builtin_evaluation, collection_only_contract,
     extraction_reasons, NOT_PERFORMED, COLLECTION_PRODUCER_VERSION)
 from common.sanity_privacy import SecretGuard
-from common.sanity_submission import (HEX, PART_BYTES, PART_RECORDS, PROTOCOL, SOURCE_TYPES, check,
+from common.sanity_submission import (AI_INPUT_KEYS, HEX, PART_BYTES, PART_RECORDS, PROTOCOL, SOURCE_TYPES, check,
     message_id, scope_digest, source_execution, source_unit, source_version, validate_packet, validate_plan)
 from common.sanity_submission_store import require_schema
 from common.sanity_shared_sources import GATE, SharedSourcePackets
@@ -157,6 +157,8 @@ class SourceReceiver:
               and result['check_status'] in ('PASS','FAIL','UNKNOWN','NOT_APPLICABLE')
               and result['condition']==unit['condition'] and result['execution_status']==unit['execution_status']
               and result['applicable']==unit['applicable'],'INVALID_SOURCE_MANIFEST')
+        check(canonical_json({key:result[key] for key in AI_INPUT_KEYS if key in result}) ==
+              canonical_json({key:unit[key] for key in AI_INPUT_KEYS if key in unit}),'SOURCE_SCOPE_MISMATCH')
         check(isinstance(result['status_counts'],dict) and set(result['status_counts'])=={'PASS','FAIL','UNKNOWN'}
               and all(type(n) is int and n>=0 for n in result['status_counts'].values())
               and sum(result['status_counts'].values())==result['record_count'],'SOURCE_COVERAGE_MISMATCH')
@@ -371,6 +373,7 @@ class SourceReceiver:
             'analysis_id':value['analysis_id'],'raw_sha256':value['raw_sha256'],'source_parts':value['parts'],
             'analysis_created_at':value['analysis_created_at'],
             'source_bytes':value['record_bytes'],'raw_line_count':value['raw_line_count']}
+        payload.update({key:result[key] for key in AI_INPUT_KEYS if key in result})
         if result.get('evaluation_mode')=='none':
             payload.update(evaluation_mode='none',not_evaluated_count=result['not_evaluated_count'])
         if value.get('preserved_sources'):

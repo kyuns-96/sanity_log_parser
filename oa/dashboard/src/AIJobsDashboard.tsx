@@ -3,6 +3,7 @@ import { Activity, ArrowUpRight, CheckCircle2, Clock3, RefreshCw, Server, Shield
 import { Button } from './studio/components/ui/button'
 import { aiExecutionLabel, aiJobActive, aiJobMessage, WorkspaceError, workspaceRequest, workspaceTime } from './workspaceApi'
 import type { CodexJob } from './workspaceApi'
+import UnknownBatchRecovery from './UnknownBatchRecovery'
 import './ai-jobs.css'
 
 type Job = CodexJob & { observed_at: string; phase?: string; can_cancel: boolean; can_resume?: boolean; report: { project_id: string; block_id: string; version_id: string; report_id: string; group_id: string | null; item_id: string; family: string } }
@@ -108,7 +109,7 @@ export default function AIJobsDashboard({ projectId, compact = false, onAll, ref
         <dl className="ai-job-metrics"><div><dt><Clock3 size={12} />{active ? '경과 시간' : '총 소요 시간'}</dt><dd>{seconds(elapsed)}</dd></div><div><dt>로그 건당 평균</dt><dd>{measured != null ? seconds(measured) : '측정 중'}</dd></div><div><dt>이번 단계 예상 종료</dt><dd>{etaAt != null ? etaAt > clock + offset ? new Date(etaAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '예상보다 지연 중' : active ? error || !snapshot?.worker.online ? '확인 불가' : '측정치 수집 중' : '—'}</dd></div></dl>
         <p className="ai-job-note">{nextRetry ? aiJobMessage(job) : active && p ? '예상 시간은 이번 단계의 완료된 호출 기준입니다. 이후 통합·검증이 남을 수 있습니다.' : job.can_resume && job.resumable && ['FAILED', 'CANCELLED'].includes(job.status) ? (p ? '저장된 완료 배치를 유지하고 중단 지점부터 재개할 수 있습니다.' : '현재 입력으로 작업을 재개할 수 있습니다.') : aiJobMessage(job)}</p>
         {(job.error || p?.retry_error) && <code className="ai-job-error">{job.error || p?.retry_error}{p?.retry_http_status ? ` · HTTP ${p.retry_http_status}` : ''}</code>}
-        <footer><span>등록 {workspaceTime(job.created_at)}</span><div>{job.can_cancel && <Button size="sm" variant="ghost" disabled={!!cancelling || !!resuming} onClick={() => void cancel(job)}>{cancelling === job.id ? '취소 중…' : '작업 취소'}</Button>}{job.can_resume && job.resumable && ['FAILED', 'CANCELLED'].includes(job.status) && <Button size="sm" variant="ghost" disabled={!!resuming || !!cancelling} onClick={() => void resume(job)}>{resuming === job.id ? '재개 요청 중…' : '중단 지점부터 재개'}</Button>}<Button size="sm" variant="outline" asChild><a href={`/?${params}`}>검토 열기<ArrowUpRight size={13} /></a></Button></div></footer>
+        <footer><span>등록 {workspaceTime(job.created_at)}</span><div>{job.can_cancel && <Button size="sm" variant="ghost" disabled={!!cancelling || !!resuming} onClick={() => void cancel(job)}>{cancelling === job.id ? '취소 중…' : '작업 취소'}</Button>}{job.can_resume && job.resumable && ['FAILED', 'CANCELLED'].includes(job.status) && <Button size="sm" variant="ghost" disabled={!!resuming || !!cancelling} onClick={() => void resume(job)}>{resuming === job.id ? '재개 요청 중…' : '중단 지점부터 재개'}</Button>}<UnknownBatchRecovery job={job} disabled={!!cancelling || !!resuming} onAccessDenied={clearAccessSnapshot} onRefresh={() => setReload(v => v + 1)} /><Button size="sm" variant="outline" asChild><a href={`/?${params}`}>검토 열기<ArrowUpRight size={13} /></a></Button></div></footer>
       </article>
     })}</div>}
   </section>

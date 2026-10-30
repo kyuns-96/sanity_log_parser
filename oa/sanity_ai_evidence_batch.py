@@ -13,7 +13,8 @@ from common.sanity_common import ReviewError, digest
 from common.sanity_preserved_ai import available, evidence, model_metadata, split_reply
 from common.sanity_submission import check
 from oa.sanity_ai_batch_model import BatchModel, LEAF_PROMPT, MERGE_PROMPT
-from oa.sanity_ai_model import _COMMON_PROMPT, _REVIEW_PROMPT, _PRESERVED_PROMPT
+from oa.sanity_ai_model import _COMMON_PROMPT, _REVIEW_PROMPT, _PRESERVED_PROMPT, project_review_context, project_context_facts, scope_rationale
+from common.sanity_ai_projection import instruction as projection_instruction, alias_rows, project_rows, restore_review
 
 VERSION = 'oa-batch-evidence-v1'
 TEXT_PROMPT = _COMMON_PROMPT + """
@@ -88,9 +89,13 @@ class EvidenceBatchModel(BatchModel):
 
     def instruction(self, context, stage):
         prompt = LEAF_PROMPT if stage == 'LEAF' else MERGE_PROMPT
+        if self.policy is not None and stage == 'LEAF':
+            prompt = prompt.replace('batch.record_aliases가 원본 ID와의 대응입니다. 배치 밖 원본을 배정하지 마세요.',
+                                    '제공된 짧은 ID는 이번 배치의 식별자입니다. 제공되지 않은 ID를 배정하지 마세요.')
         if available(self.context): prompt += ANALYSIS_PROMPT
         elif context['report'].get('preserved_sources'): prompt += _PRESERVED_PROMPT
-        return prompt, VERSION+'.'+stage.lower()
+        version = VERSION+'.'+stage.lower()
+        return projection_instruction(self.policy, prompt, version) if self.policy is not None else (prompt, version)
 
     def citation_context(self, context):
         return self.context
@@ -117,6 +122,8 @@ class EvidenceBatchModel(BatchModel):
 
     def text_packet(self, *, fragment=None, nodes=None):
         context = self.model_context()
+        if self.policy is not None:
+            context = scope_rationale(project_context_facts(context,self.policy),{},'not_in_text_request')
         context['report'].pop('records', None)
         context.pop('preserved_analysis', None)
         stage = 'TEXT_LEAF' if fragment is not None else 'TEXT_MERGE'
@@ -152,27 +159,35 @@ class EvidenceBatchModel(BatchModel):
 
     def review_packet(self, rows, *, stage, details, nodes=None):
         context = self.model_context()
-        context['group_evidence'] = rows
-        context['group_snapshot'] = {**context['group_snapshot'], 'record_ids':[r['id'] for r in rows]}
+        aliases = None
+        if self.policy is not None:
+            context, aliases = project_review_context(context, rows, self.policy)
+        else:
+            context['group_evidence'] = rows
+            context['group_snapshot'] = {**context['group_snapshot'], 'record_ids':[r['id'] for r in rows]}
         packet = {'context':context, 'criteria':self.criteria, 'cases':[shared_case(c) for c in self.cases],
             'batch':{'version':VERSION,'stage':stage,'source_record_count':len(self.records),
                      'source_sha256':self.context['source_sha256'],**details}}
         if nodes is not None:
+            reverse = {original: alias for alias, original in aliases.items()} if aliases is not None else None
             packet['analyses'] = [{'id':n['id'],'record_count':len(n['members']),
-                                  'advice':n['advice'],'preserved_citations':n['citations']} for n in nodes]
+                                  'advice':{**n['advice'], 'evidence_ids':[reverse[key] for key in n['advice']['evidence_ids']]} if reverse is not None else n['advice'],
+                                  'preserved_citations':n['citations']} for n in nodes]
         prompt = REVIEW_BATCH_PROMPT
         if available(self.context): prompt += ANALYSIS_PROMPT
         elif context['report'].get('preserved_sources'): prompt += _PRESERVED_PROMPT
-        return packet, prompt, VERSION+'.'+stage.lower(), context
+        version = VERSION+'.'+stage.lower()
+        if self.policy is not None: prompt,version = projection_instruction(self.policy,prompt,version)
+        return packet, prompt, version, context
+
+    def review_rows(self, nodes):
+        ids = {key for n in nodes for key in n['advice']['evidence_ids']}
+        rows = [r for r in self.records if r['id'] in ids]
+        return rows or [self.records[nodes[0]['members'][0]]]
 
     def merge(self, nodes):
         if not self.review: return super().merge(nodes)
-        ids = {key for n in nodes for key in n['advice']['evidence_ids']}
-        # The complete raw text of each cited record travels with the summary.
-        rows = [r for r in self.records if r['id'] in ids]
-        if not rows:
-            rows = [self.records[nodes[0]['members'][0]]]
-        return self.review_packet(rows, stage='REVIEW_MERGE', details={}, nodes=nodes)
+        return self.review_packet(self.review_rows(nodes), stage='REVIEW_MERGE', details={}, nodes=nodes)
 
     def bounded_groups(self, nodes, *, text=False):
         groups, current = [], []
@@ -223,6 +238,12 @@ class EvidenceBatchModel(BatchModel):
                           else [r['id'] for r in context['group_evidence']])
                 value = {k:v for k,v in value.items() if k!='examined_ids'}
                 advice = validate_review_v2(value,context,self.cases,self.criteria)
+                if self.policy is not None:
+                    original = self.review_rows(nodes) if nodes is not None else self.records[descriptor['start']:descriptor['stop']]
+                    _, aliases = alias_rows(project_rows(original, self.policy))
+                    source_context = {**self.context, 'group_evidence': original,
+                        'group_snapshot': {**self.context['group_snapshot'], 'record_ids':[row['id'] for row in original]}}
+                    advice = validate_review_v2(restore_review(advice, aliases),source_context,self.cases,self.criteria)
                 if advice['conclusion']=='PASS':
                     check(not self.preserved or not self.preserved['unresolved'], 'AI_BATCH_UNRESOLVED')
                     check(all(n['advice']['conclusion']=='PASS' for n in nodes or []), 'AI_BATCH_CONFLICT')

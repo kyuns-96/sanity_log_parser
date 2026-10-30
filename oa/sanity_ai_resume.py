@@ -77,6 +77,8 @@ def resume(service, user_id, job_id, request_id):
     if old:
         check(old['job_id']==job_id and old['actor_id']==user_id,'REQUEST_CONFLICT')
         return service.public(event)
+    from oa.sanity_ai_unknown_recovery import marker as unknown_marker
+    check(unknown_marker(service,request_id) is None,'REQUEST_CONFLICT')
     check(meta['ready'] and meta['can_review'] and meta['group_ready'],'AI_INPUT_STALE')
     target=event['data']['target']
     service.db.execute('SELECT pg_advisory_xact_lock(%s)',(lock_key(INTENT_PREFIX+target),))

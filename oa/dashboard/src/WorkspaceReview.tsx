@@ -7,6 +7,7 @@ import { Textarea } from './studio/components/ui/textarea'
 import { Input } from './studio/components/ui/input'
 import CaseSource from './CaseSource'
 import AiModelSelect, { selectedAiModel, selectedAiConnection, aiConnectionNotice, needsPersonalCredential } from './AiModelSelect'
+import UnknownBatchRecovery, { canRetryUnknown } from './UnknownBatchRecovery'
 import { PreservedCitations } from './PreservedSources'
 import { aiJobActive, aiJobMessage, aiExecutionLabel, WorkspaceError, toolResultStatus, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
 import type { CodexJob, Judgment, ReportReview, ReviewCase, WorkspaceReport, WorkspaceSession, WorkspaceVersion } from './workspaceApi'
@@ -37,7 +38,9 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
   const [proposalId, setProposalId] = useState<string | null>(null)
   const [pollPaused, setPollPaused] = useState(false)
   const polls = useRef({ id: '', count: 0 })
+  const aiFetchEpoch = useRef(0)
   const aiRunning = aiJobActive(data?.ai?.job)
+  const recoverableUnknown = canRetryUnknown(data?.ai?.job)
   const connectionId = aiRunning ? data!.ai!.job!.connection_id || '' : data?.ai?.connections?.some(value => value.id === selectedConnection) ? selectedConnection : data?.ai?.connection_id || ''
   const choice = selectedAiConnection(data?.ai, connectionId)
   const modelId = aiRunning ? data!.ai!.job!.model : selectedAiModel(choice, selectedModel)
@@ -73,13 +76,15 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
   useEffect(() => {
     alive.current = true
     const controller = new AbortController()
-    request<ReportReview>(`${base}/review${query}`, { signal: controller.signal }).then(value => { if (!controller.signal.aborted) initialize(value) }).catch(fail)
+    const epoch = aiFetchEpoch.current
+    request<ReportReview>(`${base}/review${query}`, { signal: controller.signal }).then(value => { if (!controller.signal.aborted && epoch === aiFetchEpoch.current) initialize(value) }).catch(fail)
     return () => { alive.current = false; controller.abort() }
   }, [base, group?.cluster_revision])
   const edit = () => { saveId.current = null; setNotice('') }
   async function reload(reset = false, signal?: AbortSignal) {
+    const epoch = aiFetchEpoch.current
     const value = await request<ReportReview>(`${base}/review${query}`, { signal })
-    if (alive.current && !signal?.aborted) { if (reset) initialize(value); else setData(value) }
+    if (alive.current && !signal?.aborted && epoch === aiFetchEpoch.current) { if (reset) initialize(value); else setData(value) }
     return value
   }
   useEffect(() => {
@@ -125,7 +130,7 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
     } finally { if (alive.current) setBusy(null) }
   }
   async function propose() {
-    if (!data) return
+    if (!data || production && recoverableUnknown) return
     const command = { expected_revision: data.revision,
       ...(group ? { expected_cluster_revision: group.cluster_revision } : {}),
       ...(production && choice?.models?.length ? { model_id: modelId } : {}),
@@ -166,12 +171,13 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
     <section className="ws-review-advice ws-studio-ai-card" aria-label="AI review와 누적 기준 제안">
       <header className="ws-studio-ai-title"><div><h4><Sparkles size={16} />AI 판정 제안</h4>{(!production || !group || !data.can_review || !data.ai?.enabled) && <p>{production ? group ? data.ai?.enabled ? `OA AI · ${modelId}` : 'OA AI 연결 설정이 필요합니다.' : '분류 확정 후 각 그룹에서 AI 판정을 요청하세요.' : demo ? '합성 데모 · AI 호출 없음' : '사내 AI 미연결 · 확정 사례 참고 엔진'}</p>}</div>
         {production && group && data.can_review && <AiModelSelect ai={data.ai} connectionValue={connectionId} onConnectionChange={value => { setSelectedConnection(value); setSelectedModel('') }} value={modelId} onChange={setSelectedModel} disabled={!!busy || aiRunning} label="판정 AI 모델" />}
-        <Button variant="outline" size="sm" onClick={propose} disabled={demo || !!busy || !data.can_review || production && (!group || !choice?.available || aiRunning)}><RefreshCw size={14} className={aiRunning ? 'ws-spin' : undefined} />{production ? aiRunning || busy === 'proposal' ? 'AI 판정 중…' : 'AI 판정 받기' : busy === 'proposal' ? '기준 확인 중…' : '판정 제안 받기'}</Button>
+        <Button variant="outline" size="sm" onClick={propose} disabled={demo || !!busy || !data.can_review || production && (!group || !choice?.available || aiRunning || recoverableUnknown)}><RefreshCw size={14} className={aiRunning ? 'ws-spin' : undefined} />{production ? aiRunning || busy === 'proposal' ? 'AI 판정 중…' : 'AI 판정 받기' : busy === 'proposal' ? '기준 확인 중…' : '판정 제안 받기'}</Button>
       </header>
       {production && data.can_review && data.ai?.enabled && !data.ai.supported && <p className="ws-notice">분류 확정과 전체 로그·필수 근거의 준비 상태를 확인해 주세요.</p>}
       {production && needsPersonalCredential(choice) && <p className="ws-notice" role="status">화면 상단의 ‘개인 AI 토큰’에서 본인의 토큰을 등록하거나 교체해 주세요.</p>}
       {production && aiConnectionNotice(choice) && <p className="ws-notice" role="status">{aiConnectionNotice(choice)}</p>}
       {production && data.ai?.job && <div className="ws-studio-ai-job"><p role="status" className={['FAILED', 'STALE', 'UNKNOWN'].includes(data.ai.job.status) ? 'ws-error' : 'ws-muted'}>{aiExecutionLabel(data.ai.job)} · {aiJobMessage(data.ai.job)}{aiRunning && pollPaused && ' 상태 자동 조회를 멈췄습니다. 아래 버튼으로 확인을 이어갈 수 있습니다.'}</p><Button variant="ghost" size="sm" disabled={!!busy} onClick={() => { polls.current.count = 0; setPollPaused(false); reload().catch(fail) }}>AI 판정 상태 다시 조회</Button></div>}
+      {production && data.ai?.job && <UnknownBatchRecovery job={data.ai.job} disabled={!data.can_review || !!busy} onAccessDenied={() => { aiFetchEpoch.current++; setData(null) }} onRefresh={() => { aiFetchEpoch.current++; void reload().catch(fail) }} />}
       {proposal ? <div className="ws-review-proposal ws-studio-ai-result">
         <PreservedCitations files={report.preserved_sources} citations={proposal.model_metadata?.preserved_citations} sources={proposal.model_metadata?.preserved_citation_sources} target="review" />
         <div className="ws-studio-ai-verdict"><Badge variant="outline" className={`ws-status ws-status-${proposal.conclusion.toLowerCase()}`}>제안 {labels[proposal.conclusion]}</Badge><span>{proposal.model_called ? `AI 모델 · ${proposal.model_metadata ? aiExecutionLabel(proposal.model_metadata) : proposal.advisor}` : '확정 기준 참고 엔진'} · {time(proposal.at)}</span></div>

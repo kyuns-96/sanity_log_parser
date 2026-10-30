@@ -64,6 +64,8 @@ def validate_plan(plan):
         fields = unit.get("identity_fields")
         _require(isinstance(fields, list) and all(_text(f) for f in fields)
                  and len(fields) == len(set(fields)), "invalid identity_fields")
+        from common.sanity_ai_projection import declaration
+        declaration(unit,code='INVALID_PLAN')
         _require(unit.get("execution_status") in ("COMPLETED", "FAILED", "UNKNOWN", "NOT_RUN"),
                  "invalid execution_status")
         _require(type(unit.get("applicable")) is bool, "applicable must be boolean")

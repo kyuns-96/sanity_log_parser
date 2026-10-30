@@ -36,7 +36,7 @@ TERMINAL = frozenset(("COMPLETED", "FAILED", "STALE", "UNKNOWN", "CANCELLED"))
 TRANSITIONS = {None: {"PENDING"}, "PENDING": {"RUNNING", "FAILED", "STALE", "CANCELLED"},
                "RUNNING": {"PENDING", "RESULT_READY", "FAILED", "STALE", "UNKNOWN", "CANCELLED"},
                "RESULT_READY": {"COMPLETED", "FAILED", "STALE", "CANCELLED"},
-               "FAILED":{"PENDING","RUNNING"},"CANCELLED":{"PENDING","RUNNING"}}
+               "FAILED":{"PENDING","RUNNING"},"CANCELLED":{"PENDING","RUNNING"},"UNKNOWN":{"RUNNING"}}
 MAX_EVENT_BYTES = 64 * 1024 * 1024
 REVIEW_LOCK = lock_key("workspace-review-write")
 _UNSET = object()
@@ -80,16 +80,18 @@ def _public(event):
             "model_called": data.get("model_called", False), "model_attempted": data.get("model_attempted", False),
             "resumable":resumable(event),
             **({"retry_limit":MAX_RETRIES} if data.get("fail_safe") else {}),
-            **{k:data[k] for k in ("worker_site","total_records","started_at","call_seconds","retry_count","retry_after","resume_count") if k in data}}
+            **{k:data[k] for k in ("worker_site","total_records","started_at","call_seconds","retry_count","retry_after","resume_count","unknown_reason") if k in data}}
 
 
 def _source_pin(context):
+    from common.sanity_ai_projection import source_policy_pin
     return {"scope": context["scope"], "source_sha256": context["source_sha256"],
             "report_id": context["report"]["id"], "version_id": context["report"]["version_id"],
             "group_id": context.get("group_id"), "cluster_revision": context.get("cluster_revision"),
             "cluster_event_id": context.get("cluster_event_id"),
             "membership_sha256": context.get("membership_sha256"),
-            "clustering_rationale_sha256": digest(context.get("clustering_rationale"))}
+            "clustering_rationale_sha256": digest(context.get("clustering_rationale")),
+            **source_policy_pin(context)}
 
 
 def _case_pins(cases):
@@ -114,7 +116,7 @@ def _validate_data(event):
     required = {"command", "target", "pins", "retrieval", "model", "created_at", "model_called"}
     optional = {"model_attempted", "call_token", "started_at", "deadline", "result", "error", "finished_at", "event_id", "cancelled_by", "batch", "result_ref", "connection_label",
                 "worker_site","total_records","call_seconds","fail_safe","retry_count","retry_after","retry_failure",
-                "resume_count","resume_request_id","resumed_by","resume_checkpoint","credential_pin"}
+                "resume_count","resume_request_id","resumed_by","resume_checkpoint","credential_pin","unknown_reason"}
     check(isinstance(data, dict) and required <= set(data) <= required | optional, "AI_JOB_CORRUPT")
     command, pins = data["command"], data["pins"]
     command_keys = {"user_id", "block_id", "version_id", "report_id", "expected_revision",
@@ -146,6 +148,9 @@ def _validate_data(event):
           and isinstance(pins["identity_fields"], list) and type(pins["case_budget"]) is int
           and 1 <= pins["case_budget"] <= 1024 * 1024, "AI_JOB_CORRUPT")
     source = pins["source"]
+    if 'ai_input_policy_sha256' in source:
+        check(isinstance(source['ai_input_policy_sha256'], str)
+              and re.fullmatch(r'[0-9a-f]{64}', source['ai_input_policy_sha256']), 'AI_JOB_CORRUPT')
     check(source.get("report_id") == command["report_id"] and source.get("version_id") == command["version_id"]
           and source.get("group_id") == group and isinstance(source.get("scope"), dict)
           and source["scope"].get("block_id") == command["block_id"], "AI_JOB_CORRUPT")
@@ -158,6 +163,9 @@ def _validate_data(event):
     if "fail_safe" in data:check(data["fail_safe"] is True,"AI_JOB_CORRUPT")
     if "retry_count" in data:check(type(data["retry_count"]) is int and 0<=data["retry_count"]<=MAX_RETRIES,"AI_JOB_CORRUPT")
     if "retry_failure" in data:check(valid_receipt(data["retry_failure"]),"AI_JOB_CORRUPT")
+    if 'unknown_reason' in data:
+        check(event['status']=='UNKNOWN' and data['unknown_reason'] in
+              ('READ_TIMEOUT','WRITE_TIMEOUT','TRANSPORT_ERROR','RESPONSE_DEADLINE','WORKER_LOST','RESERVED_EXPIRED'), 'AI_JOB_CORRUPT')
     if 'credential_pin' in data:
         pin=data['credential_pin']
         check(isinstance(pin,dict) and set(pin)=={'revision','scope'}
@@ -337,6 +345,9 @@ class AIJobService:
                 if previous["status"] in ("FAILED","CANCELLED"):
                     from oa.sanity_ai_resume import validate_resume
                     validate_resume(self,previous,event["status"],event["data"])
+                elif previous['status']=='UNKNOWN':
+                    from oa.sanity_ai_unknown_recovery import validate_recovery
+                    validate_recovery(self,previous,event['status'],event['data'])
                 else:
                     check(event["data"].get("resume_count",0)==previous["data"].get("resume_count",0),"AI_JOB_CORRUPT")
                     for key in ("resume_request_id","resumed_by","resume_checkpoint"):
@@ -360,6 +371,9 @@ class AIJobService:
         if previous and previous["status"] in ("FAILED","CANCELLED"):
             from oa.sanity_ai_resume import validate_resume
             validate_resume(self,previous,status,data)
+        if previous and previous['status']=='UNKNOWN':
+            from oa.sanity_ai_unknown_recovery import validate_recovery
+            validate_recovery(self,previous,status,data)
         event = {"namespace": NAMESPACE, "schema_version": 1, "job_id": data["command"]["request_id"],
                  "sequence": previous["sequence"] + 1 if previous else 1,
                  "previous_sha256": previous["sha256"] if previous else None,
@@ -410,6 +424,7 @@ class AIJobService:
         monitor=Monitor(self)
         target=self._target(report_id,group_id)
         latest = monitor.latest(target=target) or monitor.legacy(target)
+        latest_job = monitor.unknown_availability(latest,user_id,context) if latest else None
         # Final group membership/current-revision checks happen on the worker.
         supported = bool(context["ready"] and context["can_review"] and context["record_count"] and context["group_ready"])
         connections = self.connections.user_connections(user_id)
@@ -423,7 +438,7 @@ class AIJobService:
                 "models": first.get("models", []),
                 "connections":connections, "connection_id":first.get("id", ""),
                 "provider": "VWP_OPENAI_COMPATIBLE" if first.get("execution_site") == "vwp" else PROVIDER,
-                "synthetic_only": False, "job": latest["job"] if latest else None, **credential}
+                "synthetic_only": False, "job": latest_job, **credential}
 
     def request(self,*args,**kwargs):
         from oa.sanity_ai_submissions import Submissions
@@ -432,6 +447,10 @@ class AIJobService:
     def resume(self,user_id,job_id,request_id):
         from oa.sanity_ai_resume import resume
         return resume(self,user_id,job_id,request_id)
+
+    def retry_unknown(self,user_id,job_id,request_id,expected_event_sha256,expected_step_sha256,acknowledge_duplicate):
+        from oa.sanity_ai_unknown_recovery import retry_unknown
+        return retry_unknown(self,user_id,job_id,request_id,expected_event_sha256,expected_step_sha256,acknowledge_duplicate)
 
     def enqueue(self, user_id, block_id, version_id, report_id, *, expected_revision, request_id,
                 group_id=None, expected_cluster_revision=None, model_id=None, connection_id=None,
@@ -514,8 +533,14 @@ class AIJobService:
             store=Submissions(self);intent=store.load(job_id)
             header(self,{**intent["data"]["command"],"user_id":user_id})
             return store.public(intent)
-        header(self,{**event["data"]["command"],"user_id":user_id})
-        return self.public(event)
+        command=event['data']['command']
+        meta=header(self,{**command,"user_id":user_id})
+        job=self.public(event)
+        if event['status']=='UNKNOWN':
+            from oa.sanity_ai_unknown_recovery import unknown_availability
+            available,error=unknown_availability(self,event,user_id,meta,job)
+            job={**job,'can_retry_unknown':available,**({'unknown_recovery_error':error} if error else {})}
+        return job
 
     def cancel(self, user_id, job_id):
         job_id = str(uuid_value(job_id, "job_id"))
@@ -561,6 +586,9 @@ class AIJobService:
 
     def _failed(self, event, error, *, status="STALE", called=_UNSET, now=None):
         changes = {"error": _error_code(error)}
+        reason=getattr(error,'unknown_reason',None)
+        if status=='UNKNOWN' and reason in ('READ_TIMEOUT','WRITE_TIMEOUT','TRANSPORT_ERROR','RESPONSE_DEADLINE','WORKER_LOST','RESERVED_EXPIRED'):
+            changes['unknown_reason']=reason
         if called is not _UNSET:
             changes["model_called"] = called
             changes["model_attempted"] = called is not False
