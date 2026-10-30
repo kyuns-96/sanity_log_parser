@@ -439,13 +439,27 @@ class AIJobService:
             connection.update(available=bool(supported and connection["credential_ready"]), enabled=True,
                               supported=supported, credential_required=connection.get("credential_required", True))
         first = connections[0] if connections else {}
+        from oa.sanity_ai_task_defaults import TaskDefaults
+        default = TaskDefaults(self.db).current()['defaults']['REVIEW' if group_id is not None else 'CLUSTER']
+        task_default = None
+        if default is not None:
+            selected = next((connection for connection in connections if connection['id']==default['connection_id']), None)
+            if selected is None:
+                task_default = {**default, 'applied':False, 'reason':'AI_CONNECTION_UNAVAILABLE'}
+            elif default['model_id'] not in selected['models']:
+                task_default = {**default, 'applied':False, 'reason':'AI_MODEL_NOT_ALLOWED'}
+            else:
+                selected['model'] = default['model_id']
+                first = selected
+                task_default = {**default, 'applied':True}
         credential = {key:first[key] for key in ("credential_required", "credential_ready", "credential_error") if key in first}
         return {"available": first.get("available", False), "supported": supported,
                 "enabled": bool(connections), "model": first.get("model", ""), "remaining": None,
                 "models": first.get("models", []),
                 "connections":connections, "connection_id":first.get("id", ""),
                 "provider": "VWP_OPENAI_COMPATIBLE" if first.get("execution_site") == "vwp" else PROVIDER,
-                "synthetic_only": False, "job": latest_job, **credential}
+                "synthetic_only": False, "job": latest_job, **credential,
+                **({'task_default':task_default} if task_default is not None else {})}
 
     def request(self,*args,**kwargs):
         from oa.sanity_ai_submissions import Submissions

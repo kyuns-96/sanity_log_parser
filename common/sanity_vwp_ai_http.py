@@ -9,6 +9,7 @@ import httpx
 from common.sanity_common import ReviewError
 from common.sanity_privacy import SecretGuard
 from common.sanity_vwp_ai import require, strict_json
+from common.sanity_ai_reasoning import validate_wire_reasoning
 
 
 def _unknown(reason):
@@ -21,10 +22,11 @@ def validate_body(raw, profile):
     require(len(raw) <= profile["max_input_bytes"], "AI_INPUT_LIMIT")
     body = strict_json(raw, profile["max_input_bytes"])
     request_key = "messages" if profile["api"] == "chat_completions" else "input"
-    optional = {"response_format", "max_tokens", "max_completion_tokens"} if request_key == "messages" else {"text", "max_output_tokens", "store"}
+    optional = {"response_format", "max_tokens", "max_completion_tokens", "reasoning_effort", "chat_template_kwargs"} if request_key == "messages" else {"text", "max_output_tokens", "store", "reasoning"}
     if profile["auth_mode"] == "bearer_x_client":
         optional.add("extraData")
     require({"model", "stream", request_key} <= set(body) <= {"model", "stream", request_key} | optional)
+    validate_wire_reasoning(body, profile["api"])
     require(body["model"] in profile["models"] and body["stream"] is False and
             isinstance(body[request_key], list) and len(body[request_key]) == 2)
     require([m.get("role") if isinstance(m, dict) else None for m in body[request_key]] == ["system", "user"])

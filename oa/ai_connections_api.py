@@ -22,12 +22,28 @@ class DeleteConnectionCommand(BaseModel):
     expected_revision: int = Field(ge=1, lt=9999999999, strict=True)
 
 
+class TaskDefaultsCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int = Field(ge=0, lt=9999999999, strict=True)
+    defaults: dict[str, Any]
+
+
 def create_ai_connections_router(authorized_actor):
     router = APIRouter()
 
     def owner(actor=Depends(authorized_actor)):
         check(actor.auth_method == "sso" and getattr(actor, "access", None) is not None, "FORBIDDEN")
         return actor
+
+    @router.get("/api/admin/ai/task-defaults")
+    def task_defaults(actor=Depends(owner)):
+        from oa.sanity_ai_task_defaults import TaskDefaults
+        return TaskDefaults(actor.access.db).read(actor)
+
+    @router.post("/api/admin/ai/task-defaults")
+    def save_task_defaults(body: TaskDefaultsCommand, actor=Depends(owner)):
+        from oa.sanity_ai_task_defaults import TaskDefaults
+        return TaskDefaults(actor.access.db).save(actor,body.defaults,body.expected_revision)
 
     @router.get("/api/admin/ai/connections")
     def admin_list(actor=Depends(owner)):

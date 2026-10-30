@@ -24,6 +24,12 @@ export const aiConnectionNotice = (ai: CodexCapability | undefined) => {
   return 'VWP AI 연결을 현재 사용할 수 없습니다. 운영 담당자에게 연결 상태를 확인해 주세요.'
 }
 
+export const taskDefaultNotice = (ai: CodexCapability | undefined, task: string) => {
+  if (!ai?.task_default || ai.task_default.applied) return null
+  const reason = ai.task_default.reason === 'AI_MODEL_NOT_ALLOWED' ? '지정된 모델이 연결에서 제거되어' : '지정된 연결을 사용할 수 없어'
+  return `관리자가 지정한 ${task} 기본값은 ${reason} 적용되지 않았습니다. 현재 선택된 연결과 모델을 확인해 주세요.`
+}
+
 export default function AiModelSelect({ ai, value, onChange, disabled, label, connectionValue = '', onConnectionChange }: {
   ai?: CodexCapability; value: string; onChange: (model: string) => void; disabled: boolean; label: string
   connectionValue?: string; onConnectionChange?: (connection: string) => void

@@ -15,7 +15,8 @@ async function adminFixture(page: Page, initial: Entry[] = [], profiles = [profi
     credentialsReady: true, vwpReady: true, deleteFailure: '' as '' | 'conflict' | 'lost',
     deleted: new Map<string, number>(), deletePaths: [] as string[],
     holdGet: null as null | { started: () => void; release: Promise<void> },
-    writes: [] as Record<string, any>[] }
+    writes: [] as Record<string, any>[], taskWrites: [] as Record<string, any>[],
+    taskDefaults: { revision: 0, defaults: { CLUSTER: null, REVIEW: null } } as { revision: number; defaults: { CLUSTER: {connection_id: string; model_id: string} | null; REVIEW: {connection_id: string; model_id: string} | null } } }
   await page.route('**/api/**', async route => {
     const request = route.request(); const url = new URL(request.url()); const path = url.pathname
     if (path === '/api/auth-config') return route.fulfill({ json: { mode: 'sso', login_url: '/auth/login', logout_url: '/auth/logout', logout_method: 'POST' } })
@@ -23,6 +24,15 @@ async function adminFixture(page: Page, initial: Entry[] = [], profiles = [profi
     if (path === '/api/access/catalog') return route.fulfill({ json: { projects: [], blocks: [] } })
     if (path === '/api/access/me') return route.fulfill({ json: { user_id: 'synthetic-user', is_admin: true, revision: 0, grants: [], requests: [] } })
     if (path === '/api/admin/access') return route.fulfill({ json: { revision: 0, requests: [], grants: [], users: [] } })
+    if (path === '/api/admin/ai/task-defaults') {
+      if (request.method() === 'GET') return route.fulfill({ json: state.taskDefaults })
+      const body = request.postDataJSON()
+      expect(request.headers()['x-sanity-request']).toBe('1')
+      expect(body.expected_revision).toBe(state.taskDefaults.revision)
+      state.taskWrites.push(body)
+      state.taskDefaults = { revision: state.taskDefaults.revision + 1, defaults: body.defaults }
+      return route.fulfill({ json: state.taskDefaults })
+    }
     if (path.startsWith('/api/admin/ai/connections')) {
       if (request.method() === 'GET') {
         if (state.getFailures > 0) { state.getFailures--; return route.fulfill({ status: 503, json: { code: 'UNAVAILABLE' } }) }
@@ -192,7 +202,7 @@ test('parallel call setting preserves an untouched legacy config and enforces it
   await expect(limit).toHaveValue('1')
   await expect(panel).toContainText('다른 작업이나 이전 원격 호출은 포함하지 않습니다')
   await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
-  await expect(panel.getByText('합성 OA 연결', { exact: true })).toBeVisible()
+  await expect(panel.getByRole('listitem').getByText('합성 OA 연결', { exact: true })).toBeVisible()
   expect(state.writes[0].config.batch).not.toHaveProperty('max_concurrency')
   await panel.getByRole('listitem').filter({ hasText: '합성 OA 연결' }).getByRole('button', { name: '수정', exact: true }).click()
   await panel.locator('summary').filter({ hasText: '처리 한도와 전체 로그 배치 설정' }).click()
@@ -220,8 +230,8 @@ for (const site of ['OA', 'VWP'] as const) {
     await expect(panel.getByRole('status').filter({ hasText: /저장/ })).toBeVisible()
     await expect(panel.getByRole('alert').filter({ hasText: /목록|새로고침|불러오/ })).toBeVisible()
     expect(state.writes).toHaveLength(1)
-    await panel.getByRole('button', { name: /새로고침|다시 조회|다시 불러오기/ }).click()
-    await expect(panel.getByText(`합성 ${site} 연결`, { exact: true })).toBeVisible()
+    await panel.getByRole('button', { name: '새로고침', exact: true }).click()
+    await expect(panel.getByRole('listitem').getByText(`합성 ${site} 연결`, { exact: true })).toBeVisible()
     expect(state.writes).toHaveLength(1)
   })
 }
@@ -234,8 +244,8 @@ test('initial list failure is not an empty list and retry loads entries', async 
   const panel = await openPanel(page)
   await expect(panel.getByRole('alert').filter({ hasText: /목록|불러오/ })).toBeVisible()
   await expect(panel.getByText('등록된 AI 연결이 없습니다', { exact: true })).toHaveCount(0)
-  await panel.getByRole('button', { name: /새로고침|다시 조회|다시 불러오기/ }).click()
-  await expect(panel.getByText('기존 합성 연결', { exact: true })).toBeVisible()
+  await panel.getByRole('button', { name: '새로고침', exact: true }).click()
+  await expect(panel.getByRole('listitem').getByText('기존 합성 연결', { exact: true })).toBeVisible()
   expect(state.writes).toHaveLength(0)
 })
 
@@ -257,7 +267,7 @@ test('an unavailable previously selected VWP model can be removed and the defaul
   await expect(form.getByLabel('VWP 기본 AI 모델', { exact: true })).toHaveValue('')
   await form.getByLabel('VWP 기본 AI 모델', { exact: true }).selectOption('vwp-fast')
   await form.getByRole('button', { name: 'VWP AI 연결 저장', exact: true }).click()
-  await expect(panel.getByText('기존 VWP 연결', { exact: true })).toBeVisible()
+  await expect(panel.getByRole('listitem').getByText('기존 VWP 연결', { exact: true })).toBeVisible()
   expect(state.writes).toHaveLength(1)
   expect(state.writes[0]).toMatchObject({ expected_revision: 3, config: { models: ['vwp-fast'], model: 'vwp-fast' } })
 })
@@ -271,7 +281,7 @@ test('removing the OA default requires choosing another allowed model before sav
   expect(state.writes).toHaveLength(0)
   await panel.getByLabel('기본 AI 모델', { exact: true }).selectOption('model-a')
   await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
-  await expect(panel.getByText('합성 OA 연결', { exact: true })).toBeVisible()
+  await expect(panel.getByRole('listitem').getByText('합성 OA 연결', { exact: true })).toBeVisible()
   expect(state.writes[0].config).toMatchObject({ models: ['model-a'], model: 'model-a' })
 })
 
@@ -286,13 +296,13 @@ test('an older refresh cannot overwrite the list loaded after a successful save'
     await panel.getByRole('button', { name: '새로고침', exact: true }).click()
     await pendingStarted  // The old GET captured the empty list before the POST.
     await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
-    await expect(panel.getByText('합성 OA 연결', { exact: true })).toBeVisible()
+    await expect(panel.getByRole('listitem').getByText('합성 OA 연결', { exact: true })).toBeVisible()
     expect(state.writes).toHaveLength(1)
     const oldResponse = page.waitForResponse(response => response.request().method() === 'GET' &&
       new URL(response.url()).pathname === '/api/admin/ai/connections')
     release(); await oldResponse
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-    await expect(panel.getByText('합성 OA 연결', { exact: true })).toBeVisible()
+    await expect(panel.getByRole('listitem').getByText('합성 OA 연결', { exact: true })).toBeVisible()
     await expect(panel.getByText('등록된 AI 연결이 없습니다', { exact: true })).toHaveCount(0)
     expect(state.writes).toHaveLength(1)
   } finally { release() }
@@ -308,7 +318,7 @@ for (const width of [1280, 1440]) {
     await panel.getByLabel('허용 AI 모델 목록').fill(`model-a\n${longModel}`)
     for (const site of ['OA', 'VWP'] as const) {
       const form = site === 'OA' ? panel.locator('form.ai-connection-form') : await fillVwp(panel)
-      await form.getByText('처리 한도와 전체 로그 배치 설정', { exact: true }).click()
+      await form.locator('summary').filter({ hasText: '처리 한도와 전체 로그 배치 설정' }).click()
       await form.getByRole('checkbox', { name: '전체 로그·그룹 판정·보존 본문 배치 사용', exact: true }).check()
       if (site === 'VWP') await expect(form.getByRole('group', { name: 'VWP 허용 AI 모델 목록' }).getByText(longModel, { exact: true })).toBeVisible()
       const layout = await form.evaluate(root => {
@@ -338,3 +348,71 @@ for (const width of [1280, 1440]) {
     }
   })
 }
+
+test('reasoning settings persist for OA and return to omitted server defaults', async ({ page }) => {
+  const state = await adminFixture(page); const panel = await openPanel(page)
+  await fillOa(panel)
+  await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
+  await expect(panel.getByRole('listitem').getByText('합성 OA 연결', { exact: true })).toBeVisible()
+  expect(state.writes[0].config).not.toHaveProperty('reasoning')
+  const edit = () => panel.getByRole('listitem').filter({ hasText: '합성 OA 연결' }).getByRole('button', { name: '수정', exact: true }).click()
+  const openLimits = () => panel.locator('summary').filter({ hasText: '처리 한도와 전체 로그 배치 설정' }).click()
+  await edit(); await openLimits()
+  await panel.getByLabel('AI 추론 동작').selectOption('on')
+  await panel.getByLabel('AI 추론 강도').selectOption('high')
+  await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
+  await expect.poll(() => state.writes.length).toBe(2)
+  expect(state.writes[1].config.reasoning).toEqual({ mode: 'on', protocol: 'openai', effort: 'high' })
+  await edit(); await openLimits()
+  await expect(panel.getByLabel('AI 추론 강도')).toHaveValue('high')
+  await panel.getByLabel('AI 추론 동작').selectOption('off')
+  await expect(panel.getByText('추론 끄기는 none 값을 전달합니다. none을 지원하는 모델에서만 사용하세요.')).toBeVisible()
+  await panel.getByLabel('AI 추론 요청 방식').selectOption('chat_template')
+  await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
+  await expect.poll(() => state.writes.length).toBe(3)
+  expect(state.writes[2].config.reasoning).toEqual({ mode: 'off', protocol: 'chat_template', effort: 'default' })
+  await edit(); await openLimits()
+  await expect(panel.getByLabel('AI 추론 요청 방식')).toHaveValue('chat_template')
+  await panel.getByLabel('AI API 종류').selectOption('responses')
+  await expect(panel.getByText(/Responses는 Chat Template을 지원하지 않아/)).toBeVisible()
+  await expect(panel.getByLabel('AI 추론 요청 방식')).toHaveValue('openai')
+  await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
+  await expect.poll(() => state.writes.length).toBe(4)
+  expect(state.writes[3].config.reasoning).toEqual({ mode: 'off', protocol: 'openai', effort: 'default' })
+  await edit(); await openLimits()
+  await panel.getByLabel('AI 추론 동작').selectOption('default')
+  await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
+  await expect.poll(() => state.writes.length).toBe(5)
+  expect(state.writes[4].config).not.toHaveProperty('reasoning')
+})
+
+test('VWP reasoning is persisted using the selected profile', async ({ page }) => {
+  const state = await adminFixture(page); const panel = await openPanel(page); const form = await fillVwp(panel)
+  await form.locator('summary').filter({ hasText: '처리 한도와 전체 로그 배치 설정' }).click()
+  await form.getByLabel('AI 추론 동작').selectOption('on')
+  await form.getByLabel('AI 추론 요청 방식').selectOption('chat_template')
+  await form.getByRole('button', { name: 'VWP AI 연결 저장', exact: true }).click()
+  await expect.poll(() => state.writes.length).toBe(1)
+  expect(state.writes[0].config.reasoning).toEqual({ mode: 'on', protocol: 'chat_template', effort: 'default' })
+  await panel.getByRole('listitem').filter({ hasText: '합성 VWP 연결' }).getByRole('button', { name: '수정', exact: true }).click()
+  const reopened = panel.getByRole('form', { name: 'VWP AI 연결 등록' })
+  await reopened.locator('summary').filter({ hasText: '처리 한도와 전체 로그 배치 설정' }).click()
+  await expect(reopened.getByLabel('AI 추론 요청 방식')).toHaveValue('chat_template')
+})
+
+test('admin saves distinct classification and judgment defaults', async ({ page }) => {
+  const oa = deletionEntry('OA'), vwp = deletionEntry('VWP')
+  oa.config.models = ['synthetic-model', 'classify']; vwp.config.models = ['synthetic-model', 'judge']
+  const state = await adminFixture(page, [oa, vwp]); const panel = await openPanel(page)
+  const defaults = panel.getByRole('region', { name: '작업별 기본 AI 모델' })
+  await defaults.getByLabel('로그 분류 기본 연결').selectOption(oa.id)
+  await defaults.getByLabel('로그 분류 기본 모델').selectOption('classify')
+  await defaults.getByLabel('그룹 판정 기본 연결').selectOption(vwp.id)
+  await defaults.getByLabel('그룹 판정 기본 모델').selectOption('judge')
+  await defaults.getByRole('button', { name: '작업별 기본값 저장' }).click()
+  await expect.poll(() => state.taskWrites.length).toBe(1)
+  expect(state.taskWrites[0]).toEqual({ expected_revision: 0, defaults: { CLUSTER: { connection_id: oa.id, model_id: 'classify' }, REVIEW: { connection_id: vwp.id, model_id: 'judge' } } })
+  await defaults.getByRole('button', { name: '다시 조회' }).click()
+  await expect(defaults.getByLabel('로그 분류 기본 모델')).toHaveValue('classify')
+  await expect(defaults.getByLabel('그룹 판정 기본 모델')).toHaveValue('judge')
+})

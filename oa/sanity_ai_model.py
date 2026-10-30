@@ -22,6 +22,7 @@ import httpx
 
 from common.sanity_ai_contracts import review_evidence, validate_criteria, validate_review_v2
 from common.sanity_ai_knowledge import shared_case
+from common.sanity_ai_reasoning import ReasoningSettings
 from common.sanity_clustering import check
 from common.sanity_clustering_advice import evidence, identity_fields_valid, validate_clustering_advice
 from common.sanity_ai_projection import policy_for, project_rows, instruction as projection_instruction, alias_rows, restore_clustering, restore_review, source_policy_pin
@@ -196,8 +197,12 @@ class OASettings:
     connection_id: str = ""
     connection_revision: int = 0
     connection_label: str = ""
+    reasoning: ReasoningSettings | None = None
 
     def __post_init__(self):
+        check(self.reasoning is None or isinstance(self.reasoning, ReasoningSettings), "AI_REASONING_CONFIG")
+        if self.reasoning is not None:
+            self.reasoning.validate_api(self.api)
         check(isinstance(self.batch, BatchSettings), 'AI_BATCH_CONFIG')
         if self.batch.enabled:
             check((self.api == 'responses') == (self.batch.output_parameter == 'max_output_tokens'), 'AI_BATCH_CONFIG')
@@ -391,6 +396,8 @@ class OAAdvisor:
                   "prompt_versions": {"clustering": CLUSTER_PROMPT_VERSION, "review": REVIEW_PROMPT_VERSION}}
         if settings.auth_mode != "legacy":
             public["auth_mode"] = settings.auth_mode
+        if settings.reasoning is not None:
+            public["reasoning"] = settings.reasoning.public()
         if settings.connection_id:
             public.update(connection_id=settings.connection_id, connection_revision=settings.connection_revision,
                           connection_label=settings.connection_label)
@@ -520,6 +527,8 @@ class OAAdvisor:
         messages = [{"role": "system", "content": instruction},
                     {"role": "user", "content": canonical_json(packet).decode("utf-8")}]
         body = {"model": settings.model, "stream": False}
+        if settings.reasoning is not None:
+            body.update(settings.reasoning.body(settings.api))
         if budget is not None:
             input_tokens = budget.check(packet, instruction)
             body[budget.settings.output_parameter] = budget.settings.output_tokens

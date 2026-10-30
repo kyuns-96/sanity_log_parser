@@ -1,14 +1,30 @@
 import { Input } from './studio/components/ui/input'
-import type { BatchConfig, ProcessingConfig } from './aiConnectionTypes'
+import type { BatchConfig, ProcessingConfig, ReasoningConfig } from './aiConnectionTypes'
 
 export default function AIProcessingLimits({ config, busy, onChange }: { config: ProcessingConfig; busy: boolean; onChange: (value: Partial<ProcessingConfig>) => void }) {
   const batch = (value: Partial<BatchConfig>) => onChange({ batch: { ...config.batch, ...value } })
+  const reasoning = config.reasoning
+  const setReasoningMode = (mode: ReasoningConfig['mode']) => {
+    if (mode === 'default') { onChange({ reasoning: undefined }); return }
+    const protocol = reasoning?.protocol || 'openai'
+    onChange({ reasoning: { mode, protocol, effort: mode === 'on' && protocol === 'openai' ? reasoning?.effort && reasoning.effort !== 'default' ? reasoning.effort : 'medium' : 'default' } })
+  }
   // Keep the planning reservation in sync with BatchModel.leaf_plan().
   const classificationCap = Number.isInteger(config.batch.output_tokens) && config.batch.output_tokens > 0 && Number.isInteger(config.batch.max_records) && config.batch.max_records > 0
     ? Math.min(config.batch.max_records, Math.max(1, Math.floor(config.batch.output_tokens / 192))) : null
   return <details className="ai-processing-limits">
-    <summary><span className="ai-limits-summary"><strong>처리 한도와 전체 로그 배치 설정</strong><span className="ai-limits-summary-description">요청 크기와 배치 처리 기준을 설정합니다.</span></span></summary>
+    <summary><span className="ai-limits-summary"><strong>처리 한도와 전체 로그 배치 설정 · AI 추론</strong><span className="ai-limits-summary-description">AI 추론 방식, 요청 크기와 배치 처리 기준을 설정합니다.</span></span></summary>
     <div className="ai-limits-content">
+      <div className="ai-limits-section ai-reasoning-section">
+        <h4>AI 추론 설정</h4>
+        <p>선택한 설정은 이 연결의 모든 허용 모델에 적용됩니다. 모델과 서버가 해당 옵션을 지원하는지 확인하세요. 지원하지 않으면 요청이 실패할 수 있습니다.</p>
+        <div className="ai-connection-fields ai-limits-grid">
+          <label>추론 동작<select aria-label="AI 추론 동작" value={reasoning?.mode || 'default'} disabled={busy} onChange={event => setReasoningMode(event.target.value as ReasoningConfig['mode'])}><option value="default">서버 기본값</option><option value="on">추론 사용</option><option value="off">추론 사용 안 함</option></select><small>서버 기본값은 추론 설정을 보내지 않습니다.</small></label>
+          {reasoning && reasoning.mode !== 'default' && <label>요청 방식<select aria-label="AI 추론 요청 방식" value={reasoning.protocol} disabled={busy} onChange={event => { const protocol = event.target.value as ReasoningConfig['protocol']; onChange({ reasoning: { mode: reasoning.mode, protocol, effort: protocol === 'openai' && reasoning.mode === 'on' ? 'medium' : 'default' } }) }}><option value="openai">OpenAI 호환</option><option value="chat_template" disabled={config.api === 'responses'}>Chat Template</option></select><small>Chat Template은 Chat Completions에서만 사용할 수 있습니다.</small></label>}
+          {reasoning?.mode === 'on' && reasoning.protocol === 'openai' && <label>추론 강도<select aria-label="AI 추론 강도" value={reasoning.effort} disabled={busy} onChange={event => onChange({ reasoning: { ...reasoning, effort: event.target.value as ReasoningConfig['effort'] } })}>{(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const).map(value => <option key={value} value={value}>{value}</option>)}</select></label>}
+        </div>
+        {reasoning?.mode === 'off' && reasoning.protocol === 'openai' && <p>추론 끄기는 none 값을 전달합니다. none을 지원하는 모델에서만 사용하세요.</p>}
+      </div>
       <div className="ai-connection-fields ai-limits-grid">
         {([['timeout', '응답 제한 시간(초)', 1, 600], ['max_input_bytes', '요청 byte 한도', 1, 67108864], ['max_output_bytes', '응답 byte 한도', 1, 67108864]] as const).map(([key, label, min, max]) => <label key={key}>{label}<Input type="number" aria-label={label} required min={min} max={max} disabled={busy} value={config[key]} onChange={event => onChange({ [key]: Number(event.target.value) })} /></label>)}
       </div>

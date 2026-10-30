@@ -14,6 +14,7 @@ export default function VwpAIConnectionForm({ api, initial, profiles, ready, cre
   const [config, setConfig] = useState<VwpConnectionConfig>(() => structuredClone(initial.config))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const profile = profiles.find(value => value.id === config.profile_id)
   const unavailableModels = config.models.filter(model => !profile?.models.includes(model))
   const availableModels = config.models.filter(model => profile?.models.includes(model))
@@ -22,10 +23,13 @@ export default function VwpAIConnectionForm({ api, initial, profiles, ready, cre
   function chooseProfile(id: string) {
     const next = profiles.find(value => value.id === id)
     if (!next) return
+    const resetReasoning = next.api === 'responses' && config.reasoning?.protocol === 'chat_template'
+    setNotice(resetReasoning ? 'Responses는 Chat Template을 지원하지 않아 추론 요청 방식을 OpenAI 호환으로 변경했습니다.' : '')
     change({ profile_id: id, api: next.api, models: [...next.models], model: '',
       timeout: Math.min(120, next.timeout), max_input_bytes: Math.min(1048576, next.max_input_bytes),
       max_output_bytes: Math.min(2097152, next.max_output_bytes),
-      batch: { ...config.batch, output_parameter: next.api === 'responses' ? 'max_output_tokens' : 'max_tokens' } })
+      batch: { ...config.batch, output_parameter: next.api === 'responses' ? 'max_output_tokens' : 'max_tokens' },
+      ...(resetReasoning && config.reasoning ? { reasoning: { ...config.reasoning, protocol: 'openai', effort: config.reasoning.mode === 'on' ? 'medium' : 'default' } } : {}) })
   }
   async function save(event: FormEvent) {
     event.preventDefault()
@@ -41,6 +45,7 @@ export default function VwpAIConnectionForm({ api, initial, profiles, ready, cre
   return <form className="am-form ai-connection-form vwp-ai-connection-form" aria-label="VWP AI 연결 등록" onSubmit={save}>
     <div className="ai-connection-form-heading"><Badge variant="outline" className="ai-provider-badge">VWP</Badge><p>실행 프로필과 모델을 선택하세요. API 주소와 공통 연결 정보는 VWP에서 관리하고 개인 인증값은 사용자가 등록합니다.</p></div>
     {error && <p className="am-error ai-form-feedback" role="alert">{error}</p>}
+    {notice && <p className="am-notice ai-form-feedback" role="status">{notice}</p>}
     {((!ready && credentialsReady) || !profiles.length) && <p className="am-notice ai-form-feedback" role="status">사용 가능한 VWP 실행 프로필이 없습니다. VWP 운영 담당자가 연결을 준비한 뒤 목록을 새로고침해 주세요.</p>}
     <fieldset className="ai-form-section"><legend>VWP 실행 연결</legend>
       <div className="ai-section-content">

@@ -6,7 +6,7 @@ import { RadioGroup, RadioGroupItem } from './studio/components/ui/radio-group'
 import { Textarea } from './studio/components/ui/textarea'
 import { Input } from './studio/components/ui/input'
 import CaseSource from './CaseSource'
-import AiModelSelect, { selectedAiModel, selectedAiConnection, aiConnectionNotice, needsPersonalCredential } from './AiModelSelect'
+import AiModelSelect, { selectedAiModel, selectedAiConnection, aiConnectionNotice, needsPersonalCredential, taskDefaultNotice } from './AiModelSelect'
 import UnknownBatchRecovery, { canRetryUnknown } from './UnknownBatchRecovery'
 import { PreservedCitations } from './PreservedSources'
 import { aiJobActive, aiJobMessage, aiExecutionLabel, WorkspaceError, toolResultStatus, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
@@ -176,6 +176,7 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
       {production && data.can_review && data.ai?.enabled && !data.ai.supported && <p className="ws-notice">분류 확정과 전체 로그·필수 근거의 준비 상태를 확인해 주세요.</p>}
       {production && needsPersonalCredential(choice) && <p className="ws-notice" role="status">화면 상단의 ‘개인 AI 토큰’에서 본인의 토큰을 등록하거나 교체해 주세요.</p>}
       {production && aiConnectionNotice(choice) && <p className="ws-notice" role="status">{aiConnectionNotice(choice)}</p>}
+      {production && taskDefaultNotice(data.ai, '판정') && <p className="ws-notice" role="status">{taskDefaultNotice(data.ai, '판정')}</p>}
       {production && data.ai?.job && <div className="ws-studio-ai-job"><p role="status" className={['FAILED', 'STALE', 'UNKNOWN'].includes(data.ai.job.status) ? 'ws-error' : 'ws-muted'}>{aiExecutionLabel(data.ai.job)} · {aiJobMessage(data.ai.job)}{aiRunning && pollPaused && ' 상태 자동 조회를 멈췄습니다. 아래 버튼으로 확인을 이어갈 수 있습니다.'}</p><Button variant="ghost" size="sm" disabled={!!busy} onClick={() => { polls.current.count = 0; setPollPaused(false); reload().catch(fail) }}>AI 판정 상태 다시 조회</Button></div>}
       {production && data.ai?.job && <UnknownBatchRecovery job={data.ai.job} disabled={!data.can_review || !!busy} onAccessDenied={() => { aiFetchEpoch.current++; setData(null) }} onRefresh={() => { aiFetchEpoch.current++; void reload().catch(fail) }} />}
       {proposal ? <div className="ws-review-proposal ws-studio-ai-result">

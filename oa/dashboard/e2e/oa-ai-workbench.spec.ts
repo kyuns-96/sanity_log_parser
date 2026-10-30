@@ -224,7 +224,7 @@ test('AI card cancellation uses the same-origin endpoint and waits for server st
   await expect(dashboard.getByRole('button', { name: '작업 취소', exact: true })).toHaveCount(0)
 })
 
-type MockOptions = { holdJob?: boolean; connections?: { id: string; label: string; model: string; models: string[]; available: boolean; enabled: boolean; credential_required?: boolean; credential_ready?: boolean }[]; models?: string[]; modelMetadata?: Partial<ClusterModelMetadata>; preserved?: PreservedSource[]; collectionOnly?: boolean; configured?: boolean; personalToken?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
+type MockOptions = { holdJob?: boolean; connections?: { id: string; label: string; model: string; models: string[]; available: boolean; enabled: boolean; credential_required?: boolean; credential_ready?: boolean }[]; reviewModel?: string; models?: string[]; modelMetadata?: Partial<ClusterModelMetadata>; preserved?: PreservedSource[]; collectionOnly?: boolean; configured?: boolean; personalToken?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
 
 async function mockOA(page: Page, options: MockOptions = {}) {
   const actor = options.readOnly ? { ...user, role: 'TOP' } : user
@@ -242,7 +242,7 @@ async function mockOA(page: Page, options: MockOptions = {}) {
   state.reviewRevision = options.currentCase?.revision || 0
   state.proposal = options.proposal || null
   const connections = () => options.configured === false ? [] : options.connections ? options.connections.map(value => options.personalToken ? { ...value, available: credentialReady, credential_required: true, credential_ready: credentialReady, credential_error: credentialReady ? null : 'AI_USER_TOKEN_REQUIRED' } : value) : [{ id: connectionId, label: '합성 AI 연결', model: model.model, models: options.models || [model.model], enabled: true, available: !options.personalToken || credentialReady, credential_required: true, credential_ready: !options.personalToken || credentialReady }]
-  const capability = (job: CodexJob | null) => ({ available: options.configured !== false && (!options.personalToken || credentialReady), supported: true, enabled: options.configured !== false, remaining: null, provider: 'OA_OPENAI_COMPATIBLE', synthetic_only: false, job, connections: connections(), connection_id: connections()[0]?.id || '', model: connections()[0]?.model || '', models: connections()[0]?.models || [], ...(options.personalToken ? { credential_required: true, credential_ready: credentialReady, credential_error: credentialReady ? null : 'AI_USER_TOKEN_REQUIRED' } : {}) })
+  const capability = (job: CodexJob | null, review = false) => { const choices = connections().map(value => review && options.reviewModel ? { ...value, model: options.reviewModel } : value); return { available: options.configured !== false && (!options.personalToken || credentialReady), supported: true, enabled: options.configured !== false, remaining: null, provider: 'OA_OPENAI_COMPATIBLE', synthetic_only: false, job, connections: choices, connection_id: choices[0]?.id || '', model: choices[0]?.model || '', models: choices[0]?.models || [], ...(options.personalToken ? { credential_required: true, credential_ready: credentialReady, credential_error: credentialReady ? null : 'AI_USER_TOKEN_REQUIRED' } : {}) } }
   const cluster = () => state.revision ? { id: `cluster-${state.revision}`, report_id: report.id, revision: state.revision, action: state.confirmed ? 'CONFIRM' : 'PROPOSE', confirmed: state.confirmed, reusable: false, compatible_versions: false, criteria: '', reason: '전체 로그의 검토 의도에 따라 묶었습니다.', identity_fields: ['mode'], group_count: 1, record_count: sourceRecords.length, at, actor, references: [], advisor: 'OA_OPENAI_COMPATIBLE', model_called: true, model_metadata: { ...model, model: state.clusterJob?.model || model.model, ...options.modelMetadata }, rationale_counts: { MISSING: 0, DRAFT: Number(!state.confirmed), CONFIRMED: Number(state.confirmed), STALE: 0 } } : null
   const group = () => ({ id: 'g1', label: '확인이 필요한 합성 대상', record_count: sourceRecords.length, check_status: options.collectionOnly ? 'UNKNOWN' : 'FAIL', status: state.current?.conclusion || 'PENDING', revision: state.reviewRevision, example: {}, rationale: { status: state.confirmed ? 'CONFIRMED' : 'DRAFT', reason: '같은 조건의 확인 대상입니다.', reason_truncated: false, reason_omitted_chars: 0, source: 'AI', evidence_count: 1 } })
   const finish = (job: CodexJob) => {
@@ -321,7 +321,7 @@ async function mockOA(page: Page, options: MockOptions = {}) {
         state.reviewJob.status = 'COMPLETED'
         state.proposal = { id: 'proposal-1', conclusion: 'FAIL', reason: '현재 로그 두 건은 확인된 합성 점검 기준을 충족하지 않습니다.', references: [], advisor: 'OA_OPENAI_COMPATIBLE', model_called: true, at, schema_version: 2, evidence_ids: ['log-1', 'log-2'], criterion_ids: ['synthetic-check-1'], model_metadata: { ...model, model: state.reviewJob.model } }
       }
-      return route.fulfill({ json: { current: state.current, current_stale: !!options.currentStale, revision: state.reviewRevision, history: reviewHistory, facts: { rule: report.rule, mode: 'test' }, ready: true, can_review: !options.readOnly, cases: options.cases || [], case_count: options.cases?.length || 0, reusable_count: 0, cases_displayed: options.cases?.length || 0, proposal: state.proposal, corporate_ai_connected: true, ai: capability(state.reviewJob) } })
+      return route.fulfill({ json: { current: state.current, current_stale: !!options.currentStale, revision: state.reviewRevision, history: reviewHistory, facts: { rule: report.rule, mode: 'test' }, ready: true, can_review: !options.readOnly, cases: options.cases || [], case_count: options.cases?.length || 0, reusable_count: 0, cases_displayed: options.cases?.length || 0, proposal: state.proposal, corporate_ai_connected: true, ai: capability(state.reviewJob, true) } })
     }
     state.unexpected.push(`${req.method()} ${path}`)
     return route.fulfill({ status: 404, json: { code: 'NOT_FOUND' } })
@@ -1202,4 +1202,22 @@ test('unavailable VWP profile explains the disabled action without misleading cr
   await expect(page.getByText('VWP AI 연결을 현재 사용할 수 없습니다.', { exact: false })).toBeVisible()
   await expect(page.getByText('개인 AI 토큰을 사용할 수 없습니다.', { exact: false })).toHaveCount(0)
   expect(state.writes).toEqual([])
+})
+
+test('task-specific defaults and user selection are sent for classification and judgment', async ({ page }) => {
+  const models = [model.model, 'synthetic-second-model']
+  const state = await mockOA(page, { models, reviewModel: 'synthetic-second-model' })
+  await page.goto(url)
+  const classification = page.getByRole('combobox', { name: '분류 AI 모델', exact: true })
+  await expect(classification).toHaveValue(model.model)
+  await page.getByRole('button', { name: 'AI로 그룹 만들기', exact: true }).click()
+  await expect(page.locator('.ws-rationale-text').first()).toBeVisible()
+  expect(state.writes.find(write => write.path.endsWith('/clustering/ai'))?.body).toMatchObject({ connection_id: connectionId, model_id: model.model })
+  await page.getByRole('button', { name: '분류 확정 · 판정 시작', exact: true }).click()
+  const review = page.locator('.ws-judgment-workspace')
+  const judgment = review.getByRole('combobox', { name: '판정 AI 모델', exact: true })
+  await expect(judgment).toHaveValue('synthetic-second-model')
+  await review.getByRole('button', { name: 'AI 판정 받기', exact: true }).click()
+  await expect(review.locator('.ws-review-proposal')).toBeVisible()
+  expect(state.writes.find(write => write.path.endsWith('/review/ai'))?.body).toMatchObject({ connection_id: connectionId, model_id: 'synthetic-second-model' })
 })

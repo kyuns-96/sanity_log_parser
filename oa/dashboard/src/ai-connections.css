@@ -9,6 +9,18 @@
 .ai-connection-loading { padding: 32px 22px; color: var(--text-muted); font-size: 13px; }
 .ai-catalog-summary { display: flex; flex-wrap: wrap; gap: 24px; padding: 18px 22px; color: var(--text-muted); font-size: 12px; }
 .ai-catalog-summary strong { margin-left: 5px; color: var(--ink); font-weight: 600; }
+.ai-task-defaults { display: grid; gap: 14px; padding: 20px 22px; border-bottom: 1px solid var(--line); }
+.ai-task-defaults header { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
+.ai-task-defaults h3 { margin: 0; color: var(--ink); font-size: 14px; font-weight: 600; }
+.ai-task-defaults header p { margin: 5px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.6; }
+.ai-task-default-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.ai-task-default-grid fieldset { min-width: 0; margin: 0; padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
+.ai-task-default-grid legend { padding: 0 5px; color: var(--ink); font-size: 12px; font-weight: 600; }
+.ai-task-default-grid fieldset > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ai-task-default-grid label { display: grid; gap: 6px; min-width: 0; color: var(--text-secondary); font-size: 12px; }
+.ai-task-default-grid select { min-width: 0; width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); text-overflow: ellipsis; }
+.ai-task-default-grid p { grid-column: 1 / -1; margin: 0; color: var(--warning); font-size: 11px; }
+.ai-task-default-actions { display: flex; justify-content: flex-end; }
 .ai-list-heading, .ai-connections-admin .ai-connection-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr) 86px 230px; gap: 20px; align-items: center; }
 .ai-list-heading { padding: 11px 22px; border-block: 1px solid var(--line-soft); color: var(--text-muted); background: var(--surface-soft); font-size: 11px; }
 .ai-list-heading > :last-child { text-align: right; }

@@ -101,9 +101,35 @@ flowchart TD
 운영 담당자가 허용할 모델을 `SANITY_OA_AI_MODELS='["synthetic-model-a","synthetic-model-b"]'`처럼
 등록하고 `SANITY_OA_AI_MODEL=synthetic-model-a`로 기본값을 정한다. 실제 값은 비공개 환경에만 둔다.
 분류 화면의 **분류 AI 모델**, 그룹 판정 화면의 **판정 AI 모델**에서 사용자가 실행할 모델을 각각
-고른다. 작업 등록 API의 선택형 `model_id`는 서버 목록 안의 ID만 허용한다. 생략하면 기본 모델이다.
+고른다. 작업 등록 API의 선택형 `model_id`는 선택한 연결의 서버 목록 안의 ID만 허용한다.
 목록은 로그인·대상 조회 권한 검사 후 제공하며 브라우저가 URL·키·기준·임의 모델을 추가하지 않는다.
 외부 `/models` 자동 조회나 사용자별 영속 기본값 설정은 제공하지 않는다.
+
+관리자는 분류와 그룹 판정 각각의 기본 연결·모델을 별도로 지정할 수 있다. 작업 화면에 제시하는
+초기 선택값이며 사용자는 허용된 다른 연결·모델로 바꿀 수 있다. 관리자 설정 전에는 기존처럼 첫 연결의
+기본 모델을 사용한다. 지정한 연결이 삭제·비활성화되거나 모델이 제거되면 첫 연결을 대체 선택하고
+기본값이 적용되지 않은 이유를 표시한다. VWP의 사용자 권한이나 개인 인증값이 부족한 경우에는
+다른 연결로 자동 전환하지 않고 해당 연결을 사용 불가로 표시한다.
+새 화면은 선택한 `connection_id`와 `model_id`를 작업 요청에 명시한다. 기존 클라이언트가 이를
+생략하는 동작은 기존 계약을 유지한다. 관리자 기본값을 바꿔도 이미 제출한 작업과 재개의 고정 모델은
+바뀌지 않는다. 관리자 API는 `GET`/`POST /api/admin/ai/task-defaults`이며, 저장할 때 개정 번호와
+분류(`CLUSTER`)·판정(`REVIEW`)의 연결·모델을 함께 제출한다.
+
+관리자는 각 OA 또는 VWP 연결에서 선택적으로 추론 설정을 지정할 수 있다. 저장 형식은
+`reasoning={"mode":"default|on|off","protocol":"openai|chat_template","effort":"default|minimal|low|medium|high|xhigh|max"}`이며
+세 키가 모두 필요하다. `default`는 `effort=default`로 모델 기본 동작에 맡긴다. `openai`의 `on`은
+`default`가 아닌 effort를 지정하며, `off`는 `effort=default`와 함께 전송값 `none`을 사용한다.
+Chat Completions에서는 `reasoning_effort`, Responses에서는 `reasoning.effort`로 보낸다.
+`chat_template`은 Chat Completions 전용이며 effort는 `default`, `on`/`off`는 각각
+`chat_template_kwargs.enable_thinking=true/false`로 보낸다. 다른 임의 옵션이나 중첩 필드를 받지 않는다.
+설정을 생략한 기존 연결은 요청 본문과 기존 설정 지문이 유지된다. 설정을 변경하면 기존 작업은
+실행 전·결과 반영 전 설정 지문을 재검사한다. 모델이 반환한 별도 추론 내용은 판단 답변이나
+공개 메타데이터에 포함하지 않는다.
+
+추론 제어 값의 지원 여부와 실제 처리 시간·품질은 모델과 서버마다 다르다. 관리자는 해당 모델의
+실제 지원을 사내에서 확인한 다음에만 켠다. 참고: [OpenAI reasoning 안내](https://developers.openai.com/api/docs/guides/reasoning),
+[vLLM reasoning outputs](https://docs.vllm.ai/en/stable/features/reasoning_outputs/). 이 문서의 옵션은
+사내 모델이 두 프로토콜이나 모든 effort 값을 지원한다는 뜻이 아니다.
 
 선택한 모델은 부모 작업에 고정하며 단일 호출·보존 본문 분석·분할 분류/그룹 판정·통합·재개와
 결과 복구까지 유지한다. 동일 요청 ID에 다른 명시적 모델을 넣으면 `REQUEST_CONFLICT`다.
