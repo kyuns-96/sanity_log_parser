@@ -7,6 +7,7 @@ import { Textarea } from './studio/components/ui/textarea'
 import { WorkspaceBrand } from './components/WorkspaceBrand'
 import { ColorModeControl } from './components/ColorModeControl'
 import { SidebarModeSwitch } from './components/SidebarModeSwitch'
+import { SidebarResizer, useSidebarLayout } from './components/SidebarResizer'
 import { modeUrl, useDashboardNavigation, useDashboardSidebarState } from './dashboardMode'
 import { useWorkspaceNavigation } from './useWorkspaceNavigation'
 import type { Session } from './types'
@@ -30,10 +31,11 @@ export function AccessLayout({ session, page, title, description, onNavigate, on
   const mainId = `access-main-${screenId}`
   const [mobile, setMobile] = useState(false)
   const [collapsed, setCollapsed] = useDashboardSidebarState()
+  const sidebarLayout = useSidebarLayout(!collapsed)
   const closeMobile = useCallback(() => setMobile(false), [])
   const { isMobile, sidebarRef, triggerRef } = useWorkspaceNavigation(mobile, closeMobile, true)
   function navigate(next: AccessPage) { closeMobile(); onNavigate(next) }
-  return <div className={`am-root shell studio-system studio-access ${collapsed && !isMobile ? 'sidebar-is-collapsed' : ''}`}>
+  return <div style={sidebarLayout.style} className={`am-root shell studio-system studio-access sidebar-layout ${sidebarLayout.resizing ? 'sidebar-resizing' : ''} ${collapsed && !isMobile ? 'sidebar-is-collapsed' : ''}`}>
     <a className="skip-link" href={`#${mainId}`}>본문으로 건너뛰기</a>
     {mobile && <button className="sidebar-backdrop" aria-label="메뉴 닫기" onClick={closeMobile} tabIndex={-1} />}
     <aside id={menuId} ref={sidebarRef} className={`sidebar ${mobile ? 'sidebar-open' : ''}`} aria-label="워크스페이스 메뉴" role={isMobile && mobile ? 'dialog' : undefined} aria-modal={isMobile && mobile ? true : undefined} inert={isMobile && !mobile} aria-hidden={isMobile && !mobile}>
@@ -52,6 +54,7 @@ export function AccessLayout({ session, page, title, description, onNavigate, on
       <div className="sidebar-spacer" />
       <button className="sidebar-toggle" onClick={() => setCollapsed(value => !value)} aria-expanded={!collapsed} aria-label={collapsed ? '메뉴 펼치기' : '메뉴 접기'}>{collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}<span>메뉴 접기</span></button>
       <div className="sidebar-footer"><div className="avatar">{session.reviewer.slice(0, 1)}</div><div><strong>{session.reviewer}</strong><small>{page === 'admin' ? '관리자 모드' : '사용자 모드'}</small></div><Button variant="ghost" size="icon-sm" aria-label="로그아웃" disabled={signingOut} onClick={() => void onLogout()}><LogOut size={16} /></Button></div>
+      {!collapsed && !isMobile && <SidebarResizer layout={sidebarLayout} />}
     </aside>
     <div className="main-shell" inert={isMobile && mobile} aria-hidden={isMobile && mobile}>
       <header className="topbar"><div className="breadcrumb"><button ref={triggerRef} className="mobile-menu" aria-label="메뉴 열기" aria-expanded={mobile} aria-controls={menuId} onClick={() => setMobile(true)}><Menu /></button><span>워크스페이스</span><ChevronRight size={13} /><strong>{page === 'admin' ? '관리자' : '내 프로젝트·권한'}</strong></div><div className="color-mode-actions"><ColorModeControl /><Badge variant="outline" className="access-session-badge"><ShieldCheck size={13} />SSO 로그인됨</Badge></div></header>

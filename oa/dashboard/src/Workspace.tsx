@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './studio/components/ui
 import { WorkspaceBrand } from './components/WorkspaceBrand'
 import { ColorModeControl } from './components/ColorModeControl'
 import { SidebarModeSwitch } from './components/SidebarModeSwitch'
+import { SidebarResizer, useSidebarLayout } from './components/SidebarResizer'
 import { modeUrl, useDashboardNavigation, useDashboardSidebarState } from './dashboardMode'
 import { useWorkspaceNavigation } from './useWorkspaceNavigation'
 import { productionWorkbench, WorkspaceError, toolResultStatus, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
@@ -96,6 +97,7 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
   const [saveError, setSaveError] = useState('')
   const [mobile, setMobile] = useState(false)
   const [collapsed, setCollapsed] = useDashboardSidebarState()
+  const sidebarLayout = useSidebarLayout(!collapsed && !reviewing)
   const closeMobile = useCallback(() => setMobile(false), [])
   const { isMobile, sidebarRef, triggerRef } = useWorkspaceNavigation(mobile, closeMobile, !reviewing)
   const requestId = useRef<string | null>(null)
@@ -264,7 +266,7 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
   }
   const totals = project?.blocks.reduce((total, block) => ({ total: total.total + block.total, fail: total.fail + (block.counts.FAIL || 0), unknown: total.unknown + (block.counts.UNKNOWN || 0), por: total.por + Number(!!block.por.version) }), { total: 0, fail: 0, unknown: 0, por: 0 })
 
-  return <div className={`ws-app ws-studio-workspace ${collapsed && !reviewing ? 'ws-collapsed' : ''}${reviewing ? ' ws-studio-workbench-open' : ''}${production && session.is_admin === true ? ' ws-mode-enabled' : ''}`}>
+  return <div style={sidebarLayout.style} className={`ws-app ws-studio-workspace sidebar-layout ${sidebarLayout.resizing ? 'sidebar-resizing' : ''} ${collapsed && !reviewing ? 'ws-collapsed' : ''}${reviewing ? ' ws-studio-workbench-open' : ''}${production && session.is_admin === true ? ' ws-mode-enabled' : ''}`}>
     <a className="skip-link" href="#ws-main">본문으로 건너뛰기</a>
     {!reviewing && mobile && isMobile && <button className="ws-backdrop" aria-label="메뉴 닫기" onClick={closeMobile} />}
     {!reviewing && <aside ref={sidebarRef} className={`ws-sidebar ${mobile ? 'ws-open' : ''}`} aria-label="워크스페이스 메뉴" role={mobile && isMobile ? 'dialog' : undefined} aria-modal={mobile && isMobile || undefined} inert={isMobile && !mobile}>
@@ -283,6 +285,7 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
         <span className="ws-environment">{production ? '운영 · SSO 연결' : demo ? '합성 데모 · 메모리 저장' : '테스트 · 서버 저장'}</span>
         <div className="ws-studio-sidebar-actions"><button className="ws-collapse" onClick={() => setCollapsed(value => !value)} aria-label={collapsed ? '메뉴 펼치기' : '메뉴 접기'} aria-expanded={!collapsed}><ChevronLeft size={16} /><span>메뉴 접기</span></button><button className="ws-logout" onClick={logout}><LogOut size={16} /><span>{production ? '포털로 돌아가기' : demo ? '데모 종료' : '로그아웃'}</span></button></div>
       </div>
+      {!collapsed && !isMobile && <SidebarResizer layout={sidebarLayout} />}
     </aside>}
     <div className="ws-main-shell" inert={!reviewing && isMobile && mobile}>
       <header className={`ws-topbar ws-studio-topbar${reviewing ? ' ws-studio-workbench-topbar' : ''}`}>

@@ -18,6 +18,7 @@ import { RawEvidence } from './RawEvidence'
 import { WorkspaceBrand } from './components/WorkspaceBrand'
 import { ColorModeControl } from './components/ColorModeControl'
 import { SidebarModeSwitch } from './components/SidebarModeSwitch'
+import { SidebarResizer, useSidebarLayout } from './components/SidebarResizer'
 import { modeUrl, useDashboardNavigation, useDashboardSidebarState } from './dashboardMode'
 import { useWorkspaceNavigation } from './useWorkspaceNavigation'
 import { useDashboardAuth } from './useDashboardAuth'
@@ -63,6 +64,7 @@ export default function App({ routePage, initialAuth }: { routePage?: AccessPage
   const busy = commandBusy || auth.signingOut
   const [mobile, setMobile] = useState(false)
   const [collapsed, setCollapsed] = useDashboardSidebarState()
+  const sidebarLayout = useSidebarLayout(!collapsed)
   const closeMobile = useCallback(() => setMobile(false), [])
   const { isMobile, sidebarRef, triggerRef } = useWorkspaceNavigation(mobile, closeMobile, !!session)
   const [bundles, setBundles] = useState<Page<Bundle>>({ items: [], total: 0, offset: 0, limit: 20 })
@@ -229,7 +231,7 @@ export default function App({ routePage, initialAuth }: { routePage?: AccessPage
   const canRequestEvidence = readySSO ? detail?.permissions?.can_request_evidence === true : session.writable
   const canReceiveEvidence = readySSO ? detail?.permissions?.can_receive_evidence === true : session.writable
   const canReceive = readySSO ? session.can_receive === true : session.writable
-  return <div className={`shell studio-system studio-portal ${collapsed && !isMobile ? 'sidebar-is-collapsed' : ''}`}><a className="skip-link" href="#workspace-main">본문으로 건너뛰기</a>
+  return <div style={sidebarLayout.style} className={`shell studio-system studio-portal sidebar-layout ${sidebarLayout.resizing ? 'sidebar-resizing' : ''} ${collapsed && !isMobile ? 'sidebar-is-collapsed' : ''}`}><a className="skip-link" href="#workspace-main">본문으로 건너뛰기</a>
     {mobile && <button className="sidebar-backdrop" aria-label="메뉴 닫기" onClick={closeMobile} tabIndex={-1} />}
     <aside id="workspace-menu" ref={sidebarRef} className={`sidebar ${mobile ? 'sidebar-open' : ''}`} aria-label="워크스페이스 메뉴" role={isMobile && mobile ? 'dialog' : undefined} aria-modal={isMobile && mobile ? true : undefined} inert={isMobile && !mobile} aria-hidden={isMobile && !mobile}>
       <WorkspaceBrand />
@@ -246,6 +248,7 @@ export default function App({ routePage, initialAuth }: { routePage?: AccessPage
       <div className="portal-sidebar-note"><ShieldCheck size={15} /><span>모든 판정에 근거와 변경 이력을 남깁니다.</span></div>
       <button className="sidebar-toggle" onClick={() => setCollapsed(value => !value)} aria-expanded={!collapsed} aria-label={collapsed ? '메뉴 펼치기' : '메뉴 접기'}>{collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}<span>메뉴 접기</span></button>
       <div className="sidebar-footer"><div className="avatar">{session.reviewer.slice(0, 1)}</div><div><strong>{session.reviewer}</strong><small>{session.writable ? '검토자' : '읽기 전용'}</small></div><Button variant="ghost" size="icon-sm" aria-label="연결 종료" disabled={busy} onClick={logout}><LogOut size={17} /></Button></div>
+      {!collapsed && !isMobile && <SidebarResizer layout={sidebarLayout} />}
     </aside>
     <div className="main-shell" inert={isMobile && mobile} aria-hidden={isMobile && mobile}><header className="topbar"><div className="breadcrumb"><button ref={triggerRef} className="mobile-menu" aria-label="메뉴 열기" aria-expanded={mobile} aria-controls="workspace-menu" onClick={() => setMobile(true)}><Menu /></button><span>워크스페이스</span><ChevronRight size={13} /><strong>Sanity 검토</strong></div><div className="topbar-right"><ColorModeControl />{!demo && readySSO && <PersonalAiToken key={session.user_id} />}<span className="connection"><span className="online-dot" />{demo ? '데모 환경' : '연결됨'}</span><Separator orientation="vertical" /><span className="avatar avatar-small">{session.reviewer.slice(0, 1)}</span></div></header>
     <main className="workspace" id="workspace-main" tabIndex={-1}>

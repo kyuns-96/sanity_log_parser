@@ -1,0 +1,88 @@
+/* The expanded width is shared by the portal and workspace shells. */
+@media (min-width: 721px) {
+  .sidebar-layout:not(.ws-studio-workspace):not(.sidebar-is-collapsed) {
+    --sidebar-width: var(--sidebar-expanded-width, 220px);
+  }
+  .sidebar-layout.sidebar-is-collapsed { --sidebar-width: 80px; }
+
+  .sidebar-layout.ws-studio-workspace:not(.ws-collapsed):not(.ws-studio-workbench-open) {
+    --ws-sidebar-width: var(--sidebar-expanded-width, 220px);
+  }
+  .sidebar-layout.ws-studio-workspace.ws-collapsed:not(.ws-studio-workbench-open) {
+    --ws-sidebar-width: 78px;
+  }
+  .sidebar-layout.ws-studio-workspace.ws-mode-enabled.ws-collapsed:not(.ws-studio-workbench-open) {
+    --ws-sidebar-width: 80px;
+  }
+  .sidebar-layout.ws-studio-workspace.ws-studio-workbench-open { --ws-sidebar-width: 0px; }
+
+  .sidebar-layout > .sidebar,
+  .sidebar-layout > .ws-sidebar {
+    transition: width 220ms ease;
+  }
+  .sidebar-layout:not(.ws-studio-workspace) > .main-shell {
+    margin-left: var(--sidebar-width);
+    width: calc(100% - var(--sidebar-width));
+    transition: margin-left 220ms ease, width 220ms ease;
+  }
+  .sidebar-layout.ws-studio-workspace > .ws-main-shell {
+    margin-left: var(--ws-sidebar-width);
+    width: calc(100% - var(--ws-sidebar-width));
+    transition: margin-left 220ms ease, width 220ms ease;
+  }
+  .sidebar-layout.sidebar-resizing { user-select: none; cursor: col-resize; }
+  .sidebar-layout.sidebar-resizing > :is(.sidebar, .ws-sidebar, .main-shell, .ws-main-shell) {
+    transition: none;
+  }
+  /* A pointer can leave the shell while it is captured by the handle. */
+  html.sidebar-pointer-resizing,
+  html.sidebar-pointer-resizing * {
+    cursor: col-resize !important;
+    user-select: none !important;
+  }
+
+  /* Keep expanding labels on one line while the sidebar is still narrow. */
+  .sidebar-layout:not(.sidebar-is-collapsed) .sidebar nav button .nav-text,
+  .sidebar-layout.ws-studio-workspace:not(.ws-collapsed) .ws-sidebar nav button > span:not(.ws-studio-nav-por) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sidebar-layout:not(.sidebar-is-collapsed) .sidebar nav button > svg,
+  .sidebar-layout.ws-studio-workspace:not(.ws-collapsed) .ws-sidebar nav button > svg { flex-shrink: 0; }
+
+  .sidebar-resizer {
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    right: -5px;
+    bottom: 0;
+    width: 10px;
+    cursor: col-resize;
+    touch-action: none;
+    outline: none;
+  }
+  .sidebar-resizer::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 4px;
+    width: 2px;
+    background: transparent;
+    transition: background-color 120ms ease;
+  }
+  .sidebar-resizer:hover::after,
+  .sidebar-resizer:focus-visible::after,
+  .sidebar-resizing .sidebar-resizer::after { background: var(--accent); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sidebar-layout > :is(.sidebar, .ws-sidebar, .main-shell, .ws-main-shell),
+    .sidebar-resizer::after { transition: none; }
+  }
+}
+
+@media (max-width: 720px) {
+  .sidebar-resizer { display: none; }
+}

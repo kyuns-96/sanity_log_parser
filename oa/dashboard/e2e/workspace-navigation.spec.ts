@@ -8,7 +8,7 @@ test('desktop rail keeps navigation named, keyboard operable and reversible', as
 
   await page.getByRole('button', { name: '메뉴 접기', exact: true }).click()
   await expect(page.getByRole('button', { name: '메뉴 펼치기', exact: true })).toHaveAttribute('aria-expanded', 'false')
-  expect((await main.boundingBox())!.width).toBeGreaterThan(expandedWidth)
+  await expect.poll(async () => (await main.boundingBox())!.width).toBeGreaterThan(expandedWidth)
   const history = page.getByRole('button', { name: '활동 이력', exact: true })
   const target = (await history.boundingBox())!
   expect(target.width).toBeGreaterThanOrEqual(44)
@@ -20,7 +20,7 @@ test('desktop rail keeps navigation named, keyboard operable and reversible', as
   await expect(history).toHaveAttribute('aria-current', 'page')
 
   await page.getByRole('button', { name: '메뉴 펼치기', exact: true }).click()
-  expect((await main.boundingBox())!.width).toBe(expandedWidth)
+  await expect.poll(async () => (await main.boundingBox())!.width).toBe(expandedWidth)
   await page.getByRole('button', { name: '검토 대장', exact: true }).click()
   await expect(page.getByText('CHECK-101', { exact: true })).toBeVisible()
 })
