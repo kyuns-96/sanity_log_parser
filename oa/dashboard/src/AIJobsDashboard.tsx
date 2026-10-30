@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Activity, ArrowUpRight, CheckCircle2, Clock3, RefreshCw, Server, ShieldAlert } from 'lucide-react'
 import { Button } from './studio/components/ui/button'
-import { aiExecutionLabel, aiJobActive, aiJobMessage, WorkspaceError, workspaceRequest, workspaceTime } from './workspaceApi'
+import { aiExecutionLabel, aiJobActive, aiJobMessage, aiValidationMessage, WorkspaceError, workspaceRequest, workspaceTime } from './workspaceApi'
 import type { CodexJob } from './workspaceApi'
 import UnknownBatchRecovery from './UnknownBatchRecovery'
 import './ai-jobs.css'
@@ -92,12 +92,15 @@ export default function AIJobsDashboard({ projectId, compact = false, onAll, ref
       const roundTotal = p?.round_total || 0
       const roundCompleted = p?.round_completed || 0
       const percent = job.status === 'COMPLETED' ? 100 : roundTotal ? Math.min(100, Math.floor(roundCompleted * 100 / roundTotal)) : undefined
-      const measured = parallel ? p?.wall_seconds_per_record : p?.seconds_per_record ?? (job.call_seconds && job.total_records ? job.call_seconds / job.total_records : null)
+      const validMetric = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0
+      const rawMeasured = parallel ? p?.wall_seconds_per_record : p?.seconds_per_record ?? (job.call_seconds && job.total_records ? job.call_seconds / job.total_records : null)
+      const measured = validMetric(rawMeasured) ? rawMeasured : null
       const nextRetry = job.retry_after || p?.retry_after
       const retries = p?.child_retries ?? job.retry_count ?? 0
       const retryLimit = p?.retry_limit ?? job.retry_limit
-      const eta = active && !stopping && !nextRetry && snapshot?.worker.online && !error ? parallel ? p?.wall_stage_eta_seconds : p?.stage_eta_seconds : null
-      const etaAt = eta != null ? Date.parse(job.observed_at) + eta * 1000 : null
+      const rawEta = active && (!parallel || job.status === 'RUNNING') && !stopping && !nextRetry && snapshot?.worker.online && !error ? parallel ? p?.wall_stage_eta_seconds : p?.stage_eta_seconds : null
+      const etaBase = Date.parse(parallel ? p?.wall_measured_at || '' : job.observed_at)
+      const etaAt = validMetric(rawEta) && Number.isFinite(etaBase) ? etaBase + rawEta * 1000 : null
       const elapsed = Math.max(0, ((job.finished_at ? Date.parse(job.finished_at) : clock + offset) - Date.parse(job.created_at)) / 1000)
       const phase = !active ? statuses[job.status] : stopping ? '취소 요청됨' : nextRetry ? parallel ? '일부 배치 재시도 대기' : 'AI 요청 재시도 대기' : parallel ? phases[p?.phase || ''] || '배치 처리' : phases[job.preparation_phase || ''] || phases[job.phase || ''] || phases[p?.phase || ''] || (job.status === 'PENDING' ? '작업자 대기' : job.status === 'RESULT_READY' ? '현재 입력과 저장 결과 검증' : active ? '전체 로그 검토' : statuses[job.status])
       const params = new URLSearchParams({ page: 'workbench', project: job.report.project_id, block: job.report.block_id, version: job.report.version_id, tab: 'reports', review: job.report.report_id, item: job.report.item_id })
@@ -109,8 +112,9 @@ export default function AIJobsDashboard({ projectId, compact = false, onAll, ref
         <p className="ai-job-coverage">{p ? <>{p.completed_records.toLocaleString()} / {p.total_records.toLocaleString()}건 검토 · {p.completed_calls.toLocaleString()}회 호출 완료{roundTotal > 0 && <> · 이번 단계 {roundCompleted} / {roundTotal}</>}</> : job.total_records ? `전체 ${job.total_records.toLocaleString()}건 · 전체 응답 후 검증` : '전체 입력 준비 후 처리량을 표시합니다.'}</p>
         {parallel && p?.inflight_calls != null && p.concurrency != null && <p className="ai-job-coverage">이 작업에서 동시 처리 {p.inflight_calls} / {p.concurrency}개{p.active_descriptors?.length ? ` · 진행 중 배치 ${p.active_descriptors.map(value => `${value.index + 1}`).join(', ')}` : ''}</p>}
         {!parallel && retryLimit != null && retries > 0 && <p className="ai-job-coverage">현재 요청 재시도 {retries} / {retryLimit}{nextRetry && <> · 다음 시도 {new Date(nextRetry).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</>}</p>}
-        <dl className="ai-job-metrics"><div><dt><Clock3 size={12} />{active ? '경과 시간' : '총 소요 시간'}</dt><dd>{seconds(elapsed)}</dd></div><div><dt>로그 건당 평균</dt><dd>{measured != null ? seconds(measured) : '측정 중'}</dd></div><div><dt>이번 단계 예상 종료</dt><dd>{etaAt != null ? etaAt > clock + offset ? new Date(etaAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '예상보다 지연 중' : active && !stopping ? error || !snapshot?.worker.online ? '확인 불가' : '측정치 수집 중' : '—'}</dd></div></dl>
-        <p className="ai-job-note">{stopping ? '취소 요청됨 · 진행 중 응답 확인 후 종료' : nextRetry ? aiJobMessage(job) : active && p ? parallel ? '예상 시간은 측정된 실제 경과 시간을 기준으로 합니다. 이후 통합·검증이 남을 수 있습니다.' : '예상 시간은 이번 단계의 완료된 호출 기준입니다. 이후 통합·검증이 남을 수 있습니다.' : job.can_resume && job.resumable && ['FAILED', 'CANCELLED'].includes(job.status) ? (p ? '저장된 완료 배치를 유지하고 중단 지점부터 재개할 수 있습니다.' : '현재 입력으로 작업을 재개할 수 있습니다.') : aiJobMessage(job)}</p>
+        <dl className="ai-job-metrics"><div><dt><Clock3 size={12} />{active ? '경과 시간' : '총 소요 시간'}</dt><dd>{seconds(elapsed)}</dd></div><div><dt>로그 건당 평균</dt><dd>{measured != null ? seconds(measured) : '측정 중'}</dd></div><div><dt>이번 단계 예상 종료</dt><dd>{etaAt != null ? etaAt > clock + offset ? new Date(etaAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '예상보다 지연 중' : active && !stopping ? error || !snapshot?.worker.online ? '확인 불가' : nextRetry ? '재시도 대기 중' : parallel && job.status !== 'RUNNING' ? '—' : '측정치 수집 중' : '—'}</dd></div></dl>
+        <p className="ai-job-note">{stopping ? '취소 요청됨 · 진행 중 응답 확인 후 종료' : nextRetry ? aiJobMessage(job) : active && p ? parallel ? '평균은 최근 분류·판정의 실제 경과 시간 기준입니다. 예상은 이번 단계만 포함하며 이후 통합·검증이 남을 수 있습니다.' : '예상 시간은 이번 단계의 완료된 호출 기준입니다. 이후 통합·검증이 남을 수 있습니다.' : job.can_resume && job.resumable && ['FAILED', 'CANCELLED'].includes(job.status) ? (p ? '저장된 완료 배치를 유지하고 중단 지점부터 재개할 수 있습니다.' : '현재 입력으로 작업을 재개할 수 있습니다.') : aiJobMessage(job)}</p>
+        {aiValidationMessage(job) && <p className="ai-job-note">{aiValidationMessage(job)}</p>}
         {(job.error || p?.retry_error) && <code className="ai-job-error">{job.error || p?.retry_error}{p?.retry_http_status ? ` · HTTP ${p.retry_http_status}` : ''}</code>}
         <footer><span>등록 {workspaceTime(job.created_at)}</span><div>{(job.can_cancel || stopping) && <Button size="sm" variant="ghost" disabled={!!cancelling || !!resuming || stopping} onClick={() => void cancel(job)}>{stopping ? '취소 요청됨' : cancelling === job.id ? '취소 중…' : '작업 취소'}</Button>}{job.can_resume && job.resumable && ['FAILED', 'CANCELLED'].includes(job.status) && <Button size="sm" variant="ghost" disabled={!!resuming || !!cancelling} onClick={() => void resume(job)}>{resuming === job.id ? '재개 요청 중…' : '중단 지점부터 재개'}</Button>}<UnknownBatchRecovery job={job} disabled={!!cancelling || !!resuming} onAccessDenied={clearAccessSnapshot} onRefresh={() => setReload(v => v + 1)} /><Button size="sm" variant="outline" asChild><a href={`/?${params}`}>검토 열기<ArrowUpRight size={13} /></a></Button></div></footer>
       </article>

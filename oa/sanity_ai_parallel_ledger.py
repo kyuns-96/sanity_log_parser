@@ -45,7 +45,8 @@ class ParallelLedger(Ledger):
         for slot in wave:
             check(slot.get('status') in ('RESERVED','DONE','RETRY','FAILED','UNKNOWN'), 'AI_BATCH_CORRUPT')
             if 'reservation' not in slot:
-                check(slot['status'] in ('RETRY','DONE') and slot.get('attempt', 0) == 0, 'AI_BATCH_CORRUPT')
+                check(slot['status'] in ('RETRY','DONE') and slot.get('attempt', 0) == 0
+                      and 'validation_failure' not in slot, 'AI_BATCH_CORRUPT')
                 if slot['status'] == 'DONE':
                     result = slot.get('result')
                     check(isinstance(result,dict) and set(result)=={'key','sha256'}, 'AI_BATCH_CORRUPT')
@@ -88,6 +89,14 @@ class ParallelLedger(Ledger):
                         self._require_unknown_ack(slot['call_token'])
                 if 'receipt' in slot:
                     check(valid_receipt(slot['receipt']) and outcome.get('receipt') == slot['receipt'], 'AI_BATCH_CORRUPT')
+                if 'validation_failure' in slot:
+                    from common.sanity_validation_diagnostics import sanitize_validation_failure
+                    diagnostic=slot['validation_failure']
+                    check(slot['status'] in ('RETRY','FAILED') and slot.get('receipt',{}).get('error')=='INVALID_RATIONALE'
+                          and diagnostic is not None and sanitize_validation_failure(diagnostic)==diagnostic
+                          and outcome.get('validation_failure')==diagnostic,'AI_BATCH_CORRUPT')
+                elif slot['status'] in ('RETRY','FAILED') and 'receipt' in slot:
+                    check('validation_failure' not in outcome,'AI_BATCH_CORRUPT')
         return step, ref
 
     def _require_unknown_ack(self, token):
@@ -190,7 +199,13 @@ class ParallelLedger(Ledger):
                       and outcome['result']['key'] not in result_keys, 'AI_BATCH_CORRUPT')
                 result_keys.add(outcome['result']['key']); success += 1
             elif outcome['status'] == 'FAILURE':
-                check(valid_receipt(outcome.get('receipt')), 'AI_BATCH_CORRUPT'); failed += 1
+                check(valid_receipt(outcome.get('receipt')), 'AI_BATCH_CORRUPT')
+                if 'validation_failure' in outcome:
+                    from common.sanity_validation_diagnostics import sanitize_validation_failure
+                    diagnostic=outcome['validation_failure']
+                    check(diagnostic is not None and outcome['receipt']['error']=='INVALID_RATIONALE'
+                          and sanitize_validation_failure(diagnostic)==diagnostic,'AI_BATCH_CORRUPT')
+                failed += 1
             elif outcome['status'] == 'UNKNOWN':
                 unknown_tokens.add(call['call_token']); unknown += 1
             else:

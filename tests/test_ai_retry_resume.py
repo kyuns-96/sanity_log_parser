@@ -1,5 +1,6 @@
 """Synthetic tests for explicit resume, saved checkpoints and authorization."""
 from datetime import datetime, timedelta
+import json
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -54,6 +55,97 @@ class ResumeCheckpointTests(PgTestCase):
             with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):result=self.c.run_job(now=at)
         self.assertEqual('FAILED',result['status'],result)
         return result,start+timedelta(seconds=1200)
+
+    @staticmethod
+    def invalid_rationale(request):
+        from tests.test_ai_batches import response
+        packet=json.loads(json.loads(request.content)['messages'][1]['content'])
+        value=response(packet)
+        value['group_rationales'][0]['reason']='PRIVATE_SYNTHETIC_REASON'
+        value['group_rationales'][0]['evidence_ids']=['PRIVATE_SYNTHETIC_FOREIGN_ID']
+        return httpx.Response(200,json={'model':'synthetic-model','choices':[{'finish_reason':'stop',
+            'message':{'role':'assistant','content':json.dumps(value)}}]})
+
+    def test_single_invalid_rationale_diagnostic_is_transient_and_not_raw_content(self):
+        job=self.w.request();self.w.prepare();self.c.callback=self.invalid_rationale
+        failed=self.w.prepare()
+        self.assertEqual('PENDING',failed['status'])
+        detail=failed['validation_failure']
+        self.assertEqual(('RATIONALE_EVIDENCE_OUTSIDE_GROUP','evidence_ids',0),
+                         (detail['code'],detail['field'],detail['group_index']))
+        with self.c.service() as service:
+            self.assertEqual(detail,service.status('owner',job['id'])['validation_failure'])
+        observed=[]
+        def next_response(request):
+            with self.c.service() as service:observed.append(service.status('owner',job['id']))
+            return httpx.Response(401)
+        self.c.callback=next_response;at=_now()+timedelta(seconds=400)
+        with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):result=self.c.run_job(now=at)
+        self.assertNotIn('validation_failure',observed[0])
+        self.assertEqual('FAILED',result['status']);self.assertNotIn('validation_failure',result)
+        rows=self.c.admin_query("SELECT payload FROM {oa} WHERE workspace_key LIKE %s OR workspace_key LIKE %s",
+            ('ai1.job.'+job['id']+'.%','ai.live.'+job['id']+'.%')).fetchall()
+        rendered=json.dumps(rows,ensure_ascii=False,default=str)
+        self.assertIn('RATIONALE_EVIDENCE_OUTSIDE_GROUP',rendered)
+        self.assertNotIn('PRIVATE_SYNTHETIC_REASON',rendered);self.assertNotIn('PRIVATE_SYNTHETIC_FOREIGN_ID',rendered)
+
+    def test_serial_batch_diagnostic_preserves_completed_child_and_clears_on_retry(self):
+        from oa.sanity_ai_batch_jobs import Ledger
+        from oa.sanity_ai_monitor import Monitor
+        job=self.setup_batch();self.c.callback=self.invalid_rationale
+        failure=self.w.prepare()
+        self.assertEqual('RATIONALE_EVIDENCE_OUTSIDE_GROUP',failure['validation_failure']['code'])
+        self.assertEqual(1,failure['progress']['completed_calls'])
+        with self.c.service() as service:
+            self.assertEqual(failure['validation_failure'],service.status('owner',job['id'])['validation_failure'])
+            item=next(item for item in Monitor(service).items('owner')['items'] if item['id']==job['id'])
+            self.assertEqual(failure['validation_failure'],item['validation_failure'])
+            ledger=Ledger(service,service._load(job['id']));step,_=ledger.last()
+            self.assertEqual(failure['validation_failure'],step['failure']['validation_failure'])
+            self.assertEqual({'kind','error','model_called','response_complete'},set(step['failure']['receipt']))
+        self.c.callback=None;at=_now()+timedelta(seconds=400)
+        with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):success=self.c.run_job(now=at)
+        self.assertEqual(2,success['progress']['completed_calls']);self.assertNotIn('validation_failure',success)
+        result=self.w.v.finish();self.assertEqual('COMPLETED',result['status'],result)
+        self.assertEqual(4,len(self.w.v.wire))
+        with self.c.service() as service:
+            ledger=Ledger(service,service._load(job['id']));self.assertIsNotNone(ledger.audit())
+            history=json.dumps([step for step,_ in ledger.rows('step.')],ensure_ascii=False)
+            self.assertIn('RATIONALE_EVIDENCE_OUTSIDE_GROUP',history)
+            self.assertNotIn('PRIVATE_SYNTHETIC_REASON',history);self.assertNotIn('PRIVATE_SYNTHETIC_FOREIGN_ID',history)
+
+    def test_merge_failure_diagnostic_keeps_both_completed_leaf_results(self):
+        from oa.sanity_ai_batch_jobs import Ledger
+        job=self.setup_batch()
+        self.assertEqual(2,self.w.prepare()['progress']['completed_calls'])
+        self.w.prepare()  # Advance to the merge round without calling the model.
+        self.c.callback=self.invalid_rationale
+        failed=self.w.prepare()
+        self.assertEqual('MERGE',failed['progress']['phase'])
+        self.assertEqual(2,failed['progress']['completed_calls'])
+        self.assertEqual('RATIONALE_EVIDENCE_OUTSIDE_GROUP',failed['validation_failure']['code'])
+        self.c.callback=None;at=_now()+timedelta(seconds=400)
+        with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):self.c.run_job(now=at)
+        result=self.w.v.finish();self.assertEqual('COMPLETED',result['status'],result)
+        self.assertEqual(4,len(self.w.v.wire))
+        with self.c.service() as service:
+            ledger=Ledger(service,service._load(job['id']));self.assertIsNotNone(ledger.audit())
+
+    def test_manual_resume_clears_terminal_diagnostic_without_repeating_completed_child(self):
+        job=self.setup_batch();self.c.callback=self.invalid_rationale;start=_now()
+        for number in range(6):
+            at=start+timedelta(seconds=400*number)
+            with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):failed=self.c.run_job(now=at)
+        self.assertEqual('FAILED',failed['status'],failed)
+        self.assertEqual('RATIONALE_EVIDENCE_OUTSIDE_GROUP',failed['validation_failure']['code'])
+        self.assertTrue(failed['resumable']);self.assertEqual(1,failed['progress']['completed_calls'])
+        with patch('oa.sanity_ai_jobs._db_now',return_value=at),self.c.service() as service:
+            resumed=service.resume('owner',job['id'],uuid4())
+        self.assertEqual('RUNNING',resumed['status']);self.assertNotIn('validation_failure',resumed)
+        self.c.callback=None
+        with patch('oa.sanity_ai_jobs._db_now',return_value=at):result=self.w.v.finish()
+        self.assertEqual('COMPLETED',result['status'],result);self.assertNotIn('validation_failure',result)
+        self.assertEqual(9,len(self.w.v.wire))
 
     def test_exhausted_batch_resumes_saved_child_without_repeating_completed_work(self):
         job=self.setup_batch()

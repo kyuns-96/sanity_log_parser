@@ -102,7 +102,7 @@ def resume(service, user_id, job_id, request_id):
     check(resumable(event,checkpoint_ready=bool(step and step['status']=='READY')),'AI_RESUME_UNAVAILABLE')
     service._check_credential_pin(event)
     data={k:v for k,v in event['data'].items() if k not in
-          ('finished_at','cancelled_by','error','retry_after','retry_failure','resume_checkpoint')}
+          ('finished_at','cancelled_by','error','retry_after','retry_failure','resume_checkpoint','validation_failure')}
     data.update(resume_count=event['data'].get('resume_count',0)+1,
                 resume_request_id=request_id,resumed_by=user_id,retry_count=0)
     now=_db_now(service.db)

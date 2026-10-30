@@ -126,6 +126,7 @@ def _reset(state, statuses):
         if slot['status'] in statuses:
             slot = {**slot, 'status':'RETRY', 'retries':0, 'retry_after':None}
             slot.pop('receipt', None)
+            slot.pop('validation_failure', None)
         result['wave'].append(slot)
     result['cancel_requested'] = False
     result.pop('cancelled_by', None)
@@ -240,7 +241,7 @@ def _start(service, user_id, job_id, request_id, *, unknown=False, expected_even
 def _append(service, event, user_id, request_id, checkpoint):
     from oa.sanity_ai_jobs import _db_now, _timestamp
     data = {k:v for k,v in event['data'].items() if k not in
-            ('finished_at','cancelled_by','error','retry_after','retry_failure','resume_checkpoint','unknown_reason')}
+            ('finished_at','cancelled_by','error','retry_after','retry_failure','resume_checkpoint','unknown_reason','validation_failure')}
     data.update(resume_count=event['data'].get('resume_count',0)+1, resume_request_id=request_id,
                 resumed_by=user_id, retry_count=0, resume_checkpoint=checkpoint)
     now = _db_now(service.db)

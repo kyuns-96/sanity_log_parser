@@ -68,7 +68,9 @@ class ClusteringAdvisor(ABC):
 def validate_clustering_advice(value, context, cases, *, require_rationales=False):
     keys = {"groups", "reason", "reference_ids"}
     check(isinstance(value, dict) and set(value) in (keys, keys | {"group_rationales"}), "INVALID_ADVICE")
-    check(not require_rationales or "group_rationales" in value, "INVALID_RATIONALE")
+    if require_rationales and "group_rationales" not in value:
+        from common.sanity_validation_diagnostics import raise_rationale
+        raise_rationale('RATIONALE_MISSING','group_rationales')
     check(isinstance(value["reason"], str) and 1 <= len(value["reason"].strip()) <= 2000, "INVALID_ADVICE")
     refs = value["reference_ids"]
     check(isinstance(refs, list) and all(isinstance(key, str) for key in refs)
@@ -76,5 +78,5 @@ def validate_clustering_advice(value, context, cases, *, require_rationales=Fals
     check(len(refs) <= 100, "CASE_LIMIT")
     groups = partition(value["groups"], evidence(context))
     if "group_rationales" in value:
-        rationale.validate_group_rationales(value["group_rationales"], groups, cases, refs)
+        rationale.validate_group_rationales(value["group_rationales"], groups, cases, refs, diagnostics=require_rationales)
     return {**value, "groups": groups}

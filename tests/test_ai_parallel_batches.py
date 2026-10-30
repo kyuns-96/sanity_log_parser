@@ -31,6 +31,41 @@ class ParallelSettingsTests(unittest.TestCase):
             with self.subTest(value=value),self.assertRaises(ReviewError):BatchSettings(max_concurrency=value)
 
 
+class ParallelWallMetricsTests(unittest.TestCase):
+    def test_wall_rates_use_stage_samples_and_correct_phase_units(self):
+        from oa.sanity_ai_parallel_jobs import _wall_metrics
+        event={'status':'RUNNING','data':{'batch':{'total_records':100}}}
+        state={'round':0,'phase':'CLASSIFY','round_total':10,'index':0,'round_samples':2,'records':20,
+               'wall_record_sample':{'seconds':10.0,'records':20},
+               'wall_timing':{'round':0,'resume_count':0,'started_at':'2026-10-30T00:00:00+00:00',
+                              'measured_at':'2026-10-30T00:00:10+00:00','base_samples':0,'base_records':0,'base_units':0}}
+        wave=[{'status':'DONE'},{'status':'DONE'},{'status':'RESERVED'}]
+        rate,eta,at=_wall_metrics(event,state,wave)
+        self.assertEqual((.5,40.0,'2026-10-30T00:00:10+00:00'),(rate,eta,at))
+        self.assertEqual((rate,eta,at),_wall_metrics(event,{**state,'phase':'REVIEW'},wave))
+        merge={**state,'round':1,'phase':'MERGE','round_total':6,'records':100,
+               'wall_timing':{**state['wall_timing'],'round':1,'base_records':100}}
+        self.assertEqual((.5,20.0,'2026-10-30T00:00:10+00:00'),_wall_metrics(event,merge,wave))
+        for phase in ('TEXT','TEXT_MERGE','REVIEW_MERGE'):
+            with self.subTest(phase=phase):
+                self.assertEqual((.5,20.0,'2026-10-30T00:00:10+00:00'),
+                                 _wall_metrics(event,{**merge,'phase':phase},wave))
+        self.assertEqual((.5,None,None),_wall_metrics(event,{**state,'round_samples':1},wave))
+        self.assertEqual((.5,None,None),_wall_metrics(event,{**state,'round':1},wave))
+        self.assertEqual((.5,None,None),_wall_metrics({**event,'data':{**event['data'],'resume_count':1}},state,wave))
+        for status in ('FAILED','UNKNOWN','CANCELLED','COMPLETED'):
+            self.assertIsNone(_wall_metrics({**event,'status':status},state,wave)[1])
+        self.assertIsNone(_wall_metrics(event,{**state,'cancel_requested':True},wave)[1])
+        self.assertIsNone(_wall_metrics(event,state,[{'status':'DONE'},{'status':'DONE'},
+                                                      {'status':'RETRY','retry_after':'2026-10-30T00:00:20+00:00'}])[1])
+        self.assertEqual((None,None,None),_wall_metrics(event,{'round':0},[]))
+        for changes in ({'started_at':'invalid'},{'measured_at':'invalid'}, {'base_records':True},
+                        {'base_samples':-1}, {'base_units':None}):
+            with self.subTest(changes=changes):
+                broken={**state,'wall_timing':{**state['wall_timing'],**changes}}
+                self.assertEqual((.5,None,None),_wall_metrics(event,broken,wave))
+
+
 class ParallelVwpJobsTests(PgTestCase):
     def setUp(self):
         from tests.test_vwp_worker import VwpWorkerTests
@@ -115,6 +150,64 @@ class ParallelVwpJobsTests(PgTestCase):
             self.assertEqual('parallel-v1',event['data']['batch']['execution'])
             self.assertEqual(2,event['data']['batch']['max_concurrency'])
         self.assertEqual(4,len(self.v.wire))
+
+    def test_wall_samples_follow_overlapping_completions_and_reset_at_merge(self):
+        job=self.create_job(records=4);entered=[Event(),Event()];release=[Event(),Event()]
+        clock=[_now()]
+        def block(request):
+            packet=self.packet(request)
+            if packet['batch']['stage']=='LEAF' and packet['batch']['start'] in (0,1):
+                index=packet['batch']['start'];entered[index].set()
+                if not release[index].wait(20):raise AssertionError('synthetic leaf was not released')
+        self.c.callback=block
+        with patch('oa.sanity_ai_jobs._db_now',side_effect=lambda _db:clock[0]),ThreadPoolExecutor(max_workers=1) as executor:
+            future=executor.submit(self.run_wave)
+            try:
+                self.assertTrue(entered[0].wait(10));self.assertTrue(entered[1].wait(10))
+                start=clock[0];clock[0]=start+timedelta(seconds=6);release[1].set()
+                partial=self.wait_progress(job,1)
+                self.assertIsNone(partial['progress']['wall_seconds_per_record'])
+                self.assertIsNone(partial['progress']['wall_stage_eta_seconds'])
+                clock[0]=start+timedelta(seconds=10);release[0].set();first=future.result(timeout=10)
+                p=first['progress']
+                self.assertEqual((2,5.0,10.0),(p['completed_records'],p['wall_seconds_per_record'],p['wall_stage_eta_seconds']))
+                self.assertEqual(clock[0].isoformat(),p['wall_measured_at'])
+                self.c.callback=None;clock[0]=start+timedelta(seconds=20)
+                second=self.run_wave();self.assertEqual(4,second['progress']['completed_records'])
+                self.assertEqual(5.0,second['progress']['wall_seconds_per_record'])
+                self.assertIsNone(second['progress']['wall_stage_eta_seconds'])
+                merge=self.run_wave();self.assertEqual('MERGE',merge['progress']['phase'])
+                self.assertEqual(5.0,merge['progress']['wall_seconds_per_record'])
+                self.assertIsNone(merge['progress']['wall_stage_eta_seconds'])
+            finally:
+                for signal in release:signal.set()
+
+    def test_invalid_optional_timing_does_not_change_successful_model_result(self):
+        from oa.sanity_ai_parallel_ledger import ParallelLedger
+        job=self.create_job();entered=[Event(),Event()];release=Event()
+        def block(request):
+            packet=self.packet(request)
+            if packet['batch']['stage']=='LEAF':
+                entered[packet['batch']['start']].set()
+                if not release.wait(20):raise AssertionError('synthetic leaf was not released')
+        self.c.callback=block
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future=executor.submit(self.run_wave)
+            try:
+                self.assertTrue(entered[0].wait(10));self.assertTrue(entered[1].wait(10))
+                with self.c.service() as service:
+                    service._lock(job['id']);event=service._load(job['id'])
+                    ledger=ParallelLedger(service,event);step,ref=ledger.last()
+                    timing={**step['state']['wall_timing'],'base_records':True}
+                    ledger.step(step,ref,'READY',{**step['state'],'wall_timing':timing})
+                self.assertIsNone(self.status(job)['progress']['wall_stage_eta_seconds'])
+            finally:release.set()
+            result=future.result(timeout=10)
+        self.assertEqual(('RUNNING',2),(result['status'],result['progress']['completed_calls']))
+        self.assertIsNone(result['progress']['wall_seconds_per_record'])
+        self.c.callback=None;result=self.finish()
+        self.assertEqual('COMPLETED',result['status'],result)
+        self.assertEqual(3,len(self.v.wire))
 
     def test_two_workers_cannot_reserve_or_dispatch_a_child_twice(self):
         job=self.create_job();entered=[Event(),Event()];release=Event();second_started=Event();calls=[];lock=Lock()
@@ -365,6 +458,52 @@ class ParallelVwpJobsTests(PgTestCase):
         with lock:self.assertEqual(Counter({('LEAF',0):6,('LEAF',1):1}),Counter(calls))
         self.assertEqual(7,len(self.v.wire))
         self.assertIsNone(self.run_wave())
+
+    def test_parallel_rationale_diagnostic_is_saved_and_clears_when_retry_starts(self):
+        from oa.sanity_ai_parallel_ledger import ParallelLedger
+        from tests.test_ai_retry_resume import ResumeCheckpointTests
+        job=self.create_job()
+        def invalid(request):
+            packet=self.packet(request)
+            if packet['batch']['stage']=='LEAF' and packet['batch']['start']==0:
+                return ResumeCheckpointTests.invalid_rationale(request)
+        self.c.callback=invalid
+        first=self.run_wave()
+        detail=first['validation_failure']
+        self.assertEqual('RATIONALE_EVIDENCE_OUTSIDE_GROUP',detail['code'])
+        self.assertEqual(1,first['progress']['completed_calls'])
+        with self.c.service() as service:
+            self.assertEqual(detail,service.status('owner',job['id'])['validation_failure'])
+            ledger=ParallelLedger(service,service._load(job['id']))
+            step,_=ledger.last();slot=next(s for s in step['state']['wave'] if s['index']==0)
+            self.assertEqual(detail,slot['validation_failure'])
+            outcome,_=ledger.get(slot['reservation']['key']+'.outcome')
+            self.assertEqual(detail,outcome['validation_failure'])
+            self.assertEqual({'kind','error','model_called','response_complete'},set(outcome['receipt']))
+        entered=Event();release=Event()
+        def block(_request):
+            entered.set()
+            if not release.wait(20):raise AssertionError('synthetic retry was not released')
+        self.c.callback=block;at=_now()+timedelta(seconds=400)
+        with patch('oa.sanity_ai_jobs._db_now',return_value=at),ThreadPoolExecutor(max_workers=1) as executor:
+            def retry():
+                with executing_on('vwp'):return self.c.run_job(now=at)
+            future=executor.submit(retry)
+            try:
+                self.assertTrue(entered.wait(10))
+                self.assertNotIn('validation_failure',self.status(job))
+            finally:release.set()
+            result=future.result(timeout=10)
+        self.assertNotIn('validation_failure',result)
+        self.c.callback=None;result=self.finish();self.assertEqual('COMPLETED',result['status'],result)
+        packets=self.c.requests
+        self.assertEqual(Counter({0:2,1:1}),Counter(packet['batch']['start'] for packet in packets
+                         if packet.get('batch',{}).get('stage')=='LEAF'))
+        with self.c.service() as service:
+            ledger=ParallelLedger(service,service._load(job['id']));self.assertIsNotNone(ledger.audit())
+            history=json.dumps([value for value,_ in ledger.rows('call.')],ensure_ascii=False)
+            self.assertIn('RATIONALE_EVIDENCE_OUTSIDE_GROUP',history)
+            self.assertNotIn('PRIVATE_SYNTHETIC_REASON',history);self.assertNotIn('PRIVATE_SYNTHETIC_FOREIGN_ID',history)
 
     def test_call_budget_includes_all_reserved_siblings_and_never_overdispatches(self):
         self.create_job(width=2,records=2,max_calls=2)

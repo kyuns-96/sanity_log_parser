@@ -84,42 +84,71 @@ def unpack(event):
     return {**{key: value for key, value in event.items() if key not in PACKED_KEYS}, "rationales": rows}
 
 
-def validate_content(value, group, cases):
-    check(isinstance(value, dict) and set(value) == CONTENT_KEYS, "INVALID_RATIONALE")
+def _rationale_check(ok, code, field, *, diagnostics=False, group_index=None,
+                     actual_count=None, actual_length=None, message="Invalid classification contract"):
+    if ok:
+        return
+    if diagnostics:
+        from common.sanity_validation_diagnostics import raise_rationale
+        raise_rationale(code, field, group_index=group_index, actual_count=actual_count, actual_length=actual_length)
+    check(False, "INVALID_RATIONALE", message)
+
+
+def validate_content(value, group, cases, *, diagnostics=False, group_index=None):
+    def require(ok, code, field, **details):
+        _rationale_check(ok, code, field, diagnostics=diagnostics, group_index=group_index, **details)
+    require(isinstance(value, dict) and set(value) == CONTENT_KEYS, 'RATIONALE_ENTRY_SHAPE', 'group_rationales')
     reason, ids, refs = value["reason"], value["evidence_ids"], value["reference_groups"]
-    check(isinstance(reason, str) and 1 <= len(reason.strip()) <= 2000, "INVALID_RATIONALE")
+    reason_length = min(len(reason.strip()),1000000) if isinstance(reason,str) else None
+    require(isinstance(reason, str) and 1 <= len(reason.strip()) <= 2000,
+            'RATIONALE_REASON', 'reason', actual_length=reason_length)
     members = set(group["record_ids"])
-    check(isinstance(ids, list) and 1 <= len(ids) <= 20 and all(isinstance(key, str) for key in ids)
-          and len(set(ids)) == len(ids) and set(ids) <= members, "INVALID_RATIONALE",
-          "Representative IDs must belong to this group")
-    check(isinstance(refs, list) and len(refs) <= 20, "INVALID_RATIONALE")
+    evidence_message = 'Representative IDs must belong to this group'
+    require(isinstance(ids,list), 'RATIONALE_EVIDENCE_TYPE', 'evidence_ids', message=evidence_message)
+    require(1 <= len(ids) <= 20, 'RATIONALE_EVIDENCE_COUNT', 'evidence_ids',
+            actual_count=min(len(ids),1000000), message=evidence_message)
+    require(all(isinstance(key,str) for key in ids), 'RATIONALE_EVIDENCE_ITEM_TYPE', 'evidence_ids', message=evidence_message)
+    require(len(set(ids)) == len(ids), 'RATIONALE_EVIDENCE_DUPLICATE', 'evidence_ids', message=evidence_message)
+    require(set(ids) <= members, 'RATIONALE_EVIDENCE_OUTSIDE_GROUP', 'evidence_ids', message=evidence_message)
+    require(isinstance(refs,list), 'RATIONALE_REFERENCE_TYPE', 'reference_groups')
+    require(len(refs) <= 20, 'RATIONALE_REFERENCE_COUNT', 'reference_groups', actual_count=min(len(refs),1000000))
     catalog = {case["id"]: case for case in cases}
     seen = set()
     for ref in refs:
-        check(isinstance(ref, dict) and set(ref) == {"case_id", "group_id", "reason"}, "INVALID_RATIONALE")
-        check(isinstance(ref["case_id"], str) and isinstance(ref["group_id"], str)
-              and isinstance(ref["reason"], str) and 1 <= len(ref["reason"].strip()) <= 500, "INVALID_RATIONALE")
+        require(isinstance(ref,dict) and set(ref) == {"case_id", "group_id", "reason"},
+                'RATIONALE_REFERENCE_ENTRY_SHAPE','reference_groups')
+        require(isinstance(ref["case_id"],str) and isinstance(ref["group_id"],str)
+              and isinstance(ref["reason"],str) and 1 <= len(ref["reason"].strip()) <= 500,
+              'RATIONALE_REFERENCE_ENTRY_VALUE','reference_groups')
         pair = (ref["case_id"], ref["group_id"])
         case = catalog.get(ref["case_id"])
-        check(case is not None and any(g["id"] == ref["group_id"] for g in case["groups"])
-              and pair not in seen, "INVALID_RATIONALE", "Historical group must be an available confirmed example")
+        reference_message = 'Historical group must be an available confirmed example'
+        require(case is not None,'RATIONALE_REFERENCE_CASE_UNKNOWN','reference_groups',message=reference_message)
+        require(any(g["id"] == ref["group_id"] for g in case["groups"]),
+                'RATIONALE_REFERENCE_GROUP_UNKNOWN','reference_groups',message=reference_message)
+        require(pair not in seen,'RATIONALE_REFERENCE_DUPLICATE','reference_groups',message=reference_message)
         seen.add(pair)
     return {"reason": reason.strip(), "evidence_ids": list(ids),
             "reference_groups": [{**ref, "reason": ref["reason"].strip()} for ref in refs]}
 
 
-def validate_group_rationales(values, groups, cases, reference_ids):
-    check(isinstance(values, list) and len(values) == len(groups), "INVALID_RATIONALE")
+def validate_group_rationales(values, groups, cases, reference_ids, *, diagnostics=False):
+    _rationale_check(isinstance(values,list) and len(values)==len(groups), 'RATIONALE_COUNT', 'group_rationales',
+                     diagnostics=diagnostics, actual_count=min(len(values),1000000) if isinstance(values,list) else None)
     index, result = {group["id"]: group for group in groups}, {}
     used = set()
-    for value in values:
-        check(isinstance(value, dict) and set(value) == CONTENT_KEYS | {"group_id"}, "INVALID_RATIONALE")
+    for group_index,value in enumerate(values):
+        _rationale_check(isinstance(value,dict) and set(value)==CONTENT_KEYS | {"group_id"},
+                         'RATIONALE_ENTRY_SHAPE','group_rationales',diagnostics=diagnostics,group_index=group_index)
         key = value["group_id"]
-        check(isinstance(key, str) and key in index and key not in result, "INVALID_RATIONALE")
-        content = validate_content({k: value[k] for k in CONTENT_KEYS}, index[key], cases)
+        _rationale_check(isinstance(key,str) and key in index and key not in result,
+                         'RATIONALE_GROUP_ID','group_id',diagnostics=diagnostics,group_index=group_index)
+        content = validate_content({k: value[k] for k in CONTENT_KEYS}, index[key], cases,
+                                   diagnostics=diagnostics,group_index=group_index)
         used.update(ref["case_id"] for ref in content["reference_groups"])
         result[key] = content
-    check(used == set(reference_ids), "INVALID_RATIONALE", "Global references must equal the per-group references")
+    _rationale_check(used == set(reference_ids),'RATIONALE_REFERENCES_MISMATCH','reference_ids',
+                     diagnostics=diagnostics,message='Global references must equal the per-group references')
     return result
 
 

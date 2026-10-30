@@ -17,7 +17,7 @@ from common.sanity_submission import check
 from common.sanity_preserved_ai import available, model_metadata, receipt
 from oa.sanity_workspace import record_id
 from oa.sanity_ai_batch_model import BatchModel, VERSION
-from oa.sanity_ai_retry import MAX_RETRIES,receipt as failure_receipt,valid_receipt,retry_at,resumable
+from oa.sanity_ai_retry import MAX_RETRIES,receipt as failure_receipt,valid_receipt,retry_at,resumable,validation_failure
 
 NAMESPACE = 'oa-ai-batch-v1'
 MAX_BYTES = 64*1024*1024
@@ -163,9 +163,14 @@ class Ledger:
             if step['status']=='READY' and 'failure' in step:
                 failure=step['failure']
                 check(pending is not None and isinstance(failure,dict)
-                    and set(failure)=={'call_token','input_sha256','receipt'}
+                    and {'call_token','input_sha256','receipt'} <= set(failure) <= {'call_token','input_sha256','receipt','validation_failure'}
                     and failure['call_token']==pending['call_token'] and failure['input_sha256']==pending['input_sha256']
                     and valid_receipt(failure['receipt']),'AI_BATCH_CORRUPT')
+                if 'validation_failure' in failure:
+                    from common.sanity_validation_diagnostics import sanitize_validation_failure
+                    diagnostic=failure['validation_failure']
+                    check(diagnostic is not None and failure['receipt']['error']=='INVALID_RATIONALE'
+                          and sanitize_validation_failure(diagnostic)==diagnostic,'AI_BATCH_CORRUPT')
                 pending=None
             if step['status']=='READY' and 'unknown_resolution' in step:
                 resolution=step['unknown_resolution']
@@ -211,6 +216,12 @@ def public(service,event):
     recovery=recovery_info(event,step,step_ref)
     if recovery is not None:value['unknown_recovery']=recovery
     proof=(step.get('failure',{}).get('receipt',{}) if step else {})
+    diagnostic=step.get('failure',{}).get('validation_failure') if step else None
+    if diagnostic is not None and (event['status']=='RUNNING' or
+                                  event['status']=='FAILED' and event['data'].get('error')=='INVALID_RATIONALE'):
+        from common.sanity_validation_diagnostics import sanitize_validation_failure
+        check(proof.get('error')=='INVALID_RATIONALE' and sanitize_validation_failure(diagnostic)==diagnostic,'AI_BATCH_CORRUPT')
+        value['validation_failure']=diagnostic
     if state.get('retry_after') and valid_receipt(proof):
         value['progress']['retry_error']=proof['error']
         if 'http_status' in proof:value['progress']['retry_http_status']=proof['http_status']
@@ -445,9 +456,11 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
                 failed=state.get('failed_calls',0)+1
                 can_retry=state.get('child_retries',0)<MAX_RETRIES and attempts(state)+1<model.settings.max_calls
                 retries=state.get('child_retries',0)+(1 if can_retry else 0)
+                diagnostic=validation_failure(failure)
                 ledger.step(step,ref,'READY',{**state,'child_retries':retries,'failed_calls':failed,
                     'retry_after':retry_at(_db_now(service.db),retries,failure) if can_retry else None},
-                    failure={'call_token':step['call_token'],'input_sha256':step['input_sha256'],'receipt':proof})
+                    failure={'call_token':step['call_token'],'input_sha256':step['input_sha256'],'receipt':proof,
+                             **({'validation_failure':diagnostic} if diagnostic is not None else {})})
                 if can_retry:return public(service,current)
                 current={**current,'data':{**current['data'],'retry_failure':proof}}
                 if attempts(state)+1>=model.settings.max_calls:

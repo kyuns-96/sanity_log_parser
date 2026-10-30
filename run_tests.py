@@ -21,6 +21,7 @@ QUICK_TESTS = (
     "tests.test_ai_parallel_batches",
     "tests.test_ai_input_projection", "tests.test_ai_projection_submission",
     "tests.test_ai_http", "tests.test_ai_retry_resume",
+    "tests.test_ai_validation_diagnostics",
     "tests.test_retry_policy", "tests.test_ai_resume_cancellation", "tests.test_clustering.ClusterUnitTests",
     "tests.test_ai_connections",
     "tests.test_ai_connection_deletion",

@@ -30,7 +30,8 @@ export type PipelineView = { current: ClusterEvent | null; revision: number; rea
 export type ClusterBrief = Omit<ClusterEvent, 'groups'> & { group_count: number; record_count: number; rationale_counts: Record<RationaleStatus, number> }
 export type PipelineTask = { id: string; status: 'PENDING' | 'RUNNING' | 'FAILED' | 'STALE' | 'CANCELLED' | 'COMPLETED'; record_count: number; processed: number; next_chunk: number; error: string | null; chunks: { index: number; start: number; stop: number; record_count: number; input_sha256: string; status: string }[] }
 export type UnknownRecovery = { event_sha256: string; step_sha256: string; call_token: string; phase: string; round: number; index: number; total: number; input_bytes?: number }
-export type CodexJob = { can_retry_unknown?: boolean; unknown_recovery?: UnknownRecovery; unknown_recoveries?: UnknownRecovery[]; unknown_recovery_error?: string; unknown_reason?: string; worker_site?: 'oa' | 'vwp'; preparation_phase?: string; total_records?: number; call_seconds?: number; retry_count?: number; retry_limit?: number; retry_after?: string | null; resume_count?: number; resumable?: boolean; started_at?: string; connection_id?: string; connection_label?: string; id: string; status: 'PENDING' | 'RUNNING' | 'RESULT_READY' | 'COMPLETED' | 'FAILED' | 'STALE' | 'UNKNOWN' | 'CANCELLED' | 'SAVE_FAILED'; error: string | null; model: string; created_at: string; finished_at?: string; expected_revision: number; input_case_count: number; event_id?: string; progress?: { mode: 'BATCH'; execution?: 'parallel-v1'; cancel_requested?: boolean; concurrency?: number; inflight_calls?: number; active_descriptors?: { index: number; phase?: string }[]; wall_seconds_per_record?: number | null; wall_stage_eta_seconds?: number | null; phase: 'TEXT' | 'TEXT_MERGE' | 'CLASSIFY' | 'MERGE' | 'REVIEW' | 'REVIEW_MERGE'; completed_records: number; total_records: number; completed_calls: number; round: number; waiting: boolean; round_completed?: number; round_total?: number; average_call_seconds?: number | null; seconds_per_record?: number | null; stage_eta_seconds?: number | null; retry_count?: number; child_retries?: number; retry_limit?: number; retry_error?: string | null; retry_http_status?: number | null; retry_after?: string | null } }
+export type AIValidationFailure = { schema_version: 1; code: string; field: string; group_index?: number; actual_count?: number; actual_length?: number }
+export type CodexJob = { validation_failure?: AIValidationFailure | null; can_retry_unknown?: boolean; unknown_recovery?: UnknownRecovery; unknown_recoveries?: UnknownRecovery[]; unknown_recovery_error?: string; unknown_reason?: string; worker_site?: 'oa' | 'vwp'; preparation_phase?: string; total_records?: number; call_seconds?: number; retry_count?: number; retry_limit?: number; retry_after?: string | null; resume_count?: number; resumable?: boolean; started_at?: string; connection_id?: string; connection_label?: string; id: string; status: 'PENDING' | 'RUNNING' | 'RESULT_READY' | 'COMPLETED' | 'FAILED' | 'STALE' | 'UNKNOWN' | 'CANCELLED' | 'SAVE_FAILED'; error: string | null; model: string; created_at: string; finished_at?: string; expected_revision: number; input_case_count: number; event_id?: string; progress?: { mode: 'BATCH'; execution?: 'parallel-v1'; cancel_requested?: boolean; concurrency?: number; inflight_calls?: number; active_descriptors?: { index: number; phase?: string }[]; wall_seconds_per_record?: number | null; wall_stage_eta_seconds?: number | null; wall_measured_at?: string | null; phase: 'TEXT' | 'TEXT_MERGE' | 'CLASSIFY' | 'MERGE' | 'REVIEW' | 'REVIEW_MERGE'; completed_records: number; total_records: number; completed_calls: number; round: number; waiting: boolean; round_completed?: number; round_total?: number; average_call_seconds?: number | null; seconds_per_record?: number | null; stage_eta_seconds?: number | null; retry_count?: number; child_retries?: number; retry_limit?: number; retry_error?: string | null; retry_http_status?: number | null; retry_after?: string | null } }
 export type AIConnectionChoice = { id: string; label: string; execution_site?: 'vwp'; model: string; models: string[]; available: boolean; enabled: boolean; credential_required?: boolean; credential_ready?: boolean; credential_error?: string | null }
 export type CodexCapability = { connection_id?: string; connection_label?: string; execution_site?: 'vwp'; connections?: AIConnectionChoice[]; task_default?: { connection_id: string; model_id: string; applied: boolean; reason?: 'AI_CONNECTION_UNAVAILABLE' | 'AI_MODEL_NOT_ALLOWED' }; available: boolean; supported: boolean; enabled: boolean; model: string; models?: string[]; remaining: number | null; job: CodexJob | null; provider?: string; synthetic_only?: boolean; credential_required?: boolean; credential_ready?: boolean; credential_error?: string | null }
 export type WorkbenchView = { report: WorkspaceReport; version: WorkspaceVersion; current: ClusterBrief | null; revision: number; ready: boolean; can_edit: boolean; stale: boolean; task: PipelineTask | null; ai?: CodexCapability; record_count: number; raw_line_count: number; source_sha256: string; case_count: number; reusable_count: number; removed_count: number; corporate_ai_connected: boolean; summary: { confirmed: boolean; total: number; reviewed: number; pending: number; complete: boolean; rationale_counts: Record<RationaleStatus, number>; counts: Record<string, number> } }
@@ -116,6 +117,40 @@ export const productionWorkbench = () => productionDocument
 export const workspaceApiBase = () => productionWorkbench() ? '/api/workbench' : '/workspace/api'
 export const aiExecutionLabel = (value: { model: string; connection_label?: string }) => [value.connection_label, value.model].filter(Boolean).join(' / ')
 export const aiJobActive = (job?: CodexJob | null) => !!job && ['PENDING', 'RUNNING', 'RESULT_READY'].includes(job.status)
+// Only fixed diagnostics and bounded integers are shown; server/model strings are never echoed.
+const rationaleDiagnostics: Record<string, { field: string; message: string }> = {
+  RATIONALE_MISSING: { field: 'group_rationales', message: '그룹별 분류 근거가 누락되었습니다.' },
+  RATIONALE_COUNT: { field: 'group_rationales', message: '그룹 수와 분류 근거 수가 일치하지 않습니다.' },
+  RATIONALE_ENTRY_SHAPE: { field: 'group_rationales', message: '그룹별 분류 근거의 형식이 올바르지 않습니다.' },
+  RATIONALE_GROUP_ID: { field: 'group_id', message: '분류 근거의 그룹 지정이 올바르지 않습니다.' },
+  RATIONALE_REASON: { field: 'reason', message: '분류 근거 설명이 없거나 허용 범위를 벗어났습니다.' },
+  RATIONALE_EVIDENCE_TYPE: { field: 'evidence_ids', message: '대표 로그 목록의 형식이 올바르지 않습니다.' },
+  RATIONALE_EVIDENCE_COUNT: { field: 'evidence_ids', message: '대표 로그 수가 허용 범위에 맞지 않습니다.' },
+  RATIONALE_EVIDENCE_ITEM_TYPE: { field: 'evidence_ids', message: '대표 로그 항목의 형식이 올바르지 않습니다.' },
+  RATIONALE_EVIDENCE_DUPLICATE: { field: 'evidence_ids', message: '대표 로그가 중복되었습니다.' },
+  RATIONALE_EVIDENCE_OUTSIDE_GROUP: { field: 'evidence_ids', message: '대표 로그에 해당 그룹 밖의 로그가 포함되었습니다.' },
+  RATIONALE_REFERENCE_TYPE: { field: 'reference_groups', message: '참고 사례 목록의 형식이 올바르지 않습니다.' },
+  RATIONALE_REFERENCE_COUNT: { field: 'reference_groups', message: '참고 사례 수가 허용 범위에 맞지 않습니다.' },
+  RATIONALE_REFERENCE_ENTRY_SHAPE: { field: 'reference_groups', message: '참고 사례 항목의 형식이 올바르지 않습니다.' },
+  RATIONALE_REFERENCE_ENTRY_VALUE: { field: 'reference_groups', message: '참고 사례 항목의 값이 올바르지 않습니다.' },
+  RATIONALE_REFERENCE_CASE_UNKNOWN: { field: 'reference_groups', message: '제공되지 않은 참고 사례가 지정되었습니다.' },
+  RATIONALE_REFERENCE_GROUP_UNKNOWN: { field: 'reference_groups', message: '제공되지 않은 참고 그룹이 지정되었습니다.' },
+  RATIONALE_REFERENCE_DUPLICATE: { field: 'reference_groups', message: '참고 사례가 중복되었습니다.' },
+  RATIONALE_REFERENCES_MISMATCH: { field: 'reference_ids', message: '참고 사례 목록이 일치하지 않습니다.' },
+}
+export const aiValidationMessage = (job: CodexJob) => {
+  const detail = job.validation_failure
+  if (job.status !== 'FAILED' && !(aiJobActive(job) && (job.retry_after || job.progress?.retry_after))) return null
+  if (!detail || detail.schema_version !== 1 || typeof detail.code !== 'string' || !Object.hasOwn(rationaleDiagnostics, detail.code)) return null
+  const known = rationaleDiagnostics[detail.code]
+  if (detail.field !== known.field) return null
+  const safeNumber = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 1_000_000
+  const parts = [known.message]
+  if (safeNumber(detail.group_index)) parts.push(`응답 내 그룹 순번 ${detail.group_index + 1}`)
+  if (safeNumber(detail.actual_count)) parts.push(`항목 수 ${detail.actual_count.toLocaleString()}개`)
+  if (safeNumber(detail.actual_length)) parts.push(`설명 길이 ${detail.actual_length.toLocaleString()}자`)
+  return parts.join(' · ')
+}
 const unknownRecoveryErrors: Record<string, string> = {
   AI_CREDENTIAL_CHANGED: '개인 인증값이 변경되어 이 배치를 현재 설정으로 재시도할 수 없습니다.',
   AI_CREDENTIAL_SCOPE_CHANGED: '개인 인증값의 연결 범위가 변경되었습니다. 인증값을 확인해 주세요.',

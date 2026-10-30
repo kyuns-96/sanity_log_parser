@@ -10,6 +10,14 @@ INVALID_REPLIES = frozenset(("INVALID_JSON", "INVALID_AI_RESPONSE", "AI_VWP_PROT
     "INVALID_RATIONALE", "INVALID_REFERENCE", "AI_BATCH_COVERAGE", "AI_BATCH_TEXT", "AI_BATCH_CITATION"))
 
 
+def validation_failure(error):
+    """Only the allowlisted structural diagnostic may cross a job boundary."""
+    if not isinstance(error, ReviewError) or error.code != 'INVALID_RATIONALE':
+        return None
+    from common.sanity_validation_diagnostics import sanitize_validation_failure
+    return sanitize_validation_failure(getattr(error, 'validation_failure', None))
+
+
 def annotate(error, attempt):
     error.model_called = attempt["model_called"]
     error.response_complete = attempt.get("response_complete", False)

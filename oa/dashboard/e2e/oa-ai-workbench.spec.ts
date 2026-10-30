@@ -511,7 +511,7 @@ test('recoverable unknown classification blocks a new job and retries only the c
   expect(retries).toBe(0)
   await page.getByRole('button', { name: '결과 불명 배치 재시도' }).click()
   await dialog.getByRole('button', { name: '확인하고 이 배치 재시도' }).click()
-  await expect(page.getByText('AI가 전체 로그를 나누어 검토하고 있습니다.', { exact: false })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: 'AI가 전체 로그를 나누어 검토하고 있습니다.' })).toBeVisible()
   expect(retries).toBe(1)
   expect(state.writes.filter(value => value.path.endsWith('/clustering/ai'))).toHaveLength(0)
 })
@@ -1220,4 +1220,119 @@ test('task-specific defaults and user selection are sent for classification and 
   await review.getByRole('button', { name: 'AI 판정 받기', exact: true }).click()
   await expect(review.locator('.ws-review-proposal')).toBeVisible()
   expect(state.writes.find(write => write.path.endsWith('/review/ai'))?.body).toMatchObject({ connection_id: connectionId, model_id: 'synthetic-second-model' })
+})
+
+test('validation diagnostics on AI cards show only known safe information', async ({ page }) => {
+  await mockOA(page)
+  const baseJob = monitoredJob()
+  let failure: Record<string, unknown> = { schema_version: 1, code: 'RATIONALE_EVIDENCE_COUNT', field: 'evidence_ids', group_index: 0, actual_count: 21, raw: 'SECRET_RAW_SYNTHETIC', reason: 'SECRET_REASON_SYNTHETIC', model_id: 'SECRET_MODEL_SYNTHETIC' }
+  let reads = 0
+  await page.route('**/api/workbench/ai/jobs', route => { reads++; return route.fulfill({ json: { items: [{ ...baseJob, status: 'FAILED', error: 'INVALID_RATIONALE', can_cancel: false, validation_failure: failure }], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }) })
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  await expect(dashboard).toContainText('대표 로그 수가 허용 범위에 맞지 않습니다.')
+  await expect(dashboard).toContainText('응답 내 그룹 순번 1')
+  await expect(dashboard).toContainText('항목 수 21개')
+  for (const secret of ['SECRET_RAW_SYNTHETIC', 'SECRET_REASON_SYNTHETIC', 'SECRET_MODEL_SYNTHETIC']) await expect(dashboard).not.toContainText(secret)
+  failure = { schema_version: 1, code: 'RATIONALE_EVIDENCE_COUNT', field: 'arbitrary SECRET_FIELD_SYNTHETIC', group_index: 0, actual_count: 21 }
+  await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+  await expect(dashboard).toContainText('INVALID_RATIONALE')
+  await expect(dashboard).not.toContainText('대표 로그 수가 허용 범위에 맞지 않습니다.')
+  await expect(dashboard).not.toContainText('SECRET_FIELD_SYNTHETIC')
+  failure = { schema_version: 1, code: 'SECRET_CODE_SYNTHETIC', field: 'reason', group_index: 0 }
+  await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+  await expect.poll(() => reads).toBeGreaterThanOrEqual(3)
+  await expect(dashboard).not.toContainText('SECRET_CODE_SYNTHETIC')
+  await expect(dashboard).not.toContainText('응답 내 그룹 순번 1')
+})
+
+test('retrying AI card retains safe failure detail while waiting', async ({ page }) => {
+  await mockOA(page)
+  const baseJob = monitoredJob()
+  const job = { ...baseJob, validation_failure: { schema_version: 1, code: 'RATIONALE_EVIDENCE_DUPLICATE', field: 'evidence_ids', group_index: 1 },
+    progress: { ...baseJob.progress, retry_error: 'INVALID_RATIONALE', retry_after: '2099-01-01T00:00:00Z', child_retries: 2, retry_limit: 5 } }
+  await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  await expect(dashboard).toContainText('대표 로그가 중복되었습니다.')
+  await expect(dashboard).toContainText('응답 내 그룹 순번 2')
+  await expect(dashboard).toContainText('현재 요청 재시도 2 / 5')
+})
+
+test('workbench shows safe failure detail and stage-specific progress', async ({ page }) => {
+  const job: CodexJob = { id: 'synthetic-diagnostic', status: 'FAILED', error: 'INVALID_RATIONALE', model: model.model, created_at: at, expected_revision: 1, input_case_count: 0,
+    validation_failure: { schema_version: 1, code: 'RATIONALE_REASON', field: 'reason', group_index: 2, actual_length: 2001 } }
+  const state = await mockOA(page, { initialJob: job, initialRevision: 1, holdJob: true })
+  await page.goto(url)
+  const workbench = page.getByRole('region', { name: 'Sanity item 순차 검토' })
+  await expect(workbench).toContainText('분류 근거 설명이 없거나 허용 범위를 벗어났습니다.')
+  await expect(workbench).toContainText('응답 내 그룹 순번 3')
+  await expect(workbench).toContainText('설명 길이 2,001자')
+  job.validation_failure = null; job.error = null; job.status = 'PENDING'
+  await page.reload()
+  await expect(page.locator('.ws-step-hint')).toContainText('처리 시작을 기다리고 있습니다')
+  job.preparation_phase = 'PREPARING'
+  await page.reload()
+  await expect(page.locator('.ws-step-hint')).toContainText('전체 로그와 참고 사례를 준비')
+  job.status = 'RUNNING'; job.preparation_phase = undefined
+  job.progress = { mode: 'BATCH', phase: 'CLASSIFY', completed_records: 1, total_records: 2, completed_calls: 1, round: 0, waiting: false }
+  await page.reload()
+  await expect(page.locator('.ws-step-hint')).toContainText('1 / 2건 완료')
+  job.progress.phase = 'MERGE'
+  await page.reload()
+  await expect(page.locator('.ws-step-hint')).toContainText('통합과 전체 배정 검증이 남아 있습니다')
+  job.progress.retry_after = '2099-01-01T00:00:00Z'
+  await page.reload()
+  await expect(page.locator('.ws-step-hint')).toContainText('다시 처리하기 전 잠시 대기')
+  expect(state.writes).toHaveLength(0)
+})
+
+test('parallel measured throughput and ETA use wall-time snapshot, not total call time or newer observation', async ({ page }) => {
+  await mockOA(page)
+  const baseJob = monitoredJob()
+  const measuredAt = new Date(Date.now() - 30000).toISOString()
+  const expectedEnd = new Date(Date.parse(measuredAt) + 300000).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const job = { ...baseJob, observed_at: new Date().toISOString(), progress: { ...baseJob.progress, execution: 'parallel-v1',
+    wall_seconds_per_record: 1.25, wall_stage_eta_seconds: 300, wall_measured_at: measuredAt, seconds_per_record: 123, stage_eta_seconds: 999 } }
+  await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  const metrics = dashboard.locator('.ai-job-metrics')
+  await expect(metrics.getByText('로그 건당 평균').locator('..').locator('dd')).toHaveText('1.3초')
+  await expect(metrics.getByText('이번 단계 예상 종료').locator('..').locator('dd')).toHaveText(expectedEnd)
+  await expect(dashboard).toContainText('평균은 최근 분류·판정의 실제 경과 시간 기준입니다.')
+  await expect(dashboard).toContainText('예상은 이번 단계만 포함')
+  await expect(dashboard).not.toContainText('2분 3초')
+})
+
+test('parallel merge may show prior record measurement and estimates only the current stage', async ({ page }) => {
+  await mockOA(page)
+  const baseJob = monitoredJob()
+  const measuredAt = new Date(Date.now() - 10000).toISOString()
+  const expectedEnd = new Date(Date.parse(measuredAt) + 180000).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const job = { ...baseJob, progress: { ...baseJob.progress, execution: 'parallel-v1', phase: 'MERGE',
+    wall_seconds_per_record: 2.5, wall_stage_eta_seconds: 180, wall_measured_at: measuredAt } }
+  await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  const metrics = dashboard.locator('.ai-job-metrics')
+  await expect(metrics.getByText('로그 건당 평균').locator('..').locator('dd')).toHaveText('2.5초')
+  await expect(metrics.getByText('이번 단계 예상 종료').locator('..').locator('dd')).toHaveText(expectedEnd)
+  await expect(dashboard).toContainText('그룹 통합')
+  await expect(dashboard).toContainText('평균은 최근 분류·판정의 실제 경과 시간 기준입니다.')
+})
+
+test('parallel ETA is withheld when no measurement timestamp exists or a retry is pending', async ({ page }) => {
+  await mockOA(page)
+  const baseJob = monitoredJob()
+  let job = { ...baseJob, progress: { ...baseJob.progress, execution: 'parallel-v1',
+    wall_seconds_per_record: 1.25, wall_stage_eta_seconds: 90, wall_measured_at: null as string | null, retry_after: null as string | null } }
+  await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  const eta = dashboard.locator('.ai-job-metrics').getByText('이번 단계 예상 종료').locator('..').locator('dd')
+  await expect(eta).toHaveText('측정치 수집 중')
+  job = { ...job, progress: { ...job.progress, wall_measured_at: new Date().toISOString(), retry_after: '2099-01-01T00:00:00Z' } }
+  await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+  await expect(eta).toHaveText('재시도 대기 중')
 })

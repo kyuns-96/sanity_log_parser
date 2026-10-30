@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from common.sanity_ai_contracts import validate_review_v2
 from common.sanity_ai_execution import worker_site
-from oa.sanity_ai_retry import MAX_RETRIES,MAX_RESUMES,receipt as failure_receipt,valid_receipt,retry_at,resumable
+from oa.sanity_ai_retry import MAX_RETRIES,MAX_RESUMES,receipt as failure_receipt,valid_receipt,retry_at,resumable,validation_failure
 from common.sanity_clustering import check
 from common.sanity_clustering_advice import evidence, identity_fields_valid, validate_clustering_advice
 from common.sanity_common import ReviewError, canonical_json, digest
@@ -80,7 +80,7 @@ def _public(event):
             "model_called": data.get("model_called", False), "model_attempted": data.get("model_attempted", False),
             "resumable":resumable(event),
             **({"retry_limit":MAX_RETRIES} if data.get("fail_safe") else {}),
-            **{k:data[k] for k in ("worker_site","total_records","started_at","call_seconds","retry_count","retry_after","resume_count","unknown_reason") if k in data}}
+            **{k:data[k] for k in ("worker_site","total_records","started_at","call_seconds","retry_count","retry_after","resume_count","unknown_reason","validation_failure") if k in data}}
 
 
 def _source_pin(context):
@@ -116,7 +116,7 @@ def _validate_data(event):
     required = {"command", "target", "pins", "retrieval", "model", "created_at", "model_called"}
     optional = {"model_attempted", "call_token", "started_at", "deadline", "result", "error", "finished_at", "event_id", "cancelled_by", "batch", "result_ref", "connection_label",
                 "worker_site","total_records","call_seconds","fail_safe","retry_count","retry_after","retry_failure",
-                "resume_count","resume_request_id","resumed_by","resume_checkpoint","credential_pin","unknown_reason"}
+                "resume_count","resume_request_id","resumed_by","resume_checkpoint","credential_pin","unknown_reason","validation_failure"}
     check(isinstance(data, dict) and required <= set(data) <= required | optional, "AI_JOB_CORRUPT")
     command, pins = data["command"], data["pins"]
     command_keys = {"user_id", "block_id", "version_id", "report_id", "expected_revision",
@@ -163,6 +163,10 @@ def _validate_data(event):
     if "fail_safe" in data:check(data["fail_safe"] is True,"AI_JOB_CORRUPT")
     if "retry_count" in data:check(type(data["retry_count"]) is int and 0<=data["retry_count"]<=MAX_RETRIES,"AI_JOB_CORRUPT")
     if "retry_failure" in data:check(valid_receipt(data["retry_failure"]),"AI_JOB_CORRUPT")
+    if 'validation_failure' in data:
+        from common.sanity_validation_diagnostics import sanitize_validation_failure
+        check(data['validation_failure'] is not None and data.get('error') == 'INVALID_RATIONALE'
+              and sanitize_validation_failure(data['validation_failure']) == data['validation_failure'], 'AI_JOB_CORRUPT')
     if 'unknown_reason' in data:
         check(event['status']=='UNKNOWN' and data['unknown_reason'] in
               ('READ_TIMEOUT','WRITE_TIMEOUT','TRANSPORT_ERROR','RESPONSE_DEADLINE','WORKER_LOST','RESERVED_EXPIRED'), 'AI_JOB_CORRUPT')
@@ -614,13 +618,16 @@ class AIJobService:
 
     def _failed(self, event, error, *, status="STALE", called=_UNSET, now=None):
         changes = {"error": _error_code(error)}
+        diagnostic = validation_failure(error)
+        data = {k:v for k,v in event['data'].items() if k != 'validation_failure'}
+        if diagnostic is not None: changes['validation_failure'] = diagnostic
         reason=getattr(error,'unknown_reason',None)
         if status=='UNKNOWN' and reason in ('READ_TIMEOUT','WRITE_TIMEOUT','TRANSPORT_ERROR','RESPONSE_DEADLINE','WORKER_LOST','RESERVED_EXPIRED'):
             changes['unknown_reason']=reason
         if called is not _UNSET:
             changes["model_called"] = called
             changes["model_attempted"] = called is not False
-        return self._append(event, status, {**event["data"], **changes}, now=now)
+        return self._append(event, status, {**data, **changes}, now=now)
 
     def _apply(self, event):
         try:
@@ -744,7 +751,7 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
             return _public(service._failed(event, error, now=now))
         started = now or _db_now(service.db)
         deadline = started + timedelta(seconds=dispatch_advisor.settings.timeout + 60)
-        running={k:v for k,v in event["data"].items() if k not in ("error","retry_after","retry_failure")}
+        running={k:v for k,v in event["data"].items() if k not in ("error","retry_after","retry_failure","validation_failure")}
         event = service._append(event, "RUNNING", {**running, "call_token": call_id,
                    "model_attempted": True, "model_called": None,
                    "started_at": started.isoformat(), "deadline": deadline.isoformat()}, now=started)
@@ -792,6 +799,9 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
                 data={k:v for k,v in current["data"].items() if k not in ("call_token","started_at","deadline")}
                 data.update(error=code,model_called=proof["model_called"],model_attempted=proof["model_called"],
                             retry_failure=proof,retry_count=count,retry_after=retry_at(_db_now(service.db),count,failure))
+                diagnostic=validation_failure(failure)
+                if diagnostic is not None:data['validation_failure']=diagnostic
+                else:data.pop('validation_failure',None)
                 return _public(service._append(current,"PENDING",data))
             if proof is not None:current={**current,"data":{**current["data"],"retry_failure":proof}}
             return _public(service._failed(current, failure, status="UNKNOWN" if unknown else "STALE" if code in {"AI_CONFIG_CHANGED", "AI_CONNECTION_UNAVAILABLE", "AI_CREDENTIAL_CHANGED", "FORBIDDEN", "UNAUTHORIZED"} else "FAILED", called=called))
