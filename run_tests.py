@@ -9,13 +9,66 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parent
-PROFILES = ("quick", "full")
-# A short regression set for everyday edits. Keep expensive datasets and the
-# complete portal migration replay in full, with their original assertions.
-# Pure contracts are cheap. Exercise TLS/OWNER intake with the plain and shared
-# layouts here; the compressed/page variants and legacy HTTPS replay stay in
-# full rather than repeating the same workflow in every everyday run.
+PROFILES = ("quick", "regression", "full")
+# Keep everyday checks within a three-minute target on the development device.
+# Select representative DB workflows explicitly: adding an entire integration
+# module here silently repeats schema setup and complete AI/submission cycles.
 QUICK_TESTS = (
+    "tests.test_auth", "tests.test_db_config", "tests.test_db_single_account",
+    "tests.test_common", "tests.test_parsers", "tests.test_scope_contract",
+    "tests.test_schema", "tests.test_normalization", "tests.test_integration_contracts",
+    "tests.test_submission_contracts", "tests.test_submission_https", "tests.test_submission_files",
+    "tests.test_collection_only", "tests.test_retry_policy",
+    "tests.test_vwp_inference.VwpInferenceContractTests",
+    "tests.test_vwp_personal_credentials.VwpPersonalProfileTests",
+    "tests.test_ai_input_projection.ProjectionContractTests",
+    "tests.test_ai_input_projection.ProjectionModelTests",
+    "tests.test_ai_projection_submission.ProjectionPlanTests",
+    "tests.test_ai_connections.ConnectionConfigurationTests",
+    "tests.test_ai_connections.ConnectionApiTests",
+    "tests.test_ai_connection_deletion.ConnectionDeletionApiTests",
+    "tests.test_ai_reasoning.ReasoningSettingsTests", "tests.test_ai_reasoning.ReasoningWireTests",
+    "tests.test_ai_task_models.TaskDefaultsApiTests",
+    "tests.test_ai_routing.RoutingConfigurationTests", "tests.test_ai_routing.RoutingTransportTests",
+    "tests.test_ai_workbench_api", "tests.test_ai_unknown_recovery.UnknownRecoveryApiTests",
+    "tests.test_ai_parallel_batches.ParallelSettingsTests", "tests.test_ai_parallel_batches.ParallelWallMetricsTests",
+    "tests.test_ai_batches.BatchPureTests", "tests.test_ai_evidence_batches.EvidenceBatchPureTests",
+    "tests.test_ai_model.ReviewV2Tests",
+    "tests.test_payload_storage.PayloadCodecTests", "tests.test_evidence_pages.EvidencePageCodecTests",
+    "tests.test_vwp_inference.VwpInferenceDatabaseTests.test_whole_report_is_not_sampled_and_is_executed_on_vwp",
+    "tests.test_vwp_worker.VwpWorkerTests.test_web_submission_and_polling_do_not_hydrate_logs_or_retrieve_cases",
+    "tests.test_vwp_worker.VwpWorkerTests.test_existing_oa_model_runs_on_the_vwp_host_without_a_vwp_relay",
+    "tests.test_vwp_worker.VwpWorkerTests.test_unknown_call_is_not_retried_and_progress_has_real_transport_stages",
+    "tests.test_ai_parallel_batches.ParallelVwpJobsTests.test_true_overlap_out_of_order_commit_and_merge_waits_for_all_siblings",
+    "tests.test_ai_unknown_recovery.UnknownRecoveryBatchTests.test_acknowledged_retry_keeps_finished_child_and_is_idempotent",
+    "tests.test_ai_connection_deletion.ConnectionDeletionDatabaseTests.test_deletion_during_http_rejects_returned_result_and_publication",
+    "tests.test_ai_input_projection.ProjectionJobTests.test_policy_is_pinned_and_change_stops_batch_without_another_http_call",
+    "tests.test_ai_evidence_batches.EvidenceTextDatabaseTests.test_real_source_packet_reader_and_ledger_cover_text_for_classification_and_review",
+    "tests.test_oa_ai_feedback.OAFeedbackCycleTests.test_human_corrections_and_counterexamples_reach_the_next_eco_model_calls",
+    "tests.test_submission_tokenless.InternalIntakeContracts",
+    "tests.test_submission_tokenless.TokenlessSubmissionTests.test_real_tls_without_token_reaches_pending_then_sso_owner_publishes",
+    "tests.test_submission_tokenless.TokenlessSubmissionTests.test_only_current_owner_can_confirm_and_digest_revision_and_request_are_bound",
+    "tests.test_shared_source_packets.SharedSourceSubmissionFlows.test_tokenless_sso_owner_confirmation_keeps_full_shared_evidence",
+    "tests.test_shared_source_packets.SharedSourceSubmissionFlows.test_collection_only_owner_intake_and_human_review_with_shared_bodies",
+    "tests.test_shared_source_packets.SharedSourceSubmissionFlows.test_collection_only_marker_tampering_is_rejected_with_shared_bodies",
+    "tests.test_database.DatabaseTests.test_missing_configuration_and_admin_login_fail_closed",
+    "tests.test_database.DatabaseTests.test_excess_column_rights_are_detected",
+    "tests.test_database.DatabaseTests.test_destructive_and_ddl_related_rights_are_rejected_in_restricted_mode",
+    "tests.test_database.DatabaseTests.test_private_payload_and_sender_ack_cannot_be_modified",
+    "tests.test_database.DatabaseTests.test_message_idempotence_and_conflict",
+    "tests.test_database.DatabaseTests.test_psycopg2_outer_rollback_and_readonly_do_not_leak",
+    # Keep the known PG18 catalog failures visible in the default scope.
+    "tests.test_sso_identity_migration.SSOIdentityMigrationTests.test_008_checkpoint_runs_one_portal_statement_with_the_exact_original_009_catalog",
+    "tests.test_raw_sources_migration.RawSourcesMigrationTests.test_009_checkpoint_executes_four_portal_statements_with_the_original_010_catalog",
+    "tests.test_payload_storage_migration.PayloadStorageMigrationTests.test_checkpoint_59_prepares_and_verifies_the_exact_original_011_catalog",
+    "tests.test_evidence_pages_migration.EvidencePagesMigrationTests.test_checkpoint_60_applies_only_012_with_exact_original_catalog",
+    "tests.test_shared_source_migration.SharedPacketMigrationTests.test_checkpoint_62_runs_exact_original_013_catalog",
+    "tests.test_mock_runner", "tests.test_test_runner", "oa.test_auth_config", "oa.test_sso",
+)
+# Preserve the previous quick scope for explicit, broader regression runs.
+# Full still discovers every original test, including large datasets and all
+# portal migration replays. No test input, assertion or skip rule is changed.
+REGRESSION_TESTS = (
     "tests.test_vwp_inference", "tests.test_vwp_worker", "tests.test_vwp_personal_credentials",
     "tests.test_ai_unknown_recovery",
     "tests.test_ai_parallel_batches",
@@ -121,6 +174,14 @@ def build_suite(profile):
     loader = unittest.TestLoader()
     if profile == "quick":
         return loader.loadTestsFromNames(QUICK_TESTS)
+    if profile == "regression":
+        suite = unittest.TestSuite()
+        seen = set()
+        for test in test_cases(loader.loadTestsFromNames((*QUICK_TESTS, *REGRESSION_TESTS))):
+            if test.id() not in seen:
+                suite.addTest(test)
+                seen.add(test.id())
+        return suite
     if profile != "full":
         raise ValueError("Unknown test profile")
     suite = unittest.TestSuite()
@@ -137,14 +198,31 @@ def test_cases(suite):
             yield test
 
 
+class TimedTestResult(unittest.TextTestResult):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.timings = []
+
+    def startTest(self, test):
+        self.started = time.monotonic()
+        super().startTest(test)
+
+    def stopTest(self, test):
+        self.timings.append({"test": test.id(), "seconds": round(time.monotonic() - self.started, 6)})
+        super().stopTest(test)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=PROFILES, default="quick",
-                        help="quick: core regressions (default); full: all tests including 100,000-record workloads")
+                        help="quick: three-minute core checks (default); regression: broader checks; full: all tests including 100,000-record workloads")
     parser.add_argument("--list", action="store_true", help="list selected test IDs without executing them")
     parser.add_argument("--require-db", action="store_true", help="fail rather than skip PostgreSQL integration tests")
     parser.add_argument("--report-json", type=Path, help="write a new machine-readable result file (will not overwrite)")
+    parser.add_argument("--durations", type=int, default=5, help="show the N slowest tests (default: 5; 0: hide)")
     args = parser.parse_args(argv)
+    if args.durations < 0:
+        parser.error("--durations must be nonnegative")
     if args.require_db and not all(os.environ.get(key) for key in ("SANITY_TEST_ADMIN_DSN", "SANITY_VWP_DSN", "SANITY_OA_DSN")):
         parser.error("--require-db needs SANITY_TEST_ADMIN_DSN, SANITY_VWP_DSN and SANITY_OA_DSN")
     if args.require_db:
@@ -152,6 +230,7 @@ def main(argv=None):
             import psycopg2
         except ImportError:
             parser.error("--require-db needs psycopg2; install requirements.txt")
+    started = time.monotonic()
     suite = build_suite(args.profile)
     selected = suite.countTestCases()
     if not selected:
@@ -161,13 +240,17 @@ def main(argv=None):
         for test in test_cases(suite):
             print(test.id())
         return 0
-    started = time.monotonic()
-    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    result = unittest.TextTestRunner(verbosity=2, resultclass=TimedTestResult).run(suite)
+    seconds = round(time.monotonic() - started, 3)
+    print(f"profile={args.profile} tests_run={result.testsRun} seconds={seconds:.3f}", flush=True)
+    timings = sorted(result.timings, key=lambda row: row["seconds"], reverse=True)
+    for row in timings[:args.durations]:
+        print(f"slow_test seconds={row['seconds']:.3f} test={row['test']}", flush=True)
     if args.report_json:
         report = {"profile": args.profile, "full_suite": args.profile == "full", "tests_selected": selected,
                   "tests_run": result.testsRun, "failures": len(result.failures), "errors": len(result.errors),
                   "skipped": len(result.skipped), "successful": result.wasSuccessful(),
-                  "seconds": round(time.monotonic() - started, 3),
+                  "seconds": seconds, "timings": timings,
                   "failed_tests": [test.id() for test, _ in result.failures + result.errors]}
         with args.report_json.open("x", encoding="utf-8") as stream:
             json.dump(report, stream, ensure_ascii=False, indent=2)

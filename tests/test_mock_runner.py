@@ -17,7 +17,8 @@ spec.loader.exec_module(runner)
 class MockRunnerTests(unittest.TestCase):
     def test_profiles_forward_scope_and_keep_large_probes_explicit(self):
         for profile, arguments, rows, groups, scenario_count in (
-            ("quick", [], 100, 10, 1), ("full", ["--profile", "full"], 10000, 100, 4),
+            ("quick", [], 100, 10, 1), ("regression", ["--profile", "regression"], 100, 10, 1),
+            ("full", ["--profile", "full"], 10000, 100, 4),
         ):
             with self.subTest(profile=profile), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
@@ -50,6 +51,29 @@ class MockRunnerTests(unittest.TestCase):
                 test_call = next(args for script, args in calls if script == "run_tests.py")
                 self.assertEqual(profile, test_call[test_call.index("--profile") + 1])
                 self.assertIn("--require-db", test_call)
+
+    def test_failed_regression_retains_counts_and_timings_in_the_failed_summary(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            database = Mock(root=root, server_version_num=180000)
+            report = {"profile": "quick", "tests_run": 9, "failures": 5, "errors": 2,
+                      "skipped": 0, "successful": False, "seconds": 42.0, "timings": []}
+
+            def execute(staged, environment, log, script, *args):
+                if script == "run_tests.py":
+                    (root / "tests.json").write_text(json.dumps(report))
+                    raise runner.MockError("run_tests.py failed; see tests.log")
+
+            with patch.object(runner, "pg_binaries", return_value=Path("/synthetic/bin")), \
+                    patch.object(runner, "MockDatabase", return_value=database), \
+                    patch.object(runner, "stage_source"), patch.object(runner, "execute", side_effect=execute), \
+                    redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(1, runner.main([]))
+            summary = json.loads((root / "summary.json").read_text())
+            self.assertEqual("FAILED", summary["status"])
+            self.assertEqual(report, summary["tests"])
+            self.assertTrue(summary["db_stopped"])
+            database.stop.assert_called_once()
 
     def test_failed_start_still_stops_and_records_failure(self):
         with tempfile.TemporaryDirectory() as temp:

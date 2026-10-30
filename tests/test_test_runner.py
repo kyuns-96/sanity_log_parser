@@ -12,6 +12,32 @@ import run_tests as runner
 
 
 class TestRunnerTests(unittest.TestCase):
+    def test_regression_preserves_previous_scope_and_includes_quick_without_duplicates(self):
+        quick = {test.id() for test in runner.test_cases(runner.build_suite("quick"))}
+        previous = {test.id() for test in runner.test_cases(unittest.TestLoader().loadTestsFromNames(runner.REGRESSION_TESTS))}
+        regression = [test.id() for test in runner.test_cases(runner.build_suite("regression"))]
+        full = {test.id() for test in runner.test_cases(runner.build_suite("full"))}
+        self.assertEqual(quick | previous, set(regression))
+        self.assertEqual(len(regression), len(set(regression)))
+        self.assertLess(quick, set(regression))
+        self.assertLess(set(regression), full)
+        self.assertFalse(any("_FailedTest" in name for name in regression))
+
+    def test_quick_keeps_known_failures_and_synthetic_file_security_checks_visible(self):
+        quick = {test.id() for test in runner.test_cases(runner.build_suite("quick"))}
+        for name in (
+            "tests.test_submission_contracts.SubmissionContractTests.test_hardlinks_symlinks_and_changed_snapshot_are_rejected",
+            "tests.test_submission_https.HttpsSubmissionTests.test_transport_config_is_explicit_https_and_receipts_are_bound_to_the_owner",
+            "tests.test_submission_files.SyntheticSubmissionMetadataTests.test_synthetic_single_link_file_keeps_exact_bytes",
+            "tests.test_submission_files.SyntheticSubmissionMetadataTests.test_synthetic_root_owned_safe_configuration_loads",
+            "tests.test_sso_identity_migration.SSOIdentityMigrationTests.test_008_checkpoint_runs_one_portal_statement_with_the_exact_original_009_catalog",
+            "tests.test_raw_sources_migration.RawSourcesMigrationTests.test_009_checkpoint_executes_four_portal_statements_with_the_original_010_catalog",
+            "tests.test_payload_storage_migration.PayloadStorageMigrationTests.test_checkpoint_59_prepares_and_verifies_the_exact_original_011_catalog",
+            "tests.test_evidence_pages_migration.EvidencePagesMigrationTests.test_checkpoint_60_applies_only_012_with_exact_original_catalog",
+            "tests.test_shared_source_migration.SharedPacketMigrationTests.test_checkpoint_62_runs_exact_original_013_catalog",
+        ):
+            self.assertIn(name, quick)
+
     def test_quick_is_a_nonempty_subset_and_full_retains_large_and_portal_replays(self):
         quick = [test.id() for test in runner.test_cases(runner.build_suite("quick"))]
         full = [test.id() for test in runner.test_cases(runner.build_suite("full"))]
@@ -58,6 +84,16 @@ class TestRunnerTests(unittest.TestCase):
             self.assertEqual(("quick", False, 1, 1, True),
                              (data["profile"], data["full_suite"], data["tests_selected"],
                               data["tests_run"], data["successful"]))
+            self.assertGreaterEqual(data["seconds"], 0)
+            self.assertEqual([case.id()], [row["test"] for row in data["timings"]])
+            self.assertGreaterEqual(data["timings"][0]["seconds"], 0)
+
+    def test_negative_duration_count_is_rejected_before_loading_tests(self):
+        with patch.object(runner, "build_suite") as build, redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as error:
+                runner.main(["--durations", "-1"])
+        self.assertEqual(2, error.exception.code)
+        build.assert_not_called()
 
     def test_missing_quick_selector_is_an_error_instead_of_a_silent_exclusion(self):
         with tempfile.TemporaryDirectory() as temp:

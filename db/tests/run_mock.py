@@ -73,7 +73,7 @@ def pg_binaries(explicit):
 class MockDatabase:
     def __init__(self, binaries):
         self.binaries = binaries
-        self.root = Path(tempfile.mkdtemp(prefix="sanity-mock-pg-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="sanity-mock-pg-"))
         self.data = self.root / "data"
         self.env = isolated_environment(os.environ)
         self.credentials = {name: secrets.token_urlsafe(32) for name in ("admin", "vwp", "oa")}
@@ -183,13 +183,13 @@ def execute(staged, environment, log, script, *args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pg-bin", help="directory containing initdb, pg_ctl and postgres")
-    parser.add_argument("--profile", choices=("quick", "full"), default="quick",
-                        help="quick: core tests + 100-row probe; full: all tests + 10,000-row probe")
+    parser.add_argument("--profile", choices=("quick", "regression", "full"), default="quick",
+                        help="quick: three-minute core checks + 100-row probe; regression: broader checks + 100-row probe; full: all tests + 10,000-row probe")
     parser.add_argument("--rows", type=int, help="override parser/storage probe rows; does not change test fixtures")
     parser.add_argument("--groups", type=int, help="override parser/storage probe groups")
     args = parser.parse_args(argv)
-    args.rows = args.rows if args.rows is not None else (100 if args.profile == "quick" else 10000)
-    args.groups = args.groups if args.groups is not None else min(args.rows, 10 if args.profile == "quick" else 100)
+    args.rows = args.rows if args.rows is not None else (10000 if args.profile == "full" else 100)
+    args.groups = args.groups if args.groups is not None else min(args.rows, 100 if args.profile == "full" else 10)
     if not 1 <= args.groups <= args.rows <= 100000:
         parser.error("Require 1 <= groups <= rows <= 100000")
     database = None
@@ -211,16 +211,19 @@ def main(argv=None):
         for side in ("vwp", "oa"):
             execute(staged, environment, database.root / f"check-{side}.log", "common.sanity_db", "check", "--side", side)
         print(f"phase=regression_tests profile={args.profile}", flush=True)
-        execute(staged, environment, database.root / "tests.log", "run_tests.py", "--require-db",
-                "--profile", args.profile, "--report-json", database.root / "tests.json")
-        summary["tests"] = json.loads((database.root / "tests.json").read_text(encoding="utf-8"))
+        try:
+            execute(staged, environment, database.root / "tests.log", "run_tests.py", "--require-db",
+                    "--profile", args.profile, "--report-json", database.root / "tests.json")
+        finally:
+            if (database.root / "tests.json").is_file():
+                summary["tests"] = json.loads((database.root / "tests.json").read_text(encoding="utf-8"))
         if summary["tests"].get("profile") != args.profile:
             raise MockError("Test report profile does not match the requested scope")
         if summary["tests"]["skipped"]:
             raise MockError("Mock DB validation must not skip tests")
         print(f"phase=tests_passed count={summary['tests']['tests_run']}", flush=True)
         scenarios = {}
-        selected_scenarios = ("complete",) if args.profile == "quick" else ("complete", "missing", "malformed", "unsupported")
+        selected_scenarios = ("complete", "missing", "malformed", "unsupported") if args.profile == "full" else ("complete",)
         for scenario in selected_scenarios:
             output = database.root / ("demo-" + scenario)
             execute(staged, environment, database.root / ("demo-" + scenario + ".log"), "devtools/demo.py",

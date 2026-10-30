@@ -276,7 +276,7 @@ git diff --check
 ```
 
 마지막 DB 명령은 개발 머신에 PostgreSQL 12.1+ 서버 바이너리가 준비된 경우의 별도 mock 검증이다. 사내 실제 DB에 실행하는 명령이 아니다.
-2026-10-21 사용자 요청으로 `run_tests.py`와 `db/tests/run_mock.py`의 기본은 `quick` 핵심 회귀다. 전수 회귀·포털 전체 단계·10만 건 검사는 `--profile full`로 별도 실행한다. 선택 프로필·실행 건수를 결과에 남기며 `quick`을 전수 통과로 보고하지 않는다. 이 실행 범위 분리는 내부 AI에게 기존 테스트·입력·기대값·앱 한도를 수정하거나 실패를 생략할 권한을 주지 않는다.
+2026-10-21 사용자 요청으로 `run_tests.py`와 `db/tests/run_mock.py`의 기본은 `quick` 핵심 회귀다. 2026-10-30 요청에 따라 기본 실행은 독립 mock DB 준비·종료를 포함해 3분 이내 완료를 목표로 한다. 이전의 넓은 quick 범위는 `--profile regression`, 전수 회귀·포털 전체 단계·10만 건 검사는 `--profile full`로 별도 실행한다. 변경 부분의 전용 테스트도 별도로 확인한다. 선택 프로필·실행 건수·실제 소요 시간을 결과에 남기며 `quick`을 전수 통과로 보고하지 않는다. 이 실행 범위 분리는 내부 AI에게 기존 테스트·입력·기대값·앱 한도를 수정하거나 실패를 생략할 권한을 주지 않는다.
 회사 테스트는 자기 서버의 `integration/company_*/`에 작성하고 해당 디렉터리를 별도로 테스트한다. 예: `.venv/bin/python -m unittest discover -s vwp_bridge/integration/company_parsers -p 'test_*.py' -v`. 공통 runner/mock은 회사 구현·비공개 fixture를 자동 수집하지 않는다.
 SSO 어댑터 성공만으로 업무 API를 공개하지 않는다. 관리자/권한 엔진 미설정 시 `503 AUTHORIZATION_NOT_IMPLEMENTED`는 의도된 보호 상태다. 설정된 경우에도 관리 화면의 승인과 봉인된 결과 scope·서버 대상별 검사를 모두 충족해야 한다.
 미구현 상태의 `AUTH_SSO_NOT_CONFIGURED`도 숨기지 않는다. 구현 후 예상하지 못한 같은 오류가 계속되면 문의한다.
