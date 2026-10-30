@@ -28,12 +28,13 @@ def is_vwp(config):
 def validate_config(config):
     if is_vwp(config):
         from common.sanity_vwp_ai import identifier
-        check(set(config) == VWP_CONFIG_KEYS and identifier(config["profile_id"]), "AI_CONNECTION_CONFIG")
+        check(VWP_CONFIG_KEYS <= set(config) <= VWP_CONFIG_KEYS | {"issuance_url"}
+              and identifier(config["profile_id"]), "AI_CONNECTION_CONFIG")
         # Reuse the existing bounded model/batch validation, without accepting
         # an endpoint, credential or custom headers for execution on VWP.
         ordinary = {"label":config["label"], "enabled":config["enabled"],
             "endpoint":"https://vwp.invalid/inference", "fallback_endpoint":"", "auth_mode":"bearer",
-            "issuance_url":"", "client_name":"", "client_version":"", "session_mode":"disabled", "session_id":"",
+            "issuance_url":config.get("issuance_url", ""), "client_name":"", "client_version":"", "session_mode":"disabled", "session_id":"",
             **{k:config[k] for k in ("api", "model", "models", "json_mode", "timeout", "max_input_bytes", "max_output_bytes", "batch")}}
         validate_config(ordinary)
         return deepcopy(config)
@@ -128,13 +129,20 @@ class ConnectionStore:
         except (InvalidToken, ValueError, UnicodeError):
             raise ReviewError("AI_TOKEN_UNAVAILABLE", "Connection credentials are unavailable") from None
 
-    @staticmethod
-    def public(value):
+    def public(self, value, *, profile=None):
         config = value["config"]
+        vwp = is_vwp(config)
+        if vwp and profile is None:
+            # Expired catalog metadata may label an existing credential for
+            # removal, but credential_scope/dispatch always require a live one.
+            from oa.sanity_vwp_inference import Catalog
+            catalog = Catalog(self.db)._latest()
+            profile = next((p for p in catalog["profiles"] if p["id"] == config["profile_id"]), None) if catalog else None
         return {"id":value["connection_id"], "revision":value["revision"], "label":config["label"],
-                "auth_mode":"vwp_managed" if is_vwp(config) else config["auth_mode"], "model":config["model"], "models":config["models"],
+                "auth_mode":(profile["auth_mode"] if profile else "vwp_unavailable") if vwp else config["auth_mode"],
+                "model":config["model"], "models":config["models"],
                 "issuance_url":config.get("issuance_url") or None,
-                **({"execution_site":"vwp", "profile_id":config["profile_id"]} if is_vwp(config) else {})}
+                **({"execution_site":"vwp", "profile_id":config["profile_id"], "token_source":"user"} if vwp else {})}
 
     @staticmethod
     def admin_public(value):
@@ -142,41 +150,69 @@ class ConnectionStore:
                 "client_key_registered":value["client_key_ciphertext"] is not None}
 
     def credential_scope(self, value):
+        if is_vwp(value["config"]):
+            from oa.sanity_vwp_inference import Catalog
+            config = value["config"]
+            profile = Catalog(self.db).get(config["profile_id"])
+            self._check_profile(config, profile)
+            return digest({"connection_id":value["connection_id"], "execution_site":"vwp", "token_source":"user",
+                "profile_id":profile["id"], "profile_sha256":profile["sha256"], "api":profile["api"],
+                "auth_mode":profile["auth_mode"], "issuance_url":config.get("issuance_url", "")})
         return digest({"connection_id":value["connection_id"],
             "client_key_sha256":digest(self._client_key(value)) if value["client_key_ciphertext"] else None,
             **{key:value["config"][key] for key in
             ("endpoint", "fallback_endpoint", "api", "auth_mode", "issuance_url", "client_name")}})
 
     def tokens(self, value):
-        check(not is_vwp(value["config"]), "AI_VWP_CREDENTIALS_MANAGED", "VWP credentials are managed on VWP")
         return UserTokenStore(self.db, self.settings, connection_id=value["connection_id"],
                               credential_scope=self.credential_scope(value))
+
+    def removal_tokens(self, value):
+        if not is_vwp(value["config"]):
+            return self.tokens(value)
+        # Removal uses the same owner/connection ledger and revision lock, with
+        # a scope which must never be used to retrieve a dispatch credential.
+        return UserTokenStore(self.db, self.settings, connection_id=value["connection_id"],
+                              credential_scope=digest({"remove_vwp_credential":value["connection_id"]}))
+
+    def credential_status(self, value, user_id):
+        error = None
+        try:
+            status = self.tokens(value).status(user_id)
+        except ReviewError as failure:
+            if is_vwp(value["config"]) and failure.code in ("AI_VWP_PROFILE_UNAVAILABLE", "AI_CONFIG_CHANGED"):
+                status, error = self.removal_tokens(value).status(user_id), failure.code
+                # No live boundary is available to compare. Report the actual
+                # connection failure, rather than claiming a credential change.
+                status["connection_changed"] = False
+            else:
+                raise
+        return status, error
 
     def user_connections(self, user_id, *, include_disabled=False):
         result = []
         for value in self.rows():
             if not include_disabled and not value["config"]["enabled"]:continue
             entry = {**self.public(value), "enabled":value["config"]["enabled"]}
+            connection_error = "AI_CONNECTION_UNAVAILABLE" if not value["config"]["enabled"] else None
             if is_vwp(value["config"]):
-                error = None
                 try:
-                    self.authorize_user(value["connection_id"], user_id)
-                    self.advisor(value["connection_id"])
+                    from oa.sanity_vwp_inference import Catalog
+                    profile = Catalog(self.db).get(value["config"]["profile_id"], actor_id=user_id)
+                    self._check_profile(value["config"], profile)
                 except ReviewError as failure:
                     if failure.code not in ("AI_VWP_SCHEMA", "AI_VWP_PROFILE_UNAVAILABLE", "AI_CONFIG_CHANGED", "FORBIDDEN", "AI_CONNECTION_UNAVAILABLE"):
                         raise
-                    error = failure.code
-                result.append({**entry, "credential":{"enabled":False, "registered":False, "revision":0, "managed":True},
-                    "credential_required":False, "credential_ready":error is None, "credential_error":error})
-                continue
+                    connection_error = failure.code
             try:
-                status = self.tokens(value).status(user_id)
-                error = ("AI_CREDENTIAL_SCOPE_CHANGED" if status.get("connection_changed") else
+                status, availability_error = self.credential_status(value, user_id)
+                error = connection_error or availability_error or ("AI_CREDENTIAL_SCOPE_CHANGED" if status.get("connection_changed") else
                          "AI_USER_TOKEN_EXPIRED" if status["expired"] else None if status["registered"] else "AI_USER_TOKEN_REQUIRED")
             except ReviewError as failure:
                 if failure.code not in ("AI_TOKEN_STORE_NOT_CONFIGURED", "AI_TOKEN_UNAVAILABLE"):raise
                 status, error = {"enabled":True, "registered":False, "revision":0}, failure.code
-            result.append({**entry, "credential":status, "credential_ready":error is None, "credential_error":error})
+            result.append({**entry, "credential":status, "credential_required":True,
+                           "credential_ready":error is None, "credential_error":error})
         return result
 
     def advisor(self, connection_id, model_id=None, *, transport=None):
@@ -233,6 +269,8 @@ class ConnectionStore:
             from oa.sanity_vwp_inference import Catalog
             if previous is None or config != {**previous["config"], "enabled":False}:
                 self._check_profile(config, Catalog(self.db).get(config["profile_id"]))
+            if config["enabled"]:
+                self._cipher()
         else:
             self._cipher()  # OA connections require encrypted user credentials.
         key = ""

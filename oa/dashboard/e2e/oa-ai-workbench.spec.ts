@@ -210,7 +210,7 @@ async function mockOA(page: Page, options: MockOptions = {}) {
   state.current = options.currentCase || null
   state.reviewRevision = options.currentCase?.revision || 0
   state.proposal = options.proposal || null
-  const connections = () => options.configured === false ? [] : options.connections ?? [{ id: connectionId, label: '합성 AI 연결', model: model.model, models: options.models || [model.model], enabled: true, available: !options.personalToken || credentialReady, credential_required: true, credential_ready: !options.personalToken || credentialReady }]
+  const connections = () => options.configured === false ? [] : options.connections ? options.connections.map(value => options.personalToken ? { ...value, available: credentialReady, credential_required: true, credential_ready: credentialReady, credential_error: credentialReady ? null : 'AI_USER_TOKEN_REQUIRED' } : value) : [{ id: connectionId, label: '합성 AI 연결', model: model.model, models: options.models || [model.model], enabled: true, available: !options.personalToken || credentialReady, credential_required: true, credential_ready: !options.personalToken || credentialReady }]
   const capability = (job: CodexJob | null) => ({ available: options.configured !== false && (!options.personalToken || credentialReady), supported: true, enabled: options.configured !== false, remaining: null, provider: 'OA_OPENAI_COMPATIBLE', synthetic_only: false, job, connections: connections(), connection_id: connections()[0]?.id || '', model: connections()[0]?.model || '', models: connections()[0]?.models || [], ...(options.personalToken ? { credential_required: true, credential_ready: credentialReady, credential_error: credentialReady ? null : 'AI_USER_TOKEN_REQUIRED' } : {}) })
   const cluster = () => state.revision ? { id: `cluster-${state.revision}`, report_id: report.id, revision: state.revision, action: state.confirmed ? 'CONFIRM' : 'PROPOSE', confirmed: state.confirmed, reusable: false, compatible_versions: false, criteria: '', reason: '전체 로그의 검토 의도에 따라 묶었습니다.', identity_fields: ['mode'], group_count: 1, record_count: sourceRecords.length, at, actor, references: [], advisor: 'OA_OPENAI_COMPATIBLE', model_called: true, model_metadata: { ...model, model: state.clusterJob?.model || model.model, ...options.modelMetadata }, rationale_counts: { MISSING: 0, DRAFT: Number(!state.confirmed), CONFIRMED: Number(state.confirmed), STALE: 0 } } : null
   const group = () => ({ id: 'g1', label: '확인이 필요한 합성 대상', record_count: sourceRecords.length, check_status: options.collectionOnly ? 'UNKNOWN' : 'FAIL', status: state.current?.conclusion || 'PENDING', revision: state.reviewRevision, example: {}, rationale: { status: state.confirmed ? 'CONFIRMED' : 'DRAFT', reason: '같은 조건의 확인 대상입니다.', reason_truncated: false, reason_omitted_chars: 0, source: 'AI', evidence_count: 1 } })
@@ -227,7 +227,7 @@ async function mockOA(page: Page, options: MockOptions = {}) {
     }
     if (path.startsWith('/workspace/api/')) { state.unexpected.push(path); return route.fulfill({ status: 404, json: { code: 'NOT_FOUND' } }) }
     if (path === '/api/ai/connections') return route.fulfill({ json: { items: connections().map(value => ({ ...value, auth_mode: 'bearer', issuance_url: null, credential: { registered: credentialReady, revision: credentialRevision }, credential_error: null })) } })
-    if (path === credentialPath && options.personalToken) {
+    if (options.personalToken && connections().some(value => path === `/api/ai/connections/${value.id}/credentials`)) {
       if (body) { expect(body.expected_revision).toBe(credentialRevision); credentialReady = true; credentialRevision++ }
       return route.fulfill({ json: { enabled: true, registered: credentialReady, revision: credentialRevision, expires_at: null, expired: false, expires_soon: false } })
     }
@@ -1069,28 +1069,41 @@ test('preserved text viewer shows masked complete text pages and separate AI cit
 
 const syntheticVwpConnection = { id: '10000000-0000-4000-8000-000000000099', label: '합성 VWP AI',
   execution_site: 'vwp' as const, model: 'vwp-review', models: ['vwp-fast', 'vwp-review'], available: true,
-  enabled: true, credential_required: false, credential_ready: true }
+  enabled: true, credential_required: true, credential_ready: true }
 
-test('VWP connection uses its admin default for classification without a personal OA token', async ({ page }) => {
-  const local = { id: connectionId, label: 'OA 합성 연결', model: model.model, models: [model.model], available: true, enabled: true }
-  const state = await mockOA(page, { connections: [local, syntheticVwpConnection] })
+test('VWP classification waits for the personal key and then uses the admin default', async ({ page }) => {
+  const state = await mockOA(page, { connections: [syntheticVwpConnection], personalToken: true })
   await page.goto(url)
-  await page.getByRole('combobox', { name: '분류 AI 연결', exact: true }).selectOption(syntheticVwpConnection.id)
+  await expect(page.getByRole('button', { name: 'AI로 그룹 만들기', exact: true })).toBeDisabled()
+  await expect(page.getByText('이 VWP 연결에 사용할 개인 인증값을 등록해 주세요.')).toBeVisible()
+  await page.getByRole('button', { name: '개인 AI 토큰', exact: true }).click()
+  await page.getByLabel('합성 VWP AI 개인 Bearer 토큰').fill('synthetic-vwp-key')
+  await page.getByRole('button', { name: '인증값 저장', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText('개인 인증값을 저장했습니다')
+  await page.getByRole('dialog').press('Escape')
+  await expect(page.getByRole('button', { name: 'AI로 그룹 만들기', exact: true })).toBeEnabled()
   await expect(page.getByRole('combobox', { name: '분류 AI 모델', exact: true })).toHaveValue('vwp-review')
   await page.getByRole('button', { name: 'AI로 그룹 만들기', exact: true }).click()
   await expect.poll(() => state.writes.find(value => value.path.endsWith('/clustering/ai'))?.body).toMatchObject({ connection_id: syntheticVwpConnection.id, model_id: 'vwp-review' })
 })
 
 test('VWP group judgment sends the selected connection and model independently', async ({ page }) => {
-  const state = await mockOA(page, { initialRevision: 1, confirmed: true, connections: [syntheticVwpConnection] })
+  const state = await mockOA(page, { initialRevision: 1, confirmed: true, connections: [syntheticVwpConnection], personalToken: true })
   await page.goto(url)
   await page.getByRole('button', { name: '그룹 판정 계속', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'AI 판정 받기', exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: '개인 AI 토큰', exact: true }).click()
+  await page.getByLabel('합성 VWP AI 개인 Bearer 토큰').fill('synthetic-vwp-key')
+  await page.getByRole('button', { name: '인증값 저장', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText('개인 인증값을 저장했습니다')
+  await page.getByRole('dialog').press('Escape')
+  await expect(page.getByRole('button', { name: 'AI 판정 받기', exact: true })).toBeEnabled()
   await page.getByRole('combobox', { name: '판정 AI 모델', exact: true }).selectOption('vwp-fast')
   await page.getByRole('button', { name: 'AI 판정 받기', exact: true }).click()
   await expect.poll(() => state.writes.find(value => value.path.endsWith('/review/ai'))?.body).toMatchObject({ connection_id: syntheticVwpConnection.id, model_id: 'vwp-fast' })
 })
 
-test('unavailable VWP profile explains the disabled action without requesting an OA token', async ({ page }) => {
+test('unavailable VWP profile explains the disabled action without misleading credential guidance', async ({ page }) => {
   const remote = { ...syntheticVwpConnection, available: false, credential_ready: false, credential_error: 'AI_VWP_PROFILE_UNAVAILABLE' }
   const state = await mockOA(page, { connections: [remote] })
   await page.goto(url)

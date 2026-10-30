@@ -43,7 +43,8 @@ def strict_json(raw, limit=MAX_BYTES):
 
 
 def validate_profile(profile):
-    require(isinstance(profile, dict) and set(profile) == PUBLIC_PROFILE_KEYS)
+    require(isinstance(profile, dict) and set(profile) in (PUBLIC_PROFILE_KEYS, PUBLIC_PROFILE_KEYS | {'token_source'}))
+    require(profile.get('token_source', 'user') == 'user')
     require(identifier(profile["id"]) and isinstance(profile["label"], str)
             and 1 <= len(profile["label"]) <= 100 and profile["label"].isprintable())
     require(profile["api"] in ("chat_completions", "responses")

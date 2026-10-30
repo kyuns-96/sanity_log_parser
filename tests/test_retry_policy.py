@@ -6,11 +6,15 @@ import httpx
 
 from common.sanity_common import ReviewError, canonical_json
 from common.sanity_integration_examples import clustering_example
-from common.sanity_vwp_ai_http import invoke
+from common.sanity_vwp_ai_http import invoke as vwp_invoke
 from oa.sanity_ai_model import OAAdvisor
 from oa.sanity_ai_retry import MAX_RETRIES, MAX_RESUMES, receipt, retry_at, valid_receipt, resumable
 from tests.test_ai_model import environment
-from tests.test_vwp_inference import body, profile
+from tests.test_vwp_inference import PERSONAL_TOKEN, body, profile
+
+
+def invoke(raw, private, **options):
+    return vwp_invoke(raw, {**private, "token":PERSONAL_TOKEN}, **options)
 
 
 class RetryPolicyTests(unittest.TestCase):

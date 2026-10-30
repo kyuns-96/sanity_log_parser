@@ -23,8 +23,8 @@ VWP에서 기존 [작업자 환경 예제](ai-worker.env.example)를 참고해 �
 
 - 이미 사용하는 공유 DB 로그인과 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`를 유지한다. `Database("oa")`로 논리적 OA 작업을 수행한다. 새 권한·역할을 생성하지 않으며, 같은 계정이므로 OA/VWP 계정 간 DB 권한 격리를 주장하지 않는다. 기존 읽기 전용 연결·스키마 점검을 먼저 수행한다.
 - `SANITY_ADMIN_USER_ID`는 OA의 현재 SSO 관리자 ID와 동일하게 설정한다. 작업자는 현재 SSO 계정 활성 상태와 업무 배정을 DB에서 다시 확인한다. SAML 인증서나 SSO 로그인 SDK를 작업자에 전달할 필요는 없다.
-- OA 연결도 VWP 작업자에서 처리할 경우 같은 `SANITY_OA_AI_TOKEN_STORE_SECRET`를 안전하게 주입해야 등록된 개인 토큰을 복호화할 수 있다. 기존 승인 기준 catalog, tokenizer/해시와 사내 CA 파일도 같은 내용으로 준비한다. VWP에서 기존 OA 모델 API에 연결 가능한지는 현장 확인 대상이다.
-- VWP 모델의 실제 HTTP/HTTPS URL·토큰·클라이언트 키·CA 경로는 VWP의 로컬 비공개 프로필 파일에만 둔다. 사용자 VWP 클라이언트나 OA 웹에 모델 계정·DB 계정을 배포하지 않는다.
+- OA 또는 VWP 연결을 처리할 작업자에는 OA 웹과 같은 `SANITY_OA_AI_TOKEN_STORE_SECRET`를 안전하게 주입한다. 요청자의 개인 인증값을 복호화하는 기존 암호화 키다. 기존 승인 기준 catalog, tokenizer/해시와 사내 CA 파일도 같은 내용으로 준비한다. VWP에서 기존 OA 모델 API에 연결 가능한지는 현장 확인 대상이다.
+- VWP 모델의 실제 HTTP/HTTPS URL·게이트웨이 공통 클라이언트 키·CA 경로는 VWP의 로컬 비공개 프로필에만 둔다. 개인 모델 인증값은 각 사용자가 OA에서 등록하며 프로필에 공용 모델 토큰을 넣지 않는다. 사용자 VWP 클라이언트에 DB 계정을 배포하지 않는다.
 
 저장소 루트에서 직접 실행:
 
@@ -38,7 +38,7 @@ VWP에서 기존 [작업자 환경 예제](ai-worker.env.example)를 참고해 �
 
 `SANITY_VWP_AI_PROFILES_FILE`에 절대 경로를 지정한다. 파일은 일반 파일·하드링크 수 1·심볼릭 링크 금지, root 또는 실행 서비스 UID 소유, **0600 등 그룹/다른 사용자 권한이 없는 모드**여야 한다. root 소유 파일도 서비스가 읽을 수 있어야 한다. 컨테이너 UID/GID는 `10001:10001`이다. 부모 경로와 파일 교체 권한도 운영 담당자가 보호한다.
 
-아래는 **합성 형식 예제**이며 실제 운영 프로필로 쓰지 않는다. `profiles` 배열에 같은 형식의 프로필을 추가할 수 있다. 사용자 ID는 실제 승인된 SSO의 영속 ID를 사내에서 기입한다. VWP 프로필은 서버 관리형 인증이며 승인된 `allowed_user_ids`만 해당 인증으로 호출한다. 회사 정책이 사용자별 JWT를 요구한다면 공용 계정으로 대체하지 말고 Codex에 별도 설계를 문의한다.
+아래는 **합성 형식 예제**이며 실제 운영 프로필로 쓰지 않는다. `profiles` 배열에 같은 형식의 프로필을 추가할 수 있다. 사용자 ID는 실제 승인된 SSO의 영속 ID를 사내에서 기입한다. `allowed_user_ids`에 포함된 사용자만 자신이 OA에 등록한 해당 연결의 개인 인증값으로 호출한다. 기존 공용 모델 토큰은 사용하지 않는다.
 
 ```json
 {
@@ -51,7 +51,7 @@ VWP에서 기존 [작업자 환경 예제](ai-worker.env.example)를 참고해 �
     "api": "chat_completions",
     "models": ["synthetic-model-a", "synthetic-model-b"],
     "auth_mode": "bearer",
-    "token": "synthetic-example-token",
+    "token_source": "user",
     "client_api_key": "",
     "client_name": "",
     "client_version": "",
@@ -66,11 +66,15 @@ VWP에서 기존 [작업자 환경 예제](ai-worker.env.example)를 참고해 �
 }
 ```
 
-지원 API는 `chat_completions`와 `responses`다. 인증은 `bearer`, `x_client_api_key`(이때 `token`이 x-client 값), `bearer_x_client`다. 마지막 방식은 별도 `client_api_key`, `client_name`, `client_version`, `session_mode=per_request|fixed`를 함께 지정하며 Chat Completions만 지원한다. `fixed`에는 `session_id`가 필요하다. 프로필마다 URL·같은 모델의 보조 URL·인증·모델 목록·입출력 바이트 한도를 독립 지정한다. 2026-10-30 사용자 결정으로 `endpoint`와 `fallback_endpoint`에 사내 HTTP 또는 HTTPS 주소를 지정할 수 있다. 기본·보조 주소의 프로토콜은 각각 명시한다. HTTPS 대상에는 인증서·호스트명 검증을 적용하며, HTTP 전용 연결은 CA 파일을 읽지 않는다. 임의 헤더·명령 실행·리다이렉트·환경 프록시·TLS 검증 해제는 지원하지 않는다.
+지원 API는 `chat_completions`와 `responses`다. 개인 인증 방식은 `bearer`, `x_client_api_key`, `bearer_x_client`다. 각 사용자 인증값은 선택한 방식의 Bearer 또는 x-client 헤더에만 전달한다. 마지막 방식은 VWP 프로필의 별도 공통 `client_api_key`, `client_name`, `client_version`, `session_mode=per_request|fixed`를 함께 지정하며 Chat Completions만 지원한다. `fixed`에는 `session_id`가 필요하다. `token_source`는 생략하거나 `user`만 허용하며, 이전 프로필의 `token`은 빈 문자열만 허용한다. 비어 있지 않은 공용 토큰은 설정 오류다. 프로필마다 URL·같은 모델의 보조 URL·인증·모델 목록·입출력 바이트 한도를 독립 지정한다. `endpoint`와 `fallback_endpoint`에 사내 HTTP 또는 HTTPS 주소를 지정할 수 있다. 기본·보조 주소의 프로토콜은 각각 명시한다. HTTPS 대상에는 인증서·호스트명 검증을 적용하며, HTTP 전용 연결은 CA 파일을 읽지 않는다. 임의 헤더·명령 실행·리다이렉트·환경 프록시·TLS 검증 해제는 지원하지 않는다.
 
-작업자는 시작 시와 약 5분마다 **비밀 없는 프로필 목록**을 기존 OA `WS_CONFIG`에 게시한다. 목록은 20분 뒤 만료된다. URL·토큰·클라이언트 키·CA 경로는 이 목록에 포함되지 않는다. OA의 AI 연결 설정에서 **VWP AI 연결 추가 → 프로필 선택 → 허용 모델 선택 → 기본 모델 지정 → 저장**한다. 사용자도 연결과 그 연결의 허용 모델을 선택할 수 있다. OA용 개인 토큰 입력창은 VWP 연결에 표시하지 않는다.
+작업자는 시작 시와 약 5분마다 **비밀 없는 프로필 목록**을 기존 OA `WS_CONFIG`에 게시한다. 목록은 20분 뒤 만료된다. URL·개인 인증값·클라이언트 키·CA 경로는 이 목록에 포함되지 않는다. OA의 AI 연결 설정에서 **VWP AI 연결 추가 → 프로필 선택 → 허용 모델·기본 모델·선택형 개인 인증값 발급 URL 지정 → 저장**한다. 승인된 각 사용자는 OA의 개인 AI 토큰 화면에서 그 연결의 개인 토큰/API 키를 등록·교체·해제하고 허용 모델을 선택한다. 비밀값은 재표시하지 않고 기존 OA private `WS_CONFIG`의 사용자·연결별 암호문으로 보관한다. 토큰 발급 링크는 HTTPS만 허용한다.
 
-한도는 모델의 context/token 한도와 별개다. 배치 한도는 관리 화면에서 실제 확인된 값으로 설정한다. 큰 보고서는 기존 전체 로그·보존 본문 배치를 사용하며 표본 추출이나 일부 성공 결과 공개로 대체하지 않는다. 프로필 내용이 변경되면 hash가 바뀌고 이전 설정으로 준비한 결과는 적용하지 않는다. 토큰 교체도 작업 중에는 설정 변경으로 취급한다.
+한도는 모델의 context/token 한도와 별개다. 배치 한도는 관리 화면에서 실제 확인된 값으로 설정한다. 큰 보고서는 기존 전체 로그·보존 본문 배치를 사용하며 표본 추출이나 일부 성공 결과 공개로 대체하지 않는다. 사용자·연결·프로필과 인증 설정에 결합된 개인 인증값이 없거나 설정이 바뀌면 호출하지 않는다. 작업 제출 시 고정한 인증 개정과 범위를 준비·호출·재시도·재개·결과 적용에서 다시 확인한다. 도중 토큰 교체/삭제 또는 프로필 변경은 기존 결과 적용을 차단한다. 공용 토큰이나 다른 사용자의 키로 대체하지 않는다.
+
+개인 키 방식으로 전환할 때는 기존 VWP 프로필의 공용 `token`을 제거하고 OA 웹과 VWP 작업자에 같은 암호화 키를 준비한다. 두 서버를 같은 릴리스로 갱신한 뒤 작업자가 새 프로필 목록을 게시하게 하고, 각 사용자가 OA에서 해당 연결의 키를 등록한다. 프로필 전체 hash가 인증 범위에 포함되므로 프로필을 변경하면 기존 키도 재등록해야 한다. 새 SQL migration은 필요하지 않다.
+
+이전 공용 키 작업은 개인 인증 pin이 없으므로 새 키로 자동 인계하지 않는다. 호출 전 작업이나 적용 대기 결과는 `STALE`로 중단해 새 작업을 요청한다. 이미 호출을 예약해 결과를 모르는 작업은 기한까지 기다린 뒤 `UNKNOWN`으로 남기며 자동 재전송·수동 재개하지 않는다. 개인 키·VWP 공통 클라이언트 키·모델 주소가 로그 본문이나 부가 필드에 포함된 요청도 전송 전에 차단한다.
 
 ## 3. 카드와 실패 처리
 

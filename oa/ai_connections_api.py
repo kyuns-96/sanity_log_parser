@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from common.sanity_clustering import check
 from oa.ai_tokens_api import TokenCommand, RemoveTokenCommand
 from oa.sanity_ai_connections import ConnectionStore
-from oa.sanity_ai_tokens import UserTokenStore
 
 
 class ConnectionCommand(BaseModel):
@@ -50,26 +49,29 @@ def create_ai_connections_router(authorized_actor):
     def connections(actor=Depends(owner)):
         return {"items":ConnectionStore(actor.access.db).user_connections(actor.user_id, include_disabled=True)}
 
-    def tokens(actor, connection_id, *, enabled=True):
+    def connection(actor, connection_id, *, enabled=True):
         store = ConnectionStore(actor.access.db)
         value = store.get(str(connection_id), enabled=enabled)
-        return store.tokens(value), value
+        return store, value
 
     @router.get("/api/ai/connections/{connection_id}/credentials")
     def status(connection_id: UUID, actor=Depends(owner)):
-        store, value = tokens(actor, connection_id, enabled=False)
-        return {**store.status(actor.user_id), "issuance_url":value["config"]["issuance_url"] or None}
+        store, value = connection(actor, connection_id, enabled=False)
+        status, error = store.credential_status(value, actor.user_id)
+        return {**status, "issuance_url":value["config"].get("issuance_url") or None,
+                **({"credential_error":error} if error else {})}
 
     @router.post("/api/ai/connections/{connection_id}/credentials")
     def save_token(connection_id: UUID, body: TokenCommand, actor=Depends(owner)):
-        store, value = tokens(actor, connection_id)
-        return {**store.save(actor.user_id, body.token.get_secret_value(), body.expected_revision),
-                "issuance_url":value["config"]["issuance_url"] or None}
+        store, value = connection(actor, connection_id)
+        store.authorize_user(str(connection_id), actor.user_id)
+        return {**store.tokens(value).save(actor.user_id, body.token.get_secret_value(), body.expected_revision),
+                "issuance_url":value["config"].get("issuance_url") or None}
 
     @router.post("/api/ai/connections/{connection_id}/credentials/remove")
     def remove_token(connection_id: UUID, body: RemoveTokenCommand, actor=Depends(owner)):
-        store, value = tokens(actor, connection_id, enabled=False)
-        return {**store.save(actor.user_id, None, body.expected_revision),
-                "issuance_url":value["config"]["issuance_url"] or None}
+        store, value = connection(actor, connection_id, enabled=False)
+        return {**store.removal_tokens(value).save(actor.user_id, None, body.expected_revision),
+                "issuance_url":value["config"].get("issuance_url") or None}
 
     return router

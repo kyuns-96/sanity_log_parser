@@ -1,4 +1,4 @@
-"""VWP-local, operator-owned model profiles; credentials never leave VWP."""
+"""VWP-local, operator-owned model profiles; user credentials are stored separately."""
 from __future__ import annotations
 
 import os
@@ -26,23 +26,25 @@ def _endpoint(value):
 
 
 def validate_private_profile(value):
-    require(isinstance(value, dict) and set(value) == (PUBLIC_PROFILE_KEYS - {"sha256"}) | PRIVATE_KEYS,
+    keys = (PUBLIC_PROFILE_KEYS - {"sha256"}) | (PRIVATE_KEYS - {'token'})
+    require(isinstance(value, dict) and set(value) in (keys, keys | {'token_source'},
+            keys | {'token'}, keys | {'token_source','token'}),
             "AI_VWP_PROFILE_CONFIG")
     require(_endpoint(value["endpoint"]) and (value["fallback_endpoint"] == "" or
             _endpoint(value["fallback_endpoint"]) and value["fallback_endpoint"] != value["endpoint"]),
             "AI_VWP_PROFILE_CONFIG")
     require(isinstance(value["ca_path"], str) and (not value["ca_path"] or Path(value["ca_path"]).is_absolute()),
             "AI_VWP_PROFILE_CONFIG")
-    require(isinstance(value["token"], str) and 1 <= len(value["token"]) <= 8192
-            and all(33 <= ord(c) <= 126 for c in value["token"]), "AI_VWP_PROFILE_CONFIG")
+    require(value.get('token_source', 'user') == 'user' and value.get('token', '') == '', 'AI_VWP_PROFILE_CONFIG')
     key = value["client_api_key"]
     require(isinstance(key, str) and ((value["auth_mode"] == "bearer_x_client" and 1 <= len(key) <= 8192
             and all(33 <= ord(c) <= 126 for c in key)) or
             (value["auth_mode"] != "bearer_x_client" and key == "")), "AI_VWP_PROFILE_CONFIG")
     public = {k: value[k] for k in PUBLIC_PROFILE_KEYS if k != "sha256"}
+    public['token_source'] = 'user'
     public["sha256"] = digest(value)
     validate_profile(public)
-    SecretGuard({"VWP_MODEL_SECRET":value["token"], "VWP_CLIENT_SECRET":key,
+    SecretGuard({"VWP_CLIENT_SECRET":key,
                  "VWP_ENDPOINT_SECRET":value["endpoint"], "VWP_BACKUP_SECRET":value["fallback_endpoint"]}).ensure_public(public)
     return public
 

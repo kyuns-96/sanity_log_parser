@@ -12,10 +12,17 @@ export const selectedAiConnection = (ai: CodexCapability | undefined, connection
 export const selectedAiModel = (ai: CodexCapability | undefined, selected: string) =>
   ai?.models?.includes(selected) ? selected : ai?.model || ''
 
-export const aiConnectionNotice = (ai: CodexCapability | undefined) => ai?.execution_site === 'vwp' && ai.credential_error
-  ? ai.credential_error === 'FORBIDDEN' ? '현재 사용자에게 VWP 모델 사용 권한이 없습니다. 운영 담당자에게 문의해 주세요.'
-    : 'VWP AI 연결을 현재 사용할 수 없습니다. 운영 담당자에게 연결 상태를 확인해 주세요.'
-  : null
+export const needsPersonalCredential = (ai: CodexCapability | undefined) => !!ai?.credential_required && !ai.credential_ready &&
+  (!ai.credential_error || ['AI_USER_TOKEN_REQUIRED', 'AI_USER_TOKEN_EXPIRED', 'AI_CREDENTIAL_SCOPE_CHANGED'].includes(ai.credential_error))
+
+export const aiConnectionNotice = (ai: CodexCapability | undefined) => {
+  if (ai?.execution_site !== 'vwp' || !ai.credential_error) return null
+  if (ai.credential_error === 'AI_USER_TOKEN_REQUIRED') return '이 VWP 연결에 사용할 개인 인증값을 등록해 주세요.'
+  if (ai.credential_error === 'AI_USER_TOKEN_EXPIRED') return 'VWP 개인 인증값이 만료되었습니다. 새 인증값을 등록해 주세요.'
+  if (ai.credential_error === 'AI_CREDENTIAL_SCOPE_CHANGED') return 'VWP 연결 설정이 변경되었습니다. 개인 인증값을 다시 등록해 주세요.'
+  if (ai.credential_error === 'FORBIDDEN') return '현재 사용자에게 VWP 모델 사용 권한이 없습니다. 운영 담당자에게 문의해 주세요.'
+  return 'VWP AI 연결을 현재 사용할 수 없습니다. 운영 담당자에게 연결 상태를 확인해 주세요.'
+}
 
 export default function AiModelSelect({ ai, value, onChange, disabled, label, connectionValue = '', onConnectionChange }: {
   ai?: CodexCapability; value: string; onChange: (model: string) => void; disabled: boolean; label: string

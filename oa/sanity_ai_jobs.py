@@ -114,7 +114,7 @@ def _validate_data(event):
     required = {"command", "target", "pins", "retrieval", "model", "created_at", "model_called"}
     optional = {"model_attempted", "call_token", "started_at", "deadline", "result", "error", "finished_at", "event_id", "cancelled_by", "batch", "result_ref", "connection_label",
                 "worker_site","total_records","call_seconds","fail_safe","retry_count","retry_after","retry_failure",
-                "resume_count","resume_request_id","resumed_by","resume_checkpoint"}
+                "resume_count","resume_request_id","resumed_by","resume_checkpoint","credential_pin"}
     check(isinstance(data, dict) and required <= set(data) <= required | optional, "AI_JOB_CORRUPT")
     command, pins = data["command"], data["pins"]
     command_keys = {"user_id", "block_id", "version_id", "report_id", "expected_revision",
@@ -158,6 +158,12 @@ def _validate_data(event):
     if "fail_safe" in data:check(data["fail_safe"] is True,"AI_JOB_CORRUPT")
     if "retry_count" in data:check(type(data["retry_count"]) is int and 0<=data["retry_count"]<=MAX_RETRIES,"AI_JOB_CORRUPT")
     if "retry_failure" in data:check(valid_receipt(data["retry_failure"]),"AI_JOB_CORRUPT")
+    if 'credential_pin' in data:
+        pin=data['credential_pin']
+        check(isinstance(pin,dict) and set(pin)=={'revision','scope'}
+              and type(pin['revision']) is int and pin['revision']>=1
+              and isinstance(pin['scope'],str) and re.fullmatch(r'[0-9a-f]{64}',pin['scope'])
+              and 'connection_id' in command,'AI_JOB_CORRUPT')
     if "resume_count" in data:
         check(type(data["resume_count"]) is int and 1<=data["resume_count"]<=MAX_RESUMES
             and isinstance(data.get("resume_request_id"),str) and re.fullmatch(r"[0-9a-f-]{36}",data["resume_request_id"])
@@ -253,9 +259,7 @@ class AIJobService:
 
     def _personal_tokens(self, event=None, *, connection_id=None):
         if connection_id or event and event["data"]["command"].get("connection_id"):
-            from oa.sanity_ai_connections import is_vwp
-            selected = connection_id or event["data"]["command"]["connection_id"]
-            return not is_vwp(self.connections.get(selected)["config"])
+            return True
         return getattr(getattr(self.advisor, "settings", None), "token_source", "server") == "user"
 
     @staticmethod
@@ -268,6 +272,28 @@ class AIJobService:
         if connection_id:
             return self.connections.tokens(self.connections.get(connection_id)).get_token(user_id)
         return UserTokenStore(self.db).get_token(user_id)
+
+    def _vwp_credential_pin(self, user_id, connection_id):
+        from oa.sanity_ai_connections import is_vwp
+        if not connection_id:return None
+        value=self.connections.get(connection_id)
+        if not is_vwp(value['config']):return None
+        self.connections.authorize_user(connection_id,user_id)
+        store=self.connections.tokens(value)
+        _,revision=store.get_token(user_id)
+        return {'revision':revision,'scope':store.credential_scope}
+
+    def _check_credential_pin(self, event):
+        data=event['data'];command=data['command'];connection=command.get('connection_id')
+        from oa.sanity_ai_connections import is_vwp
+        if not connection or not is_vwp(self.connections.get(connection)['config']):return
+        check(isinstance(data.get('credential_pin'),dict),'AI_CREDENTIAL_CHANGED')
+        try:current=self._vwp_credential_pin(command['user_id'],connection)
+        except ReviewError as error:
+            if error.code in ('AI_USER_TOKEN_REQUIRED','AI_USER_TOKEN_EXPIRED','AI_CREDENTIAL_SCOPE_CHANGED','AI_TOKEN_UNAVAILABLE','AI_TOKEN_STORE_NOT_CONFIGURED'):
+                raise ReviewError('AI_CREDENTIAL_CHANGED','The personal AI credential changed') from None
+            raise
+        check(data.get('credential_pin') is not None and current==data['credential_pin'],'AI_CREDENTIAL_CHANGED')
 
     def _store(self, command):
         if command.get("group_id") is not None:
@@ -317,7 +343,7 @@ class AIJobService:
                         check(event["data"].get(key)==previous["data"].get(key),"AI_JOB_CORRUPT")
                 if event["status"]=="PENDING" and previous["status"]=="RUNNING":_validate_retry(previous,event["data"])
                 check(_timestamp(event["created_at"]) >= _timestamp(previous["created_at"]), "AI_JOB_CORRUPT")
-                for key in ("command", "target", "pins", "retrieval", "model", "created_at","worker_site","fail_safe","total_records"):
+                for key in ("command", "target", "pins", "retrieval", "model", "created_at","worker_site","fail_safe","total_records","credential_pin"):
                     check(event["data"].get(key) == previous["data"].get(key), "AI_JOB_CORRUPT")
                 check(('batch' in event['data'])==('batch' in previous['data']),'AI_JOB_CORRUPT')
                 if 'plan' in previous['data'].get('batch',{}):
@@ -409,7 +435,7 @@ class AIJobService:
 
     def enqueue(self, user_id, block_id, version_id, report_id, *, expected_revision, request_id,
                 group_id=None, expected_cluster_revision=None, model_id=None, connection_id=None,
-                _worker_site=None,_requested_at=None):
+                _worker_site=None,_requested_at=None,_credential_pin=None):
         check(type(expected_revision) is int and expected_revision >= 0, "INVALID_REQUEST")
         check(group_id is None or isinstance(group_id, str) and 1 <= len(group_id) <= 100, "INVALID_REQUEST")
         check(group_id is None or type(expected_cluster_revision) is int and expected_cluster_revision >= 1, "INVALID_REQUEST")
@@ -438,6 +464,8 @@ class AIJobService:
         check(model["enabled"], "AI_NOT_CONFIGURED")
         if connection_id:
             self.connections.authorize_user(connection_id, user_id)
+        pin=self._vwp_credential_pin(user_id,connection_id)
+        if _credential_pin is not None:check(pin==_credential_pin,'AI_CREDENTIAL_CHANGED')
         if self._personal_tokens(connection_id=connection_id):
             self._user_token(user_id, connection_id)
         check(context["ready"] and context["can_review"], "CLUSTER_NOT_CONFIRMED" if group_id else "CLUSTER_BLOCKED")
@@ -464,6 +492,7 @@ class AIJobService:
         now = _db_now(self.db)
         data = {"command": command, "target": target, "pins": pins, "retrieval": selected["metadata"],
                 "model": model["model"], "created_at": now.isoformat(), "model_called": False}
+        if pin is not None:data['credential_pin']=pin
         if _worker_site is not None:
             check(_worker_site == worker_site() == "vwp","AI_WORKER_SITE")
             data.update(worker_site=_worker_site,created_at=_requested_at or now.isoformat(),fail_safe=True,
@@ -507,6 +536,7 @@ class AIJobService:
         return self.public(self._append(event, "CANCELLED", {**event["data"], "cancelled_by": user_id}))
 
     def _inputs(self, event):
+        self._check_credential_pin(event)
         data, model = event["data"], self._job_advisor(event).describe()
         pins, command = data["pins"], data["command"]
         check(model.get("enabled") and model.get("config_sha256") == pins["config_sha256"], "AI_CONFIG_CHANGED")

@@ -344,6 +344,15 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
         if event['status']=='RESULT_READY': return public(service,service._apply(event))
         if event['status'] not in ('PENDING','RUNNING'): return public(service,event)
         try:
+            # A persisted reservation may already have reached the model.
+            # Input or credential changes cannot prove that it did not happen.
+            if event['status']=='RUNNING':
+                reserved,_=Ledger(service,event).last()
+                if reserved and reserved['status']=='RESERVED':
+                    current=now or _db_now(service.db)
+                    if _timestamp(reserved['deadline'])<=current or _timestamp(event['data']['deadline'])<=current:
+                        return public(service,service._failed(event,ReviewError('AI_OUTCOME_UNKNOWN','Child call completion is unknown'),status='UNKNOWN',called=None))
+                    return public(service,event)
             event,ledger,model,revision=_prepare(service,event,advisor,now)
             step,ref=ledger.last();state=step['state'];current=now or _db_now(service.db)
             if step['status']=='RESERVED':

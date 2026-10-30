@@ -345,6 +345,8 @@ class ConnectionApiTests(unittest.TestCase):
         self.tokens=Mock();self.tokens.status.return_value={"registered":False,"revision":0}
         self.tokens.save.return_value={"registered":True,"revision":1}
         self.store.tokens.return_value=self.tokens
+        self.store.removal_tokens.return_value=self.tokens
+        self.store.credential_status.side_effect=lambda value,user:(self.tokens.status(user),None)
         factory=patch.object(ai_connections_api,"ConnectionStore",return_value=self.store)
         factory.start();self.addCleanup(factory.stop)
         app=create_app(auth_mode="sso")
@@ -377,6 +379,7 @@ class ConnectionApiTests(unittest.TestCase):
         response=self.client.post(path,headers=self.headers,json={"token":"synthetic-personal-key","expected_revision":0})
         self.assertEqual(200,response.status_code);self.assertNotIn('synthetic-personal-key',response.text)
         self.tokens.save.assert_called_with('owner','synthetic-personal-key',0)
+        self.store.authorize_user.assert_called_once_with(self.connection,'owner')
         self.client.post(path+'/remove',headers=self.headers,json={"expected_revision":1})
         self.tokens.save.assert_called_with('owner',None,1)
 
@@ -398,3 +401,13 @@ class ConnectionApiTests(unittest.TestCase):
         self.assertEqual(200,self.client.post(path,headers=self.headers,json={"expected_revision":0}).status_code)
         self.store.get.assert_called_with(self.connection,enabled=False)
         self.tokens.save.assert_called_with('owner',None,0)
+
+    def test_revoked_model_permission_blocks_registration_but_not_self_removal(self):
+        path='/api/ai/connections/'+self.connection+'/credentials'
+        self.store.authorize_user.side_effect=ReviewError('FORBIDDEN','Synthetic model permission revoked')
+        response=self.client.post(path,headers=self.headers,json={"token":"synthetic-personal-key","expected_revision":0})
+        self.assertEqual(403,response.status_code)
+        self.tokens.save.assert_not_called()
+        self.assertNotIn('synthetic-personal-key',response.text)
+        self.assertEqual(200,self.client.post(path+'/remove',headers=self.headers,json={"expected_revision":0}).status_code)
+        self.tokens.save.assert_called_once_with('owner',None,0)

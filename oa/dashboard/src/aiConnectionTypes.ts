@@ -1,10 +1,10 @@
 export type BatchConfig = { enabled: boolean; tokenizer_mode: 'utf8_bytes'; tokenizer_sha256: string; context_tokens: number; input_tokens: number; output_tokens: number; overhead_tokens: number; output_parameter: string; max_records: number; merge_groups: number; max_calls: number; max_rounds: number; deadline_seconds: number }
 export type ProcessingConfig = { api: 'chat_completions' | 'responses'; json_mode: boolean; timeout: number; max_input_bytes: number; max_output_bytes: number; batch: BatchConfig }
 export type OAConnectionConfig = ProcessingConfig & { execution_site?: never; label: string; enabled: boolean; endpoint: string; fallback_endpoint: string; auth_mode: 'bearer' | 'bearer_x_client' | 'x_client_api_key'; model: string; models: string[]; issuance_url: string; client_name: string; client_version: string; session_mode: string; session_id: string }
-export type VwpConnectionConfig = ProcessingConfig & { execution_site: 'vwp'; profile_id: string; label: string; enabled: boolean; model: string; models: string[] }
+export type VwpConnectionConfig = ProcessingConfig & { execution_site: 'vwp'; profile_id: string; label: string; enabled: boolean; model: string; models: string[]; issuance_url?: string }
 export type OAConnectionEntry = { id: string; revision: number; config: OAConnectionConfig; client_key_registered: boolean }
 export type VwpConnectionEntry = { id: string; revision: number; config: VwpConnectionConfig; client_key_registered: boolean }
 export type ManagedConnection = OAConnectionEntry | VwpConnectionEntry
-export type VwpProfile = { id: string; label: string; api: 'chat_completions' | 'responses'; models: string[]; auth_mode: string; timeout: number; max_input_bytes: number; max_output_bytes: number; sha256: string }
+export type VwpProfile = { id: string; label: string; api: 'chat_completions' | 'responses'; models: string[]; auth_mode: string; token_source?: 'user'; timeout: number; max_input_bytes: number; max_output_bytes: number; sha256: string }
 export const isVwpConnection = (entry: ManagedConnection): entry is VwpConnectionEntry => entry.config.execution_site === 'vwp'
 export const defaultBatch = (): BatchConfig => ({ enabled: false, tokenizer_mode: 'utf8_bytes', tokenizer_sha256: '', context_tokens: 32768, input_tokens: 16000, output_tokens: 4096, overhead_tokens: 1024, output_parameter: 'max_tokens', max_records: 200, merge_groups: 20, max_calls: 20000, max_rounds: 8, deadline_seconds: 86400 })

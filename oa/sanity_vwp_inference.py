@@ -9,7 +9,8 @@ from common.sanity_common import ReviewError, canonical_json, digest
 from common.sanity_config import load_environment
 from common.sanity_db import Database, uuid_value
 from common.sanity_ai_execution import worker_site
-from common.sanity_vwp_ai import VERSION, CATALOG_BYTES, CATALOG_TTL, require, timestamp, validate_profile
+from common.sanity_privacy import SecretGuard
+from common.sanity_vwp_ai import VERSION, CATALOG_BYTES, CATALOG_TTL, require, strict_json, timestamp, validate_profile
 from oa.sanity_ai_model import OAAdvisor
 from oa.sanity_workspace import WorkspaceStore, record_id
 
@@ -94,7 +95,7 @@ class LocalClient:
         from common.sanity_vwp_ai_profiles import ProfileStore
         (self.profiles_factory or ProfileStore.load)().get(profile["id"],profile["sha256"])
 
-    def call(self, data, profile, settings, binding, *, observer=None):
+    def call(self, data, profile, settings, binding, *, observer=None, personal_token=None):
         from common.sanity_vwp_ai_profiles import ProfileStore
         from common.sanity_vwp_ai_http import invoke
         factory = self.profiles_factory or ProfileStore.load
@@ -104,6 +105,23 @@ class LocalClient:
             require(binding["actor_id"] in public["allowed_user_ids"], "FORBIDDEN")
             require(settings.api == public["api"] and settings.model in public["models"]
                     and all(getattr(settings,k) <= public[k] for k in ("timeout", "max_input_bytes", "max_output_bytes")), "AI_CONFIG_CHANGED")
+            require(isinstance(personal_token,str) and 1<=len(personal_token)<=8192
+                    and all(33<=ord(c)<=126 for c in personal_token), 'AI_USER_TOKEN_REQUIRED')
+            private = {**private, 'token': personal_token}
+            guard=SecretGuard({'VWP_MODEL_SECRET':personal_token, 'VWP_CLIENT_SECRET':private['client_api_key'],
+                'VWP_ENDPOINT_SECRET':private['endpoint'], 'VWP_BACKUP_SECRET':private['fallback_endpoint']})
+            body=strict_json(data,private['max_input_bytes'])
+            guard.ensure_public(body)
+            # The user message contains a serialized packet; inspect its decoded
+            # strings too, so JSON escaping cannot hide a credential.
+            messages=body.get('messages',body.get('input',[])) if isinstance(body,dict) else []
+            if isinstance(messages,list):
+                for message in messages:
+                    content=message.get('content') if isinstance(message,dict) else None
+                    if isinstance(content,str):
+                        try: packet=strict_json(content.encode('utf-8'),private['max_input_bytes'])
+                        except (ReviewError,UnicodeError):continue
+                        guard.ensure_public(packet)
         except ReviewError as error:
             error.model_called=False
             raise
@@ -125,22 +143,31 @@ class VwpAdvisor(OAAdvisor):
         # VWP-hosted worker and uses its local HTTP executor/credentials.
         super().__init__(settings)
         self.profile, self.client, self.binding = profile, client or LocalClient(), binding
+        self.personal_token = None
 
     def describe(self):
         if worker_site()=="vwp":self.client.validate_current(self.profile)
         value = super().describe()
         original = value.pop("config_sha256")
-        return {**value, "provider":PROVIDER, "execution_site":"vwp", "auth_mode":"vwp_managed",
+        return {**value, "provider":PROVIDER, "execution_site":"vwp", "auth_mode":self.profile['auth_mode'],
             "profile_id":self.profile["id"], "profile_sha256":self.profile["sha256"],
             "config_sha256":digest({"settings":original, "site":"vwp", "profile":self.profile["sha256"]})}
 
     def for_model(self, model_id):
         require(model_id in self.model_choices(), "AI_MODEL_NOT_ALLOWED")
-        return self if model_id == self.settings.model else VwpAdvisor(replace(self.settings, model=model_id),
-            self.profile, client=self.client, binding=self.binding)
+        if model_id == self.settings.model:return self
+        result = VwpAdvisor(replace(self.settings, model=model_id), self.profile, client=self.client, binding=self.binding)
+        return result.with_user_token(self.personal_token) if self.personal_token is not None else result
 
     def with_user_token(self, token):
-        raise ReviewError("AI_VWP_CREDENTIALS_MANAGED", "VWP credentials are managed on VWP")
+        require(self.profile.get('token_source','user') == 'user', 'AI_CONFIG_CHANGED')
+        require(isinstance(token,str) and 1<=len(token)<=8192 and all(33<=ord(c)<=126 for c in token),
+                'AI_USER_TOKEN_REQUIRED')
+        result = copy(self)
+        result.personal_token = token
+        result._guard = SecretGuard({'PERSONAL_AI_TOKEN':token, 'OA_ENDPOINT_SECRET':self.settings.endpoint,
+                                    'OA_FALLBACK_ENDPOINT_SECRET':self.settings.fallback_endpoint})
+        return result
 
     def bind_execution(self, *, call_id, job_id, actor_id, scope_sha256):
         require(actor_id in self.profile["allowed_user_ids"], "FORBIDDEN")
@@ -166,7 +193,8 @@ class VwpAdvisor(OAAdvisor):
         require(headers == {}, "AI_VWP_PROTOCOL")
         attempt["model_called"] = None
         try:
-            raw, receipt = self.client.call(data, self.profile, self.settings, self.binding,observer=self._observe)
+            raw, receipt = self.client.call(data, self.profile, self.settings, self.binding,
+                                            observer=self._observe,personal_token=self.personal_token)
             attempt["model_called"] = True
             attempt["response_complete"] = True
             value, metadata = self._decode_reply(data, raw, prompt_version, budget=budget, input_tokens=tokens,

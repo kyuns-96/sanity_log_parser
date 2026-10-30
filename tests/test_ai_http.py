@@ -11,14 +11,19 @@ import httpx
 
 from common.sanity_common import ReviewError, canonical_json
 from common.sanity_integration_examples import clustering_example
-from common.sanity_vwp_ai_http import invoke
+from common.sanity_vwp_ai_http import invoke as vwp_invoke
 from common.sanity_vwp_ai_profiles import ProfileStore
 from oa.sanity_ai_model import OAAdvisor
 from tests.test_ai_model import chat, environment
-from tests.test_vwp_inference import profile, body
+from tests.test_vwp_inference import PERSONAL_TOKEN, profile, body
 from vwp_bridge.sanity_ai import AIAdapter
 
 UNUSED_CA = "/nonexistent/synthetic-unused-model-ca.pem"
+
+
+def invoke(raw, private, **options):
+    # The worker injects an owner's key only into the transient HTTP profile.
+    return vwp_invoke(raw, {**private, "token":PERSONAL_TOKEN}, **options)
 
 
 class ModelHttpTests(unittest.TestCase):
@@ -74,7 +79,7 @@ class ModelHttpTests(unittest.TestCase):
             "SANITY_AI_TOKEN":"synthetic-legacy-token", "SANITY_AI_MODEL":"synthetic-model", "SANITY_AI_CA_PATH":UNUSED_CA})
         self.assertTrue(legacy.propose({"schema_version":1})["needs_clarification"])
         self.assertEqual(["/oa","/vwp","/legacy"], [r[0] for r in self.requests])
-        self.assertEqual(["Bearer "+environment()["SANITY_OA_AI_TOKEN"], "Bearer "+private["token"], "Bearer synthetic-legacy-token"],
+        self.assertEqual(["Bearer "+environment()["SANITY_OA_AI_TOKEN"], "Bearer "+PERSONAL_TOKEN, "Bearer synthetic-legacy-token"],
                          [r[1]["Authorization"] for r in self.requests])
 
     def test_http_backup_receives_one_post_after_refused_primary_connection(self):

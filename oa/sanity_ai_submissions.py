@@ -84,7 +84,7 @@ class Submissions:
                     "AI_SUBMISSION_CORRUPT")
             data = event["data"]
             required_keys={"command","target","snapshot","model","config_sha256","created_at","worker_site","attempts"}
-            require(isinstance(data,dict) and required_keys <= set(data) <= required_keys | {"lease_until","error","connection_label","cancelled_by"}
+            require(isinstance(data,dict) and required_keys <= set(data) <= required_keys | {"lease_until","error","connection_label","cancelled_by","credential_pin"}
                     and isinstance(data["command"],dict) and data["command"].get("request_id") == identity and data["worker_site"] == "vwp"
                     and type(data["attempts"]) is int and 0 <= data["attempts"] <= 2, "AI_SUBMISSION_CORRUPT")
             command=data["command"]
@@ -98,11 +98,18 @@ class Submissions:
                     and isinstance(data["config_sha256"],str) and re.fullmatch('[0-9a-f]{64}',data["config_sha256"])
                     and isinstance(data["snapshot"],dict) and set(data["snapshot"])=={"record_id","snapshot_xid","version","updated_at"},"AI_SUBMISSION_CORRUPT")
             _timestamp(event["at"]);_timestamp(data["created_at"])
+            if 'credential_pin' in data:
+                pin=data['credential_pin']
+                require(isinstance(pin,dict) and set(pin)=={'revision','scope'}
+                    and type(pin['revision']) is int and pin['revision']>=1
+                    and isinstance(pin['scope'],str) and re.fullmatch(r'[0-9a-f]{64}',pin['scope'])
+                    and 'connection_id' in command,'AI_SUBMISSION_CORRUPT')
             if "lease_until" in data:_timestamp(data["lease_until"])
             if event["status"]=="PREPARING":require("lease_until" in data and data["attempts"]>=1,"AI_SUBMISSION_CORRUPT")
             if previous:
                 require(all(data[k] == previous["data"][k] for k in
                     ("command","target","snapshot","model","config_sha256","created_at","worker_site")), "AI_SUBMISSION_CORRUPT")
+                require(data.get('credential_pin')==previous['data'].get('credential_pin'),'AI_SUBMISSION_CORRUPT')
                 require(_timestamp(event["at"])>=_timestamp(previous["at"])
                     and data["attempts"]==previous["data"]["attempts"]+(1 if event["status"]=="PREPARING" else 0),"AI_SUBMISSION_CORRUPT")
             else:require(data["attempts"]==0,"AI_SUBMISSION_CORRUPT")
@@ -186,10 +193,12 @@ class Submissions:
         model = self.service._description(model_id,command.get("connection_id"))
         require(model["enabled"],"AI_NOT_CONFIGURED")
         if connection_id:self.service.connections.authorize_user(command["connection_id"],user_id)
+        pin=self.service._vwp_credential_pin(user_id,command.get('connection_id'))
         if self.service._personal_tokens(connection_id=command.get("connection_id")):
             self.service._user_token(user_id,command.get("connection_id"))
         data = {"command":command,"target":target,"snapshot":value["snapshot"],"model":model["model"],
             "config_sha256":model["config_sha256"],"created_at":_db_now(self.db).isoformat(),"worker_site":"vwp","attempts":0}
+        if pin is not None:data['credential_pin']=pin
         if connection_id:data["connection_label"] = model["connection_label"]
         return self.public(self.append(None,"QUEUED",data))
 
@@ -214,15 +223,17 @@ def prepare_one(db_factory,workspace_factory,advisor,criteria_provider=None):
             if event["sequence"] != claimed["sequence"]:return None
             data=event["data"];command=data["command"]
             require(header(service,command,write=True)["snapshot"] == data["snapshot"],"AI_INPUT_STALE")
+            service._check_credential_pin(event)
             require(service._description(data["model"],command.get("connection_id"))["config_sha256"] == data["config_sha256"],"AI_CONFIG_CHANGED")
             kwargs={k:v for k,v in command.items() if k not in ("user_id","block_id","version_id","report_id","model_id")}
             result=service.enqueue(command["user_id"],command["block_id"],command["version_id"],command["report_id"],
-                **kwargs,model_id=data["model"],_worker_site="vwp",_requested_at=data["created_at"])
+                **kwargs,model_id=data["model"],_worker_site="vwp",_requested_at=data["created_at"],
+                _credential_pin=data.get('credential_pin'))
             store.append(event,"PREPARED",data)
             return result
     except Exception as error:
         code="AI_RESOURCE_LIMIT" if isinstance(error,MemoryError) else _error_code(error)
-        status="STALE" if code in {"AI_INPUT_STALE","AI_CONFIG_CHANGED","REVISION_CONFLICT","UNAUTHORIZED","FORBIDDEN","NOT_FOUND","RESOURCE_NOT_FOUND"} else "FAILED"
+        status="STALE" if code in {"AI_INPUT_STALE","AI_CONFIG_CHANGED","AI_CREDENTIAL_CHANGED","REVISION_CONFLICT","UNAUTHORIZED","FORBIDDEN","NOT_FOUND","RESOURCE_NOT_FOUND"} else "FAILED"
         with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
             service._lock(claimed["id"]);store=Submissions(service);event=store.load(claimed["id"])
             canonical=service._load(claimed["id"],required=False)

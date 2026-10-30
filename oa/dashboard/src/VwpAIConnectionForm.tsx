@@ -7,8 +7,8 @@ import type { AccessApi } from './accessApi'
 import type { VwpConnectionEntry, VwpConnectionConfig, VwpProfile } from './aiConnectionTypes'
 import AIProcessingLimits from './AIProcessingLimits'
 
-export default function VwpAIConnectionForm({ api, initial, profiles, ready, onBusyChange, onSaved, onCancel }: {
-  api: AccessApi; initial: VwpConnectionEntry; profiles: VwpProfile[]; ready: boolean;
+export default function VwpAIConnectionForm({ api, initial, profiles, ready, credentialsReady, onBusyChange, onSaved, onCancel }: {
+  api: AccessApi; initial: VwpConnectionEntry; profiles: VwpProfile[]; ready: boolean; credentialsReady: boolean;
   onBusyChange: (busy: boolean) => void; onSaved: () => Promise<void>; onCancel: () => void;
 }) {
   const [config, setConfig] = useState<VwpConnectionConfig>(() => structuredClone(initial.config))
@@ -39,14 +39,15 @@ export default function VwpAIConnectionForm({ api, initial, profiles, ready, onB
     finally { setBusy(false); onBusyChange(false) }
   }
   return <form className="am-form ai-connection-form vwp-ai-connection-form" aria-label="VWP AI 연결 등록" onSubmit={save}>
-    <div className="ai-connection-form-heading"><Badge variant="outline" className="ai-provider-badge">VWP</Badge><p>실행 프로필과 사용할 모델을 선택하세요. API 주소와 인증값은 VWP에서 관리합니다.</p></div>
+    <div className="ai-connection-form-heading"><Badge variant="outline" className="ai-provider-badge">VWP</Badge><p>실행 프로필과 모델을 선택하세요. API 주소와 공통 연결 정보는 VWP에서 관리하고 개인 인증값은 사용자가 등록합니다.</p></div>
     {error && <p className="am-error ai-form-feedback" role="alert">{error}</p>}
-    {(!ready || !profiles.length) && <p className="am-notice ai-form-feedback" role="status">사용 가능한 VWP 실행 프로필이 없습니다. VWP 운영 담당자가 연결을 준비한 뒤 목록을 새로고침해 주세요.</p>}
+    {((!ready && credentialsReady) || !profiles.length) && <p className="am-notice ai-form-feedback" role="status">사용 가능한 VWP 실행 프로필이 없습니다. VWP 운영 담당자가 연결을 준비한 뒤 목록을 새로고침해 주세요.</p>}
     <fieldset className="ai-form-section"><legend>VWP 실행 연결</legend>
       <div className="ai-section-content">
       <label>연결 이름<Input aria-label="VWP AI 연결 이름" required maxLength={100} disabled={busy} value={config.label} onChange={event => change({ label: event.target.value })} /></label>
       <label>실행 프로필<select className="studio-native-select" aria-label="VWP AI 실행 프로필" required disabled={busy || !ready} value={config.profile_id} onChange={event => chooseProfile(event.target.value)}><option value="" disabled>VWP 실행 프로필을 선택하세요</option>{config.profile_id && !profile && <option value={config.profile_id} disabled>{config.profile_id} · 현재 사용 불가</option>}{profiles.map(value => <option key={value.id} value={value.id}>{value.label}</option>)}</select><small>VWP 운영 담당자가 제공한 모델 연결입니다.</small></label>
-      <dl className="vwp-ai-profile-details"><div><dt>실행 위치</dt><dd>VWP</dd></div><div><dt>인증 관리</dt><dd>VWP에서 관리</dd></div>{profile && <><div><dt>API 종류</dt><dd>{profile.api === 'responses' ? 'Responses' : 'Chat Completions'}</dd></div><div><dt>최대 응답 대기</dt><dd>{profile.timeout}초</dd></div></>}</dl>
+      <dl className="vwp-ai-profile-details"><div><dt>실행 위치</dt><dd>VWP</dd></div><div><dt>인증 방식</dt><dd>사용자별 개인 인증값</dd></div>{profile && <><div><dt>API 종류</dt><dd>{profile.api === 'responses' ? 'Responses' : 'Chat Completions'}</dd></div><div><dt>최대 응답 대기</dt><dd>{profile.timeout}초</dd></div></>}</dl>
+      <label>개인 토큰·API 키 발급 URL<Input aria-label="VWP AI 인증값 발급 URL" type="url" disabled={busy} value={config.issuance_url || ''} onChange={event => change({ issuance_url: event.target.value })} /><small>사용자에게 표시할 HTTPS 발급 페이지입니다.</small></label>
       <label className="ai-checkbox"><input type="checkbox" disabled={busy} checked={config.enabled} onChange={event => change({ enabled: event.target.checked })} /><span>이 연결 사용</span></label>
       </div>
     </fieldset>

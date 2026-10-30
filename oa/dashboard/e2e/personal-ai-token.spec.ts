@@ -188,7 +188,7 @@ for (const url of [undefined, 'javascript:alert(1)', 'http://identity.example.te
   })
 }
 
-test('VWP managed credentials show no personal token form alongside an OA connection', async ({ page }) => {
+test('legacy VWP managed metadata requires configuration review alongside an OA connection', async ({ page }) => {
   const state = await setup(page, { empty: true })
   await page.getByRole('dialog').press('Escape')
   await page.route('**/api/ai/connections', route => route.fulfill({ json: { items: [
@@ -197,7 +197,9 @@ test('VWP managed credentials show no personal token form alongside an OA connec
   ] } }))
   await page.getByRole('button', { name: '개인 AI 토큰', exact: true }).click()
   const remote = page.getByRole('article', { name: 'VWP 공용 연결 VWP 연결', exact: true })
-  await expect(remote.getByText('VWP에서 인증 관리', { exact: true })).toBeVisible()
+  await expect(remote.getByText('설정 확인 필요', { exact: true })).toBeVisible()
+  await expect(remote).toContainText('VWP 인증 방식을 확인할 수 없습니다')
+  await expect(remote).not.toContainText('VWP에서 인증 관리')
   await expect(remote.locator('input')).toHaveCount(0)
   await expect(remote.getByRole('button')).toHaveCount(0)
   await expect(page.getByRole('article', { name: 'OA 개인 연결 개인 인증값', exact: true }).locator('input[type=password]')).toBeVisible()

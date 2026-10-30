@@ -92,6 +92,7 @@ def resume(service, user_id, job_id, request_id):
         ledger=Ledger(service,event)
         step,ref=ledger.last()
     check(resumable(event,checkpoint_ready=bool(step and step['status']=='READY')),'AI_RESUME_UNAVAILABLE')
+    service._check_credential_pin(event)
     data={k:v for k,v in event['data'].items() if k not in
           ('finished_at','cancelled_by','error','retry_after','retry_failure','resume_checkpoint')}
     data.update(resume_count=event['data'].get('resume_count',0)+1,

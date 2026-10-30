@@ -14,6 +14,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import httpx
+from cryptography.fernet import Fernet
 
 from common.sanity_common import ReviewError, canonical_json, digest
 from common.sanity_db import Database, Queue, json_value
@@ -28,10 +29,13 @@ from common.sanity_vwp_ai_http import invoke
 from common.sanity_vwp_ai_profiles import ProfileStore
 
 
+PERSONAL_TOKEN = "synthetic-vwp-personal-credential"
+
+
 def profile(**changes):
     return {"id":"synthetic-vwp", "label":"합성 VWP AI", "endpoint":"https://vwp-model.example.test/chat/completions",
         "fallback_endpoint":"", "api":"chat_completions", "models":["synthetic-model", "vwp-fast"],
-        "auth_mode":"bearer", "token":"synthetic-vwp-personal-credential", "client_api_key":"",
+        "auth_mode":"bearer", "token_source":"user", "client_api_key":"",
         "client_name":"", "client_version":"", "session_mode":"disabled", "session_id":"", "ca_path":"",
         "timeout":120, "max_input_bytes":1048576, "max_output_bytes":2097152, "allowed_user_ids":["owner"], **changes}
 
@@ -53,7 +57,7 @@ class VwpInferenceContractTests(unittest.TestCase):
         private = profile()
         public = ProfileStore([private]).public[private["id"]]
         rendered = json.dumps(public)
-        self.assertNotIn(private["token"], rendered)
+        self.assertNotIn(PERSONAL_TOKEN, rendered)
         self.assertNotIn(private["endpoint"], rendered)
         self.assertEqual(digest(private), public["sha256"])
         self.assertEqual(["owner"], public["allowed_user_ids"])
@@ -61,14 +65,23 @@ class VwpInferenceContractTests(unittest.TestCase):
     def test_remote_registration_cannot_supply_endpoints_credentials_or_commands(self):
         self.assertEqual("vwp", validate_config(configuration())["execution_site"])
         for extra in ({"endpoint":"https://another.example.test"}, {"token":"synthetic-secret"},
-                      {"client_api_key":"synthetic-secret"}, {"argv":["/bin/false"]}, {"issuance_url":"https://issue.example.test"}):
+                      {"client_api_key":"synthetic-secret"}, {"argv":["/bin/false"]}):
             with self.subTest(extra=extra), self.assertRaises(ReviewError):
                 validate_config(configuration(**extra))
+
+    def test_vwp_issuance_link_must_be_https_and_have_no_embedded_credentials(self):
+        address="https://identity.example.test/issue"
+        self.assertEqual(address,validate_config(configuration(issuance_url=address))["issuance_url"])
+        for address in ("http://identity.example.test/issue", "javascript:alert(1)",
+                        "https://synthetic-user:synthetic-password@identity.example.test/issue"):
+            with self.subTest(address=address),self.assertRaises(ReviewError):
+                validate_config(configuration(issuance_url=address))
 
     def test_profiles_require_explicit_callers_http_or_https_and_finite_limits(self):
         for changes in ({"allowed_user_ids":[]}, {"allowed_user_ids":["owner","owner"]},
                         {"endpoint":"ftp://model.example.test"}, {"endpoint":"https://model.example.test?key=synthetic"},
-                        {"timeout":True}, {"max_input_bytes":0}, {"models":[{}]}, {"token":""}):
+                        {"timeout":True}, {"max_input_bytes":0}, {"models":[{}]}, {"token":"synthetic-forbidden-shared-token"},
+                        {"token_source":"server"}):
             with self.subTest(changes=changes), self.assertRaises(ReviewError):
                 ProfileStore([profile(**changes)])
 
@@ -100,7 +113,7 @@ class VwpInferenceContractTests(unittest.TestCase):
         for mode in ("bearer","x_client_api_key","bearer_x_client"):
             extra = {"client_api_key":"synthetic-vwp-client-key", "client_name":"synthetic-app", "client_version":"1",
                      "session_mode":"per_request"} if mode == "bearer_x_client" else {}
-            private = profile(auth_mode=mode,**extra)
+            private = {**profile(auth_mode=mode,**extra), "token":PERSONAL_TOKEN}
             request_body = body(**({"extraData":{"clientName":"synthetic-app","clientVersion":"1","sessionId":str(uuid4())}}
                                   if mode == "bearer_x_client" else {}))
             raw = canonical_json(request_body)
@@ -115,7 +128,7 @@ class VwpInferenceContractTests(unittest.TestCase):
             self.assertEqual(mode!="bearer","x-client-api-key" in seen[0].headers)
 
     def test_only_connect_failure_uses_same_model_backup(self):
-        private = profile(fallback_endpoint="https://backup.example.test/chat/completions")
+        private = {**profile(fallback_endpoint="https://backup.example.test/chat/completions"), "token":PERSONAL_TOKEN}
         seen=[]
         def respond(request):
             seen.append(request)
@@ -133,9 +146,9 @@ class VwpInferenceContractTests(unittest.TestCase):
         self.assertEqual(1,len(seen))
 
     def test_vwp_response_budget_and_secret_guard_are_enforced(self):
-        for response in (httpx.Response(200,content=b"x"*5000),httpx.Response(200,json={"echo":profile()["token"]})):
+        for response in (httpx.Response(200,content=b"x"*5000),httpx.Response(200,json={"echo":PERSONAL_TOKEN})):
             with self.assertRaises(ReviewError):
-                invoke(canonical_json(body()),profile(),timeout=30,max_output_bytes=4096,
+                invoke(canonical_json(body()),{**profile(),"token":PERSONAL_TOKEN},timeout=30,max_output_bytes=4096,
                        transport=httpx.MockTransport(lambda request:response))
 
 
@@ -144,10 +157,13 @@ class VwpInferenceDatabaseTests(PgTestCase):
         from tests.test_ai_jobs import AIJobDatabaseTests
         self.c=AIJobDatabaseTests();self.c.setUp();self.addCleanup(self.c.doCleanups)
         self.admin,self.schema=self.c.admin,self.c.schema
+        self.settings={"SANITY_OA_AI_TOKEN_STORE_SECRET":Fernet.generate_key().decode()}
+        private_settings=patch("oa.sanity_ai_connections.load_environment",return_value=self.settings)
+        private_settings.start();self.addCleanup(private_settings.stop)
         self.private=profile();self.wire=[]
         def respond(request):
             self.wire.append(request)
-            self.assertEqual("Bearer "+self.private["token"],request.headers["authorization"])
+            self.assertEqual("Bearer "+PERSONAL_TOKEN,request.headers["authorization"])
             return self.c.respond(request)
         self.transport=httpx.MockTransport(respond)
         self.client=LocalClient(self.profiles,transport=self.transport)
@@ -166,11 +182,13 @@ class VwpInferenceDatabaseTests(PgTestCase):
             def admin(actor):
                 if actor.user_id!="owner":raise ReviewError("FORBIDDEN","Synthetic admin only")
             actor=SimpleNamespace(user_id="owner",auth_method="sso",access=SimpleNamespace(db=service.db,_admin=admin))
-            yield ConnectionStore(service.db,{}),actor,service
+            yield ConnectionStore(service.db,self.settings),actor,service
 
     def create(self,config=None):
         connection=str(uuid4())
-        with self.store() as (store,actor,_):store.save(actor,connection,config or configuration(),0)
+        with self.store() as (store,actor,_):
+            store.save(actor,connection,config or configuration(),0)
+            store.tokens(store.get(connection)).save("owner",PERSONAL_TOKEN,0)
         return connection
 
     def finish(self):
@@ -180,17 +198,16 @@ class VwpInferenceDatabaseTests(PgTestCase):
                 if result is None or result["status"] in ("COMPLETED","STALE","FAILED","UNKNOWN","CANCELLED"):return result
         self.fail("VWP inference did not finish")
 
-    def test_registration_is_admin_only_and_needs_no_oa_token_encryption(self):
+    def test_registration_is_admin_only_and_uses_encrypted_personal_credential(self):
         with self.store() as (store,actor,_):
             denied=SimpleNamespace(user_id="other",auth_method="sso",access=actor.access)
             with self.assertRaises(ReviewError):store.save(denied,str(uuid4()),configuration(),0)
         connection=self.create()
         with self.store() as (store,_,_):
             choice=store.user_connections("owner")[0]
-            self.assertEqual(connection,choice["id"]);self.assertFalse(choice["credential_required"])
+            self.assertEqual(connection,choice["id"]);self.assertTrue(choice["credential_required"])
             self.assertTrue(choice["credential_ready"])
-            with self.assertRaises(ReviewError) as caught:store.tokens(store.get(connection))
-            self.assertEqual("AI_VWP_CREDENTIALS_MANAGED",caught.exception.code)
+            self.assertEqual((PERSONAL_TOKEN,1),store.tokens(store.get(connection)).get_token("owner"))
 
     def test_whole_report_is_not_sampled_and_is_executed_on_vwp(self):
         connection=self.create()
@@ -267,7 +284,7 @@ class VwpInferenceDatabaseTests(PgTestCase):
         result=self.finish();self.assertEqual("COMPLETED",result["status"],result)
         rows=self.c.admin_query("SELECT payload FROM {oa}").fetchall()
         rendered=json.dumps(rows,default=str)
-        self.assertNotIn(self.private["token"],rendered);self.assertNotIn(self.private["endpoint"],rendered)
+        self.assertNotIn(PERSONAL_TOKEN,rendered);self.assertNotIn(self.private["endpoint"],rendered)
 
     def test_offline_connection_can_be_disabled_without_attaching_oa_credentials(self):
         connection=self.create()
@@ -282,12 +299,13 @@ class VwpInferenceDatabaseTests(PgTestCase):
 
     def test_profile_changes_before_or_during_inference_stale_the_job(self):
         connection=self.create();self.c.enqueue(connection_id=connection)
-        self.private=profile(token="synthetic-rotated-vwp-token");self.publish()
-        first=self.finish();self.assertEqual(("STALE","AI_CONFIG_CHANGED"),(first["status"],first["error"]))
+        self.private=profile(fallback_endpoint="https://changed.example.test/chat/completions");self.publish()
+        first=self.finish();self.assertEqual(("STALE","AI_CREDENTIAL_CHANGED"),(first["status"],first["error"]))
         self.assertEqual([],self.wire)
+        with self.store() as (store,_,_):store.tokens(store.get(connection)).save("owner",PERSONAL_TOKEN,1)
         self.c.enqueue(connection_id=connection)
         def rotate(request):
-            self.private=profile(token="synthetic-second-vwp-rotation");self.publish()
+            self.private=profile(fallback_endpoint="https://changed-again.example.test/chat/completions");self.publish()
         self.c.callback=rotate
         second=self.finish();self.assertEqual(("STALE","AI_CONFIG_CHANGED"),(second["status"],second["error"]))
         self.assertEqual(1,len(self.wire))

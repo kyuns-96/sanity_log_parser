@@ -254,24 +254,32 @@ const syntheticVwpProfile = { id: 'synthetic-vwp-profile', label: '합성 VWP �
   models: ['vwp-fast', 'vwp-review'], auth_mode: 'bearer', timeout: 120, max_input_bytes: 1048576,
   max_output_bytes: 2097152, sha256: 'a'.repeat(64) }
 
-test('administrator registers VWP separately without OA encryption or model secrets', async ({ page }) => {
+test('VWP personal credentials require encryption readiness without exposing model secrets', async ({ page }) => {
   await accessServer(page, true)
+  let credentialsReady = false
   const entries: { id: string; revision: number; config: Record<string, unknown>; client_key_registered: boolean }[] = []
   const writes: Record<string, unknown>[] = []
   await page.route('**/api/admin/ai/connections**', async route => {
     const request = route.request()
-    if (request.method() === 'GET') return route.fulfill({ json: { items: entries, credentials_ready: false, vwp_ready: true, vwp_profiles: [syntheticVwpProfile] } })
+    if (request.method() === 'GET') return route.fulfill({ json: { items: entries, credentials_ready: credentialsReady, vwp_ready: true, vwp_profiles: [syntheticVwpProfile] } })
     expect(request.headers()['x-sanity-request']).toBe('1')
     const body = request.postDataJSON()
     writes.push(body)
-    const entry = { id: new URL(request.url()).pathname.split('/').at(-1)!, revision: 1, config: body.config, client_key_registered: false }
-    entries.push(entry)
+    const id = new URL(request.url()).pathname.split('/').at(-1)!
+    const index = entries.findIndex(value => value.id === id)
+    const entry = { id, revision: index < 0 ? 1 : entries[index].revision + 1, config: body.config, client_key_registered: false }
+    if (index < 0) entries.push(entry); else entries[index] = entry
     return route.fulfill({ json: entry })
   })
   await page.goto('/?page=admin')
   await page.getByRole('button', { name: 'AI 연결·모델 관리', exact: true }).click()
   const panel = page.getByRole('region', { name: 'AI 연결·모델 관리', exact: true })
   await expect(panel.getByRole('button', { name: 'OA AI 연결 추가', exact: true })).toBeDisabled()
+  await expect(panel.getByRole('button', { name: 'VWP AI 연결 추가', exact: true })).toBeDisabled()
+  await expect(panel).toContainText('OA와 VWP의 개인 인증값을 저장하려면')
+  credentialsReady = true
+  await panel.getByRole('button', { name: '새로고침', exact: true }).click()
+  await expect(panel.getByRole('button', { name: 'VWP AI 연결 추가', exact: true })).toBeEnabled()
   await panel.getByRole('button', { name: 'VWP AI 연결 추가', exact: true }).click()
   const form = panel.getByRole('form', { name: 'VWP AI 연결 등록' })
   await form.getByLabel('VWP AI 연결 이름', { exact: true }).fill('VWP 검토 모델')
@@ -279,15 +287,30 @@ test('administrator registers VWP separately without OA encryption or model secr
   await expect(form.getByLabel('VWP 기본 AI 모델', { exact: true })).toHaveValue('')
   await form.getByRole('checkbox', { name: 'vwp-fast', exact: true }).uncheck()
   await form.getByLabel('VWP 기본 AI 모델', { exact: true }).selectOption('vwp-review')
+  await form.getByLabel('VWP AI 인증값 발급 URL', { exact: true }).fill('https://identity.example.test/vwp')
   await expect(form.locator('input[type=password]')).toHaveCount(0)
   await expect(form.getByLabel('AI API URL', { exact: true })).toHaveCount(0)
+  credentialsReady = false
+  await panel.getByRole('button', { name: '새로고침', exact: true }).click()
+  await expect(form.getByRole('button', { name: 'VWP AI 연결 저장', exact: true })).toBeDisabled()
+  credentialsReady = true
+  await panel.getByRole('button', { name: '새로고침', exact: true }).click()
+  await expect(form.getByRole('button', { name: 'VWP AI 연결 저장', exact: true })).toBeEnabled()
   await form.getByRole('button', { name: 'VWP AI 연결 저장', exact: true }).click()
   await expect(panel.getByText('VWP 검토 모델', { exact: true })).toBeVisible()
   expect(writes).toHaveLength(1)
   const config = writes[0].config as Record<string, unknown>
-  expect(config).toMatchObject({ execution_site: 'vwp', profile_id: syntheticVwpProfile.id, model: 'vwp-review', models: ['vwp-review'] })
-  for (const key of ['endpoint', 'fallback_endpoint', 'token', 'client_api_key', 'issuance_url']) expect(config[key]).toBeUndefined()
+  expect(config).toMatchObject({ execution_site: 'vwp', profile_id: syntheticVwpProfile.id, model: 'vwp-review', models: ['vwp-review'], issuance_url: 'https://identity.example.test/vwp' })
+  for (const key of ['endpoint', 'fallback_endpoint', 'token', 'client_api_key']) expect(config[key]).toBeUndefined()
   expect(writes[0].client_api_key).toBeUndefined()
+  credentialsReady = false
+  await panel.getByRole('button', { name: '새로고침', exact: true }).click()
+  const row = panel.locator('li').filter({ hasText: 'VWP 검토 모델' })
+  await row.getByRole('button', { name: '사용 중지', exact: true }).click()
+  await expect(row).toContainText('사용 중지')
+  expect(writes).toHaveLength(2)
+  expect((writes[1].config as Record<string, unknown>).enabled).toBe(false)
+  await expect(row.getByRole('button', { name: '사용 허용', exact: true })).toBeDisabled()
 })
 
 test('VWP registration stays unavailable until the execution profile is ready', async ({ page }) => {
@@ -299,10 +322,8 @@ test('VWP registration stays unavailable until the execution profile is ready', 
   })
   await page.goto('/?page=admin')
   await page.getByRole('button', { name: 'AI 연결·모델 관리', exact: true }).click()
-  await page.getByRole('button', { name: 'VWP AI 연결 추가', exact: true }).click()
-  await expect(page.getByText('사용 가능한 VWP 실행 프로필이 없습니다.', { exact: false })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'VWP AI 연결 저장', exact: true })).toBeDisabled()
-  await page.getByRole('button', { name: '취소', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'VWP AI 연결 추가', exact: true })).toBeDisabled()
+  await expect(page.getByText('VWP 실행 프로필이 준비되지 않았습니다.', { exact: false })).toBeVisible()
   await page.getByRole('button', { name: 'OA AI 연결 추가', exact: true }).click()
   await expect(page.getByLabel('AI API URL', { exact: true })).toBeVisible()
   expect(writes).toBe(0)

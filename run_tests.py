@@ -16,7 +16,8 @@ PROFILES = ("quick", "full")
 # layouts here; the compressed/page variants and legacy HTTPS replay stay in
 # full rather than repeating the same workflow in every everyday run.
 QUICK_TESTS = (
-    "tests.test_vwp_inference", "tests.test_vwp_worker", "tests.test_ai_http", "tests.test_ai_retry_resume",
+    "tests.test_vwp_inference", "tests.test_vwp_worker", "tests.test_vwp_personal_credentials",
+    "tests.test_ai_http", "tests.test_ai_retry_resume",
     "tests.test_retry_policy", "tests.test_ai_resume_cancellation", "tests.test_clustering.ClusterUnitTests",
     "tests.test_ai_connections",
     "tests.test_ai_routing", "tests.test_ai_workbench_api",
