@@ -28,6 +28,7 @@ QUICK_TESTS = (
     "tests.test_ai_connections.ConnectionApiTests",
     "tests.test_ai_connection_deletion.ConnectionDeletionApiTests",
     "tests.test_ai_reasoning.ReasoningSettingsTests", "tests.test_ai_reasoning.ReasoningWireTests",
+    "tests.test_ai_cache_contract.CacheContractTests", "tests.test_ai_cache_transport.CacheTransportTests",
     "tests.test_ai_task_models.TaskDefaultsApiTests",
     "tests.test_ai_routing.RoutingConfigurationTests", "tests.test_ai_routing.RoutingTransportTests",
     "tests.test_ai_workbench_api", "tests.test_ai_unknown_recovery.UnknownRecoveryApiTests",
@@ -69,6 +70,7 @@ QUICK_TESTS = (
 # Full still discovers every original test, including large datasets and all
 # portal migration replays. No test input, assertion or skip rule is changed.
 REGRESSION_TESTS = (
+    "tests.test_ai_cache_contract", "tests.test_ai_cache_transport",
     "tests.test_vwp_inference", "tests.test_vwp_worker", "tests.test_vwp_personal_credentials",
     "tests.test_ai_unknown_recovery",
     "tests.test_ai_parallel_batches",

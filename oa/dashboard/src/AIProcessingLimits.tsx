@@ -13,7 +13,7 @@ export default function AIProcessingLimits({ config, busy, onChange }: { config:
   const classificationCap = Number.isInteger(config.batch.output_tokens) && config.batch.output_tokens > 0 && Number.isInteger(config.batch.max_records) && config.batch.max_records > 0
     ? Math.min(config.batch.max_records, Math.max(1, Math.floor(config.batch.output_tokens / 192))) : null
   return <details className="ai-processing-limits">
-    <summary><span className="ai-limits-summary"><strong>처리 한도와 전체 로그 배치 설정 · AI 추론</strong><span className="ai-limits-summary-description">AI 추론 방식, 요청 크기와 배치 처리 기준을 설정합니다.</span></span></summary>
+    <summary><span className="ai-limits-summary"><strong>처리 한도와 전체 로그 배치 설정 · AI 추론 · 응답 캐시</strong><span className="ai-limits-summary-description">AI 추론과 응답 캐시, 요청 크기와 배치 처리 기준을 설정합니다.</span></span></summary>
     <div className="ai-limits-content">
       <div className="ai-limits-section ai-reasoning-section">
         <h4>AI 추론 설정</h4>
@@ -24,6 +24,12 @@ export default function AIProcessingLimits({ config, busy, onChange }: { config:
           {reasoning?.mode === 'on' && reasoning.protocol === 'openai' && <label>추론 강도<select aria-label="AI 추론 강도" value={reasoning.effort} disabled={busy} onChange={event => onChange({ reasoning: { ...reasoning, effort: event.target.value as ReasoningConfig['effort'] } })}>{(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const).map(value => <option key={value} value={value}>{value}</option>)}</select></label>}
         </div>
         {reasoning?.mode === 'off' && reasoning.protocol === 'openai' && <p>추론 끄기는 none 값을 전달합니다. none을 지원하는 모델에서만 사용하세요.</p>}
+      </div>
+      <div className="ai-limits-section">
+        <h4>응답 캐시</h4>
+        <div className="ai-connection-fields ai-limits-grid">
+          <label>응답 캐시<select className="studio-native-select" aria-label="AI 응답 캐시" value={config.cache?.['no-cache'] ? 'bypass' : 'default'} disabled={busy} onChange={event => onChange({ cache: event.target.value === 'bypass' ? { 'no-cache': true } : undefined })}><option value="default">서버 기본값</option><option value="bypass">캐시 우회 (no-cache)</option></select><small>서버 기본값은 캐시 설정을 보내지 않습니다. 캐시 우회는 지원하는 게이트웨이에서 저장된 응답을 재사용하지 않고 새 응답을 요청합니다.</small></label>
+        </div>
       </div>
       <div className="ai-connection-fields ai-limits-grid">
         {([['timeout', '응답 제한 시간(초)', 1, 600], ['max_input_bytes', '요청 byte 한도', 1, 67108864], ['max_output_bytes', '응답 byte 한도', 1, 67108864]] as const).map(([key, label, min, max]) => <label key={key}>{label}<Input type="number" aria-label={label} required min={min} max={max} disabled={busy} value={config[key]} onChange={event => onChange({ [key]: Number(event.target.value) })} /></label>)}

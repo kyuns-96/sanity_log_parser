@@ -9,6 +9,7 @@ from common.sanity_config import load_environment
 from common.sanity_db import lock_key, uuid_value
 from common.sanity_privacy import SecretGuard
 from common.sanity_ai_reasoning import ReasoningSettings
+from common.sanity_ai_cache import CacheSettings
 from oa.sanity_ai_budget import BatchSettings
 from oa.sanity_ai_model import OAAdvisor, OASettings
 from oa.sanity_ai_tokens import UserTokenStore
@@ -29,7 +30,7 @@ def is_vwp(config):
 def validate_config(config):
     if is_vwp(config):
         from common.sanity_vwp_ai import identifier
-        check(VWP_CONFIG_KEYS <= set(config) <= VWP_CONFIG_KEYS | {"issuance_url", "reasoning"}
+        check(VWP_CONFIG_KEYS <= set(config) <= VWP_CONFIG_KEYS | {"issuance_url", "reasoning", "cache"}
               and identifier(config["profile_id"]), "AI_CONNECTION_CONFIG")
         # Reuse the existing bounded model/batch validation, without accepting
         # an endpoint, credential or custom headers for execution on VWP.
@@ -39,9 +40,11 @@ def validate_config(config):
             **{k:config[k] for k in ("api", "model", "models", "json_mode", "timeout", "max_input_bytes", "max_output_bytes", "batch")}}
         if "reasoning" in config:
             ordinary["reasoning"] = config["reasoning"]
+        if "cache" in config:
+            ordinary["cache"] = config["cache"]
         validate_config(ordinary)
         return deepcopy(config)
-    check(isinstance(config, dict) and CONFIG_KEYS <= set(config) <= CONFIG_KEYS | {"reasoning"}, "AI_CONNECTION_CONFIG")
+    check(isinstance(config, dict) and CONFIG_KEYS <= set(config) <= CONFIG_KEYS | {"reasoning", "cache"}, "AI_CONNECTION_CONFIG")
     check(isinstance(config["label"], str) and 1 <= len(config["label"]) <= 100
           and config["label"] == config["label"].strip() and config["label"].isprintable(), "AI_CONNECTION_CONFIG")
     check(type(config["enabled"]) is bool and config["auth_mode"] in
@@ -66,7 +69,8 @@ def validate_config(config):
         client_api_key="validation-placeholder" if config["auth_mode"] == "bearer_x_client" else "",
         client_name=config["client_name"], client_version=config["client_version"],
         session_mode=config["session_mode"], session_id=config["session_id"], batch=settings,
-        reasoning=ReasoningSettings.from_config(config["reasoning"]) if "reasoning" in config else None)
+        reasoning=ReasoningSettings.from_config(config["reasoning"]) if "reasoning" in config else None,
+        cache=CacheSettings.from_config(config["cache"]) if "cache" in config else None)
     return deepcopy(config)
 
 
@@ -244,6 +248,7 @@ class ConnectionStore:
                 json_mode=config["json_mode"], timeout=config["timeout"], max_input_bytes=config["max_input_bytes"],
                 max_output_bytes=config["max_output_bytes"], batch=BatchSettings(**config["batch"]),
                 reasoning=ReasoningSettings.from_config(config["reasoning"]) if "reasoning" in config else None,
+                cache=CacheSettings.from_config(config["cache"]) if "cache" in config else None,
                 connection_id=value["connection_id"], connection_revision=value["revision"], connection_label=config["label"])
             advisor = VwpAdvisor(settings, profile)
             return advisor.for_model(model_id) if model_id is not None else advisor
@@ -255,6 +260,7 @@ class ConnectionStore:
             client_name=config["client_name"], client_version=config["client_version"],
             session_mode=config["session_mode"], session_id=config["session_id"], batch=BatchSettings(**config["batch"]),
             reasoning=ReasoningSettings.from_config(config["reasoning"]) if "reasoning" in config else None,
+            cache=CacheSettings.from_config(config["cache"]) if "cache" in config else None,
             connection_id=value["connection_id"], connection_revision=value["revision"], connection_label=config["label"]),
             transport=transport)
         return advisor.for_model(model_id) if model_id is not None else advisor
