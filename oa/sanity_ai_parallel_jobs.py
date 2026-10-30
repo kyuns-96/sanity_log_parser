@@ -15,6 +15,7 @@ from common.sanity_common import ReviewError, digest
 from common.sanity_submission import check
 from oa.sanity_ai_batch_jobs import _model, _record_plan, _bind_preserved, _finish_round, attempts
 from oa.sanity_ai_parallel_ledger import ParallelLedger
+from oa.sanity_ai_deletion import worker_load
 from oa.sanity_ai_retry import MAX_RETRIES, receipt as failure_receipt, retry_at
 
 STALE = frozenset(('AI_INPUT_STALE','AI_CASES_STALE','AI_CRITERIA_STALE','REVISION_CONFLICT',
@@ -148,7 +149,8 @@ def _execute(model, descriptor, nodes, prepared):
 def _save(db_factory,workspace_factory,advisor,criteria_provider,job_id,slot,descriptor,revision,result,error,seconds,max_calls):
     from oa.sanity_ai_jobs import _transaction,_db_now,_timestamp,_error_code
     with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
-        service._lock(job_id); event = service._load(job_id)
+        service._lock(job_id); event = worker_load(service, job_id)
+        if event is None:return None
         if event['status']!='RUNNING': return service.public(event)
         ledger = ParallelLedger(service,event); step,ref = ledger.last(); state = step['state']
         current = next((s for s in state['wave'] if s['index']==slot['index']),None)
@@ -202,7 +204,8 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
     from oa.sanity_ai_jobs import _transaction,_db_now,_timestamp
     dispatch = []
     with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
-        service._lock(job_id); event = service._load(job_id)
+        service._lock(job_id); event = worker_load(service, job_id)
+        if event is None:return None
         if event['status']=='RESULT_READY': return service.public(service._apply(event))
         if event['status'] not in ('PENDING','RUNNING'): return service.public(event)
         try:

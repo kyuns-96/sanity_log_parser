@@ -83,10 +83,12 @@ def delete(service, user_id, identity):
             "(workspace_key LIKE %s AND payload->>'namespace'=%s) OR "
             "(workspace_key LIKE %s AND payload->>'namespace'=%s) OR "
             "(workspace_key LIKE %s AND payload->>'namespace'=%s) OR "
+            "(workspace_key LIKE %s AND payload->>'namespace'=%s AND payload->>'job_id'=%s) OR "
             "(workspace_key LIKE %s AND payload->>'namespace'=%s AND payload->>'job_id'=%s))",
             ('ai1.job.' + identity + '.%', 'oa-ai-v1',
              'ai2.' + identity + '.%', 'oa-ai-batch-v1',
              'ai.live.' + identity + '.%', 'ai-live-v1',
              'ai.intent.' + identity + '.%', 'oa-ai-submission-v1',
-             'ai.resume.%', 'oa-ai-resume-v1', identity))
+             'ai.resume.%', 'oa-ai-resume-v1', identity,
+             'ai.unknown.%', 'oa-ai-unknown-recovery-v1', identity))
     return {'id': identity, 'deleted': True}

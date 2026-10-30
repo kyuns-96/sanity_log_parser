@@ -60,8 +60,9 @@ class AIJobDeletionDatabaseTests(unittest.TestCase):
     def assert_removed(self, identity):
         for prefix in ('ai1.job.', 'ai2.', 'ai.intent.', 'ai.live.'):
             self.assertEqual(0, self.count(prefix + identity + '.%'))
-        self.assertEqual(0, self.c.admin_query("SELECT count(*) FROM {oa} WHERE workspace_key LIKE %s "
-            "AND payload->>'job_id'=%s", ('ai.resume.%', identity)).fetchone()[0])
+        for prefix in ('ai.resume.%', 'ai.unknown.%'):
+            self.assertEqual(0, self.c.admin_query("SELECT count(*) FROM {oa} WHERE workspace_key LIKE %s "
+                "AND payload->>'job_id'=%s", (prefix, identity)).fetchone()[0])
         with self.c.service() as service:
             value = marker(service, identity)
             self.assertEqual({'namespace', 'id', 'actor_id', 'sha256'}, set(value))
@@ -230,3 +231,68 @@ class AIJobDeletionDatabaseTests(unittest.TestCase):
         with self.c.service() as service:
             self.assertEqual(before, WorkspaceClusteringStore(service.db, ws=service.ws).current('report'))
 
+    def test_serial_and_parallel_unknown_recovery_markers_are_removed(self):
+        from dataclasses import replace
+        import httpx
+        from tests.test_ai_batches import batch_settings
+        from tests.test_vwp_inference import configuration
+        for width in (1, 2):
+            with self.subTest(concurrency=width):
+                settings = replace(batch_settings(max_records=1), max_concurrency=width)
+                self.w.connection = self.w.v.create(configuration(batch=settings.public()))
+                job = self.w.request()
+                self.w.prepare()
+                def timeout(request):
+                    raise httpx.ReadTimeout('Synthetic unknown outcome', request=request)
+                self.c.callback = timeout
+                unknown = self.w.prepare()
+                self.assertEqual('UNKNOWN', unknown['status'])
+                info = unknown['unknown_recovery']
+                with self.c.service() as service:
+                    service.retry_unknown('owner', job['id'], uuid4(),
+                        info['event_sha256'], info['step_sha256'], True)
+                    self.assertEqual('CANCELLED', service.cancel('owner', job['id'])['status'])
+                self.assertGreater(self.count('ai.unknown.%'), 0)
+                self.delete(job['id'])
+                self.assert_removed(job['id'])
+                self.assertIsNone(self.w.prepare())
+
+    def test_expired_parallel_wave_can_be_deleted_before_late_responses_arrive(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from dataclasses import replace
+        from datetime import timedelta
+        import json
+        from threading import Event
+        from common.sanity_ai_execution import executing_on
+        from oa.sanity_ai_jobs import _now
+        from tests.test_ai_batches import batch_settings
+        from tests.test_vwp_inference import configuration
+        settings = replace(batch_settings(max_records=1), max_concurrency=2)
+        self.w.connection = self.w.v.create(configuration(batch=settings.public()))
+        job = self.w.request()
+        self.w.prepare()
+        entered, release = [Event(), Event()], Event()
+        def blocked(request):
+            packet = json.loads(json.loads(request.content)['messages'][1]['content'])
+            entered[packet['batch']['start']].set()
+            if not release.wait(20):
+                raise AssertionError('Synthetic parallel call was not released')
+        self.c.callback = blocked
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            pending = executor.submit(self.w.prepare)
+            try:
+                self.assertTrue(entered[0].wait(10))
+                self.assertTrue(entered[1].wait(10))
+                with self.c.service() as service:
+                    self.assertEqual('RUNNING', service.cancel('owner', job['id'])['status'])
+                self.c.assert_code('AI_JOB_ACTIVE', lambda: self.delete(job['id']))
+                at = _now() + timedelta(seconds=400)
+                with executing_on('vwp'), patch('oa.sanity_ai_jobs._db_now', return_value=at):
+                    self.assertEqual('UNKNOWN', self.c.run_job(now=at)['status'])
+                self.delete(job['id'])
+            finally:
+                release.set()
+            self.assertIsNone(pending.result(timeout=10))
+        self.assert_removed(job['id'])
+        self.assertIsNone(self.w.prepare())
+        self.assertEqual(0, self.c.admin_query("SELECT count(*) FROM {oa} WHERE record_type='WS_CLUSTER_EVENT'").fetchone()[0])
