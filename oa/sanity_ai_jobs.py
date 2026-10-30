@@ -550,7 +550,8 @@ class AIJobService:
             from oa.sanity_ai_unknown_recovery import unknown_availability
             available,error=unknown_availability(self,event,user_id,meta,job)
             job={**job,'can_retry_unknown':available,**({'unknown_recovery_error':error} if error else {})}
-        return job
+        from oa.sanity_ai_monitor import Monitor
+        return Monitor(self).connection_availability(job)
 
     def cancel(self, user_id, job_id):
         job_id = str(uuid_value(job_id, "job_id"))
@@ -779,7 +780,7 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
                             retry_failure=proof,retry_count=count,retry_after=retry_at(_db_now(service.db),count,failure))
                 return _public(service._append(current,"PENDING",data))
             if proof is not None:current={**current,"data":{**current["data"],"retry_failure":proof}}
-            return _public(service._failed(current, failure, status="UNKNOWN" if unknown else "STALE" if code in {"AI_CONFIG_CHANGED", "AI_CREDENTIAL_CHANGED", "FORBIDDEN", "UNAUTHORIZED"} else "FAILED", called=called))
+            return _public(service._failed(current, failure, status="UNKNOWN" if unknown else "STALE" if code in {"AI_CONFIG_CHANGED", "AI_CONNECTION_UNAVAILABLE", "AI_CREDENTIAL_CHANGED", "FORBIDDEN", "UNAUTHORIZED"} else "FAILED", called=called))
         try:
             service._inputs(current)
             if dispatch["credential_revision"] is not None:

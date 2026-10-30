@@ -5,6 +5,8 @@ import { Button } from './studio/components/ui/button'
 import { Badge } from './studio/components/ui/badge'
 import { Input } from './studio/components/ui/input'
 import { Textarea } from './studio/components/ui/textarea'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog'
+import { DashboardRequestError } from './useDashboardAuth'
 import type { AccessApi } from './accessApi'
 import AIProcessingLimits from './AIProcessingLimits'
 import VwpAIConnectionForm from './VwpAIConnectionForm'
@@ -31,6 +33,8 @@ export default function AIConnectionsAdmin({ api }: { api: AccessApi }) {
   const [draft, setDraft] = useState<Entry | null>(null)
   const [models, setModels] = useState('')
   const [clientKey, setClientKey] = useState('')
+  const [deleting, setDeleting] = useState<ManagedConnection | null>(null)
+  const [deleteError, setDeleteError] = useState('')
   const loadRequest = useRef(0)
   const config = draft?.config
   const editing = !!draft || !!vwpDraft
@@ -102,6 +106,25 @@ export default function AIConnectionsAdmin({ api }: { api: AccessApi }) {
     } catch { setError('상태를 변경하지 못했습니다. 목록을 새로고침해 현재 설정을 확인해 주세요.') }
     finally { setBusy(false) }
   }
+  async function deleteConnection() {
+    if (!deleting || busy) return
+    const entry = deleting
+    setBusy(true); setDeleteError(''); setError(''); setNotice('')
+    try {
+      const value = await api<{ id: string; revision: number; deleted: boolean }>(`/api/admin/ai/connections/${encodeURIComponent(entry.id)}/delete`, { expected_revision: entry.revision })
+      if (value.id !== entry.id || value.deleted !== true || !Number.isInteger(value.revision)) throw new Error('Invalid deletion response')
+      ++loadRequest.current
+      setItems(previous => previous.filter(item => item.id !== entry.id))
+      setDeleting(null)
+      setNotice(`${entry.config.label} 연결을 삭제했습니다. 기존 작업과 판정 이력은 유지됩니다.`)
+      window.dispatchEvent(new Event('sanity-ai-token-changed'))
+      await refresh()
+    } catch (failure) {
+      setDeleteError(failure instanceof DashboardRequestError && failure.status >= 400 && failure.status < 500 && failure.status !== 408
+        ? '삭제하지 못했습니다. 권한과 최신 연결 상태를 확인해 주세요.'
+        : '삭제 요청 결과를 확인하지 못했습니다. 다시 누르면 같은 연결 개정으로 확인합니다.')
+    } finally { setBusy(false) }
+  }
 
   return <section className="am-panel ai-connections-admin" aria-label="AI 연결·모델 관리">
     <div className="am-panel-heading"><div><h2><Settings2 size={17} />{editing ? editorTitle : '등록된 AI 연결'}</h2><p>{editing ? '연결과 기본 모델을 설정하세요. 처리 한도는 고급 설정에서 조정할 수 있습니다.' : 'OA와 VWP의 연결별 모델과 사용 상태를 관리합니다.'}</p></div><div className="am-row-actions"><Button variant="outline" disabled={busy || loading || refreshing} onClick={() => { setError(''); void refresh() }}><RefreshCw size={14} />{refreshing ? '새로고침 중…' : '새로고침'}</Button>{editing ? <Button variant="outline" disabled={busy} onClick={closeEditor}>목록으로</Button> : <><Button variant="outline" disabled={!ready || busy || loading || !loaded} onClick={() => edit()}><Plus size={15} />OA AI 연결 추가</Button><Button disabled={!ready || !vwpReady || busy || loading || !loaded} onClick={addVwp}><Plus size={15} />VWP AI 연결 추가</Button></>}</div></div>
@@ -111,9 +134,18 @@ export default function AIConnectionsAdmin({ api }: { api: AccessApi }) {
     {!loading && loaded && !vwpReady && !editing && <p className="ai-availability-note">VWP 실행 프로필이 준비되지 않았습니다. 운영 담당자에게 확인해 주세요.</p>}
     {loading ? <p role="status" className="ai-connection-loading">AI 연결을 불러오고 있습니다.</p> : !editing && loaded ? <>
       {!!items.length && <><div className="ai-catalog-summary"><span>전체 <strong>{items.length}</strong></span><span>사용 중 <strong>{items.filter(entry => entry.config.enabled).length}</strong></span><span>OA <strong>{items.length - vwpCount}</strong></span><span>VWP <strong>{vwpCount}</strong></span></div><div className="ai-list-heading" aria-hidden="true"><span>연결</span><span>기본 모델</span><span>상태</span><span>관리</span></div></>}
-      <ul className="am-list ai-connection-list">{items.map(entry => <li className="ai-connection-row" key={entry.id} data-enabled={entry.config.enabled}><div><div className="ai-connection-title"><Badge variant="outline" className="ai-provider-badge">{isVwpConnection(entry) ? 'VWP' : 'OA'}</Badge><strong>{entry.config.label}</strong></div><span>{isVwpConnection(entry) ? '사용자별 개인 인증값' : modes[entry.config.auth_mode]}</span></div><div className="ai-connection-model"><code title={entry.config.model}>{entry.config.model}</code><span>허용 모델 {entry.config.models.length}개</span></div><div className="ai-connection-row-status"><Badge variant="outline" className="ai-connection-status">{entry.config.enabled ? '사용 중' : '사용 중지'}</Badge></div><div className="am-row-actions"><Button variant="outline" disabled={busy} onClick={() => edit(entry)}>수정</Button><Button variant="outline" disabled={busy || !entry.config.enabled && (!ready || isVwpConnection(entry) && (!vwpReady || !vwpProfiles.some(profile => profile.id === entry.config.profile_id)))} onClick={() => void toggle(entry)}>{entry.config.enabled ? '사용 중지' : '사용 허용'}</Button></div></li>)}</ul>
+      <ul className="am-list ai-connection-list">{items.map(entry => <li className="ai-connection-row" key={entry.id} data-enabled={entry.config.enabled}><div><div className="ai-connection-title"><Badge variant="outline" className="ai-provider-badge">{isVwpConnection(entry) ? 'VWP' : 'OA'}</Badge><strong>{entry.config.label}</strong></div><span>{isVwpConnection(entry) ? '사용자별 개인 인증값' : modes[entry.config.auth_mode]}</span></div><div className="ai-connection-model"><code title={entry.config.model}>{entry.config.model}</code><span>허용 모델 {entry.config.models.length}개</span></div><div className="ai-connection-row-status"><Badge variant="outline" className="ai-connection-status">{entry.config.enabled ? '사용 중' : '사용 중지'}</Badge></div><div className="am-row-actions"><Button variant="outline" disabled={busy} onClick={() => edit(entry)}>수정</Button><Button variant="outline" disabled={busy || !entry.config.enabled && (!ready || isVwpConnection(entry) && (!vwpReady || !vwpProfiles.some(profile => profile.id === entry.config.profile_id)))} onClick={() => void toggle(entry)}>{entry.config.enabled ? '사용 중지' : '사용 허용'}</Button><Button variant="outline" className="ai-connection-delete" disabled={busy} onClick={() => { setDeleteError(''); setDeleting(entry) }}>삭제</Button></div></li>)}</ul>
       {!items.length && <div className="am-empty"><Settings2 size={26} /><h3>등록된 AI 연결이 없습니다</h3><p>AI 연결을 추가하고 인증 방식과 기본 모델을 설정해 주세요.</p></div>}
     </> : !editing && loadError ? <div className="am-empty"><RefreshCw size={26} /><h3>연결 목록을 확인할 수 없습니다</h3><p>새로고침하여 등록된 AI 연결을 다시 불러와 주세요.</p></div> : null}
+    <Dialog open={!!deleting} onOpenChange={value => { if (!value && !busy) { setDeleting(null); setDeleteError('') } }}>
+      <DialogContent className="ai-delete-dialog" showCloseButton={!busy}>
+        <DialogHeader><DialogTitle>AI 연결을 삭제할까요?</DialogTitle><DialogDescription>삭제할 연결과 영향을 확인해 주세요.</DialogDescription></DialogHeader>
+        {deleting && <div className="ai-delete-details"><strong>{deleting.config.label}</strong><span>기본 모델 <code>{deleting.config.model}</code></span></div>}
+        <p className="ai-delete-explanation">연결이 관리자 목록과 사용자의 모델 선택에서 제거됩니다. 기존 작업과 판정 이력은 보존되며, 진행 중인 작업은 중단될 수 있습니다.</p>
+        {deleteError && <p role="alert" className="am-error">{deleteError}</p>}
+        <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => { setDeleting(null); setDeleteError('') }}>취소</Button><Button type="button" className="ai-delete-confirm" disabled={busy} onClick={() => void deleteConnection()}>{busy ? '삭제 확인 중…' : '연결 삭제'}</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
     {vwpDraft && <VwpAIConnectionForm key={vwpDraft.id} api={api} initial={vwpDraft} profiles={vwpProfiles} ready={vwpReady && ready} credentialsReady={ready} onBusyChange={setBusy} onCancel={closeEditor} onSaved={() => saved('VWP AI 연결을 저장했습니다.')} />}
     {draft && config && <form className="am-form ai-connection-form" aria-label="OA AI 연결 등록" onSubmit={save}>
       <div className="ai-connection-form-heading"><Badge variant="outline" className="ai-provider-badge">OA</Badge><p>모델 API와 사용자의 개인 인증값 발급 경로를 등록합니다.</p></div>

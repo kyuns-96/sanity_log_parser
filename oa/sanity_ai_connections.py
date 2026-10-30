@@ -79,8 +79,8 @@ class ConnectionStore:
 
     def _validate(self, row):
         value = row["payload"]
-        check(isinstance(value, dict) and set(value) == {"namespace", "connection_id", "revision", "actor_id",
-              "config", "client_key_ciphertext", "sha256"} and value["namespace"] == NAMESPACE
+        required = {"namespace", "connection_id", "revision", "actor_id", "config", "client_key_ciphertext", "sha256"}
+        check(isinstance(value, dict) and required <= set(value) <= required | {"deleted"} and value["namespace"] == NAMESPACE
               and type(value["revision"]) is int and 1 <= value["revision"] <= 9999999999
               and isinstance(value["actor_id"], str) and 1 <= len(value["actor_id"]) <= 200,
               "AI_CONNECTION_CORRUPT")
@@ -93,6 +93,10 @@ class ConnectionStore:
               and value["sha256"] == digest({k:v for k,v in value.items() if k != "sha256"}), "AI_CONNECTION_CORRUPT")
         validate_config(value["config"])
         encrypted = value["client_key_ciphertext"]
+        if 'deleted' in value:
+            check(value['deleted'] is True and value['config']['enabled'] is False and encrypted is None,
+                  'AI_CONNECTION_CORRUPT')
+            return value
         check((value["config"].get("auth_mode") == "bearer_x_client" and isinstance(encrypted, str)
                and 1 <= len(encrypted) <= 20000) or
               (value["config"].get("auth_mode") != "bearer_x_client" and encrypted is None), "AI_CONNECTION_CORRUPT")
@@ -102,18 +106,26 @@ class ConnectionStore:
         rows = self.db.execute("SELECT * FROM (SELECT DISTINCT ON (payload->>'connection_id') * FROM {oa} "
             "WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s ORDER BY payload->>'connection_id',workspace_key DESC) "
             "latest ORDER BY workspace_key", (PREFIX + "%",)).fetchall()
-        check(len(rows) <= 100, "AI_CONNECTION_LIMIT")
-        return [self._validate(row) for row in rows]
+        values = [self._validate(row) for row in rows]
+        active = [value for value in values if not value.get('deleted')]
+        check(len(active) <= 100, "AI_CONNECTION_LIMIT")
+        return active
+
+    def _latest(self, connection_id):
+        row = self.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s "
+                              "ORDER BY workspace_key DESC LIMIT 1", (PREFIX + connection_id + ".%",)).fetchone()
+        if row is None:
+            return None
+        value = self._validate(row)
+        check(value['connection_id'] == connection_id, 'AI_CONNECTION_CORRUPT')
+        return value
 
     def get(self, connection_id, *, enabled=True, lock=True):
         connection_id = str(uuid_value(connection_id))
         if lock:
             self.db.execute("SELECT pg_advisory_xact_lock_shared(%s)", (lock_key(PREFIX + connection_id),))
-        row = self.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s "
-                              "ORDER BY workspace_key DESC LIMIT 1", (PREFIX + connection_id + ".%",)).fetchone()
-        check(row is not None, "AI_CONNECTION_UNAVAILABLE")
-        value = self._validate(row)
-        check(value["connection_id"] == connection_id and (not enabled or value["config"]["enabled"]),
+        value = self._latest(connection_id)
+        check(value is not None and not value.get('deleted') and (not enabled or value["config"]["enabled"]),
               "AI_CONNECTION_UNAVAILABLE")
         return value
 
@@ -262,7 +274,8 @@ class ConnectionStore:
         self.db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key(PREFIX + "catalog"),))
         self.db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key(PREFIX + connection_id),))
         values = {value["connection_id"]:value for value in self.rows()}
-        previous = values.get(connection_id)
+        previous = self._latest(connection_id)
+        check(previous is None or not previous.get('deleted'), 'AI_CONNECTION_UNAVAILABLE')
         check((previous["revision"] if previous else 0) == expected_revision, "REVISION_CONFLICT")
         check(previous is not None or len(values) < 100, "AI_CONNECTION_LIMIT")
         check(previous is None or is_vwp(previous["config"]) == is_vwp(config), "AI_CONNECTION_CONFIG")
@@ -289,3 +302,25 @@ class ConnectionStore:
         value["sha256"] = digest(value)
         WorkspaceStore(self.db).put("WS_CONFIG", PREFIX + connection_id + "." + f"{revision:010d}", value)
         return self.admin_public(value)
+
+    def delete(self, actor, connection_id, expected_revision):
+        """Remove a connection from use while retaining immutable past revisions."""
+        check(getattr(actor, 'auth_method', None) == 'sso' and getattr(actor, 'access', None) is not None
+              and actor.access.db is self.db, 'FORBIDDEN')
+        actor.access._admin(actor)
+        connection_id = str(uuid_value(connection_id))
+        check(type(expected_revision) is int and 1 <= expected_revision < 9999999999, 'INVALID_REQUEST')
+        self.db.execute('SELECT pg_advisory_xact_lock(%s)', (lock_key(PREFIX + 'catalog'),))
+        self.db.execute('SELECT pg_advisory_xact_lock(%s)', (lock_key(PREFIX + connection_id),))
+        previous = self._latest(connection_id)
+        check(previous is not None, 'AI_CONNECTION_UNAVAILABLE')
+        if previous.get('deleted'):
+            check(previous['revision'] == expected_revision + 1, 'REVISION_CONFLICT')
+            return {'id':connection_id,'revision':previous['revision'],'deleted':True}
+        check(previous['revision'] == expected_revision, 'REVISION_CONFLICT')
+        revision = expected_revision + 1
+        value = {'namespace':NAMESPACE,'connection_id':connection_id,'revision':revision,'actor_id':actor.user_id,
+                 'config':{**deepcopy(previous['config']),'enabled':False},'client_key_ciphertext':None,'deleted':True}
+        value['sha256'] = digest(value)
+        WorkspaceStore(self.db).put('WS_CONFIG',PREFIX + connection_id + '.' + f'{revision:010d}',value)
+        return {'id':connection_id,'revision':revision,'deleted':True}

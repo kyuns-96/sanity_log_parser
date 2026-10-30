@@ -233,7 +233,7 @@ def prepare_one(db_factory,workspace_factory,advisor,criteria_provider=None):
             return result
     except Exception as error:
         code="AI_RESOURCE_LIMIT" if isinstance(error,MemoryError) else _error_code(error)
-        status="STALE" if code in {"AI_INPUT_STALE","AI_CONFIG_CHANGED","AI_CREDENTIAL_CHANGED","REVISION_CONFLICT","UNAUTHORIZED","FORBIDDEN","NOT_FOUND","RESOURCE_NOT_FOUND"} else "FAILED"
+        status="STALE" if code in {"AI_INPUT_STALE","AI_CONFIG_CHANGED","AI_CONNECTION_UNAVAILABLE","AI_CREDENTIAL_CHANGED","REVISION_CONFLICT","UNAUTHORIZED","FORBIDDEN","NOT_FOUND","RESOURCE_NOT_FOUND"} else "FAILED"
         with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
             service._lock(claimed["id"]);store=Submissions(service);event=store.load(claimed["id"])
             canonical=service._load(claimed["id"],required=False)

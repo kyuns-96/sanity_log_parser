@@ -12,6 +12,8 @@ type Entry = { id: string; revision: number; config: Record<string, any>; client
 async function adminFixture(page: Page, initial: Entry[] = [], profiles = [profile]) {
   const fallback = makeDemo()
   const state = { entries: initial, profiles, getFailures: 0, failNextRefresh: false,
+    credentialsReady: true, vwpReady: true, deleteFailure: '' as '' | 'conflict' | 'lost',
+    deleted: new Map<string, number>(), deletePaths: [] as string[],
     holdGet: null as null | { started: () => void; release: Promise<void> },
     writes: [] as Record<string, any>[] }
   await page.route('**/api/**', async route => {
@@ -28,11 +30,26 @@ async function adminFixture(page: Page, initial: Entry[] = [], profiles = [profi
           const pending = state.holdGet; state.holdGet = null
           const snapshot = structuredClone(state.entries)
           pending.started(); await pending.release
-          return route.fulfill({ json: { items: snapshot, credentials_ready: true, vwp_ready: true, vwp_profiles: state.profiles } })
+          return route.fulfill({ json: { items: snapshot, credentials_ready: state.credentialsReady, vwp_ready: state.vwpReady, vwp_profiles: state.profiles } })
         }
-        return route.fulfill({ json: { items: state.entries, credentials_ready: true, vwp_ready: true, vwp_profiles: state.profiles } })
+        return route.fulfill({ json: { items: state.entries, credentials_ready: state.credentialsReady, vwp_ready: state.vwpReady, vwp_profiles: state.profiles } })
       }
-      const body = request.postDataJSON(); const id = path.split('/').at(-1)!
+      const body = request.postDataJSON()
+      if (path.endsWith('/delete')) {
+        const id = path.split('/').at(-2)!
+        const old = state.entries.find(entry => entry.id === id)
+        expect(Object.keys(body)).toEqual(['expected_revision'])
+        expect(request.headers()['x-sanity-request']).toBe('1')
+        state.writes.push(body); state.deletePaths.push(path)
+        if (state.deleteFailure === 'conflict') return route.fulfill({ status: 409, json: { code: 'REVISION_CONFLICT' } })
+        const revision = old?.revision ?? state.deleted.get(id)
+        expect(body.expected_revision).toBe(revision)
+        if (old) { state.entries.splice(state.entries.indexOf(old), 1); state.deleted.set(id, old.revision) }
+        if (state.failNextRefresh) { state.getFailures++; state.failNextRefresh = false }
+        if (state.deleteFailure === 'lost') { state.deleteFailure = ''; return route.abort('failed') }
+        return route.fulfill({ json: { id, revision: revision! + 1, deleted: true } })
+      }
+      const id = path.split('/').at(-1)!
       const old = state.entries.find(entry => entry.id === id)
       expect(body.expected_revision).toBe(old?.revision || 0)
       expect(request.headers()['x-sanity-request']).toBe('1')
@@ -71,6 +88,82 @@ async function fillVwp(panel: ReturnType<Page['getByRole']>) {
   await form.getByLabel('VWP 기본 AI 모델', { exact: true }).selectOption('vwp-fast')
   return form
 }
+
+const deletionEntry = (site: 'OA' | 'VWP'): Entry => ({ id: site === 'OA' ? '10000000-0000-4000-8000-000000000011' : '10000000-0000-4000-8000-000000000012', revision: 3, client_key_registered: false,
+  config: { label: `삭제 대상 ${site}`, enabled: true, model: 'synthetic-model', models: ['synthetic-model'],
+    ...(site === 'VWP' ? { execution_site: 'vwp', profile_id: 'expired-synthetic-profile' } : { auth_mode: 'bearer' }) } })
+
+test('administrators can cancel and explicitly delete OA and VWP connections', async ({ page }) => {
+  const state = await adminFixture(page, [deletionEntry('OA'), deletionEntry('VWP')]); const panel = await openPanel(page)
+  const row = (site: string) => panel.getByRole('listitem').filter({ hasText: `삭제 대상 ${site}` })
+  await row('OA').getByRole('button', { name: '삭제', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toContainText('삭제 대상 OA')
+  await expect(dialog).toContainText('synthetic-model')
+  await expect(dialog).toContainText('판정 이력은 보존')
+  await expect(dialog).toContainText('진행 중인 작업은 중단될 수 있습니다')
+  await dialog.getByRole('button', { name: '취소', exact: true }).click()
+  expect(state.writes).toHaveLength(0)
+  await row('OA').getByRole('button', { name: '삭제', exact: true }).click()
+  await dialog.getByRole('button', { name: '연결 삭제', exact: true }).click()
+  await expect(row('OA')).toHaveCount(0)
+  await expect(panel.getByRole('status').filter({ hasText: '연결을 삭제했습니다' })).toBeVisible()
+  await row('VWP').getByRole('button', { name: '삭제', exact: true }).click()
+  await dialog.getByRole('button', { name: '연결 삭제', exact: true }).click()
+  await expect(row('VWP')).toHaveCount(0)
+  expect(state.deletePaths).toEqual(['/api/admin/ai/connections/10000000-0000-4000-8000-000000000011/delete', '/api/admin/ai/connections/10000000-0000-4000-8000-000000000012/delete'])
+  expect(state.writes).toEqual([{ expected_revision: 3 }, { expected_revision: 3 }])
+})
+
+test('uncertain deletion can be confirmed with the same revision without losing the row first', async ({ page }) => {
+  const state = await adminFixture(page, [deletionEntry('OA')]); state.deleteFailure = 'lost'
+  const panel = await openPanel(page)
+  await panel.getByRole('listitem').getByRole('button', { name: '삭제', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('button', { name: '연결 삭제', exact: true }).click()
+  await expect(dialog.getByRole('alert')).toContainText('삭제 요청 결과를 확인하지 못했습니다')
+  await expect(page.locator('.ai-connections-admin .ai-connection-row')).toHaveCount(1)
+  await dialog.getByRole('button', { name: '취소', exact: true }).click()
+  await expect(panel.getByRole('listitem')).toHaveCount(1)
+  await panel.getByRole('listitem').getByRole('button', { name: '삭제', exact: true }).click()
+  await dialog.getByRole('button', { name: '연결 삭제', exact: true }).click()
+  await expect(panel.getByRole('listitem')).toHaveCount(0)
+  expect(state.writes).toEqual([{ expected_revision: 3 }, { expected_revision: 3 }])
+})
+
+test('a rejected deletion leaves the connection visible without claiming success', async ({ page }) => {
+  const state = await adminFixture(page, [deletionEntry('OA')]); state.deleteFailure = 'conflict'
+  const panel = await openPanel(page)
+  await panel.getByRole('listitem').getByRole('button', { name: '삭제', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('button', { name: '연결 삭제', exact: true }).click()
+  await expect(dialog.getByRole('alert')).toContainText('삭제하지 못했습니다')
+  await expect(page.locator('.ai-connections-admin .ai-connection-row')).toHaveCount(1)
+  await dialog.getByRole('button', { name: '취소', exact: true }).click()
+  await expect(panel.getByRole('listitem')).toHaveCount(1)
+  await expect(panel.getByRole('status').filter({ hasText: '연결을 삭제했습니다' })).toHaveCount(0)
+})
+
+test('deletion remains available offline and an old list response cannot restore the removed connection', async ({ page }) => {
+  const state = await adminFixture(page, [deletionEntry('VWP')], [])
+  state.credentialsReady = false; state.vwpReady = false
+  const panel = await openPanel(page)
+  let start!: () => void, release!: () => void
+  const started = new Promise<void>(resolve => { start = resolve })
+  const gate = new Promise<void>(resolve => { release = resolve })
+  state.holdGet = { started: start, release: gate }
+  await panel.getByRole('button', { name: '새로고침', exact: true }).click()
+  await started
+  state.failNextRefresh = true
+  await panel.getByRole('listitem').getByRole('button', { name: '삭제', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '연결 삭제', exact: true }).click()
+  await expect(panel.getByRole('listitem')).toHaveCount(0)
+  await expect(panel.getByRole('status').filter({ hasText: '연결을 삭제했습니다' })).toBeVisible()
+  await expect(panel.getByRole('alert').filter({ hasText: '목록을 불러오지 못했습니다' })).toBeVisible()
+  release()
+  await expect(panel.getByRole('listitem')).toHaveCount(0)
+  expect(state.writes).toEqual([{ expected_revision: 3 }])
+})
 
 test('batch settings expose the effective output-bound cap before saving', async ({ page }) => {
   const state = await adminFixture(page); const panel = await openPanel(page)

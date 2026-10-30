@@ -95,9 +95,22 @@ class Monitor:
         self._unknown_events[identity]=event
         return {**value,'job':self.service.public(event)}
 
+    def connection_availability(self, job):
+        """Hide resume when its original connection is no longer usable."""
+        connection_id = job.get('connection_id')
+        if job.get('resumable') is not True or not connection_id:
+            return job
+        try:
+            self.service.connections.get(connection_id)
+        except ReviewError as error:
+            if error.code != 'AI_CONNECTION_UNAVAILABLE':
+                raise
+            return {**job, 'resumable':False, 'resume_error':'AI_CONNECTION_UNAVAILABLE'}
+        return job
+
     def unknown_availability(self,value,user_id,meta):
         job=value['job']
-        if job.get('status')!='UNKNOWN':return job
+        if job.get('status')!='UNKNOWN':return self.connection_availability(job)
         event=self._unknown_events.get(value.get('id',job.get('id')))
         require(event is not None,'AI_MONITOR_CORRUPT')
         from oa.sanity_ai_unknown_recovery import unknown_availability

@@ -18,7 +18,7 @@ from oa.sanity_ai_parallel_ledger import ParallelLedger
 from oa.sanity_ai_retry import MAX_RETRIES, receipt as failure_receipt, retry_at
 
 STALE = frozenset(('AI_INPUT_STALE','AI_CASES_STALE','AI_CRITERIA_STALE','REVISION_CONFLICT',
-                   'AI_CONFIG_CHANGED','AI_CREDENTIAL_CHANGED','UNAUTHORIZED','FORBIDDEN'))
+                   'AI_CONFIG_CHANGED','AI_CONNECTION_UNAVAILABLE','AI_CREDENTIAL_CHANGED','UNAUTHORIZED','FORBIDDEN'))
 
 
 def public(service, event):

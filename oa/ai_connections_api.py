@@ -17,6 +17,11 @@ class ConnectionCommand(BaseModel):
     client_api_key: SecretStr | None = Field(default=None, max_length=8192)
 
 
+class DeleteConnectionCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int = Field(ge=1, lt=9999999999, strict=True)
+
+
 def create_ai_connections_router(authorized_actor):
     router = APIRouter()
 
@@ -44,6 +49,11 @@ def create_ai_connections_router(authorized_actor):
         actor.access._admin(actor)
         return ConnectionStore(actor.access.db).save(actor, str(connection_id), body.config, body.expected_revision,
             body.client_api_key.get_secret_value() if body.client_api_key is not None else None)
+
+    @router.post("/api/admin/ai/connections/{connection_id}/delete")
+    def delete(connection_id: UUID, body: DeleteConnectionCommand, actor=Depends(owner)):
+        actor.access._admin(actor)
+        return ConnectionStore(actor.access.db).delete(actor,str(connection_id),body.expected_revision)
 
     @router.get("/api/ai/connections")
     def connections(actor=Depends(owner)):

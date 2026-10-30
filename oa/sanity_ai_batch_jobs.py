@@ -419,7 +419,7 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
             model.advisor=model.advisor.with_observer(observer(db_factory,workspace_factory,advisor,criteria_provider,event,reserved['call_token']))
             dispatch=(event,reserved,reserved_ref,model,descriptor,nodes,revision,prepared_call)
         except ReviewError as error:
-            stale=error.code in ('AI_INPUT_STALE','AI_CASES_STALE','AI_CRITERIA_STALE','REVISION_CONFLICT','AI_CONFIG_CHANGED','AI_CREDENTIAL_CHANGED','UNAUTHORIZED','FORBIDDEN')
+            stale=error.code in ('AI_INPUT_STALE','AI_CASES_STALE','AI_CRITERIA_STALE','REVISION_CONFLICT','AI_CONFIG_CHANGED','AI_CONNECTION_UNAVAILABLE','AI_CREDENTIAL_CHANGED','UNAUTHORIZED','FORBIDDEN')
             return public(service,service._failed(event,error,status='STALE' if stale else 'FAILED'))
     # No database connection or authorization lock survives model dispatch.
     event,reserved,reserved_ref,model,descriptor,nodes,revision,prepared_call=dispatch
@@ -454,7 +454,7 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
                     return public(service,service._failed(current,ReviewError('AI_BATCH_LIMIT','Call attempt budget exhausted'),
                                   status='FAILED',called=proof['model_called']))
             unknown=not isinstance(failure,ReviewError) or _error_code(failure)=='AI_OUTCOME_UNKNOWN'
-            stale=_error_code(failure) in ('AI_CONFIG_CHANGED','AI_CREDENTIAL_CHANGED','FORBIDDEN','UNAUTHORIZED')
+            stale=_error_code(failure) in ('AI_CONFIG_CHANGED','AI_CONNECTION_UNAVAILABLE','AI_CREDENTIAL_CHANGED','FORBIDDEN','UNAUTHORIZED')
             return public(service,service._failed(current,failure,status='UNKNOWN' if unknown else 'STALE' if stale else 'FAILED',called=getattr(failure,'model_called',None)))
         try:
             service._inputs(current)

@@ -9,13 +9,19 @@
 .ai-connection-loading { padding: 32px 22px; color: var(--text-muted); font-size: 13px; }
 .ai-catalog-summary { display: flex; flex-wrap: wrap; gap: 24px; padding: 18px 22px; color: var(--text-muted); font-size: 12px; }
 .ai-catalog-summary strong { margin-left: 5px; color: var(--ink); font-weight: 600; }
-.ai-list-heading, .ai-connections-admin .ai-connection-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr) 86px 158px; gap: 20px; align-items: center; }
+.ai-list-heading, .ai-connections-admin .ai-connection-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr) 86px 230px; gap: 20px; align-items: center; }
 .ai-list-heading { padding: 11px 22px; border-block: 1px solid var(--line-soft); color: var(--text-muted); background: var(--surface-soft); font-size: 11px; }
 .ai-list-heading > :last-child { text-align: right; }
 .ai-connection-list { margin: 0; }
 .ai-connections-admin .ai-connection-row { padding: 20px 22px; }
 .ai-connection-row > div { min-width: 0; }
 .ai-connection-row .am-row-actions { justify-content: flex-end; }
+.ai-connection-row .ai-connection-delete { color: var(--danger); }
+.ai-delete-details { display: grid; gap: 5px; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-soft); overflow-wrap: anywhere; }
+.ai-delete-details strong { color: var(--ink); font-size: 14px; }
+.ai-delete-details span, .ai-delete-explanation { color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
+.ai-delete-explanation { margin: 0; }
+.ai-delete-dialog .ai-delete-confirm { background: var(--danger); color: var(--surface); }
 .ai-connection-row[data-enabled='false'] { background: var(--surface-soft); }
 .ai-connection-title { display: flex; align-items: center; gap: 9px; margin-bottom: 5px; }
 .ai-connection-list .ai-connection-title strong { font-size: 14px; }

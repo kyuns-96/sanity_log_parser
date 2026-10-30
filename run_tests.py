@@ -23,6 +23,7 @@ QUICK_TESTS = (
     "tests.test_ai_http", "tests.test_ai_retry_resume",
     "tests.test_retry_policy", "tests.test_ai_resume_cancellation", "tests.test_clustering.ClusterUnitTests",
     "tests.test_ai_connections",
+    "tests.test_ai_connection_deletion",
     "tests.test_ai_routing", "tests.test_ai_workbench_api",
     "tests.test_ai_batches.BatchPureTests", "tests.test_ai_batches.BatchDatabaseTests",
     "tests.test_ai_evidence_batches.EvidenceBatchPureTests", "tests.test_ai_evidence_batches.EvidenceBatchDatabaseTests",
