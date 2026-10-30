@@ -1,0 +1,206 @@
+import { expect, test } from '@playwright/test'
+import type { Page } from '@playwright/test'
+import { makeDemo } from '../src/demo'
+
+// Synthetic UI contracts: no company accounts, models or database are used.
+const profile = { id: 'synthetic-vwp', label: '합성 프로필', api: 'chat_completions',
+  models: ['vwp-fast', 'vwp-review'], auth_mode: 'bearer', timeout: 120,
+  max_input_bytes: 1048576, max_output_bytes: 2097152, sha256: 'a'.repeat(64) }
+
+type Entry = { id: string; revision: number; config: Record<string, any>; client_key_registered: boolean }
+
+async function adminFixture(page: Page, initial: Entry[] = [], profiles = [profile]) {
+  const fallback = makeDemo()
+  const state = { entries: initial, profiles, getFailures: 0, failNextRefresh: false,
+    holdGet: null as null | { started: () => void; release: Promise<void> },
+    writes: [] as Record<string, any>[] }
+  await page.route('**/api/**', async route => {
+    const request = route.request(); const url = new URL(request.url()); const path = url.pathname
+    if (path === '/api/auth-config') return route.fulfill({ json: { mode: 'sso', login_url: '/auth/login', logout_url: '/auth/logout', logout_method: 'POST' } })
+    if (path === '/api/session') return route.fulfill({ json: { user_id: 'synthetic-user', reviewer: '합성 사용자', auth_method: 'sso', authorization_ready: true, is_admin: true, can_read_business: false, can_receive: false, writable: false, access_mode: 'postgresql', notice: '' } })
+    if (path === '/api/access/catalog') return route.fulfill({ json: { projects: [], blocks: [] } })
+    if (path === '/api/access/me') return route.fulfill({ json: { user_id: 'synthetic-user', is_admin: true, revision: 0, grants: [], requests: [] } })
+    if (path === '/api/admin/access') return route.fulfill({ json: { revision: 0, requests: [], grants: [], users: [] } })
+    if (path.startsWith('/api/admin/ai/connections')) {
+      if (request.method() === 'GET') {
+        if (state.getFailures > 0) { state.getFailures--; return route.fulfill({ status: 503, json: { code: 'UNAVAILABLE' } }) }
+        if (state.holdGet) {
+          const pending = state.holdGet; state.holdGet = null
+          const snapshot = structuredClone(state.entries)
+          pending.started(); await pending.release
+          return route.fulfill({ json: { items: snapshot, credentials_ready: true, vwp_ready: true, vwp_profiles: state.profiles } })
+        }
+        return route.fulfill({ json: { items: state.entries, credentials_ready: true, vwp_ready: true, vwp_profiles: state.profiles } })
+      }
+      const body = request.postDataJSON(); const id = path.split('/').at(-1)!
+      const old = state.entries.find(entry => entry.id === id)
+      expect(body.expected_revision).toBe(old?.revision || 0)
+      expect(request.headers()['x-sanity-request']).toBe('1')
+      state.writes.push(body)
+      const value = { id, revision: (old?.revision || 0) + 1, config: body.config,
+        client_key_registered: !!body.client_api_key || !!old?.client_key_registered }
+      if (old) state.entries[state.entries.indexOf(old)] = value; else state.entries.push(value)
+      if (state.failNextRefresh) { state.getFailures++; state.failNextRefresh = false }
+      return route.fulfill({ json: value })
+    }
+    const body = request.method() === 'POST' ? request.postDataJSON() : undefined
+    return route.fulfill({ json: await fallback(path + url.search, body) })
+  })
+  return state
+}
+
+async function openPanel(page: Page) {
+  await page.goto('/?page=admin')
+  await page.getByRole('button', { name: 'AI 연결·모델 관리', exact: true }).click()
+  return page.getByRole('region', { name: 'AI 연결·모델 관리', exact: true })
+}
+
+async function fillOa(panel: ReturnType<Page['getByRole']>) {
+  await panel.getByRole('button', { name: 'OA AI 연결 추가', exact: true }).click()
+  await panel.getByLabel('AI 연결 이름', { exact: true }).fill('합성 OA 연결')
+  await panel.getByLabel('AI API URL', { exact: true }).fill('http://synthetic.example.test/v1/chat/completions')
+  await panel.getByLabel('허용 AI 모델 목록').fill('model-a\nmodel-b')
+  await panel.getByLabel('기본 AI 모델', { exact: true }).selectOption('model-b')
+}
+
+async function fillVwp(panel: ReturnType<Page['getByRole']>) {
+  await panel.getByRole('button', { name: 'VWP AI 연결 추가', exact: true }).click()
+  const form = panel.getByRole('form', { name: 'VWP AI 연결 등록' })
+  await form.getByLabel('VWP AI 연결 이름', { exact: true }).fill('합성 VWP 연결')
+  await form.getByLabel('VWP AI 실행 프로필', { exact: true }).selectOption(profile.id)
+  await form.getByLabel('VWP 기본 AI 모델', { exact: true }).selectOption('vwp-fast')
+  return form
+}
+
+for (const site of ['OA', 'VWP'] as const) {
+  test(`${site} save succeeds even when the subsequent list refresh fails`, async ({ page }) => {
+    const state = await adminFixture(page); const panel = await openPanel(page)
+    state.failNextRefresh = true
+    if (site === 'OA') {
+      await fillOa(panel)
+      await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
+    } else {
+      const form = await fillVwp(panel)
+      await form.getByRole('button', { name: 'VWP AI 연결 저장', exact: true }).click()
+    }
+    await expect(panel.getByRole('status').filter({ hasText: /저장/ })).toBeVisible()
+    await expect(panel.getByRole('alert').filter({ hasText: /목록|새로고침|불러오/ })).toBeVisible()
+    expect(state.writes).toHaveLength(1)
+    await panel.getByRole('button', { name: /새로고침|다시 조회|다시 불러오기/ }).click()
+    await expect(panel.getByText(`합성 ${site} 연결`, { exact: true })).toBeVisible()
+    expect(state.writes).toHaveLength(1)
+  })
+}
+
+test('initial list failure is not an empty list and retry loads entries', async ({ page }) => {
+  const initial: Entry[] = [{ id: 'existing', revision: 1, client_key_registered: false,
+    config: { label: '기존 합성 연결', enabled: true, execution_site: 'vwp', profile_id: profile.id,
+      api: 'chat_completions', model: 'vwp-fast', models: ['vwp-fast'] } }]
+  const state = await adminFixture(page, initial); state.getFailures = 1
+  const panel = await openPanel(page)
+  await expect(panel.getByRole('alert').filter({ hasText: /목록|불러오/ })).toBeVisible()
+  await expect(panel.getByText('등록된 AI 연결이 없습니다', { exact: true })).toHaveCount(0)
+  await panel.getByRole('button', { name: /새로고침|다시 조회|다시 불러오기/ }).click()
+  await expect(panel.getByText('기존 합성 연결', { exact: true })).toBeVisible()
+  expect(state.writes).toHaveLength(0)
+})
+
+test('an unavailable previously selected VWP model can be removed and the default reselected', async ({ page }) => {
+  const batch = { enabled: false, tokenizer_mode: 'utf8_bytes', tokenizer_sha256: '', context_tokens: 32768,
+    input_tokens: 16000, output_tokens: 4096, overhead_tokens: 1024, output_parameter: 'max_tokens',
+    max_records: 200, merge_groups: 20, max_calls: 20000, max_rounds: 8, deadline_seconds: 86400 }
+  const initial: Entry[] = [{ id: 'existing-vwp', revision: 3, client_key_registered: false,
+    config: { label: '기존 VWP 연결', enabled: true, execution_site: 'vwp', profile_id: profile.id,
+      api: 'chat_completions', model: 'vwp-removed', models: ['vwp-fast', 'vwp-removed'],
+      json_mode: false, timeout: 120, max_input_bytes: 1048576, max_output_bytes: 2097152, batch } }]
+  const state = await adminFixture(page, initial); const panel = await openPanel(page)
+  await panel.getByRole('listitem').filter({ hasText: '기존 VWP 연결' }).getByRole('button', { name: '수정', exact: true }).click()
+  const form = panel.getByRole('form', { name: 'VWP AI 연결 등록' })
+  const removed = form.getByRole('checkbox', { name: /vwp-removed/ })
+  await expect(removed).toBeChecked()
+  await removed.click()
+  await expect(removed).toHaveCount(0)
+  await expect(form.getByLabel('VWP 기본 AI 모델', { exact: true })).toHaveValue('')
+  await form.getByLabel('VWP 기본 AI 모델', { exact: true }).selectOption('vwp-fast')
+  await form.getByRole('button', { name: 'VWP AI 연결 저장', exact: true }).click()
+  await expect(panel.getByText('기존 VWP 연결', { exact: true })).toBeVisible()
+  expect(state.writes).toHaveLength(1)
+  expect(state.writes[0]).toMatchObject({ expected_revision: 3, config: { models: ['vwp-fast'], model: 'vwp-fast' } })
+})
+
+test('removing the OA default requires choosing another allowed model before saving', async ({ page }) => {
+  const state = await adminFixture(page); const panel = await openPanel(page)
+  await fillOa(panel)
+  await panel.getByLabel('허용 AI 모델 목록').fill('model-a')
+  await expect(panel.getByLabel('기본 AI 모델', { exact: true })).toHaveValue('')
+  await expect(panel.getByRole('button', { name: 'AI 연결 저장', exact: true })).toBeDisabled()
+  expect(state.writes).toHaveLength(0)
+  await panel.getByLabel('기본 AI 모델', { exact: true }).selectOption('model-a')
+  await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
+  await expect(panel.getByText('합성 OA 연결', { exact: true })).toBeVisible()
+  expect(state.writes[0].config).toMatchObject({ models: ['model-a'], model: 'model-a' })
+})
+
+test('an older refresh cannot overwrite the list loaded after a successful save', async ({ page }) => {
+  const state = await adminFixture(page); const panel = await openPanel(page)
+  await fillOa(panel)
+  let started!: () => void; let release!: () => void
+  const pendingStarted = new Promise<void>(resolve => { started = resolve })
+  const pendingRelease = new Promise<void>(resolve => { release = resolve })
+  state.holdGet = { started, release: pendingRelease }
+  try {
+    await panel.getByRole('button', { name: '새로고침', exact: true }).click()
+    await pendingStarted  // The old GET captured the empty list before the POST.
+    await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
+    await expect(panel.getByText('합성 OA 연결', { exact: true })).toBeVisible()
+    expect(state.writes).toHaveLength(1)
+    const oldResponse = page.waitForResponse(response => response.request().method() === 'GET' &&
+      new URL(response.url()).pathname === '/api/admin/ai/connections')
+    release(); await oldResponse
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    await expect(panel.getByText('합성 OA 연결', { exact: true })).toBeVisible()
+    await expect(panel.getByText('등록된 AI 연결이 없습니다', { exact: true })).toHaveCount(0)
+    expect(state.writes).toHaveLength(1)
+  } finally { release() }
+})
+
+for (const width of [1280, 1440]) {
+  test(`desktop ${width}: long model names and expanded limits do not overlap or overflow`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1100 })
+    const longModel = `synthetic-${'long-model-name-'.repeat(9)}end`
+    await adminFixture(page, [], [{ ...profile, models: ['vwp-fast', longModel] }])
+    const panel = await openPanel(page)
+    await fillOa(panel)
+    await panel.getByLabel('허용 AI 모델 목록').fill(`model-a\n${longModel}`)
+    for (const site of ['OA', 'VWP'] as const) {
+      const form = site === 'OA' ? panel.locator('form.ai-connection-form') : await fillVwp(panel)
+      await form.getByText('처리 한도와 전체 로그 배치 설정', { exact: true }).click()
+      await form.getByRole('checkbox', { name: '전체 로그·그룹 판정·보존 본문 배치 사용', exact: true }).check()
+      if (site === 'VWP') await expect(form.getByRole('group', { name: 'VWP 허용 AI 모델 목록' }).getByText(longModel, { exact: true })).toBeVisible()
+      const layout = await form.evaluate(root => {
+      const labels = Array.from(root.querySelectorAll('label')).filter(label => {
+        const control = label.querySelector('input,select,textarea')
+        return control && label.getClientRects().length && control.getClientRects().length
+      })
+      const rects = labels.map(label => ({ text: label.textContent?.trim(), rect: label.getBoundingClientRect(),
+        control: label.querySelector('input,select,textarea')!.getBoundingClientRect() }))
+      const overlaps: string[] = []
+      for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) {
+        const a = rects[i].rect, b = rects[j].rect
+        if (Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 &&
+            Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1)
+          overlaps.push(`${rects[i].text} / ${rects[j].text}`)
+      }
+      const formRect = root.getBoundingClientRect()
+      return { overlaps, badControls: rects.filter(({ rect, control }) => control.width <= 0 || control.height <= 0 ||
+        control.left < rect.left - 1 || control.right > rect.right + 1 || control.top < rect.top - 1 ||
+        control.bottom > rect.bottom + 1 || control.right > formRect.right + 1).map(item => item.text),
+        overflow: document.documentElement.scrollWidth > window.innerWidth + 1 }
+      })
+      expect(layout.overlaps, `${site}: labels`).toEqual([])
+      expect(layout.badControls, `${site}: controls`).toEqual([])
+      expect(layout.overflow, `${site}: horizontal overflow`).toBe(false)
+      if (site === 'OA') await form.getByRole('button', { name: '취소', exact: true }).click()
+    }
+  })
+}
