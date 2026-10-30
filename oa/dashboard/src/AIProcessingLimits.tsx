@@ -30,6 +30,7 @@ export default function AIProcessingLimits({ config, busy, onChange }: { config:
           {classificationCap != null && <p className="ai-availability-note" role="status">현재 설정의 분류 배치 상한: <strong>{classificationCap.toLocaleString()}건 / 호출</strong>. 5만 항목이라면 최초 분류만 최소 {Math.ceil(50000 / classificationCap).toLocaleString()}회 호출합니다. 입력 크기에 따라 더 작게 나뉠 수 있고, 이후 통합 호출은 별도입니다. 조각별 최대 로그와 출력 예약을 함께 확인하세요.</p>}
           <p>응답 제한 시간이 짧으면 정상 생성 중에도 결과를 확인하지 못할 수 있습니다. 실제 모델·게이트웨이의 응답 시간과 허용 한도를 확인해 설정하세요. 실행 중인 작업의 연결 설정 변경은 해당 작업을 중단시킬 수 있습니다.</p>
           <div className="ai-connection-fields ai-limits-grid">
+            <label>작업당 동시 호출 수<Input type="number" aria-label="작업당 동시 호출 수" required min={1} max={8} step={1} disabled={busy} value={config.batch.max_concurrency ?? 1} onChange={event => batch({ max_concurrency: Number(event.target.value) })} /><small>기본 1은 순차 처리입니다. 서버 허용량을 확인한 뒤 2부터 시작해 보세요. 한 작업에서 추적하는 호출의 한도이며, 다른 작업이나 이전 원격 호출은 포함하지 않습니다.</small></label>
             {([['max_records','조각별 최대 로그',1,1000], ['merge_groups','통합별 최대 그룹',2,100], ['max_calls','전체 호출 한도',1,100000], ['max_rounds','통합 라운드 한도',1,32], ['deadline_seconds','전체 작업 제한 시간(초)',60,604800]] as const).map(([key,label,min,max]) => <label key={key}>{label}<Input type="number" aria-label={label} required min={min} max={max} disabled={busy} value={config.batch[key]} onChange={event => batch({ [key]: Number(event.target.value) })} /></label>)}
           </div>
         </div>

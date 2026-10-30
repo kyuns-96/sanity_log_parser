@@ -183,6 +183,9 @@ class Ledger:
 
 
 def public(service,event):
+    if event['data']['batch'].get('execution')=='parallel-v1':
+        from oa.sanity_ai_parallel_jobs import public as parallel_public
+        return parallel_public(service,event)
     from oa.sanity_ai_jobs import _public
     value=_public(event)
     try: step,step_ref=Ledger(service,event).last()
@@ -348,7 +351,11 @@ def _finish_round(service,event,ledger,model,step,ref):
 
 
 def load_result(service,event,context,cases,criteria=None):
-    ledger=Ledger(service,event)
+    if event['data']['batch'].get('execution')=='parallel-v1':
+        from oa.sanity_ai_parallel_ledger import ParallelLedger
+        ledger=ParallelLedger(service,event)
+    else:
+        ledger=Ledger(service,event)
     ref=event['data']['result_ref']
     result=ledger.get(ref['key'],ref)[0]
     check(set(result)=={'nodes','metadata'} and result['metadata'].get('input_hash_kind')=='BATCH_MANIFEST'

@@ -33,13 +33,14 @@ class BatchSettings:
     max_calls: int = 20000
     max_rounds: int = 8
     deadline_seconds: int = 86400
+    max_concurrency: int = 1
 
     def __post_init__(self):
         check(type(self.enabled) is bool, 'AI_BATCH_CONFIG')
         for name, low, high in (('context_tokens',0,10000000),('input_tokens',1,1000000),
                 ('output_tokens',1,1000000),('overhead_tokens',1,1000000),('max_records',1,1000),
                 ('merge_groups',2,100),('max_calls',1,100000),('max_rounds',1,32),
-                ('deadline_seconds',60,604800)):
+                ('deadline_seconds',60,604800),('max_concurrency',1,8)):
             value = getattr(self,name)
             check(type(value) is int and low <= value <= high, 'AI_BATCH_CONFIG')
         if self.enabled:
@@ -58,7 +59,9 @@ class BatchSettings:
                    - (self.context_tokens + 9)//10 - self.overhead_tokens)
 
     def public(self):
-        return {k:v for k,v in asdict(self).items() if k != 'tokenizer_file'}
+        # Absence retains existing serialized settings and queued job pins.
+        return {k:v for k,v in asdict(self).items() if k != 'tokenizer_file'
+                and not (k == 'max_concurrency' and v == 1)}
 
     @classmethod
     def from_env(cls, env):

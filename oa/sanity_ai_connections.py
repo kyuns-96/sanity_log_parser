@@ -48,7 +48,8 @@ def validate_config(config):
           _issuance_url({"SANITY_OA_AI_TOKEN_ISSUE_URL": config["issuance_url"]}) is not None), "AI_CONNECTION_CONFIG")
     check(isinstance(config["models"], list) and 1 <= len(config["models"]) <= 100, "AI_CONNECTION_CONFIG")
     batch = config["batch"]
-    check(isinstance(batch, dict) and set(batch) == set(BatchSettings().public())
+    batch_keys = set(BatchSettings().public())
+    check(isinstance(batch, dict) and batch_keys <= set(batch) <= batch_keys | {'max_concurrency'}
           and batch.get("tokenizer_mode") == "utf8_bytes" and batch.get("tokenizer_sha256") == "", "AI_BATCH_CONFIG")
     try:
         settings = BatchSettings(**batch)

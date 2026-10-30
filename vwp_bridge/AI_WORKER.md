@@ -17,6 +17,8 @@ OA 웹의 AI 등록·현황 조회는 전체 입력 복원, 사례 검색, 토�
 
 item별 모델 전송 내용은 [AI 입력 필드 선택](../oa/AI_INPUT_FIELDS.md)을 따른다. plan unit의 `ai_fields`·`include_raw`·`include_details`는 전체 원본을 저장한 채 AI 요청만 줄인다. 선언이 없는 기존 item은 전체 입력을 유지한다.
 
+새 batch 작업은 [작업당 병렬 호출](../oa/PARALLEL_BATCHES.md)을 선택할 수 있다. 관리자 연결의 `batch.max_concurrency`는 1~8이며 기본 1은 직렬이다. 각 응답을 바로 저장하고 같은 단계의 결과를 모아 통합한다. 여러 결과가 불명이면 목록 전체를 명시 확인하며 성공한 배치를 다시 보내지 않는다. 취소는 진행 중 응답을 확인한 뒤 확정한다. 기존 worker 명령은 동일하고 별도 DDL/GRANT는 없다.
+
 ## 1. 실행 환경
 
 OA와 VWP 작업자에 같은 소스 버전을 배치한다. 기존 OA `oa.ai_worker` 관리 프로세스는 중지하고 VWP에서 하나의 작업자를 시작한다. `oa.main work`, 제출 파서 작업자, OA 수신 작업자는 별개 프로세스이므로 이번 이동 대상에 포함하지 않는다.

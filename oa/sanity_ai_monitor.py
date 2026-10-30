@@ -146,7 +146,8 @@ class Monitor:
             job=self.unknown_availability(value,user_id,meta)
             items.append({**job,"observed_at":value["at"],"phase":value.get("phase"),
                 "report":{**value["command"],**{k:meta[k] for k in ("project_id","item_id","family")}},
-                "can_cancel":meta["can_review"] and job["status"] in ("PENDING","RUNNING","RESULT_READY"),
+                "can_cancel":meta["can_review"] and job["status"] in ("PENDING","RUNNING","RESULT_READY")
+                    and not job.get('progress',{}).get('cancel_requested',False),
                 "can_resume":bool(meta["can_review"] and meta["ready"] and meta["group_ready"] and job.get("resumable"))})
         return {"items":items,"worker":worker_health(self.db),"server_time":self.db.execute(
             "SELECT clock_timestamp() AS now").fetchone()["now"].isoformat()}

@@ -186,9 +186,13 @@ def _validate_data(event):
         check("call_token" in data, "AI_JOB_CORRUPT")
     if 'batch' in data:
         batch=data['batch']
+        parallel_keys = {'execution', 'max_concurrency'} if isinstance(batch,dict) and 'execution' in batch else set()
         check(isinstance(batch,dict) and type(batch.get('version'))is int and batch['version'] in (1,2)
               and (batch['version']==2 or command['group_id'] is None)
-              and set(batch) in ({'version'},{'version','total_records','leaf_count','plan','credential_revision'}), 'AI_JOB_CORRUPT')
+              and set(batch)-parallel_keys in ({'version'},{'version','total_records','leaf_count','plan','credential_revision'}), 'AI_JOB_CORRUPT')
+        if parallel_keys:
+            check(batch['execution']=='parallel-v1' and type(batch.get('max_concurrency')) is int
+                  and 2<=batch['max_concurrency']<=8, 'AI_JOB_CORRUPT')
         if 'plan' in batch:
             check(type(batch['total_records'])is int and 1<=batch['total_records']<=1000000
                   and type(batch['leaf_count'])is int and 1<=batch['leaf_count']<=100000
@@ -357,6 +361,9 @@ class AIJobService:
                 for key in ("command", "target", "pins", "retrieval", "model", "created_at","worker_site","fail_safe","total_records","credential_pin"):
                     check(event["data"].get(key) == previous["data"].get(key), "AI_JOB_CORRUPT")
                 check(('batch' in event['data'])==('batch' in previous['data']),'AI_JOB_CORRUPT')
+                if 'batch' in event['data']:
+                    check(all(event['data']['batch'].get(key)==previous['data']['batch'].get(key)
+                              for key in ('execution','max_concurrency')), 'AI_JOB_CORRUPT')
                 if 'plan' in previous['data'].get('batch',{}):
                     check(event['data']['batch']==previous['data']['batch'],'AI_JOB_CORRUPT')
             check(event["data"]["command"]["request_id"] == job_id, "AI_JOB_CORRUPT")
@@ -521,6 +528,9 @@ class AIJobService:
         if model.get('batch',{}).get('enabled'):
             from common.sanity_preserved_ai import available
             data['batch']={'version':2 if group_id is not None or available(context) else 1}
+            width = model['batch'].get('max_concurrency',1)
+            if width>1:
+                data['batch'].update(execution='parallel-v1',max_concurrency=width)
         return self.public(self._append(None, "PENDING", data, now=now))
 
     def status(self, user_id, job_id):
@@ -558,6 +568,9 @@ class AIJobService:
         header(self,{**command,"user_id":user_id},write=True)
         if event["status"] in TERMINAL:
             return self.public(event)
+        if event['data'].get('batch',{}).get('execution')=='parallel-v1':
+            from oa.sanity_ai_parallel_jobs import cancel
+            return cancel(self,event,user_id)
         return self.public(self._append(event, "CANCELLED", {**event["data"], "cancelled_by": user_id}))
 
     def _inputs(self, event):
@@ -659,9 +672,21 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
             if candidate['status']=='RUNNING' and candidate['data'].get('fail_safe') and 'batch' in candidate['data']:
                 from oa.sanity_ai_batch_jobs import Ledger
                 try:
-                    step,_=Ledger(service,candidate).last()
-                    waiting=bool(step and step['status']=='READY' and step['state'].get('retry_after') and
-                        _timestamp(step['state']['retry_after']) > (now or _db_now(service.db)))
+                    if candidate['data']['batch'].get('execution')=='parallel-v1':
+                        from oa.sanity_ai_parallel_ledger import ParallelLedger
+                        step,_=ParallelLedger(service,candidate).last()
+                        slots=step['state'].get('wave',[]) if step else []
+                        current_time=now or _db_now(service.db)
+                        active_slots=[s for s in slots if s['status']=='RESERVED']
+                        active_wait=bool(active_slots and _timestamp(candidate['data']['deadline'])>current_time
+                            and all(_timestamp(s['deadline'])>current_time for s in active_slots))
+                        waiting=active_wait or bool(slots and all(s['status']=='DONE' or s['status']=='RETRY' and s.get('retry_after')
+                            and _timestamp(s['retry_after'])>(now or _db_now(service.db)) for s in slots)
+                            and any(s['status']=='RETRY' for s in slots))
+                    else:
+                        step,_=Ledger(service,candidate).last()
+                        waiting=bool(step and step['status']=='READY' and step['state'].get('retry_after') and
+                            _timestamp(step['state']['retry_after']) > (now or _db_now(service.db)))
                 except ReviewError:waiting=False
                 if waiting:
                     excluded.append(candidate['job_id'])
@@ -673,6 +698,9 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
         from oa.sanity_ai_submissions import prepare_one
         return prepare_one(db_factory,workspace_factory,advisor,criteria_provider)
     if batch_job is not None:
+        if event['data']['batch'].get('execution')=='parallel-v1':
+            from oa.sanity_ai_parallel_jobs import run_step
+            return run_step(db_factory,workspace_factory,advisor,criteria_provider,batch_job,now=now)
         from oa.sanity_ai_batch_jobs import run_step
         return run_step(db_factory,workspace_factory,advisor,criteria_provider,batch_job,now=now)
     with _transaction(db_factory, workspace_factory, advisor, criteria_provider) as service:

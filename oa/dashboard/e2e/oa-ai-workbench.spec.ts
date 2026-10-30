@@ -40,6 +40,37 @@ test('desktop AI cards show measured stage progress, transport and stage ETA', a
   await page.screenshot({ path: info.outputPath('ai-jobs-desktop.png'), fullPage: true })
 })
 
+test('parallel card shows in-flight calls without treating accumulated call time as elapsed time', async ({ page }) => {
+  await mockOA(page)
+  const base = monitoredJob()
+  const job = { ...base, progress: { ...base.progress, execution: 'parallel-v1', concurrency: 2, inflight_calls: 2,
+    active_descriptors: [{ index: 2, phase: 'CLASSIFY' }, { index: 3, phase: 'CLASSIFY' }],
+    seconds_per_record: 123, stage_eta_seconds: 75, wall_seconds_per_record: null, wall_stage_eta_seconds: null } }
+  await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  await expect(dashboard).toContainText('이 작업에서 동시 처리 2 / 2개')
+  await expect(dashboard).toContainText('진행 중 배치 3, 4')
+  await expect(dashboard).toContainText('측정치 수집 중')
+  await expect(dashboard).toContainText('측정 중')
+  await expect(dashboard).not.toContainText('2분 3초')
+  await expect(dashboard.getByRole('progressbar')).toHaveAttribute('value', '40')
+})
+
+test('parallel cancellation waits for in-flight responses and does not offer another cancel', async ({ page }) => {
+  await mockOA(page)
+  const base = monitoredJob()
+  const job = { ...base, can_cancel: false, progress: { ...base.progress, execution: 'parallel-v1', concurrency: 2,
+    inflight_calls: 1, cancel_requested: true, wall_stage_eta_seconds: 60 } }
+  await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  await expect(dashboard).toContainText('취소 요청됨 · 진행 중 응답 확인 후 종료')
+  await expect(dashboard).toContainText('이 작업에서 동시 처리 1 / 2개')
+  await expect(dashboard.getByRole('button', { name: '취소 요청됨', exact: true })).toBeDisabled()
+  await expect(dashboard).not.toContainText('예상보다 지연 중')
+})
+
 test('single calls stay indeterminate and unknown outcomes have no repeat button', async ({ page }) => {
   await mockOA(page)
   const base = monitoredJob()

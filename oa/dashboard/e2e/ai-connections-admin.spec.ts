@@ -90,6 +90,29 @@ test('batch settings expose the effective output-bound cap before saving', async
   expect(state.writes).toHaveLength(0)
 })
 
+test('parallel call setting preserves an untouched legacy config and enforces its range', async ({ page }) => {
+  const state = await adminFixture(page); const panel = await openPanel(page)
+  await fillOa(panel)
+  await panel.locator('summary').filter({ hasText: '처리 한도와 전체 로그 배치 설정' }).click()
+  await panel.getByLabel('전체 로그·그룹 판정·보존 본문 배치 사용').check()
+  const limit = panel.getByLabel('작업당 동시 호출 수', { exact: true })
+  await expect(limit).toHaveValue('1')
+  await expect(panel).toContainText('다른 작업이나 이전 원격 호출은 포함하지 않습니다')
+  await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
+  await expect(panel.getByText('합성 OA 연결', { exact: true })).toBeVisible()
+  expect(state.writes[0].config.batch).not.toHaveProperty('max_concurrency')
+  await panel.getByRole('listitem').filter({ hasText: '합성 OA 연결' }).getByRole('button', { name: '수정', exact: true }).click()
+  await panel.locator('summary').filter({ hasText: '처리 한도와 전체 로그 배치 설정' }).click()
+  await limit.fill('9')
+  expect(await limit.evaluate((input: HTMLInputElement) => input.checkValidity())).toBe(false)
+  await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
+  expect(state.writes).toHaveLength(1)
+  await limit.fill('2')
+  await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
+  await expect.poll(() => state.writes.length).toBe(2)
+  expect(state.writes[1].config.batch.max_concurrency).toBe(2)
+})
+
 for (const site of ['OA', 'VWP'] as const) {
   test(`${site} save succeeds even when the subsequent list refresh fails`, async ({ page }) => {
     const state = await adminFixture(page); const panel = await openPanel(page)

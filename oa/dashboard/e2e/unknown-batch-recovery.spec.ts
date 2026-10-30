@@ -71,6 +71,31 @@ test('unknown batch requires explicit confirmation, preserves progress and reuse
   expect(state.calls[1].request_id).toBe(state.calls[0].request_id)
 })
 
+test('parallel unknown recovery confirms the complete set with one acknowledgment', async ({ page }) => {
+  const { state, dashboard } = await setup(page)
+  const first = { ...state.job.unknown_recovery, index: 2 }
+  const second = { ...state.job.unknown_recovery, index: 3, step_sha256: 'c'.repeat(64), input_bytes: 2400 }
+  state.job = { ...state.job, unknown_recoveries: [first, second],
+    progress: { ...state.job.progress, execution: 'parallel-v1', concurrency: 2, inflight_calls: 0 } } as typeof state.job
+  await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+  await expect(dashboard).toContainText('이 작업에서 동시 처리 0 / 2개')
+  await dashboard.getByRole('button', { name: '결과 불명 배치 재시도' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toContainText('배치 3 / 5')
+  await expect(dialog).toContainText('배치 4 / 5')
+  await expect(dialog).toContainText('2,400 bytes')
+  await expect(dialog).toContainText('완료된 배치는 다시 호출하지 않고 유지')
+  await dialog.getByRole('button', { name: '취소', exact: true }).click()
+  expect(state.calls).toHaveLength(0)
+  await dashboard.getByRole('button', { name: '결과 불명 배치 재시도' }).click()
+  state.mode = 'success'
+  await dialog.getByRole('button', { name: '확인하고 미확인 2개 재시도' }).click()
+  await expect(dashboard).toContainText('처리 중')
+  await expect(dashboard).toContainText('20,000 / 50,000건')
+  expect(state.calls).toHaveLength(1)
+  expect(state.calls[0]).toMatchObject({ expected_event_sha256: eventHash, expected_step_sha256: stepHash, acknowledge_duplicate: true })
+})
+
 test('changed checkpoint requires fresh confirmation and a new request ID', async ({ page }) => {
   const { state, dashboard } = await setup(page)
   await dashboard.getByRole('button', { name: '결과 불명 배치 재시도' }).click()

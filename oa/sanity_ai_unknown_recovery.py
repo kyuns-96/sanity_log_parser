@@ -37,6 +37,9 @@ def recovery_info(event, step, ref):
 
 def unknown_availability(service,event,user_id,meta,job):
     """Display-only lightweight preflight; dispatch still revalidates inputs."""
+    if event['data'].get('batch', {}).get('execution') == 'parallel-v1':
+        from oa.sanity_ai_parallel_recovery import unknown_availability as parallel_availability
+        return parallel_availability(service,event,user_id,meta,job)
     if event['status']!='UNKNOWN' or 'batch' not in event['data']:
         return False,None
     if event['data']['command']['user_id']!=user_id or not meta['can_review']:
@@ -78,6 +81,9 @@ def marker(service, request_id):
 
 
 def validate_recovery(service, previous, status, data):
+    if previous['data'].get('batch', {}).get('execution') == 'parallel-v1':
+        from oa.sanity_ai_parallel_recovery import validate_recovery as parallel_validate
+        return parallel_validate(service,previous,status,data)
     from oa.sanity_ai_batch_jobs import Ledger, attempts
     check(previous['status']=='UNKNOWN' and status=='RUNNING' and 'batch' in previous['data']
           and previous['data'].get('fail_safe') is True and type(data.get('resume_count')) is int
@@ -118,6 +124,9 @@ def retry_unknown(service,user_id,job_id,request_id,expected_event_sha256,expect
     service.db.execute('SELECT pg_advisory_xact_lock(%s)',(lock_key(RESUME_PREFIX+request_id),))
     job_lock(service,job_id)
     event=service._load(job_id);command=event['data']['command']
+    if event['data'].get('batch', {}).get('execution') == 'parallel-v1':
+        from oa.sanity_ai_parallel_recovery import retry_unknown as parallel_retry
+        return parallel_retry(service,user_id,job_id,request_id,expected_event_sha256,expected_step_sha256,acknowledge_duplicate)
     check(command['user_id']==user_id,'FORBIDDEN')
     meta=header(service,{**command,'user_id':user_id},write=True)
     old=marker(service,request_id)
