@@ -35,7 +35,7 @@ test('saved selection is applied before the application bundle loads', async ({ 
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
   await expect(page.locator('html')).toHaveClass(/dark/)
   expect(await page.evaluate(() => document.documentElement.style.colorScheme)).toBe('dark')
-  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content', '#13161d')
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content', '#141323')
 })
 
 test('theme persists across pages and synchronizes between open tabs', async ({ page, context }) => {
@@ -95,7 +95,7 @@ test('the review editor keeps unsaved text and selected logs while changing appe
   await chooseTheme(page, '다크 모드')
   await expect(page.getByLabel('분류 기준', { exact: true })).toHaveValue(draft)
   await expect(selected).toBeChecked()
-  await expect(page.getByLabel('분류 기준', { exact: true })).toHaveCSS('background-color', 'rgb(27, 32, 41)')
+  await expect(page.getByLabel('분류 기준', { exact: true })).toHaveCSS('background-color', 'rgb(29, 27, 48)')
   // Check actual foreground/background pairs used by the editor and its actions.
   const ratios = await page.evaluate(() => {
     const luma = (color: string) => {
@@ -128,7 +128,7 @@ test('phone theme menu is keyboard accessible and fits without horizontal overfl
   await expect(trigger).toBeFocused()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.getByRole('button', { name: '메뉴 열기', exact: true }).click()
-  await expect(page.getByRole('dialog', { name: '워크스페이스 메뉴' })).toHaveCSS('background-color', 'rgb(23, 27, 35)')
+  await expect(page.getByRole('dialog', { name: '워크스페이스 메뉴' })).toHaveCSS('background-color', 'rgb(25, 24, 42)')
   await page.keyboard.press('Escape')
 })
 
@@ -148,14 +148,14 @@ test('login, SSO welcome and administration share the selected appearance', asyn
   await page.goto('/')
   await expect(page.getByRole('button', { name: 'SSO로 로그인', exact: true })).toBeVisible()
   await chooseTheme(page, '다크 모드')
-  await expect(page.locator('.login-main')).toHaveCSS('color', 'rgb(232, 236, 243)')
+  await expect(page.locator('.login-main')).toHaveCSS('color', 'rgb(238, 238, 254)')
   signedIn = true
   await page.goto('/?page=welcome')
   await expect(page.getByRole('heading', { name: '권한 요청', exact: true })).toBeVisible()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
   await page.getByRole('button', { name: '관리자 모드', exact: true }).click()
   await expect(page.getByRole('heading', { name: '프로젝트·권한 관리', exact: true })).toBeVisible()
-  await expect(page.locator('.am-panel').first()).toHaveCSS('background-color', 'rgb(27, 32, 41)')
+  await expect(page.locator('.am-panel').first()).toHaveCSS('background-color', 'rgb(29, 27, 48)')
   await page.setViewportSize({ width: 390, height: 844 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await chooseTheme(page, '라이트 모드')
@@ -173,11 +173,11 @@ for (const [name, url, surface] of [
     await page.emulateMedia({ colorScheme: 'dark' })
     await page.goto(url)
     await expect(page.locator(surface).first()).toBeVisible()
-    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(19, 22, 29)')
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(20, 19, 35)')
     await expect(page.getByRole('button', { name: '화면 테마', exact: true })).toBeVisible()
     await page.setViewportSize({ width: 390, height: 844 })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await chooseTheme(page, '라이트 모드')
-    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(245, 246, 248)')
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(248, 247, 255)')
   })
 }

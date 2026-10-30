@@ -7,5 +7,5 @@
   root.dataset.theme = dark ? 'dark' : 'light'
   root.classList.toggle('dark', dark)
   root.style.colorScheme = dark ? 'dark' : 'light'
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#13161d' : '#f5f6f8')
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#141323' : '#f8f7ff')
 })()

@@ -19,8 +19,8 @@ export function DashboardLogin({ config, session, checking, signingOut, error, a
     <div className="login-decoration">
       <WorkspaceBrand />
       <div>
-        <Badge variant="outline" className="login-platform-badge"><Layers3 size={13} />Sanity review platform</Badge>
-        <h1>판단을 쌓고,<br />다음 검토를 가깝게.</h1>
+        <Badge variant="outline" className="login-platform-badge"><Layers3 size={13} />AI 로그 분석 · 판정 지원</Badge>
+        <h1>로그에서 패턴을 찾고,<br />판단의 근거를 쌓습니다.</h1>
         <p>AI의 분류와 판정, 사람의 확정 근거를<br />하나의 검토 흐름으로 연결합니다.</p>
         <ol className="login-process" aria-label="검토 흐름">
           <li><span>01</span><div><strong>AI 로그 분류</strong><small>로그를 그룹으로 정리하고 분류 근거 확인</small></div><Layers3 /></li>
@@ -28,7 +28,7 @@ export function DashboardLogin({ config, session, checking, signingOut, error, a
           <li><span>03</span><div><strong>사람의 확정</strong><small>검토 결과를 다음 AI의 참고 사례로 축적</small></div><ClipboardCheck /></li>
         </ol>
       </div>
-      <span>Sanity Console · AI review workspace</span>
+      <span>Sanity Lens AI · AI 로그 분석 · 판정 지원</span>
     </div>
     <main className="login-main" id="workspace-main" tabIndex={-1}>
       <div className="color-mode-login"><ColorModeControl /></div>
@@ -63,7 +63,7 @@ export function DashboardLogin({ config, session, checking, signingOut, error, a
           <p className="tiny">데모는 예시 데이터를 사용하며 실제 검사 결과에 영향을 주지 않습니다.</p>
         </>}
       </div>
-      <span className="login-foot">SANITY / REVIEW CONSOLE <span>v0.2 · OA</span></span>
+      <span className="login-foot">SANITY LENS AI <span>AI 로그 분석 · 판정 지원</span></span>
     </main>
   </div>
 }

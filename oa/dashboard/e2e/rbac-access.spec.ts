@@ -241,7 +241,7 @@ test('welcome and administrator share the Studio neutral theme without mobile ov
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.getByRole('heading', { name: '권한 요청', exact: true })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
-  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#272b35')
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#4f46e5')
   await page.screenshot({ path: 'artifacts/rbac-welcome-mobile.png', fullPage: true, animations: 'disabled' })
   await page.getByRole('button', { name: '메뉴 열기', exact: true }).click()
   await page.getByRole('button', { name: '관리자 모드', exact: true }).click()

@@ -194,7 +194,7 @@ test.describe('independent Studio workbench preview', () => {
     await expect(page.locator('.comparison')).toHaveCount(0)
     await expect(page.locator('html')).not.toHaveClass(/dark/)
     await expect(page.locator('html')).toHaveClass(/studio-system/)
-    expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#272b35')
+    expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#4f46e5')
     expect(requests.filter(path => path.includes('/studio-preview/'))).toEqual([])
     await page.getByRole('button', { name: 'CPU 버전과 검사 보기', exact: true }).click()
     await expect(page.locator('.ws-report-table tbody tr')).toHaveCount(25)

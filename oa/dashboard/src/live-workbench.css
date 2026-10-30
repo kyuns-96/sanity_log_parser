@@ -196,10 +196,10 @@
 .ws-studio-workbench .ws-judgment-summary > div { gap: 7px; }
 .ws-studio-workbench .ws-judgment-summary > div > span { font-size: 11px; }
 .ws-studio-workbench .ws-studio-review .ws-status { font-size: 11px; padding: 3px 7px; }
-.ws-studio-workbench .ws-review-advice.ws-studio-ai-card { margin-top: 15px; padding: 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
+.ws-studio-workbench .ws-review-advice.ws-studio-ai-card { margin-top: 15px; padding: 13px; border: 1px solid var(--ai-line); border-radius: 8px; background: var(--surface-soft); }
 .ws-studio-workbench .ws-studio-ai-card > header { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .ws-studio-ai-title { min-width: 0; flex: 1; }
-.ws-studio-ai-title h4 { display: flex; align-items: center; gap: 6px; color: var(--ink); font-size: 12px; font-weight: 600; margin: 0; }
+.ws-studio-ai-title h4 { display: flex; align-items: center; gap: 6px; color: var(--ai); font-size: 12px; font-weight: 600; margin: 0; }
 .ws-studio-ai-title p { margin: 6px 0 0; font-size: 11px; color: var(--text-muted); line-height: 1.8; }
 .ws-studio-workbench .ws-studio-ai-card > header [data-slot='button'] { min-height: 30px; padding-inline: 8px; font-size: 11px; }
 .ws-studio-workbench .ws-review-proposal.ws-studio-ai-result { padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--line); }

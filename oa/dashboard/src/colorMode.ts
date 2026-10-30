@@ -21,7 +21,7 @@ function apply(preference: ColorMode) {
   root.dataset.theme = resolved
   root.classList.toggle('dark', resolved === 'dark')
   root.style.colorScheme = resolved
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', resolved === 'dark' ? '#13161d' : '#f5f6f8')
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', resolved === 'dark' ? '#141323' : '#f8f7ff')
   if (state.preference !== preference || state.resolved !== resolved) {
     state = { preference, resolved }
     listeners.forEach(listener => listener())

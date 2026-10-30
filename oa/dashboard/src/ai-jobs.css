@@ -6,32 +6,40 @@
 .ai-jobs-header h2 span { font-size: 12px; font-weight: 500; margin-left: 8px; color: var(--muted-foreground); }
 .ai-jobs-header p, .ai-job-note { font-size: 12px; color: var(--muted-foreground); line-height: 1.6; }
 .ai-worker-health { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 11px; color: var(--muted-foreground); }
-.ai-worker-health i, .ai-job-status i { width: 6px; height: 6px; border-radius: 50%; background: #c38738; }
-.ai-worker-health.online i { background: #23927b; }
+.ai-worker-health i, .ai-job-status i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.ai-worker-health i { color: var(--warning); }
+.ai-worker-health.online i { color: var(--success); }
 .ai-jobs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px; }
 .ai-job-card { min-width: 0; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 19px 20px 0; box-shadow: 0 2px 5px #00000003; }
 .ai-job-top { font-size: 11px; }
 .ai-job-kind { color: var(--muted-foreground); }
-.ai-job-status { display: inline-flex; align-items: center; gap: 5px; color: #357582; background: #3575820c; padding: 4px 7px; border-radius: 5px; }
-.ai-job-completed .ai-job-status { color: #298568; background: #2985680c; }
-.ai-job-unknown .ai-job-status, .ai-job-failed .ai-job-status { color: #bc6647; background: #bc66470c; }
+.ai-job-status { display: inline-flex; align-items: center; gap: 5px; color: var(--ai); background: var(--ai-soft); padding: 4px 7px; border-radius: 5px; }
+.ai-job-completed .ai-job-status { color: var(--success); background: var(--success-soft); }
+.ai-job-failed .ai-job-status { color: var(--danger); background: var(--danger-soft); }
+.ai-job-unknown .ai-job-status, .ai-job-stale .ai-job-status { color: var(--warning); background: var(--warning-soft); }
+.ai-job-cancelled .ai-job-status { color: var(--text-muted); background: var(--surface-soft); }
 .ai-job-card h3 { font-size: 16px; font-weight: 650; margin: 16px 0 4px; overflow-wrap: anywhere; }
 .ai-job-model { color: var(--muted-foreground); font-size: 11px; overflow-wrap: anywhere; margin-bottom: 19px; }
 .ai-job-stage { font-size: 11px; margin-bottom: 8px; }
 .ai-job-stage strong { color: var(--muted-foreground); font-size: 11px; font-weight: 500; }
-.ai-job-card progress { appearance: none; width: 100%; height: 5px; display: block; overflow: hidden; border: 0; border-radius: 4px; background: var(--muted); accent-color: #3d8a93; }
+.ai-job-card progress { appearance: none; width: 100%; height: 5px; display: block; overflow: hidden; border: 0; border-radius: 4px; background: var(--muted); accent-color: var(--ai); }
 .ai-job-card progress::-webkit-progress-bar { background: var(--muted); border-radius: 4px; }
-.ai-job-card progress::-webkit-progress-value { background: #3d8a93; border-radius: 4px; transition: width .3s ease; }
-.ai-job-card progress:indeterminate { background: repeating-linear-gradient(100deg, var(--muted) 0 10px, #3d8a9320 10px 20px); }
+.ai-job-card progress::-webkit-progress-value { background: var(--ai); border-radius: 4px; transition: width .3s ease; }
+.ai-job-card progress::-moz-progress-bar { background: var(--ai); border-radius: 4px; }
+.ai-job-card progress:indeterminate { background: repeating-linear-gradient(100deg, var(--muted) 0 10px, var(--ai-soft) 10px 20px); }
+.ai-job-card progress:indeterminate::-webkit-progress-bar { background: repeating-linear-gradient(100deg, var(--muted) 0 10px, var(--ai-soft) 10px 20px); }
+.ai-job-completed progress { accent-color: var(--success); }
+.ai-job-completed progress::-webkit-progress-value { background: var(--success); }
+.ai-job-completed progress::-moz-progress-bar { background: var(--success); }
 .ai-job-coverage { font-size: 10px; color: var(--muted-foreground); margin: 9px 0 17px; line-height: 1.5; }
 .ai-job-metrics { display: grid; grid-template-columns: 1fr 1fr 1.3fr; gap: 10px; padding: 14px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .ai-job-metrics dt { font-size: 10px; color: var(--muted-foreground); display: flex; align-items: center; gap: 3px; margin-bottom: 7px; }
 .ai-job-metrics dd { font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 550; margin: 0; }
 .ai-job-note { margin: 13px 0; min-height: 38px; font-size: 11px; }
-.ai-job-error { display: block; margin-bottom: 10px; font-size: 10px; color: #bc6647; }
+.ai-job-error { display: block; margin-bottom: 10px; font-size: 10px; color: var(--danger); }
 .ai-job-card footer { border-top: 1px solid var(--border); padding: 10px 0; font-size: 10px; color: var(--muted-foreground); }
 .ai-job-card footer div { display: flex; gap: 4px; }
-.ai-jobs-warning { padding: 10px 13px; background: #b9873110; border: 1px solid #b9873130; color: var(--foreground); font-size: 12px; border-radius: 7px; display: flex; align-items: center; gap: 7px; margin-bottom: 12px; }
+.ai-jobs-warning { padding: 10px 13px; background: var(--warning-soft); border: 1px solid var(--warning-line); color: var(--foreground); font-size: 12px; border-radius: 7px; display: flex; align-items: center; gap: 7px; margin-bottom: 12px; }
 .ai-jobs-empty { display: flex; gap: 15px; align-items: center; border: 1px dashed var(--border); border-radius: 10px; padding: 26px; color: var(--muted-foreground); font-size: 13px; }
 .ai-jobs-empty strong { font-weight: 500; color: var(--foreground); }
 .ai-jobs-empty p { margin-top: 6px; font-size: 12px; }

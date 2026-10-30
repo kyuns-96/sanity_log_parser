@@ -136,7 +136,7 @@ export default function DashboardNavigation() {
     current.current = next
     setError('')
     setState(previous => ({ route: next, visited: discard ? [next.page] : Array.from(new Set([...previous.visited, next.page])), epoch: previous.epoch + (discard ? 1 : 0), initialAuth: initialAuth ?? (discard ? undefined : previous.initialAuth), initialWorkspace: initialWorkspace ?? (discard ? undefined : previous.initialWorkspace) }))
-    document.title = `${next.page === 'admin' ? '프로젝트·권한 관리' : next.page === 'workbench' ? 'AI 검토 워크스페이스' : next.page === 'welcome' ? '내 프로젝트·권한' : 'Sanity 검토'} | Sanity Console`
+    document.title = `${next.page === 'admin' ? '프로젝트·권한 관리' : next.page === 'workbench' ? 'AI 검토 워크스페이스' : next.page === 'welcome' ? '내 프로젝트·권한' : 'Sanity 검토'} | Sanity Lens AI`
   }, [])
   const navigate = useCallback<DashboardNavigate>((href, sourceUser, reset) => change(href, sourceUser, 'push', reset), [change])
 

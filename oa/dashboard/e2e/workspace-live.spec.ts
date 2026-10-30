@@ -20,7 +20,7 @@ test('real API scopes projects and reports and the shared Studio theme is loaded
   await expect(page.getByRole('button', { name: 'Boreal 프로젝트', exact: true })).toHaveCount(0)
   await expect(page.locator('.ws-block-table tbody tr')).toHaveCount(1)
   await expect(page.locator('.ws-account')).toContainText('정민수')
-  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#272b35')
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#4f46e5')
   expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 })
   const cookies = await page.context().cookies()
   expect(cookies.find(cookie => cookie.name === 'sanity_workspace_session')).toMatchObject({ httpOnly: true, sameSite: 'Strict' })

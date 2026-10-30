@@ -235,7 +235,7 @@ export default function App({ routePage, initialAuth }: { routePage?: AccessPage
       <WorkspaceBrand />
       <button className="sidebar-close" aria-label="메뉴 닫기" onClick={closeMobile}><X size={18} /></button>
       {readySSO && session.is_admin === true && <SidebarModeSwitch mode="user" onChange={mode => { closeMobile(); return navigateDashboard(modeUrl(mode, session.can_read_business === true), session.user_id) }} />}
-      <div className="portal-sidebar-context"><span className="workspace-icon"><Layers3 size={18} /></span><div><strong>검토 워크스페이스</strong><small>{demo ? '합성 데이터 · 데모' : '결과 · 근거 · 변경 이력'}</small></div></div>
+      <div className="portal-sidebar-context"><span className="workspace-icon"><Layers3 size={18} /></span><div><strong>AI 분석 워크스페이스</strong><small>{demo ? '합성 데이터 · 데모' : '결과 · 근거 · 변경 이력'}</small></div></div>
       <div className="nav-label">워크스페이스</div>
       <nav aria-label="검토 메뉴">
         {readySSO && <Button variant="ghost" aria-label="AI 분류·판정" onClick={() => { closeMobile(); void navigateDashboard('/?page=workbench', session.user_id).catch(fail) }}><Layers3 size={18} /><span className="nav-text">AI 분류·판정</span></Button>}

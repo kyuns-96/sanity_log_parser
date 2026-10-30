@@ -1,23 +1,26 @@
 :root { color-scheme: light; --form-footer-shadow: #ffffffed; }
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --canvas: #13161d;
-  --surface: #1b2029;
-  --surface-soft: #202631;
-  --sidebar-surface: #171b23;
-  --surface-recessed: #151a22;
-  --source: #151a22;
-  --ink: #e8ecf3;
-  --text-secondary: #bac4d3;
-  --text-muted: #94a1b5;
-  --line: #343e4f;
-  --line-soft: #2a3240;
-  --accent: #dbe2ee;
-  --accent-soft: #2a3343;
-  --accent-line: #4c5b73;
-  --focus: #a8bbdf;
+  --canvas: #141323;
+  --surface: #1d1b30;
+  --surface-soft: #26243b;
+  --sidebar-surface: #19182a;
+  --surface-recessed: #171629;
+  --source: #171629;
+  --ink: #eeeefe;
+  --text-secondary: #c2c2dc;
+  --text-muted: #aaaac7;
+  --line: #403d59;
+  --line-soft: #302d46;
+  --accent: #b4b0ff;
+  --accent-soft: #302d52;
+  --accent-line: #625ca0;
+  --focus: #b4b0ff;
+  --ai: #c4b5fd;
+  --ai-soft: #35294f;
+  --ai-line: #7553a2;
   --code: #bdcbe2;
-  --primary-foreground: #1b2029;
+  --primary-foreground: #1d1b30;
   --success: #7ed7b2;
   --success-soft: #18362c;
   --success-line: #2b6350;
@@ -27,7 +30,7 @@
   --danger: #f39a93;
   --danger-soft: #3b2427;
   --danger-line: #79454b;
-  --form-footer-shadow: #1b2029ed;
+  --form-footer-shadow: #1d1b30ed;
 }
 
 .color-mode-trigger {
