@@ -88,6 +88,8 @@ const messages: Record<string, string> = {
   INVALID_AI_CRITERIA: '확인된 점검 기준의 형식과 적용 범위를 확인해 주세요.',
   INVALID_ADVICE: 'AI 제안의 직접 근거 또는 참고 사례를 검증하지 못해 적용하지 않았습니다.',
   AI_JOB_ACTIVE: 'AI 작업이 진행 중입니다. 현재 상태를 확인해 주세요.',
+  AI_JOB_DELETED: '삭제된 AI 작업입니다. 새 작업으로 요청해 주세요.',
+  AI_JOB_DELETE_NOT_CONFIGURED: 'AI 작업 삭제 권한이 없습니다. 운영 담당자에게 문의해 주세요.',
   AI_BUSY: '다른 AI 분류 요청이 진행 중입니다. 완료 후 다시 요청해 주세요.',
   AI_MOCK_LIMIT: '이 합성 report의 AI 테스트 호출 한도에 도달했습니다.',
   SYNTHETIC_ONLY: 'Codex 연결은 지정된 합성 mock report에서만 사용할 수 있습니다.',

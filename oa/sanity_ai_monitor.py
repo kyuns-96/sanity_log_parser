@@ -144,12 +144,15 @@ class Monitor:
 
     def items(self,user_id,*,limit=12):
         from oa.sanity_ai_submissions import header
+        from oa.sanity_ai_deletion import available
+        from oa.sanity_ai_jobs import TERMINAL
         require(type(limit) is int and 1<=limit<=20,"INVALID_REQUEST")
         rows=self.db.execute("SELECT * FROM (SELECT DISTINCT ON (payload->>'id') * FROM {oa} "
             "WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s AND payload->>'actor_id'=%s "
             "ORDER BY payload->>'id',workspace_key DESC) latest ORDER BY created_at DESC LIMIT %s",
             (PREFIX+"%",user_id,limit)).fetchall()
         items=[]
+        deletion_available=available(self.service)
         for row in rows:
             value=self.display_unknown(validate(row))
             try:meta=header(self.service,{**value["command"],"user_id":user_id})
@@ -161,6 +164,7 @@ class Monitor:
                 "report":{**value["command"],**{k:meta[k] for k in ("project_id","item_id","family")}},
                 "can_cancel":meta["can_review"] and job["status"] in ("PENDING","RUNNING","RESULT_READY")
                     and not job.get('progress',{}).get('cancel_requested',False),
+                "can_delete":bool(deletion_available and meta["can_review"] and job["status"] in TERMINAL),
                 "can_resume":bool(meta["can_review"] and meta["ready"] and meta["group_ready"] and job.get("resumable"))})
         return {"items":items,"worker":worker_health(self.db),"server_time":self.db.execute(
             "SELECT clock_timestamp() AS now").fetchone()["now"].isoformat()}

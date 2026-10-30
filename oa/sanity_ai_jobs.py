@@ -24,6 +24,7 @@ from common.sanity_config import load_environment
 from common.sanity_db import Database, lock_key, uuid_value
 from oa.sanity_access import access_lock
 from oa.sanity_ai_cases import CaseRetriever
+from oa.sanity_ai_deletion import ensure_not_deleted, worker_load
 from oa.sanity_ai_tokens import UserTokenStore
 from oa.sanity_ai_model import OAAdvisor, OASettings, PROVIDER
 from oa.sanity_workspace import record_id
@@ -416,7 +417,7 @@ class AIJobService:
         else:
             query += "ORDER BY created_at DESC,workspace_key DESC LIMIT 1"
         row = self.db.execute(query, tuple(params)).fetchone()
-        return self._load(row["payload"]["job_id"]) if row else None
+        return worker_load(self, row["payload"]["job_id"]) if row else None
 
     @staticmethod
     def _target(report_id, group_id):
@@ -473,6 +474,10 @@ class AIJobService:
         from oa.sanity_ai_unknown_recovery import retry_unknown
         return retry_unknown(self,user_id,job_id,request_id,expected_event_sha256,expected_step_sha256,acknowledge_duplicate)
 
+    def delete(self, user_id, job_id):
+        from oa.sanity_ai_deletion import delete
+        return delete(self, user_id, job_id)
+
     def enqueue(self, user_id, block_id, version_id, report_id, *, expected_revision, request_id,
                 group_id=None, expected_cluster_revision=None, model_id=None, connection_id=None,
                 _worker_site=None,_requested_at=None,_credential_pin=None):
@@ -490,6 +495,7 @@ class AIJobService:
             connection_id = str(uuid_value(connection_id))
             command["connection_id"] = connection_id
         self._lock(request_id)
+        ensure_not_deleted(self, request_id)
         target=self._target(report_id,group_id)
         from oa.sanity_ai_submissions import Submissions,PREFIX as INTENT_PREFIX,ACTIVE as PREPARING
         self.db.execute("SELECT pg_advisory_xact_lock(%s)",(lock_key(INTENT_PREFIX+target),))
@@ -720,7 +726,9 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
         return run_step(db_factory,workspace_factory,advisor,criteria_provider,batch_job,now=now)
     with _transaction(db_factory, workspace_factory, advisor, criteria_provider) as service:
         service._lock(event["job_id"])
-        event = service._load(event["job_id"])
+        event = worker_load(service, event["job_id"])
+        if event is None:
+            return None
         if event["status"] == "RESULT_READY":
             return _public(service._apply(event))
         if event["status"] == "RUNNING":
@@ -774,7 +782,9 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
     call_seconds=time.monotonic()-call_started
     with _transaction(db_factory, workspace_factory, advisor, criteria_provider) as service:
         service._lock(event["job_id"])
-        current = service._load(event["job_id"])
+        current = worker_load(service, event["job_id"])
+        if current is None:
+            return None
         if current["status"] != "RUNNING" or current["data"].get("call_token") != event["data"]["call_token"]:
             return _public(current)  # A late response never revives a terminal job.
         if _timestamp(current["data"]["deadline"]) <= _db_now(service.db):
@@ -810,5 +820,7 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
             return _public(service._failed(current, error, status="FAILED", called=True))
     with _transaction(db_factory, workspace_factory, advisor, criteria_provider) as service:
         service._lock(event["job_id"])
-        current = service._load(event["job_id"])
+        current = worker_load(service, event["job_id"])
+        if current is None:
+            return None
         return _public(service._apply(current)) if current["status"] == "RESULT_READY" else _public(current)

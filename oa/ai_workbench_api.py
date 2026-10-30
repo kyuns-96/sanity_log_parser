@@ -109,6 +109,10 @@ def create_workbench_router(authorized_actor):
         return jobs(scope).retry_unknown(scope.user_id,str(job_id),body.request_id,
             body.expected_event_sha256,body.expected_step_sha256,body.acknowledge_duplicate)
 
+    @router.post("/ai/jobs/{job_id}/delete")
+    def delete_ai_job(job_id: UUID, scope=Depends(workspace)):
+        return jobs(scope).delete(scope.user_id, str(job_id))
+
     @router.get("/blocks/{block_id}/versions")
     def versions(block_id: ID, scope=Depends(workspace)):
         return scope.ws.versions(scope.user_id, block_id)

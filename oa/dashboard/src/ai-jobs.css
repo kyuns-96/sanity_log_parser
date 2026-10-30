@@ -13,6 +13,9 @@
 .ai-job-card { min-width: 0; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 19px 20px 0; box-shadow: 0 2px 5px #00000003; }
 .ai-job-top { font-size: 11px; }
 .ai-job-kind { color: var(--muted-foreground); }
+.ai-job-top-actions { display: flex; align-items: center; gap: 8px; }
+.ai-job-delete { width: 28px; height: 28px; color: var(--muted-foreground); }
+.ai-job-delete:not(:disabled):hover { color: var(--danger); background: var(--danger-soft); }
 .ai-job-status { display: inline-flex; align-items: center; gap: 5px; color: var(--ai); background: var(--ai-soft); padding: 4px 7px; border-radius: 5px; }
 .ai-job-completed .ai-job-status { color: var(--success); background: var(--success-soft); }
 .ai-job-failed .ai-job-status { color: var(--danger); background: var(--danger-soft); }
@@ -22,6 +25,12 @@
 .ai-job-model { color: var(--muted-foreground); font-size: 11px; overflow-wrap: anywhere; margin-bottom: 19px; }
 .ai-job-stage { font-size: 11px; margin-bottom: 8px; }
 .ai-job-stage strong { color: var(--muted-foreground); font-size: 11px; font-weight: 500; }
+.ai-job-progress { position: relative; overflow: hidden; border-radius: 4px; }
+.ai-job-progress-motion { position: absolute; inset: 0 auto 0 0; overflow: hidden; border-radius: inherit; pointer-events: none; transition: width .3s ease; }
+.ai-job-progress-motion::after { content: ''; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 15%, #ffffff99 50%, transparent 85%); transform: translateX(-100%); animation: ai-job-progress-shimmer 1.8s ease-in-out infinite; }
+.ai-job-progress progress:not([value]) + .ai-job-progress-motion::after,
+.ai-job-progress progress[value="0"] + .ai-job-progress-motion::after { background: linear-gradient(100deg, transparent 15%, var(--ai) 50%, transparent 85%); opacity: .4; }
+@keyframes ai-job-progress-shimmer { to { transform: translateX(100%); } }
 .ai-job-card progress { appearance: none; width: 100%; height: 5px; display: block; overflow: hidden; border: 0; border-radius: 4px; background: var(--muted); accent-color: var(--ai); }
 .ai-job-card progress::-webkit-progress-bar { background: var(--muted); border-radius: 4px; }
 .ai-job-card progress::-webkit-progress-value { background: var(--ai); border-radius: 4px; transition: width .3s ease; }
@@ -31,6 +40,11 @@
 .ai-job-completed progress { accent-color: var(--success); }
 .ai-job-completed progress::-webkit-progress-value { background: var(--success); }
 .ai-job-completed progress::-moz-progress-bar { background: var(--success); }
+@media (prefers-reduced-motion: reduce) {
+  .ai-job-progress-motion { display: none; transition: none; }
+  .ai-job-progress-motion::after { animation: none; }
+  .ai-job-card progress::-webkit-progress-value { transition: none; }
+}
 .ai-job-coverage { font-size: 10px; color: var(--muted-foreground); margin: 9px 0 17px; line-height: 1.5; }
 .ai-job-metrics { display: grid; grid-template-columns: 1fr 1fr 1.3fr; gap: 10px; padding: 14px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .ai-job-metrics dt { font-size: 10px; color: var(--muted-foreground); display: flex; align-items: center; gap: 3px; margin-bottom: 7px; }

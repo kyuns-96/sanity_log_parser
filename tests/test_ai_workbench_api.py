@@ -143,6 +143,22 @@ class ProductionWorkbenchApiTests(unittest.TestCase):
         self.actor=SimpleNamespace(user_id=TARGET[0],auth_method='local_token',access=self.access)
         self.assertEqual(403,self.client.get('/api/workbench/ai/jobs').status_code)
 
+    def test_job_deletion_keeps_sso_origin_and_server_actor_guards(self):
+        identity = str(uuid4())
+        path = '/api/workbench/ai/jobs/' + identity + '/delete'
+        self.service.delete.return_value = {'id': identity, 'deleted': True}
+        for headers in ({}, {'X-Sanity-Request': '1', 'Origin': 'http://different.test'},
+                        {'X-Sanity-Request': '1', 'Sec-Fetch-Site': 'cross-site'}):
+            self.assertEqual(403, self.client.post(path, headers=headers, json={}).status_code)
+        self.service.delete.assert_not_called()
+        response = self.client.post(path, headers=HEADERS, json={'user_id': 'someone-else'})
+        self.assertEqual(200, response.status_code)
+        self.assertEqual({'id': identity, 'deleted': True}, response.json())
+        self.service.delete.assert_called_once_with(TARGET[0], identity)
+        self.assertEqual(400, self.client.post('/api/workbench/ai/jobs/not-a-uuid/delete', headers=HEADERS, json={}).status_code)
+        self.actor = SimpleNamespace(user_id=TARGET[0], auth_method='local_token', access=self.access)
+        self.assertEqual(403, self.client.post(path, headers=HEADERS, json={}).status_code)
+
     def test_session_exposes_only_the_server_administrator_flag_for_the_same_user(self):
         self.ws.authorization.is_admin.return_value = True
         response = self.client.get("/api/workbench/session?is_admin=false&user_id=someone-else")

@@ -371,9 +371,11 @@ def load_result(service,event,context,cases,criteria=None):
 
 def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now=None):
     from oa.sanity_ai_jobs import _transaction,_db_now,_timestamp,_error_code
+    from oa.sanity_ai_deletion import worker_load
     dispatch=None
     with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
-        service._lock(job_id);event=service._load(job_id)
+        service._lock(job_id);event=worker_load(service,job_id)
+        if event is None:return None
         if event['status']=='RESULT_READY': return public(service,service._apply(event))
         if event['status'] not in ('PENDING','RUNNING'): return public(service,event)
         try:
@@ -430,7 +432,9 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
         result=None;failure=error
     seconds=time.monotonic()-call_started
     with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
-        service._lock(job_id);current=service._load(job_id);ledger=Ledger(service,current)
+        service._lock(job_id);current=worker_load(service,job_id)
+        if current is None:return None
+        ledger=Ledger(service,current)
         if current['status']!='RUNNING': return public(service,current)
         if current['sequence']!=event['sequence']:return public(service,current)
         step,ref=ledger.last()

@@ -224,6 +224,100 @@ test('AI card cancellation uses the same-origin endpoint and waits for server st
   await expect(dashboard.getByRole('button', { name: '작업 취소', exact: true })).toHaveCount(0)
 })
 
+test('AI card progress moves only during processing and respects reduced motion', async ({ page }) => {
+  await mockOA(page)
+  let status = 'RUNNING'
+  let online = true
+  await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [{ ...monitoredJob(), status }], server_time: new Date().toISOString(), worker: { site: 'vwp', online, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  const motion = dashboard.locator('.ai-job-progress-motion')
+  await expect(motion).toBeVisible()
+  const transform = () => motion.evaluate(element => getComputedStyle(element, '::after').transform)
+  const start = await transform()
+  await expect.poll(transform).not.toBe(start)
+  await expect(dashboard.getByRole('progressbar')).toHaveAttribute('value', '40')
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(motion).toBeHidden()
+  expect(await motion.evaluate(element => getComputedStyle(element, '::after').animationName)).toBe('none')
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  online = false
+  await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+  await expect(motion).toHaveCount(0)
+  online = true
+  for (const next of ['COMPLETED', 'FAILED', 'CANCELLED', 'UNKNOWN', 'STALE', 'PENDING']) {
+    status = next
+    await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+    await expect(dashboard.locator(`.ai-job-${next.toLowerCase()}`)).toHaveCount(1)
+    await expect(motion).toHaveCount(0)
+  }
+})
+
+test('AI card trash waits for deletion and stays removed after reloading', async ({ page }) => {
+  await mockOA(page)
+  const job = { ...monitoredJob(), status: 'COMPLETED', can_delete: true, can_cancel: false }
+  let deleted = false
+  let finish!: () => void
+  const ready = new Promise<void>(resolve => { finish = resolve })
+  await page.route('**/api/workbench/ai/jobs**', async route => {
+    if (route.request().method() === 'POST') {
+      expect(new URL(route.request().url()).pathname).toBe(`/api/workbench/ai/jobs/${job.id}/delete`)
+      expect(route.request().headers()['x-sanity-request']).toBe('1')
+      expect(route.request().postDataJSON()).toEqual({})
+      await ready
+      deleted = true
+      return route.fulfill({ json: { id: job.id, deleted: true } })
+    }
+    return route.fulfill({ json: { items: deleted ? [] : [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } })
+  })
+  const target = url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', '')
+  await page.goto(target)
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  const trash = dashboard.getByRole('button', { name: 'synthetic_check AI 작업 삭제', exact: true })
+  await trash.click()
+  await expect(trash).toBeDisabled()
+  await expect(trash).toHaveAttribute('aria-busy', 'true')
+  await expect(dashboard.locator('.ai-job-card')).toHaveCount(1)
+  finish()
+  await expect(dashboard.locator('.ai-job-card')).toHaveCount(0)
+  await page.reload()
+  await expect(dashboard).toContainText('아직 요청한 AI 작업이 없습니다')
+})
+
+test('AI card deletion failures keep the card and permission denial clears it', async ({ page }) => {
+  await mockOA(page)
+  let denied = false
+  const job = { ...monitoredJob(), status: 'FAILED', can_delete: true, can_cancel: false }
+  await page.route('**/api/workbench/ai/jobs**', route => route.request().method() === 'POST'
+    ? denied ? route.fulfill({ status: 403, json: { code: 'FORBIDDEN' } }) : route.abort('failed')
+    : route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  const trash = dashboard.getByRole('button', { name: 'synthetic_check AI 작업 삭제', exact: true })
+  await trash.click()
+  await expect(dashboard.getByRole('alert')).toBeVisible()
+  await expect(dashboard.locator('.ai-job-card')).toHaveCount(1)
+  await expect(trash).toBeEnabled()
+  denied = true
+  await trash.click()
+  await expect(dashboard.locator('.ai-job-card')).toHaveCount(0)
+})
+
+test('AI card trash stays disabled for active jobs and unavailable deletion', async ({ page }) => {
+  await mockOA(page)
+  let status = 'RUNNING'
+  await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [{ ...monitoredJob(), status, can_delete: false }], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  const trash = dashboard.getByRole('button', { name: 'synthetic_check AI 작업 삭제', exact: true })
+  await expect(trash).toBeDisabled()
+  await expect(trash).toHaveAttribute('title', '작업을 취소한 뒤 삭제할 수 있습니다.')
+  status = 'COMPLETED'
+  await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+  await expect(dashboard.locator('.ai-job-completed')).toHaveCount(1)
+  await expect(trash).toBeDisabled()
+})
+
 type MockOptions = { holdJob?: boolean; connections?: { id: string; label: string; model: string; models: string[]; available: boolean; enabled: boolean; credential_required?: boolean; credential_ready?: boolean }[]; reviewModel?: string; models?: string[]; modelMetadata?: Partial<ClusterModelMetadata>; preserved?: PreservedSource[]; collectionOnly?: boolean; configured?: boolean; personalToken?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
 
 async function mockOA(page: Page, options: MockOptions = {}) {

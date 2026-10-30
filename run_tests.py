@@ -25,7 +25,7 @@ QUICK_TESTS = (
     "tests.test_ai_connections",
     "tests.test_ai_connection_deletion",
     "tests.test_ai_reasoning", "tests.test_ai_task_models",
-    "tests.test_ai_routing", "tests.test_ai_workbench_api",
+    "tests.test_ai_routing", "tests.test_ai_workbench_api", "tests.test_ai_job_deletion",
     "tests.test_ai_batches.BatchPureTests", "tests.test_ai_batches.BatchDatabaseTests",
     "tests.test_ai_evidence_batches.EvidenceBatchPureTests", "tests.test_ai_evidence_batches.EvidenceBatchDatabaseTests",
     "tests.test_ai_evidence_batches.EvidenceTextDatabaseTests",
