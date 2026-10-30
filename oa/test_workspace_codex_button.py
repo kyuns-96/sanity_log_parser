@@ -4,7 +4,7 @@ import sys
 import uuid
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
+from tests.http_support import TestClient
 
 from devtools.sanity_codex_mock import CodexMockClusteringAdvisor, REPORT_IDS, fixture_report
 from common.sanity_common import ReviewError, digest

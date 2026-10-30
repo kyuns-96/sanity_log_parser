@@ -151,6 +151,17 @@ class OAModelTests(unittest.TestCase):
     def adapter(self, handler, **extra):
         return OAAdvisor(environment(**extra), transport=httpx.MockTransport(handler))
 
+    def test_wire_json_guard_preserves_packet_bytes_and_scans_nested_sequences(self):
+        advisor=self.adapter(lambda request:self.fail('Guard probe must not call HTTP'))
+        packet={'raw':'합성 원문 😀','fields':{'flag':False,'count':0,'empty':None},'rows':({'id':'r1'},)}
+        expected=canonical_json(packet).decode()
+        body,_=advisor._body(packet,'합성 점검')
+        self.assertEqual(expected,body['messages'][1]['content'])
+        for secret in ('Bearer synthetic-private-value', 'TOKEN=synthetic-private-value', 'baSİc synthetic-private-value'):
+            with self.subTest(secret=secret),self.assertRaises(ReviewError) as caught:
+                advisor._body({'rows':({'raw':secret},)},'합성 점검')
+            self.assertEqual('SENSITIVE_CONTENT',caught.exception.code)
+
     def invoke(self, advisor):
         packet = self.packet
         return advisor.cluster(packet["context"], packet["cases"], packet["identity_fields"])

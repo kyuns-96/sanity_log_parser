@@ -8,7 +8,7 @@ import unittest
 import uuid
 from unittest.mock import MagicMock, patch
 
-from fastapi.testclient import TestClient
+from tests.http_support import TestClient
 
 from common.sanity_common import ReviewError, canonical_json, digest
 from common.sanity_submission_files import load_config, verify_bundle, write_json_file
