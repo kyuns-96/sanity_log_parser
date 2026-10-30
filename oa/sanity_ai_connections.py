@@ -17,9 +17,26 @@ NAMESPACE, PREFIX = "oa-ai-connections-v1", "aic1."
 CONFIG_KEYS = frozenset(("label", "enabled", "endpoint", "fallback_endpoint", "api", "auth_mode",
     "model", "models", "issuance_url", "json_mode", "timeout", "max_input_bytes", "max_output_bytes",
     "client_name", "client_version", "session_mode", "session_id", "batch"))
+VWP_CONFIG_KEYS = frozenset(("label", "enabled", "execution_site", "profile_id", "api", "model", "models",
+    "json_mode", "timeout", "max_input_bytes", "max_output_bytes", "batch"))
+
+
+def is_vwp(config):
+    return isinstance(config, dict) and config.get("execution_site") == "vwp"
 
 
 def validate_config(config):
+    if is_vwp(config):
+        from common.sanity_vwp_ai import identifier
+        check(set(config) == VWP_CONFIG_KEYS and identifier(config["profile_id"]), "AI_CONNECTION_CONFIG")
+        # Reuse the existing bounded model/batch validation, without accepting
+        # an endpoint, credential or custom headers for execution on VWP.
+        ordinary = {"label":config["label"], "enabled":config["enabled"],
+            "endpoint":"https://vwp.invalid/inference", "fallback_endpoint":"", "auth_mode":"bearer",
+            "issuance_url":"", "client_name":"", "client_version":"", "session_mode":"disabled", "session_id":"",
+            **{k:config[k] for k in ("api", "model", "models", "json_mode", "timeout", "max_input_bytes", "max_output_bytes", "batch")}}
+        validate_config(ordinary)
+        return deepcopy(config)
     check(isinstance(config, dict) and set(config) == CONFIG_KEYS, "AI_CONNECTION_CONFIG")
     check(isinstance(config["label"], str) and 1 <= len(config["label"]) <= 100
           and config["label"] == config["label"].strip() and config["label"].isprintable(), "AI_CONNECTION_CONFIG")
@@ -74,9 +91,9 @@ class ConnectionStore:
               and value["sha256"] == digest({k:v for k,v in value.items() if k != "sha256"}), "AI_CONNECTION_CORRUPT")
         validate_config(value["config"])
         encrypted = value["client_key_ciphertext"]
-        check((value["config"]["auth_mode"] == "bearer_x_client" and isinstance(encrypted, str)
+        check((value["config"].get("auth_mode") == "bearer_x_client" and isinstance(encrypted, str)
                and 1 <= len(encrypted) <= 20000) or
-              (value["config"]["auth_mode"] != "bearer_x_client" and encrypted is None), "AI_CONNECTION_CORRUPT")
+              (value["config"].get("auth_mode") != "bearer_x_client" and encrypted is None), "AI_CONNECTION_CORRUPT")
         return value
 
     def rows(self):
@@ -115,8 +132,9 @@ class ConnectionStore:
     def public(value):
         config = value["config"]
         return {"id":value["connection_id"], "revision":value["revision"], "label":config["label"],
-                "auth_mode":config["auth_mode"], "model":config["model"], "models":config["models"],
-                "issuance_url":config["issuance_url"] or None}
+                "auth_mode":"vwp_managed" if is_vwp(config) else config["auth_mode"], "model":config["model"], "models":config["models"],
+                "issuance_url":config.get("issuance_url") or None,
+                **({"execution_site":"vwp", "profile_id":config["profile_id"]} if is_vwp(config) else {})}
 
     @staticmethod
     def admin_public(value):
@@ -130,6 +148,7 @@ class ConnectionStore:
             ("endpoint", "fallback_endpoint", "api", "auth_mode", "issuance_url", "client_name")}})
 
     def tokens(self, value):
+        check(not is_vwp(value["config"]), "AI_VWP_CREDENTIALS_MANAGED", "VWP credentials are managed on VWP")
         return UserTokenStore(self.db, self.settings, connection_id=value["connection_id"],
                               credential_scope=self.credential_scope(value))
 
@@ -138,6 +157,18 @@ class ConnectionStore:
         for value in self.rows():
             if not include_disabled and not value["config"]["enabled"]:continue
             entry = {**self.public(value), "enabled":value["config"]["enabled"]}
+            if is_vwp(value["config"]):
+                error = None
+                try:
+                    self.authorize_user(value["connection_id"], user_id)
+                    self.advisor(value["connection_id"])
+                except ReviewError as failure:
+                    if failure.code not in ("AI_VWP_SCHEMA", "AI_VWP_PROFILE_UNAVAILABLE", "AI_CONFIG_CHANGED", "FORBIDDEN", "AI_CONNECTION_UNAVAILABLE"):
+                        raise
+                    error = failure.code
+                result.append({**entry, "credential":{"enabled":False, "registered":False, "revision":0, "managed":True},
+                    "credential_required":False, "credential_ready":error is None, "credential_error":error})
+                continue
             try:
                 status = self.tokens(value).status(user_id)
                 error = ("AI_CREDENTIAL_SCOPE_CHANGED" if status.get("connection_changed") else
@@ -151,6 +182,17 @@ class ConnectionStore:
     def advisor(self, connection_id, model_id=None, *, transport=None):
         value = self.get(connection_id)
         config = value["config"]
+        if is_vwp(config):
+            from oa.sanity_vwp_inference import Catalog, VwpAdvisor
+            profile = Catalog(self.db).get(config["profile_id"])
+            self._check_profile(config, profile)
+            settings = OASettings(enabled=True, endpoint="https://vwp.invalid/inference", token_source="user", token="",
+                auth_mode="bearer", model=config["model"], models=tuple(config["models"]), api=config["api"],
+                json_mode=config["json_mode"], timeout=config["timeout"], max_input_bytes=config["max_input_bytes"],
+                max_output_bytes=config["max_output_bytes"], batch=BatchSettings(**config["batch"]),
+                connection_id=value["connection_id"], connection_revision=value["revision"], connection_label=config["label"])
+            advisor = VwpAdvisor(settings, profile)
+            return advisor.for_model(model_id) if model_id is not None else advisor
         advisor = OAAdvisor(OASettings(enabled=True, endpoint=config["endpoint"], fallback_endpoint=config["fallback_endpoint"],
             token_source="user", token="", model=config["model"], models=tuple(config["models"]), api=config["api"],
             auth_mode=config["auth_mode"], json_mode=config["json_mode"], timeout=config["timeout"],
@@ -161,6 +203,17 @@ class ConnectionStore:
             connection_id=value["connection_id"], connection_revision=value["revision"], connection_label=config["label"]),
             transport=transport)
         return advisor.for_model(model_id) if model_id is not None else advisor
+
+    @staticmethod
+    def _check_profile(config, profile):
+        check(config["api"] == profile["api"] and set(config["models"]) <= set(profile["models"])
+              and all(config[k] <= profile[k] for k in ("timeout", "max_input_bytes", "max_output_bytes")), "AI_CONFIG_CHANGED")
+
+    def authorize_user(self, connection_id, user_id):
+        value = self.get(connection_id)
+        if is_vwp(value["config"]):
+            from oa.sanity_vwp_inference import Catalog
+            Catalog(self.db).get(value["config"]["profile_id"], actor_id=user_id)
 
     def save(self, actor, connection_id, config, expected_revision, client_api_key=None):
         check(getattr(actor, "auth_method", None) == "sso" and getattr(actor, "access", None) is not None
@@ -175,15 +228,21 @@ class ConnectionStore:
         previous = values.get(connection_id)
         check((previous["revision"] if previous else 0) == expected_revision, "REVISION_CONFLICT")
         check(previous is not None or len(values) < 100, "AI_CONNECTION_LIMIT")
-        self._cipher()  # Even Bearer-only connections require encrypted user credentials.
+        check(previous is None or is_vwp(previous["config"]) == is_vwp(config), "AI_CONNECTION_CONFIG")
+        if is_vwp(config):
+            from oa.sanity_vwp_inference import Catalog
+            if previous is None or config != {**previous["config"], "enabled":False}:
+                self._check_profile(config, Catalog(self.db).get(config["profile_id"]))
+        else:
+            self._cipher()  # OA connections require encrypted user credentials.
         key = ""
-        if config["auth_mode"] == "bearer_x_client":
+        if config.get("auth_mode") == "bearer_x_client":
             key = client_api_key if client_api_key is not None else self._client_key(previous) if previous else ""
             check(isinstance(key, str) and 1 <= len(key) <= 8192 and all(33 <= ord(ch) <= 126 for ch in key), "AI_CONNECTION_CONFIG")
         else:
             check(client_api_key in (None, ""), "AI_CONNECTION_CONFIG", "This connection does not use a shared client key")
         SecretGuard({"AI_CLIENT_SECRET":key}).ensure_public({"label":config["label"], "models":config["models"],
-                                                          "issuance_url":config["issuance_url"]})
+                                                          "issuance_url":config.get("issuance_url", "")})
         revision = expected_revision + 1
         encrypted = self._cipher().encrypt(canonical_json({"connection_id":connection_id,"revision":revision,"key":key})).decode("ascii") if key else None
         value = {"namespace":NAMESPACE, "connection_id":connection_id,"revision":revision,"actor_id":actor.user_id,

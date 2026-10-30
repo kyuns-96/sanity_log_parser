@@ -194,6 +194,10 @@ class SourceReadAuthorizationTests(unittest.TestCase):
                 "AND payload->'source'->>'layout'='POST'").fetchone()[0]
             path = '/api/workbench/blocks/block-a1/versions/'+report['version_id']+'/reports/'+report['id']+'/workbench'
             self.assertEqual(200,c.clients[OWNER].get(path).status_code)
+            # Capability/header polling no longer hydrates entire reports.
+            # Warm the cache through an authorized evidence-page read instead.
+            records=path.removesuffix('/workbench')+'/clustering/records?expected_revision=0&limit=25'
+            self.assertEqual(200,c.clients[OWNER].get(records).status_code)
             self.assertGreater(len(CACHE.values),0)
             c.success(c.post(ADMIN,'/api/admin/grants/'+c.owner_grant+'/revoke',c.revoke_body()))
             with patch.object(SourceReader,'parts',side_effect=AssertionError('Revoked caller reached cached evidence')):

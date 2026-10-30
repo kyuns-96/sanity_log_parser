@@ -7,7 +7,7 @@ import { Input } from './studio/components/ui/input'
 import Records from './live-workbench/Records'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog'
 import WorkspaceReview from './WorkspaceReview'
-import AiModelSelect, { selectedAiModel, selectedAiConnection } from './AiModelSelect'
+import AiModelSelect, { selectedAiModel, selectedAiConnection, aiConnectionNotice } from './AiModelSelect'
 import GroupRationale, { rationaleLabels } from './GroupRationale'
 import CaseSource from './CaseSource'
 import PreservedSources, { PreservedCitations } from './PreservedSources'
@@ -387,6 +387,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
     {!data.current && <section className="ws-workbench-empty"><Layers3 size={28} /><h2>분류 초안을 생성하세요</h2><p>{production || data.ai?.enabled && data.ai.supported ? 'AI가 전체 로그와 확정 사례를 바탕으로 초기 그룹과 분류 근거를 제안합니다. 첫 보고서도 과거 사례 없이 시작할 수 있습니다.' : '참고 엔진이 원본 필드와 확정 사례를 바탕으로 그룹 초안을 생성합니다. 사내 AI는 미연결 상태입니다.'}</p></section>}
     {production && !data.ai?.enabled && <p className="ws-notice" role="status">OA AI가 아직 설정되지 않았습니다. 운영 담당자가 모델 연결을 설정한 뒤 AI 분류를 시작할 수 있습니다.</p>}
     {production && choice?.credential_required && !choice.credential_ready && <p className="ws-notice" role="status">개인 AI 토큰을 사용할 수 없습니다. 화면 상단의 ‘개인 AI 토큰’에서 등록 상태와 만료일을 확인해 주세요.</p>}
+    {production && aiConnectionNotice(choice) && <p className="ws-notice" role="status">{aiConnectionNotice(choice)}</p>}
     {production && data.can_edit && data.ai?.enabled && !data.ai.supported && <p className="ws-notice" role="status">AI 분류 요청 조건을 충족하지 못했습니다. 보고서 수신·파싱과 전체 로그의 준비 상태를 확인해 주세요.</p>}
     {pollPaused && aiRunning && <p className="ws-notice" role="status">상태 자동 조회를 잠시 멈췄습니다. 서버 작업은 계속됩니다. ‘최신 구성 다시 조회’로 상태 확인을 이어가세요.</p>}
     {data.ai?.job && data.ai.job.status !== 'COMPLETED' && <div role="status" aria-live="polite" className={['FAILED', 'STALE', 'UNKNOWN', 'SAVE_FAILED'].includes(data.ai.job.status) ? 'ws-error' : 'ws-notice'}>{production ? `${aiExecutionLabel(data.ai.job)} · ${aiJobMessage(data.ai.job)}` : aiRunning ? 'AI가 전체 로그와 확정 사례로 분류 초안을 생성·저장하고 있습니다. 새로고침 후에도 상태를 확인할 수 있습니다.' : data.ai.job.status === 'UNKNOWN' ? 'AI 호출 결과를 확인하지 못했습니다. 자동 재호출하지 않습니다. 새 요청은 추가 사용량이 발생할 수 있습니다.' : data.ai.job.status === 'SAVE_FAILED' ? '받은 AI 결과를 저장하지 못했습니다. 모델을 다시 호출하지 않고 저장을 재시도할 수 있습니다.' : data.ai.job.status === 'STALE' ? '검토 개정이나 참고 사례가 바뀌어 AI 결과를 적용하지 않았습니다. 최신 상태를 확인하고 새 초안을 요청하세요.' : `AI 분류를 완료하지 못했습니다. 기존 구성은 유지됩니다. (${data.ai.job.error || 'AI_CALL_FAILED'})`}{data.ai.job.status === 'SAVE_FAILED' && data.can_edit && <Button variant="outline" disabled={busy} onClick={() => proposeAI(true)}>받은 AI 결과 저장</Button>}</div>}

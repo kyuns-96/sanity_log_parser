@@ -1,0 +1,20 @@
+# Repository-root build; the worker needs no web server or frontend build.
+ARG VWP_AI_BASE_IMAGE=python:3.10-slim-bookworm
+FROM ${VWP_AI_BASE_IMAGE} AS dependencies
+WORKDIR /build
+COPY oa/requirements.txt ./requirements.txt
+RUN python -m venv /opt/venv
+RUN --mount=type=secret,id=pip_config,target=/run/secrets/pip.conf \
+    unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL PIP_TRUSTED_HOST; \
+    PIP_CONFIG_FILE=/run/secrets/pip.conf /opt/venv/bin/python -m pip install --no-cache-dir -r requirements.txt
+
+FROM ${VWP_AI_BASE_IMAGE}
+WORKDIR /opt/work
+ENV PATH="/opt/venv/bin:${PATH}" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 SANITY_AUTH_MODE=sso
+COPY --from=dependencies /opt/venv/ /opt/venv/
+COPY common/ ./common/
+COPY oa/*.py ./oa/
+COPY oa/integration/ ./oa/integration/
+USER 10001:10001
+ENTRYPOINT []
+CMD ["python", "-m", "oa.ai_worker", "--site", "vwp", "--interval", "2"]

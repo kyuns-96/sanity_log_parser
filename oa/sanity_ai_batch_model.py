@@ -169,7 +169,8 @@ class BatchModel:
                     'citation':{**cite,'target_id':key} if cite else None})
             return {'nodes':results,'metadata':metadata,'reason':advice['reason']}
         except ReviewError as error:
-            error.model_called = attempt['model_called']
+            from oa.sanity_ai_retry import annotate
+            annotate(error,attempt)
             raise
 
     def advice(self, nodes):

@@ -6,7 +6,7 @@ import { Input } from './studio/components/ui/input'
 import './ai-connections.css'
 
 type Status = { registered: boolean; revision: number; connection_changed?: boolean; expired?: boolean; expires_soon?: boolean; expires_at?: string | null }
-type Connection = { id: string; label: string; enabled: boolean; auth_mode: string; model: string; models: string[]; issuance_url: string | null; credential: Status; credential_error: string | null }
+type Connection = { id: string; label: string; enabled: boolean; auth_mode: string; execution_site?: string; model: string; models: string[]; issuance_url: string | null; credential: Status; credential_error: string | null }
 const errors: Record<string,string> = {
   AI_USER_TOKEN_EXPIRED: '만료된 인증값입니다. 새로 발급받아 입력해 주세요.',
   AI_CREDENTIAL_SCOPE_CHANGED: '연결 주소나 인증 방식이 바뀌었습니다. 현재 연결에 맞는 인증값을 다시 등록해 주세요.',
@@ -70,6 +70,11 @@ function Credentials({ connection, busy, onSave }: { connection: Connection; bus
   const url = issuance(connection.issuance_url)
   const status = connection.credential
   const name = connection.auth_mode === 'x_client_api_key' ? '개인 API 키' : '개인 Bearer 토큰'
+  if (connection.execution_site === 'vwp') return <article className="ai-personal-connection" data-enabled={connection.enabled} aria-label={`${connection.label} VWP 연결`}>
+    <header><strong>{connection.label}</strong><Badge variant="outline">{connection.enabled ? 'VWP에서 인증 관리' : '사용 중지'}</Badge></header>
+    <small>{connection.models.join(' · ')}</small>
+    <p>{connection.credential_error === 'FORBIDDEN' ? '현재 사용자에게 VWP 모델 사용 권한이 없습니다. VWP 운영 담당자에게 문의해 주세요.' : connection.credential_error ? 'VWP 연결을 현재 사용할 수 없습니다. 운영 담당자에게 연결 상태를 확인해 주세요.' : 'VWP에 등록된 인증값으로 실행합니다. 이 화면에서 개인 토큰을 입력할 필요가 없습니다.'}</p>
+  </article>
   return <article className="ai-personal-connection" data-enabled={connection.enabled} aria-label={`${connection.label} 개인 인증값`}>
     <header><strong>{connection.label}</strong><Badge variant="outline" className={`ai-credential-status${connection.enabled && status.registered ? ' is-registered' : ''}`}>{connection.enabled ? status.registered ? '등록됨' : '미등록' : '사용 중지'}</Badge></header>
     <small>{connection.models.join(' · ')}</small>

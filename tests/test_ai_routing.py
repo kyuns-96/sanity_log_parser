@@ -54,8 +54,8 @@ class RoutingConfigurationTests(unittest.TestCase):
             self.assertEqual("AI_CONFIG", caught.exception.code)
             self.assertNotIn(raw, str(caught.exception))
 
-    def test_fallback_requires_a_distinct_full_https_endpoint(self):
-        for value in (environment()["SANITY_OA_AI_URL"], "http://backup.example.test/api",
+    def test_fallback_requires_a_distinct_full_http_or_https_endpoint(self):
+        for value in (environment()["SANITY_OA_AI_URL"], "ftp://backup.example.test/api",
                       "https://backup.example.test/", "https://user:private@backup.example.test/api",
                       "https://backup.example.test/api?q=private", "https://backup.example.test/api#secret",
                       "https://backup.example.test:bad/api", "https://backup.example.test/\napi",

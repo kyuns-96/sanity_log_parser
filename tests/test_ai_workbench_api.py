@@ -34,7 +34,7 @@ class ProductionWorkbenchApiTests(unittest.TestCase):
                            "model": "synthetic-model", "provider": "OA_OPENAI_COMPATIBLE",
                            "remaining": None, "synthetic_only": False, "job": None}
         self.service.capability.side_effect = lambda *args, **kwargs: deepcopy(self.capability)
-        self.service.enqueue.return_value = {"id": str(uuid4()), "status": "PENDING"}
+        self.service.request.return_value = {"id": str(uuid4()), "status": "PENDING"}
         self.pipeline = Mock()
         self.pipeline.view_paged.side_effect = lambda *args: {"revision": 3, "corporate_ai_connected": False}
         self.pipeline.records_page.return_value = {"items": [], "total": 0}
@@ -82,13 +82,13 @@ class ProductionWorkbenchApiTests(unittest.TestCase):
     def test_model_choice_is_forwarded_for_classification_and_group_judgment(self):
         for suffix, extra in (("/clustering/ai", {}),
                               ("/groups/group-a/review/ai", {"expected_cluster_revision": 2})):
-            self.service.enqueue.reset_mock()
+            self.service.request.reset_mock()
             request_id = uuid4()
             response = self.client.post(BASE + suffix, headers=HEADERS, json={
                 "request_id": str(request_id), "expected_revision": 0,
                 "model_id": "synthetic-second-model", **extra})
             self.assertEqual(202, response.status_code)
-            self.service.enqueue.assert_called_once_with(*TARGET, request_id=request_id,
+            self.service.request.assert_called_once_with(*TARGET, request_id=request_id,
                 expected_revision=0, model_id="synthetic-second-model",
                 **({"group_id": "group-a", **extra} if extra else {}))
 
@@ -100,7 +100,7 @@ class ProductionWorkbenchApiTests(unittest.TestCase):
                 json={"request_id": str(uuid4()), "expected_revision": 0, **extra})
             self.assertEqual(400, response.status_code)
             self.assertEqual({"code": "INVALID_REQUEST"}, response.json())
-        self.service.enqueue.assert_not_called()
+        self.service.request.assert_not_called()
 
     def test_capability_returns_only_model_choices_and_no_endpoint(self):
         self.capability["models"] = ["synthetic-model", "synthetic-second-model"]
@@ -126,6 +126,23 @@ class ProductionWorkbenchApiTests(unittest.TestCase):
         self.ws.user.assert_called_once_with(TARGET[0])
         self.factories["ProductionWorkspaceStore"].assert_called_once_with(self.db, self.access)
 
+    def test_monitoring_and_cancellation_keep_the_authenticated_actor_and_mutation_guards(self):
+        with patch('oa.sanity_ai_monitor.Monitor') as monitor:
+            monitor.return_value.items.return_value={"items":[],"worker":{"site":"vwp","online":False}}
+            response=self.client.get('/api/workbench/ai/jobs?user_id=someone-else')
+            self.assertEqual(200,response.status_code)
+            monitor.return_value.items.assert_called_once_with(TARGET[0])
+        identity=str(uuid4())
+        self.service.cancel.return_value={"id":identity,"status":"CANCELLED"}
+        path='/api/workbench/ai/jobs/'+identity+'/cancel'
+        self.assertEqual(403,self.client.post(path,json={}).status_code)
+        self.service.cancel.assert_not_called()
+        response=self.client.post(path,headers=HEADERS,json={"user_id":"someone-else"})
+        self.assertEqual(200,response.status_code)
+        self.service.cancel.assert_called_once_with(TARGET[0],identity)
+        self.actor=SimpleNamespace(user_id=TARGET[0],auth_method='local_token',access=self.access)
+        self.assertEqual(403,self.client.get('/api/workbench/ai/jobs').status_code)
+
     def test_session_exposes_only_the_server_administrator_flag_for_the_same_user(self):
         self.ws.authorization.is_admin.return_value = True
         response = self.client.get("/api/workbench/session?is_admin=false&user_id=someone-else")
@@ -141,7 +158,7 @@ class ProductionWorkbenchApiTests(unittest.TestCase):
             response = self.client.post(BASE + "/clustering/ai", json=body, headers=headers)
             self.assertEqual(403, response.status_code)
         self.factories["ProductionWorkspaceStore"].assert_not_called()
-        self.service.enqueue.assert_not_called()
+        self.service.request.assert_not_called()
 
     def test_ai_enqueue_only_registers_pinned_job_under_authenticated_user(self):
         request_id = str(uuid4())
@@ -149,7 +166,7 @@ class ProductionWorkbenchApiTests(unittest.TestCase):
                                     json={"request_id": request_id, "expected_revision": 3})
         self.assertEqual(202, response.status_code)
         self.assertEqual("PENDING", response.json()["status"])
-        self.service.enqueue.assert_called_once_with(*TARGET, request_id=UUID(request_id), expected_revision=3)
+        self.service.request.assert_called_once_with(*TARGET, request_id=UUID(request_id), expected_revision=3)
         scope = self.factories["jobs"].call_args.args[0]
         self.assertIs(self.db, scope.db)
         self.assertIs(self.ws, scope.ws)
@@ -169,7 +186,7 @@ class ProductionWorkbenchApiTests(unittest.TestCase):
         review_path = BASE + "/groups/group-a/review/ai"
         for value in (body, dict(body, expected_cluster_revision=True), dict(body, expected_cluster_revision=0)):
             self.assertEqual(400, self.client.post(review_path, headers=HEADERS, json=value).status_code)
-        self.service.enqueue.assert_not_called()
+        self.service.request.assert_not_called()
 
     def test_group_job_and_human_save_are_separate_and_pin_partition(self):
         path = BASE + "/groups/group-a/review"
@@ -177,7 +194,7 @@ class ProductionWorkbenchApiTests(unittest.TestCase):
         body = {"request_id": request_id, "expected_revision": 2, "expected_cluster_revision": 7}
         response = self.client.post(path + "/ai", headers=HEADERS, json=body)
         self.assertEqual(202, response.status_code)
-        self.service.enqueue.assert_called_once_with(*TARGET, group_id="group-a", request_id=UUID(request_id),
+        self.service.request.assert_called_once_with(*TARGET, group_id="group-a", request_id=UUID(request_id),
                                                     expected_revision=2, expected_cluster_revision=7)
         self.review.save.assert_not_called()
         response = self.client.post(path + "?compact=true", headers=HEADERS,

@@ -117,9 +117,10 @@ test('administrator adds Bearer and gateway model connections without a client k
   await page.getByRole('button', { name: 'AI 연결·모델 관리', exact: true }).click()
   const panel = page.getByRole('region', { name: 'AI 연결·모델 관리', exact: true })
   await expect(page.getByRole('heading', { name: '프로젝트 등록', exact: true })).toBeHidden()
-  await panel.getByRole('button', { name: 'AI 연결 추가', exact: true }).click()
+  await panel.getByRole('button', { name: 'OA AI 연결 추가', exact: true }).click()
   await panel.getByLabel('AI 연결 이름', { exact: true }).fill('합성 Bearer 연결')
-  await panel.getByLabel('AI API URL', { exact: true }).fill('https://one.example.test/v1/chat/completions')
+  await panel.getByLabel('AI API URL', { exact: true }).fill('http://one.example.test/v1/chat/completions')
+  await panel.getByLabel('보조 API URL', { exact: true }).fill('http://backup.example.test/v1/chat/completions')
   await expect(panel.getByLabel('공통 x-client-api-key', { exact: true })).toHaveCount(0)
   await panel.getByLabel('AI 인증값 발급 URL').fill('https://identity.example.test/one')
   await panel.getByLabel('허용 AI 모델 목록').fill('model-a\nmodel-b')
@@ -127,9 +128,9 @@ test('administrator adds Bearer and gateway model connections without a client k
   await panel.getByLabel('기본 AI 모델').selectOption('model-b')
   await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
   await expect(panel.getByText('합성 Bearer 연결', { exact: true })).toBeVisible()
-  expect(entries[0].config).toMatchObject({ auth_mode: 'bearer', model: 'model-b', models: ['model-a', 'model-b'], client_name: '', session_mode: 'disabled' })
+  expect(entries[0].config).toMatchObject({ endpoint: 'http://one.example.test/v1/chat/completions', fallback_endpoint: 'http://backup.example.test/v1/chat/completions', auth_mode: 'bearer', model: 'model-b', models: ['model-a', 'model-b'], client_name: '', session_mode: 'disabled' })
   expect(state.writes[0].body.client_api_key).toBeUndefined()
-  await panel.getByRole('button', { name: 'AI 연결 추가', exact: true }).click()
+  await panel.getByRole('button', { name: 'OA AI 연결 추가', exact: true }).click()
   await panel.getByLabel('AI 연결 이름', { exact: true }).fill('합성 게이트웨이 연결')
   await panel.getByLabel('AI API URL', { exact: true }).fill('https://two.example.test/v1/chat/completions')
   await panel.getByLabel('AI 인증 방식').selectOption('bearer_x_client')
@@ -247,4 +248,62 @@ test('welcome and administrator share the Studio neutral theme without mobile ov
   await expect(page.getByRole('heading', { name: '프로젝트·권한 관리', exact: true })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
   await page.screenshot({ path: 'artifacts/rbac-admin-mobile.png', fullPage: true, animations: 'disabled' })
+})
+
+const syntheticVwpProfile = { id: 'synthetic-vwp-profile', label: '합성 VWP 실행', api: 'chat_completions',
+  models: ['vwp-fast', 'vwp-review'], auth_mode: 'bearer', timeout: 120, max_input_bytes: 1048576,
+  max_output_bytes: 2097152, sha256: 'a'.repeat(64) }
+
+test('administrator registers VWP separately without OA encryption or model secrets', async ({ page }) => {
+  await accessServer(page, true)
+  const entries: { id: string; revision: number; config: Record<string, unknown>; client_key_registered: boolean }[] = []
+  const writes: Record<string, unknown>[] = []
+  await page.route('**/api/admin/ai/connections**', async route => {
+    const request = route.request()
+    if (request.method() === 'GET') return route.fulfill({ json: { items: entries, credentials_ready: false, vwp_ready: true, vwp_profiles: [syntheticVwpProfile] } })
+    expect(request.headers()['x-sanity-request']).toBe('1')
+    const body = request.postDataJSON()
+    writes.push(body)
+    const entry = { id: new URL(request.url()).pathname.split('/').at(-1)!, revision: 1, config: body.config, client_key_registered: false }
+    entries.push(entry)
+    return route.fulfill({ json: entry })
+  })
+  await page.goto('/?page=admin')
+  await page.getByRole('button', { name: 'AI 연결·모델 관리', exact: true }).click()
+  const panel = page.getByRole('region', { name: 'AI 연결·모델 관리', exact: true })
+  await expect(panel.getByRole('button', { name: 'OA AI 연결 추가', exact: true })).toBeDisabled()
+  await panel.getByRole('button', { name: 'VWP AI 연결 추가', exact: true }).click()
+  const form = panel.getByRole('form', { name: 'VWP AI 연결 등록' })
+  await form.getByLabel('VWP AI 연결 이름', { exact: true }).fill('VWP 검토 모델')
+  await form.getByLabel('VWP AI 실행 프로필', { exact: true }).selectOption(syntheticVwpProfile.id)
+  await expect(form.getByLabel('VWP 기본 AI 모델', { exact: true })).toHaveValue('')
+  await form.getByRole('checkbox', { name: 'vwp-fast', exact: true }).uncheck()
+  await form.getByLabel('VWP 기본 AI 모델', { exact: true }).selectOption('vwp-review')
+  await expect(form.locator('input[type=password]')).toHaveCount(0)
+  await expect(form.getByLabel('AI API URL', { exact: true })).toHaveCount(0)
+  await form.getByRole('button', { name: 'VWP AI 연결 저장', exact: true }).click()
+  await expect(panel.getByText('VWP 검토 모델', { exact: true })).toBeVisible()
+  expect(writes).toHaveLength(1)
+  const config = writes[0].config as Record<string, unknown>
+  expect(config).toMatchObject({ execution_site: 'vwp', profile_id: syntheticVwpProfile.id, model: 'vwp-review', models: ['vwp-review'] })
+  for (const key of ['endpoint', 'fallback_endpoint', 'token', 'client_api_key', 'issuance_url']) expect(config[key]).toBeUndefined()
+  expect(writes[0].client_api_key).toBeUndefined()
+})
+
+test('VWP registration stays unavailable until the execution profile is ready', async ({ page }) => {
+  await accessServer(page, true)
+  let writes = 0
+  await page.route('**/api/admin/ai/connections**', route => {
+    if (route.request().method() !== 'GET') writes++
+    return route.fulfill({ json: { items: [], credentials_ready: true, vwp_ready: false, vwp_profiles: [] } })
+  })
+  await page.goto('/?page=admin')
+  await page.getByRole('button', { name: 'AI 연결·모델 관리', exact: true }).click()
+  await page.getByRole('button', { name: 'VWP AI 연결 추가', exact: true }).click()
+  await expect(page.getByText('사용 가능한 VWP 실행 프로필이 없습니다.', { exact: false })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'VWP AI 연결 저장', exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: '취소', exact: true }).click()
+  await page.getByRole('button', { name: 'OA AI 연결 추가', exact: true }).click()
+  await expect(page.getByLabel('AI API URL', { exact: true })).toBeVisible()
+  expect(writes).toBe(0)
 })

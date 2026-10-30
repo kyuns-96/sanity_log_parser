@@ -36,7 +36,9 @@ def create_ai_connections_router(authorized_actor):
             from common.sanity_common import ReviewError
             if not isinstance(error, ReviewError) or error.code != "AI_TOKEN_STORE_NOT_CONFIGURED":raise
             ready = False
-        return {"items":[store.admin_public(value) for value in store.rows()], "credentials_ready":ready}
+        from oa.sanity_vwp_inference import Catalog
+        return {"items":[store.admin_public(value) for value in store.rows()], "credentials_ready":ready,
+                "vwp_ready":True, "vwp_profiles":Catalog(store.db).admin_public()}
 
     @router.post("/api/admin/ai/connections/{connection_id}")
     def save(connection_id: UUID, body: ConnectionCommand, actor=Depends(owner)):

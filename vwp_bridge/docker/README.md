@@ -1,5 +1,7 @@
 # 중앙 VWP 수집 서비스와 VWP-bridge Docker 실행
 
+OA 분류·판정 작업자를 VWP로 이전하는 배포는 [AI 작업자 전용 안내](../AI_WORKER.md)와 `compose.ai-worker.yaml`/`Dockerfile-ai-worker`를 사용한다. 아래 수집·legacy worker와 별개다.
+
 **현재 기본 HTTPS 배치:** [원본 DB 보관](../../vwp/DB_ORIGINALS.md)을 사용한다. 토큰 없는 서버 schema 4와 기존 010이 필요하며 `compose.https.yaml`은 설정/TLS만 마운트하고 worker 파싱 임시 `/tmp`를 제공한다. `VWP_SUBMISSION_STORAGE_DIR`와 영구 archive/upload/receipt 디렉터리는 필요 없다. 아래 filesystem 볼륨 설명은 이전 호환 배치다.
 
 **2026-10-27 현재 배치:** VWP 사용자 환경과 bridge 사이에는 공유 폴더가 없고 HTTPS를 사용한다. [HTTPS 제출 안내](../../vwp/HTTPS_SUBMISSION.md#5-docker)의 `compose.https.yaml`과 `vwp-submission-api`·`vwp-submission-worker`를 함께 사용한다. 4절의 `compose.submission.yaml`은 schema 1 공유 폴더 호환 배치다. 현재 [토큰 없는 접수 정책](../../vwp/HTTPS_DECISIONS.md)에 따라 bridge 소켓이 관측하는 승인된 peer IP/CIDR를 허용 목록에 설정한다. OA에 로그인한 OWNER의 범위 확정 전에는 보고서를 공개하지 않는다. 제출용 토큰/인증 SDK를 준비하지 않는다.

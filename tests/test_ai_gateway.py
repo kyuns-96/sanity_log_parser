@@ -317,8 +317,8 @@ class GatewayRequestTests(unittest.TestCase):
             self.assertTrue(error.exception.model_called)
             self.assertEqual(1, len(calls))
 
-    def test_gateway_configuration_keeps_https_and_ca_validation(self):
-        for extra in ({"SANITY_OA_AI_URL": "http://gateway.invalid/completions"},
+    def test_gateway_configuration_keeps_scheme_and_https_ca_validation(self):
+        for extra in ({"SANITY_OA_AI_URL": "ftp://gateway.invalid/completions"},
                       {"SANITY_OA_AI_CA_PATH": "relative-ca.pem"},
                       {"SANITY_OA_AI_CA_PATH": "/nonexistent/synthetic/private-root.pem"}):
             with self.subTest(extra=extra), self.assertRaises(ReviewError) as error:

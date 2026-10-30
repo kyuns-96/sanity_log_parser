@@ -7,6 +7,7 @@ namespace. The parent stores references, never copies every child on progress.
 from datetime import timedelta
 import base64
 import hashlib
+import time
 from uuid import uuid4
 
 from common.sanity_common import ReviewError, canonical_json, digest, pack_json, unpack_json
@@ -15,6 +16,7 @@ from common.sanity_submission import check
 from common.sanity_preserved_ai import available, model_metadata, receipt
 from oa.sanity_workspace import record_id
 from oa.sanity_ai_batch_model import BatchModel, VERSION
+from oa.sanity_ai_retry import MAX_RETRIES,receipt as failure_receipt,valid_receipt,retry_at,resumable
 
 NAMESPACE = 'oa-ai-batch-v1'
 MAX_BYTES = 64*1024*1024
@@ -73,7 +75,10 @@ class Ledger:
         index = previous['sequence']+1 if previous else 1
         body = {'sequence':index,'previous_sha256':previous_ref['sha256'] if previous_ref else None,
                 'status':status,'state':state,**extra}
-        return body,self.put('step.'+str(index).zfill(8),body)
+        ref=self.put('step.'+str(index).zfill(8),body)
+        from oa.sanity_ai_monitor import capture
+        capture(self.service,self.parent)
+        return body,ref
 
     def plans(self, round_number, descriptors, input_count):
         # One compressed immutable round retains every descriptor. Separate
@@ -144,6 +149,17 @@ class Ledger:
                     check(pending is not None and result['metadata']['input_sha256']==pending['input_sha256'],'AI_BATCH_CORRUPT')
                     pending=None
                 else: check(pending is None,'AI_BATCH_CORRUPT')
+            if step['status']=='READY' and 'unsent' in step:
+                check(pending is not None and step['unsent']=={'call_token':pending['call_token'],
+                      'input_sha256':pending['input_sha256'],'error':'AI_CONNECT_FAILED'},'AI_BATCH_CORRUPT')
+                pending=None
+            if step['status']=='READY' and 'failure' in step:
+                failure=step['failure']
+                check(pending is not None and isinstance(failure,dict)
+                    and set(failure)=={'call_token','input_sha256','receipt'}
+                    and failure['call_token']==pending['call_token'] and failure['input_sha256']==pending['input_sha256']
+                    and valid_receipt(failure['receipt']),'AI_BATCH_CORRUPT')
+                pending=None
         check(pending is None,'AI_BATCH_CORRUPT')
         return previous
 
@@ -161,7 +177,19 @@ def public(service,event):
     value['progress']={'mode':'BATCH','phase':state.get('phase', 'CLASSIFY' if state.get('round',0)==0 else 'MERGE'),
         'completed_records':state.get('records',0),'total_records':event['data']['batch'].get('total_records',0),
         'completed_calls':state.get('calls',0),'round':state.get('round',0),
-        'waiting':bool(step and step['status']=='RESERVED')}
+        'waiting':bool(step and (step['status']=='RESERVED' or state.get('retry_after'))),
+        'round_completed':state.get('index',0),'round_total':state.get('round_total',0),
+        'average_call_seconds':state.get('seconds',0)/state['calls'] if state.get('calls') else None,
+        'seconds_per_record':state.get('record_seconds',0)/state['records'] if state.get('records') else None,
+        'stage_eta_seconds':max(0,state.get('round_total',0)-state.get('index',0))*state['round_seconds']/state['round_samples']
+            if state.get('round_samples',0)>=2 and state.get('round_total') else None,
+        'retry_count':state.get('failed_calls',0),'child_retries':state.get('child_retries',0),
+        'retry_limit':MAX_RETRIES,'retry_after':state.get('retry_after')}
+    proof=(step.get('failure',{}).get('receipt',{}) if step else {})
+    if state.get('retry_after') and valid_receipt(proof):
+        value['progress']['retry_error']=proof['error']
+        if 'http_status' in proof:value['progress']['retry_http_status']=proof['http_status']
+    value['resumable']=resumable(event,checkpoint_ready=bool(step and step['status']=='READY'))
     if state.get('calls',0): value['model_called']=True;value['model_attempted']=True
     elif step and step['status']=='RESERVED':
         # A terminal pre-send failure is known unsent even though its immutable
@@ -216,7 +244,8 @@ def _prepare(service,event,advisor,now):
             'model_attempted':False,'model_called':False,'started_at':started.isoformat(),
             'deadline':(started+timedelta(seconds=model.settings.deadline_seconds)).isoformat()},now=started)
         ledger=Ledger(service,event)
-        state={'round':0,'index':0,'records':0,'calls':0,'nodes':0,'stable':0,'actual_model':None}
+        state={'round':0,'index':0,'records':0,'calls':0,'nodes':0,'stable':0,'actual_model':None,
+               'round_total':len(ranges),'round_seconds':0,'round_samples':0,'seconds':0,'record_seconds':0}
         if event['data']['batch']['version']==2:
             state.update(phase='TEXT' if text_plan else 'REVIEW' if model.review else 'CLASSIFY',stage_round=0)
         ledger.step(None,None,'READY',state)
@@ -231,6 +260,7 @@ def _text_round(ledger,model,step,ref,nodes,node_refs):
         descriptors=_record_plan(model)
         ledger.plans(number,descriptors,len(model.records))
         ledger.step(step,ref,'READY',{**state,'round':number,'index':0,'nodes':0,'stage_round':0,
+            'round_total':len(descriptors),'round_seconds':0,'round_samples':0,
             'phase':'REVIEW' if model.review else 'CLASSIFY','preserved_ref':node_refs[0]})
     else:
         check(state['stage_round']<model.settings.max_rounds,'AI_BATCH_LIMIT')
@@ -238,6 +268,7 @@ def _text_round(ledger,model,step,ref,nodes,node_refs):
         descriptors=[{'kind':'TEXT_MERGE','nodes':g,'node_refs':[by_id[k] for k in g]} for g in groups]
         ledger.plans(number,descriptors,len(nodes))
         ledger.step(step,ref,'READY',{**state,'round':number,'index':0,'nodes':0,
+                                    'round_total':len(descriptors),'round_seconds':0,'round_samples':0,
                                     'stage_round':state['stage_round']+1,'phase':'TEXT_MERGE'})
 
 
@@ -285,7 +316,8 @@ def _finish_round(service,event,ledger,model,step,ref):
     descriptors=[{'kind':'REVIEW_MERGE' if review else 'MERGE','nodes':g,'node_refs':[by_id[k] for k in g]} for g in groups]
     ledger.plans(round_number+1,descriptors,len(nodes))
     extra={'stage_round':stage_round+1,'phase':'REVIEW_MERGE' if review else 'MERGE'} if 'phase' in state else {}
-    ledger.step(step,ref,'READY',{**state,'round':round_number+1,'index':0,'nodes':0,'stable':stable,**extra})
+    ledger.step(step,ref,'READY',{**state,'round':round_number+1,'index':0,'nodes':0,'stable':stable,
+                                'round_total':len(descriptors),'round_seconds':0,'round_samples':0,**extra})
     return event
 
 
@@ -320,6 +352,7 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
                 return public(service,event)
             if _timestamp(event['data']['deadline'])<=current:
                 return public(service,service._failed(event,ReviewError('AI_BATCH_DEADLINE','Overall batch deadline exceeded'),status='FAILED'))
+            if state.get('retry_after') and _timestamp(state['retry_after'])>current:return public(service,event)
             manifest=ledger.round(state['round'])
             if state['index']==manifest['count']:
                 return public(service,_finish_round(service,event,ledger,model,step,ref))
@@ -330,23 +363,29 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
                 result=ledger.put(f"result.{state['round']:03d}.{state['index']:06d}",{'nodes':nodes,'metadata':None})
                 ledger.step(step,ref,'READY',{**state,'index':state['index']+1,'nodes':state['nodes']+1},result=result)
                 return public(service,event)
-            check(state['calls']<model.settings.max_calls,'AI_BATCH_LIMIT')
+            check(state['calls']+state.get('failed_calls',0)<model.settings.max_calls,'AI_BATCH_LIMIT')
             prepared_call=model.prepare(descriptor,nodes)
             request_bytes=prepared_call[1][0]
+            state={**state,'retry_after':None}
             reserved,reserved_ref=ledger.step(step,ref,'RESERVED',state,descriptor_sha256=digest(descriptor),
                 input_sha256=hashlib.sha256(request_bytes).hexdigest(),input_bytes=len(request_bytes),
                 prompt_version=prepared_call[0][2],
                 call_token=str(uuid4()),deadline=(current+timedelta(seconds=model.advisor.settings.timeout+60)).isoformat())
+            model.advisor=service._bind_advisor(model.advisor,event,reserved['call_token'])
+            from oa.sanity_ai_monitor import observer
+            model.advisor=model.advisor.with_observer(observer(db_factory,workspace_factory,advisor,criteria_provider,event,reserved['call_token']))
             dispatch=(event,reserved,reserved_ref,model,descriptor,nodes,revision,prepared_call)
         except ReviewError as error:
             stale=error.code in ('AI_INPUT_STALE','AI_CASES_STALE','AI_CRITERIA_STALE','REVISION_CONFLICT','AI_CONFIG_CHANGED','AI_CREDENTIAL_CHANGED','UNAUTHORIZED','FORBIDDEN')
             return public(service,service._failed(event,error,status='STALE' if stale else 'FAILED'))
     # No database connection or authorization lock survives model dispatch.
     event,reserved,reserved_ref,model,descriptor,nodes,revision,prepared_call=dispatch
+    call_started=time.monotonic()
     try:
         result=model.execute(descriptor,nodes=nodes,prepared_call=prepared_call); failure=None
     except Exception as error:
         result=None;failure=error
+    seconds=time.monotonic()-call_started
     with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
         service._lock(job_id);current=service._load(job_id);ledger=Ledger(service,current)
         if current['status']!='RUNNING': return public(service,current)
@@ -355,8 +394,23 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
         if _timestamp(step['deadline'])<=_db_now(service.db):
             return public(service,service._failed(current,ReviewError('AI_OUTCOME_UNKNOWN','Child deadline exceeded'),status='UNKNOWN',called=True))
         if failure is not None:
+            state=step['state']
+            proof=failure_receipt(failure) if current['data'].get('fail_safe') else None
+            if proof is not None:
+                failed=state.get('failed_calls',0)+1
+                can_retry=state.get('child_retries',0)<MAX_RETRIES and state['calls']+failed<model.settings.max_calls
+                retries=state.get('child_retries',0)+(1 if can_retry else 0)
+                ledger.step(step,ref,'READY',{**state,'child_retries':retries,'failed_calls':failed,
+                    'retry_after':retry_at(_db_now(service.db),retries,failure) if can_retry else None},
+                    failure={'call_token':step['call_token'],'input_sha256':step['input_sha256'],'receipt':proof})
+                if can_retry:return public(service,current)
+                current={**current,'data':{**current['data'],'retry_failure':proof}}
+                if state['calls']+failed>=model.settings.max_calls:
+                    return public(service,service._failed(current,ReviewError('AI_BATCH_LIMIT','Call attempt budget exhausted'),
+                                  status='FAILED',called=proof['model_called']))
             unknown=not isinstance(failure,ReviewError) or _error_code(failure)=='AI_OUTCOME_UNKNOWN'
-            return public(service,service._failed(current,failure,status='UNKNOWN' if unknown else 'FAILED',called=getattr(failure,'model_called',None)))
+            stale=_error_code(failure) in ('AI_CONFIG_CHANGED','AI_CREDENTIAL_CHANGED','FORBIDDEN','UNAUTHORIZED')
+            return public(service,service._failed(current,failure,status='UNKNOWN' if unknown else 'STALE' if stale else 'FAILED',called=getattr(failure,'model_called',None)))
         try:
             service._inputs(current)
             if service._personal_tokens(current):
@@ -367,7 +421,11 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
             result_ref=ledger.put(f"result.{state['round']:03d}.{state['index']:06d}",result)
             records=state['records']+(descriptor['stop']-descriptor['start'] if descriptor['kind'] in ('LEAF','REVIEW_LEAF') else 0)
             ledger.step(step,ref,'READY',{**state,'index':state['index']+1,'calls':state['calls']+1,
-                        'records':records,'nodes':state['nodes']+len(result['nodes']),'actual_model':actual},result=result_ref)
+                        'records':records,'nodes':state['nodes']+len(result['nodes']),'actual_model':actual,
+                        'seconds':state.get('seconds',0)+seconds,'round_seconds':state.get('round_seconds',0)+seconds,
+                        'round_samples':state.get('round_samples',0)+1,
+                        'record_seconds':state.get('record_seconds',0)+(seconds if records>state['records'] else 0),
+                        'child_retries':0,'retry_after':None},result=result_ref)
             return public(service,current)
         except ReviewError as error:
             return public(service,service._failed(current,error,status='STALE',called=True))

@@ -236,7 +236,8 @@ class EvidenceBatchModel(BatchModel):
                         'advice':advice,'citations':citations or []}
             return {'nodes':[node], 'metadata':metadata}
         except ReviewError as error:
-            error.model_called = attempt['model_called']
+            from oa.sanity_ai_retry import annotate
+            annotate(error,attempt)
             raise
 
     def text_result(self, value, descriptor, packet, nodes):

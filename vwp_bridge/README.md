@@ -88,7 +88,11 @@ OA가 생성한 특정 요청 UUID에 `respond`를 실행하거나 `work`로 다
 분석 번들과 분류 입력/결과에서 발견한 자격증명은 전달을 중단합니다. 범용 DLP를 구현한 것은 아닙니다.
 원본 snapshot은 현장 보존 정책에 따라 별도로 유지합니다.
 
-## VWP AI 작업자
+## 전체 AI 작업자 이전 — 2026-10-30
+
+OA의 전체 입력 준비·사례 검색·분류/판정·검증/저장 작업자를 VWP에서 실행한다. 같은 DB 계정의 기존 명시적 단일 계정 모드를 사용하고 별도 추론 중계 큐나 DDL은 만들지 않는다. 진입점은 `python -m oa.ai_worker --site vwp`다. [전용 배포·프로필·진행 카드·안전 복구 안내](AI_WORKER.md)를 따른다. 아래 `vwp_bridge.main work`는 기존 legacy 경로다.
+
+## 기존 VWP AI 작업자
 
 `work`는 DB의 분류 요청과 원문 요청을 polling하며 `--once`로 한 번만 실행할 수 있습니다.
 비공개 `.env`의 OpenAI 호환 URL/token/model과 명시적인 API 방식으로 연결합니다. 설정은 [루트 안내](../README.md#6-vwp-ai-분류-루프)를 따릅니다.

@@ -102,13 +102,13 @@ class AIAdapter:
         url = self.settings.get("SANITY_AI_URL", "")
         try:
             parsed = urlsplit(url)
-            valid = (parsed.scheme == "https" and parsed.hostname and parsed.port != 0
+            valid = (parsed.scheme in ("http", "https") and parsed.hostname and parsed.port != 0
                      and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
                      and not any(ch.isspace() or ord(ch) < 32 for ch in url))
             if not valid:
                 raise ValueError()
         except (ValueError, TypeError) as exc:
-            raise ReviewError("AI_CONFIG", "Configure an HTTPS JSON adapter endpoint without embedded credentials") from exc
+            raise ReviewError("AI_CONFIG", "Configure an HTTP or HTTPS JSON adapter endpoint without embedded credentials") from exc
         token = self.settings.get("SANITY_AI_TOKEN", "")
         if not isinstance(token, str) or not token or any(ord(ch) < 33 or ord(ch) > 126 for ch in token):
             raise ReviewError("AI_CONFIG", "Configure AI authentication on VWP only")
@@ -116,7 +116,7 @@ class AIAdapter:
             ca = self.settings.get("SANITY_AI_CA_PATH")
             if ca and not Path(ca).is_absolute():
                 raise ReviewError("AI_CONFIG", "CA path must be absolute")
-            verify = ssl.create_default_context(cafile=ca or None)
+            verify = ssl.create_default_context(cafile=ca or None) if parsed.scheme == "https" else True
         except (OSError, ssl.SSLError) as exc:
             raise ReviewError("AI_CONFIG", "Cannot load AI TLS trust configuration") from exc
         try:

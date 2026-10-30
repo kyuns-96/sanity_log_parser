@@ -122,7 +122,7 @@ class WorkspaceGroupReviewStore(WorkspaceReviewStore):
         references = [case for case in cases if case["id"] in value["reference_ids"]]
         proposal = {**self.metadata(context), **value, "id": rid, "command": command,
                     "review_revision": revision, "at": utcnow().isoformat(), "actor": self.ws.user(user_id),
-                    "references": references, "advisor": "OA_OPENAI_COMPATIBLE", "model_called": True,
+                    "references": references, "advisor": metadata["provider"], "model_called": True,
                     "case_policy": "OA_RETRIEVAL_V1", "case_catalog_sha256": digest([case["id"] for case in cases]),
                     "input_case_count": len(cases), "input_cases": [{"id": case["id"], "revision": case["revision"],
                         "source_sha256": case["source_sha256"], "sha256": digest(case)} for case in cases],

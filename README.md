@@ -222,7 +222,7 @@ SANITY_AI_JSON_MODE=off
 SANITY_AI_TIMEOUT=120
 ```
 
-URL은 전체 HTTPS 엔드포인트입니다. Responses 서버는 URL과 `SANITY_AI_API=responses`를 함께 설정합니다.
+URL은 전체 HTTP 또는 HTTPS 모델 엔드포인트입니다. Responses 서버는 URL과 `SANITY_AI_API=responses`를 함께 설정합니다.
 JSON object 모드 지원을 확인한 경우에만 `SANITY_AI_JSON_MODE=on`을 사용합니다.
 사내 PEM CA가 필요하면 `SANITY_AI_CA_PATH`에 절대 경로를 지정합니다. TLS 검증을 끄지 않습니다.
 CLI는 `SANITY_AI_MODE=cli`와 절대 실행 파일 경로를 포함한 `SANITY_AI_ARGV` JSON 배열로 명시적으로 선택합니다.

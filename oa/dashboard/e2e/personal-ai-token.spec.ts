@@ -187,3 +187,19 @@ for (const url of [undefined, 'javascript:alert(1)', 'http://identity.example.te
     await expect(page.getByLabel(tokenInput, { exact: true })).toBeVisible()
   })
 }
+
+test('VWP managed credentials show no personal token form alongside an OA connection', async ({ page }) => {
+  const state = await setup(page, { empty: true })
+  await page.getByRole('dialog').press('Escape')
+  await page.route('**/api/ai/connections', route => route.fulfill({ json: { items: [
+    { id: connectionId, label: 'OA 개인 연결', enabled: true, auth_mode: 'bearer', model: 'oa-model', models: ['oa-model'], issuance_url: null, credential: { registered: false, revision: 0 }, credential_error: null },
+    { id: '20000000-0000-4000-8000-000000000099', label: 'VWP 공용 연결', enabled: true, execution_site: 'vwp', auth_mode: 'vwp_managed', model: 'vwp-model', models: ['vwp-model'], issuance_url: null, credential: { registered: false, revision: 0, managed: true }, credential_error: null },
+  ] } }))
+  await page.getByRole('button', { name: '개인 AI 토큰', exact: true }).click()
+  const remote = page.getByRole('article', { name: 'VWP 공용 연결 VWP 연결', exact: true })
+  await expect(remote.getByText('VWP에서 인증 관리', { exact: true })).toBeVisible()
+  await expect(remote.locator('input')).toHaveCount(0)
+  await expect(remote.getByRole('button')).toHaveCount(0)
+  await expect(page.getByRole('article', { name: 'OA 개인 연결 개인 인증값', exact: true }).locator('input[type=password]')).toBeVisible()
+  expect(state.writes).toEqual([])
+})

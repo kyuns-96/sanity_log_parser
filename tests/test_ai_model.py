@@ -123,7 +123,7 @@ class OASettingsTests(unittest.TestCase):
 
     def test_invalid_flags_endpoint_credentials_and_budgets_never_call_http(self):
         values = {"ENABLED": ["yes", "TRUE", True], "JSON_MODE": ["on", "1"],
-                  "URL": ["http://model.invalid/api", "https://model.invalid:bad/api",
+                  "URL": ["ftp://model.invalid/api", "https://model.invalid:bad/api",
                           "https://name:secret@model.invalid/api", "https://model.invalid/api?q=private",
                           "https://model.invalid/api#part", "https://model.invalid/", "https://model.invalid/\napi"],
                   "TOKEN": ["", "bad\r\nheader", "한글"], "MODEL": ["", "has spaces"],

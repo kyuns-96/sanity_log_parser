@@ -43,3 +43,10 @@
   .ai-connection-form { grid-template-columns: minmax(0, 1fr); }
   .ai-connections-admin .am-panel-heading { flex-wrap: wrap; }
 }
+.vwp-ai-profile-details { display: grid; gap: 9px; margin: 8px 0; font-size: 13px; }
+.vwp-ai-profile-details > div { display: flex; justify-content: space-between; gap: 16px; }
+.vwp-ai-profile-details dt { color: var(--text-muted); }
+.vwp-ai-profile-details dd { margin: 0; color: var(--ink); }
+.vwp-ai-model-options { display: grid; gap: 8px; max-height: 18rem; overflow: auto; padding: 4px; }
+.vwp-ai-model-options .ai-checkbox { align-items: flex-start; }
+.vwp-ai-model-options .ai-checkbox span { min-width: 0; overflow-wrap: anywhere; }

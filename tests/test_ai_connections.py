@@ -50,7 +50,7 @@ class ConnectionConfigurationTests(unittest.TestCase):
             self.assertEqual("AI_CONNECTION_CONFIG", caught.exception.code)
 
     def test_invalid_settings_cannot_add_auth_headers_urls_or_files(self):
-        for changes in ({"endpoint":"http://one.example.test/api"},
+        for changes in ({"endpoint":"ftp://one.example.test/api"},
                         {"endpoint":"https://one.example.test/api?private=secret"}, {"models":[]},
                         {"models":["model-a","model-a"]}, {"model":"not-in-catalog"},
                         {"issuance_url":"javascript:alert(1)"}, {"timeout":True},
@@ -119,6 +119,21 @@ class ConnectionDatabaseTests(PgTestCase):
             result=self.c.run_job()
             if result is None or result["status"] in ("COMPLETED","STALE","FAILED","UNKNOWN","CANCELLED"):return result
         self.fail("Connection batch did not terminate")
+
+    def test_http_model_address_requires_fresh_credentials_and_runs_the_registered_model(self):
+        connection=self.create();self.token(connection)
+        endpoint="http://model.example.test/v1/chat/completions"
+        self.edit(connection,endpoint=endpoint,fallback_endpoint="http://backup.example.test/v1/chat/completions")
+        with self.store() as (store,_,_):
+            self.assertEqual("AI_CREDENTIAL_SCOPE_CHANGED",store.user_connections("owner")[0]["credential_error"])
+        with self.assertRaises(ReviewError):self.c.enqueue(connection_id=connection)
+        self.assertEqual([],self.wire)
+        self.token(connection,revision=1)
+        self.c.enqueue(connection_id=connection)
+        result=self.c.run_job()
+        self.assertEqual("COMPLETED",result["status"],result)
+        self.assertEqual([endpoint],[str(r.url) for r in self.wire])
+        self.assertEqual("Bearer synthetic-personal-key",self.wire[0].headers["authorization"])
 
     def test_only_admin_can_create_and_revisions_are_checked(self):
         connection=str(uuid4())

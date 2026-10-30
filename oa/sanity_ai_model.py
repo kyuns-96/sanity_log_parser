@@ -43,7 +43,7 @@ def _model_id(value):
 def _endpoint(value):
     try:
         parsed = urlsplit(value)
-        return (isinstance(value, str) and parsed.scheme == "https" and bool(parsed.hostname)
+        return (isinstance(value, str) and parsed.scheme in ("http", "https") and bool(parsed.hostname)
                 and parsed.port != 0 and parsed.path not in ("", "/")
                 and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
                 and not any(ch.isspace() or ord(ch) < 32 for ch in value)
@@ -190,7 +190,7 @@ class OASettings:
               and (not self.models or self.model in self.models), "AI_CONFIG", "Invalid OA model choices")
         if not self.enabled:
             return
-        check(_endpoint(self.endpoint), "AI_CONFIG", "Configure a full HTTPS OA model endpoint")
+        check(_endpoint(self.endpoint), "AI_CONFIG", "Configure a full HTTP or HTTPS OA model endpoint")
         check(isinstance(self.token, str) and (self.token or self.token_source == "user")
               and all(33 <= ord(ch) <= 126 for ch in self.token), "AI_CONFIG", "Invalid OA AI credentials")
         check(_model_id(self.model), "AI_CONFIG", "Invalid OA model ID")
@@ -335,7 +335,9 @@ class OAAdvisor:
                                    "OA_ENDPOINT_SECRET": self.settings.endpoint,
                                    "OA_FALLBACK_ENDPOINT_SECRET": self.settings.fallback_endpoint})
         try:
-            self._tls = ssl.create_default_context(cafile=self.settings.ca_path or None)
+            uses_tls = any(urlsplit(endpoint).scheme == "https" for endpoint in
+                           (self.settings.endpoint, self.settings.fallback_endpoint) if endpoint)
+            self._tls = ssl.create_default_context(cafile=self.settings.ca_path or None) if uses_tls else True
         except (OSError, ValueError, ssl.SSLError):
             raise ReviewError("AI_CONFIG", "Cannot load OA AI TLS trust configuration") from None
 
@@ -389,6 +391,19 @@ class OAAdvisor:
         check(isinstance(token, str) and bool(token), "AI_USER_TOKEN_REQUIRED")
         return OAAdvisor(replace(self.settings, token=token), transport=self.transport)
 
+    def bind_execution(self, *, call_id, job_id, actor_id, scope_sha256):
+        return self
+
+    def with_observer(self,observer):
+        from copy import copy
+        result=copy(self)
+        result.observer=observer
+        return result
+
+    def _observe(self,phase):
+        observer=getattr(self,"observer",None)
+        if observer is not None:observer(phase)
+
     def cluster(self, context, cases, identity_fields):
         attempt = {"model_called": False}
         try:
@@ -403,7 +418,8 @@ class OAAdvisor:
             metadata = model_metadata(metadata, citations, advice, context)
             return {"advice": advice, "metadata": metadata}
         except ReviewError as error:
-            error.model_called = attempt["model_called"]
+            from oa.sanity_ai_retry import annotate
+            annotate(error,attempt)
             raise
 
     def review(self, context, cases, criteria):
@@ -420,7 +436,8 @@ class OAAdvisor:
             metadata = model_metadata(metadata, citations, advice, context)
             return {"advice": advice, "metadata": metadata}
         except ReviewError as error:
-            error.model_called = attempt["model_called"]
+            from oa.sanity_ai_retry import annotate
+            annotate(error,attempt)
             raise
 
     @staticmethod
@@ -432,10 +449,9 @@ class OAAdvisor:
             report["records"] = context["report"]["records"]
         return {**{key: value for key, value in context.items() if not key.startswith("_")}, "report": report}
 
-    def _request(self, packet, instruction, *, budget=None):
+    def _body(self, packet, instruction, *, budget=None):
         settings = self.settings
         input_tokens = None
-        check(bool(settings.token), "AI_USER_TOKEN_REQUIRED", "Register a personal AI token")
         self._guard.ensure_public(packet)
         messages = [{"role": "system", "content": instruction},
                     {"role": "user", "content": canonical_json(packet).decode("utf-8")}]
@@ -451,6 +467,12 @@ class OAAdvisor:
             body.update(input=messages, store=False)
             if settings.json_mode:
                 body["text"] = {"format": {"type": "json_object"}}
+        return body, input_tokens
+
+    def _request(self, packet, instruction, *, budget=None):
+        settings = self.settings
+        check(bool(settings.token), "AI_USER_TOKEN_REQUIRED", "Register a personal AI token")
+        body, input_tokens = self._body(packet, instruction, budget=budget)
         headers = {"Authorization": "Bearer " + settings.token,
                    "Content-Type": "application/json", "Accept": "application/json",
                    "Accept-Encoding": "identity"}
@@ -494,8 +516,12 @@ class OAAdvisor:
                 with httpx.Client(timeout=timeout, trust_env=False, follow_redirects=False,
                                   verify=self._tls, transport=self.transport) as client:
                     attempt["model_called"] = True
+                    self._observe("SENDING")
                     with client.stream("POST", endpoint, content=data, headers=headers) as response:
                         response_started = True
+                        from oa.sanity_ai_retry import response_headers
+                        response_headers(attempt,response)
+                        self._observe("SERVER_RESPONDED")
                         if settings.token_source == "user" and response.status_code == 401:
                             raise ReviewError("AI_AUTH_FAILED", "Check personal token and gateway authentication")
                         check(response.status_code == 200, "AI_CALL_FAILED", "OA AI call did not succeed")
@@ -512,6 +538,7 @@ class OAAdvisor:
                                   "OA AI call exceeded its deadline; automatic retry is disabled")
                             raw.extend(chunk)
                         check(time.monotonic() - started <= settings.timeout, "AI_OUTCOME_UNKNOWN")
+                        attempt["response_complete"] = True
             except (httpx.ConnectError, httpx.ConnectTimeout):
                 # Only connection establishment failures prove that this POST
                 # was not sent. Read/write errors and any HTTP response never
@@ -525,7 +552,15 @@ class OAAdvisor:
             except (httpx.HTTPError, ValueError, OSError):
                 raise ReviewError("AI_OUTCOME_UNKNOWN", "OA AI transport failed; automatic retry is disabled") from None
             break
-        envelope = _strict_json(bytes(raw))
+        self._observe("RESPONSE_RECEIVED")
+        routing = {"endpoint": role, "attempted_endpoints": attempted_endpoints} if settings.fallback_endpoint else None
+        return self._decode_reply(data, bytes(raw), prompt_version, budget=budget,
+                                  input_tokens=input_tokens, routing=routing)
+
+    def _decode_reply(self, data, raw, prompt_version, *, budget=None, input_tokens=None, routing=None):
+        self._observe("VALIDATING")
+        settings = self.settings
+        envelope = _strict_json(raw)
         content = _content(envelope, settings.api)
         try:
             value = _strict_json(content.encode("utf-8"))
@@ -537,11 +572,11 @@ class OAAdvisor:
               "INVALID_AI_RESPONSE", "Invalid OA AI model provenance")
         metadata = {**self.describe(), "requested_model": settings.model, "model": actual_model,
                     "prompt_version": prompt_version, "input_sha256": hashlib.sha256(data).hexdigest(),
-                    "response_sha256": hashlib.sha256(bytes(raw)).hexdigest(),
+                    "response_sha256": hashlib.sha256(raw).hexdigest(),
                     "output_sha256": digest(value), "input_bytes": len(data), "output_bytes": len(raw),
                     "usage": _usage(envelope.get("usage")), "model_called": True}
-        if settings.fallback_endpoint:
-            metadata["routing"] = {"endpoint": role, "attempted_endpoints": attempted_endpoints}
+        if routing is not None:
+            metadata["routing"] = routing
         if budget is not None:
             metadata['token_budget'] = {'input_units': input_tokens, 'counter': budget.settings.tokenizer_mode,
                 'overhead_tokens': budget.settings.overhead_tokens, 'output_tokens': budget.settings.output_tokens,

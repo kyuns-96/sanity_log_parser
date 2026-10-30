@@ -29,9 +29,9 @@ export type ClusterEvent = { id: string; report_id: string; revision: number; ac
 export type PipelineView = { current: ClusterEvent | null; revision: number; ready: boolean; can_edit: boolean; stale: boolean; history: ClusterEvent[]; case_count: number; reusable_count: number; summary: PipelineSummary | null; corporate_ai_connected: boolean; record_count: number }
 export type ClusterBrief = Omit<ClusterEvent, 'groups'> & { group_count: number; record_count: number; rationale_counts: Record<RationaleStatus, number> }
 export type PipelineTask = { id: string; status: 'PENDING' | 'RUNNING' | 'FAILED' | 'STALE' | 'CANCELLED' | 'COMPLETED'; record_count: number; processed: number; next_chunk: number; error: string | null; chunks: { index: number; start: number; stop: number; record_count: number; input_sha256: string; status: string }[] }
-export type CodexJob = { connection_id?: string; connection_label?: string; id: string; status: 'PENDING' | 'RUNNING' | 'RESULT_READY' | 'COMPLETED' | 'FAILED' | 'STALE' | 'UNKNOWN' | 'CANCELLED' | 'SAVE_FAILED'; error: string | null; model: string; created_at: string; finished_at?: string; expected_revision: number; input_case_count: number; event_id?: string; progress?: { mode: 'BATCH'; phase: 'TEXT' | 'TEXT_MERGE' | 'CLASSIFY' | 'MERGE' | 'REVIEW' | 'REVIEW_MERGE'; completed_records: number; total_records: number; completed_calls: number; round: number; waiting: boolean } }
-export type AIConnectionChoice = { id: string; label: string; model: string; models: string[]; available: boolean; enabled: boolean; credential_required?: boolean; credential_ready?: boolean; credential_error?: string | null }
-export type CodexCapability = { connection_id?: string; connection_label?: string; connections?: AIConnectionChoice[]; available: boolean; supported: boolean; enabled: boolean; model: string; models?: string[]; remaining: number | null; job: CodexJob | null; provider?: string; synthetic_only?: boolean; credential_required?: boolean; credential_ready?: boolean; credential_error?: string | null }
+export type CodexJob = { worker_site?: 'oa' | 'vwp'; preparation_phase?: string; total_records?: number; call_seconds?: number; retry_count?: number; retry_limit?: number; retry_after?: string | null; resume_count?: number; resumable?: boolean; started_at?: string; connection_id?: string; connection_label?: string; id: string; status: 'PENDING' | 'RUNNING' | 'RESULT_READY' | 'COMPLETED' | 'FAILED' | 'STALE' | 'UNKNOWN' | 'CANCELLED' | 'SAVE_FAILED'; error: string | null; model: string; created_at: string; finished_at?: string; expected_revision: number; input_case_count: number; event_id?: string; progress?: { mode: 'BATCH'; phase: 'TEXT' | 'TEXT_MERGE' | 'CLASSIFY' | 'MERGE' | 'REVIEW' | 'REVIEW_MERGE'; completed_records: number; total_records: number; completed_calls: number; round: number; waiting: boolean; round_completed?: number; round_total?: number; average_call_seconds?: number | null; seconds_per_record?: number | null; stage_eta_seconds?: number | null; retry_count?: number; child_retries?: number; retry_limit?: number; retry_error?: string | null; retry_http_status?: number | null; retry_after?: string | null } }
+export type AIConnectionChoice = { id: string; label: string; execution_site?: 'vwp'; model: string; models: string[]; available: boolean; enabled: boolean; credential_required?: boolean; credential_ready?: boolean; credential_error?: string | null }
+export type CodexCapability = { connection_id?: string; connection_label?: string; execution_site?: 'vwp'; connections?: AIConnectionChoice[]; available: boolean; supported: boolean; enabled: boolean; model: string; models?: string[]; remaining: number | null; job: CodexJob | null; provider?: string; synthetic_only?: boolean; credential_required?: boolean; credential_ready?: boolean; credential_error?: string | null }
 export type WorkbenchView = { report: WorkspaceReport; version: WorkspaceVersion; current: ClusterBrief | null; revision: number; ready: boolean; can_edit: boolean; stale: boolean; task: PipelineTask | null; ai?: CodexCapability; record_count: number; raw_line_count: number; source_sha256: string; case_count: number; reusable_count: number; removed_count: number; corporate_ai_connected: boolean; summary: { confirmed: boolean; total: number; reviewed: number; pending: number; complete: boolean; rationale_counts: Record<RationaleStatus, number>; counts: Record<string, number> } }
 export type GroupBrief = { id: string; ordinal?: number; label: string; record_count: number; status: string; revision: number; example: Record<string, unknown>; rationale: { status: RationaleStatus; reason: string; reason_truncated: boolean; reason_omitted_chars: number; source: string | null; evidence_count: number } }
 export type PageResult<T> = { items: T[]; total: number; offset: number; limit: number }
@@ -99,7 +99,8 @@ const messages: Record<string, string> = {
 
 export class WorkspaceError extends Error {
   code: string
-  constructor(code: string) { super(messages[code] || '요청을 완료하지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해 주세요.'); this.code = code }
+  status?: number
+  constructor(code: string, status?: number) { super(messages[code] || '요청을 완료하지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해 주세요.'); this.code = code; this.status = status }
 }
 
 // Keep the server boundary fixed for this document: an in-app visit to the
@@ -112,6 +113,8 @@ export const workspaceApiBase = () => productionWorkbench() ? '/api/workbench' :
 export const aiExecutionLabel = (value: { model: string; connection_label?: string }) => [value.connection_label, value.model].filter(Boolean).join(' / ')
 export const aiJobActive = (job?: CodexJob | null) => !!job && ['PENDING', 'RUNNING', 'RESULT_READY'].includes(job.status)
 export const aiJobMessage = (job: CodexJob) => {
+  if (job.status === 'PENDING' && job.preparation_phase === 'PREPARING') return 'VWP 작업자가 전체 로그와 참고 사례를 준비하고 있습니다.'
+  if (aiJobActive(job) && (job.retry_after || job.progress?.retry_after)) return job.progress ? 'AI 요청을 다시 처리하기 전 잠시 대기 중입니다. 완료된 배치는 유지합니다.' : 'AI 요청을 다시 처리하기 전 잠시 대기 중입니다.'
   if (job.status === 'PENDING') return 'AI 작업을 등록했습니다. 처리 시작을 기다리고 있습니다.'
   if (job.status === 'RUNNING' && job.progress) {
     const p = job.progress
@@ -152,7 +155,7 @@ export async function workspaceRequest<T>(path: string, options: { body?: unknow
     throw new WorkspaceError('NETWORK_ERROR')
   }
   const value = await response.json().catch(() => ({ code: 'INVALID_RESPONSE' }))
-  if (!response.ok) throw new WorkspaceError(value.code || 'REQUEST_FAILED')
+  if (!response.ok) throw new WorkspaceError(value.code || 'REQUEST_FAILED', response.status)
   return value as T
 }
 

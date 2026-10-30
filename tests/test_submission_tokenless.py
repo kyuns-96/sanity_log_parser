@@ -205,10 +205,12 @@ class TokenlessSubmissionTests(PgTestCase):
         criteria_path.write_text(json.dumps({'schema_version':1,'criteria':[criterion]},ensure_ascii=False))
         workspace=lambda db:ProductionWorkspaceStore(db,AccessStore(db,ADMIN))
         factory=lambda scope:AIJobService(scope.db,scope.ws,advisor=advisor)
-        with patch.dict(os.environ,{'SANITY_OA_AI_CRITERIA_FILE':str(criteria_path)}), \
+        from common.sanity_ai_execution import executing_on
+        with executing_on('vwp'),patch.dict(os.environ,{'SANITY_OA_AI_CRITERIA_FILE':str(criteria_path)}), \
              patch('oa.ai_workbench_api.jobs',side_effect=factory):
             response=self.post(OWNER,base+'/clustering/ai',{'request_id':str(uuid.uuid4()),'expected_revision':0})
             self.assertEqual(202,response.status_code,response.text)
+            self.assertEqual('PENDING',run_once(lambda:Database('oa'),workspace,advisor)['status'])
             self.assertEqual('COMPLETED',run_once(lambda:Database('oa'),workspace,advisor)['status'])
             view=self.success(self.clients[OWNER].get(base+'/workbench'))
             self.assertFalse(view['current']['confirmed'])
@@ -219,6 +221,7 @@ class TokenlessSubmissionTests(PgTestCase):
             response=self.post(OWNER,review+'/ai',{'expected_revision':0,'expected_cluster_revision':confirmed['revision'],
                                                  'request_id':str(uuid.uuid4())})
             self.assertEqual(202,response.status_code,response.text)
+            self.assertEqual('PENDING',run_once(lambda:Database('oa'),workspace,advisor)['status'])
             self.assertEqual('COMPLETED',run_once(lambda:Database('oa'),workspace,advisor)['status'])
             value=self.success(self.clients[OWNER].get(review+'?compact=true'))
             self.assertIsNone(value['current'])

@@ -33,3 +33,6 @@ artifacts/
 
 # Generated synthetic parser/DB preview snapshot (rebuild with tools/build_public_preview.py).
 /oa/dashboard/public/sample-data/
+
+# VWP-local AI credentials; never include in the repository or build context.
+/vwp_ai_profiles.private.json

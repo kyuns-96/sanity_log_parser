@@ -18,6 +18,181 @@ const emptyPage = { items: [], total: 0, offset: 0, limit: 25 }
 const connectionId = '10000000-0000-4000-8000-000000000010'
 const credentialPath = `/api/ai/connections/${connectionId}/credentials`
 
+const monitoredJob = () => ({ id: '30000000-0000-4000-8000-000000000001', status: 'RUNNING', error: null,
+  model: 'vwp-fast', connection_label: 'VWP 분석 모델', created_at: new Date(Date.now() - 90000).toISOString(),
+  observed_at: new Date().toISOString(), expected_revision: 0, input_case_count: 0, worker_site: 'vwp',
+  can_cancel: true, phase: 'SERVER_RESPONDED', report: { project_id: 'p1', block_id: 'b1', version_id: 'v1', report_id: 'report-a', group_id: null, item_id: 'synthetic_check', family: 'GCA' },
+  progress: { mode: 'BATCH', phase: 'CLASSIFY', completed_records: 40, total_records: 100, completed_calls: 2, round: 0,
+    waiting: true, round_completed: 2, round_total: 5, seconds_per_record: 1.25, average_call_seconds: 25, stage_eta_seconds: 75 } })
+
+test('desktop AI cards show measured stage progress, transport and stage ETA', async ({ page }, info) => {
+  await mockOA(page)
+  await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [monitoredJob()], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  await expect(dashboard).toContainText('VWP 작업자 연결됨')
+  await expect(dashboard).toContainText('서버 응답 수신 중')
+  await expect(dashboard.getByRole('progressbar')).toHaveAttribute('value', '40')
+  await expect(dashboard).toContainText('1.3초')
+  await expect(dashboard).toContainText('이번 단계 2 / 5')
+  await expect(dashboard).not.toContainText('측정치 수집 중')
+  await expect(dashboard.getByRole('link', { name: '검토 열기' })).toHaveAttribute('href', /review=report-a/)
+  await page.screenshot({ path: info.outputPath('ai-jobs-desktop.png'), fullPage: true })
+})
+
+test('single calls stay indeterminate and unknown outcomes have no repeat button', async ({ page }) => {
+  await mockOA(page)
+  const base = monitoredJob()
+  const job = { ...base, status: 'UNKNOWN', error: 'AI_OUTCOME_UNKNOWN', can_cancel: false, can_resume: true, resumable: true, progress: undefined, total_records: 100, finished_at: new Date().toISOString() }
+  await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  await expect(dashboard).toContainText('자동 재호출하지 않습니다')
+  await expect(dashboard.getByRole('progressbar')).not.toHaveAttribute('value')
+  await expect(dashboard.getByRole('button', { name: /재시도|재실행|재개|작업 취소/ })).toHaveCount(0)
+})
+
+test('retry card reports the current child attempt and actual scheduled time', async ({ page }) => {
+  await mockOA(page)
+  const base = monitoredJob()
+  const next = new Date(Date.now()+60000).toISOString()
+  const job = { ...base, progress: { ...base.progress, retry_count: 9, child_retries: 3, retry_limit: 5, retry_after: next } }
+  await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  await expect(dashboard).toContainText('AI 요청 재시도 대기')
+  await expect(dashboard).toContainText('현재 요청 재시도 3 / 5')
+  await expect(dashboard).toContainText('다음 시도')
+  await expect(dashboard).not.toContainText('현재 요청 재시도 9 / 5')
+  await expect(dashboard).toContainText('완료된 배치는 유지합니다')
+})
+
+test('resume repeats the same request id after a lost reply and keeps completed batch progress', async ({ page }) => {
+  await mockOA(page)
+  const base = monitoredJob()
+  let job = { ...base, status: 'FAILED', error: 'AI_CALL_FAILED' as string | null, resumable: true, can_resume: true, can_cancel: false,
+    progress: { ...base.progress, child_retries: 5, retry_limit: 5, retry_after: null as string | null } }
+  const requestIds: string[] = []
+  await page.route('**/api/workbench/ai/jobs**', async route => {
+    const request = route.request()
+    if (request.method() === 'POST') {
+      expect(new URL(request.url()).pathname).toBe(`/api/workbench/ai/jobs/${job.id}/resume`)
+      expect(request.headers()['x-sanity-request']).toBe('1')
+      const body = request.postDataJSON() as Record<string, unknown>
+      expect(Object.keys(body)).toEqual(['request_id'])
+      expect(body.request_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+      requestIds.push(String(body.request_id))
+      if (requestIds.length === 1) return route.abort('failed')
+      job = { ...job, status: 'RUNNING', error: null, resumable: false, can_resume: false, can_cancel: true,
+        progress: { ...job.progress, child_retries: 0 } }
+      return route.fulfill({ json: job })
+    }
+    return route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } })
+  })
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  await expect(dashboard).toContainText('40 / 100건 검토')
+  await dashboard.getByRole('button', { name: '중단 지점부터 재개' }).click()
+  await expect(dashboard.getByRole('alert')).toContainText('같은 요청으로 확인')
+  await dashboard.getByRole('button', { name: '중단 지점부터 재개' }).click()
+  await expect(dashboard).toContainText('처리 중')
+  await expect(dashboard).toContainText('40 / 100건 검토')
+  await expect(dashboard.getByRole('button', { name: '중단 지점부터 재개' })).toHaveCount(0)
+  expect(requestIds).toHaveLength(2)
+  expect(requestIds[1]).toBe(requestIds[0])
+})
+
+test('failed progress polling keeps the last snapshot and removes the ETA', async ({ page }) => {
+  await mockOA(page)
+  let failed = false
+  await page.route('**/api/workbench/ai/jobs', route => failed ? route.fulfill({ status: 503, json: { code: 'TEMPORARY_FAILURE' } }) : route.fulfill({ json: { items: [monitoredJob()], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  await expect(dashboard.getByRole('progressbar')).toHaveAttribute('value', '40')
+  failed = true
+  await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+  await expect(dashboard.getByRole('alert')).toContainText('마지막으로 수신한 상태')
+  await expect(dashboard.getByRole('progressbar')).toHaveAttribute('value', '40')
+  await expect(dashboard).toContainText('확인 불가')
+})
+
+test('permission denial clears previously displayed AI job cards', async ({ page }) => {
+  await mockOA(page)
+  let revoked = false
+  await page.route('**/api/workbench/ai/jobs', route => revoked ? route.fulfill({ status: 403, json: { code: 'FORBIDDEN' } }) : route.fulfill({ json: { items: [monitoredJob()], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  await expect(dashboard.getByRole('progressbar')).toHaveCount(1)
+  revoked = true
+  await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+  await expect(dashboard.getByRole('alert')).toBeVisible()
+  await expect(dashboard.getByRole('progressbar')).toHaveCount(0)
+  await expect(dashboard).not.toContainText('VWP 분석 모델')
+})
+
+test('cancel permission denial immediately removes the last snapshot', async ({ page }) => {
+  await mockOA(page)
+  await page.route('**/api/workbench/ai/jobs**', route => route.request().method() === 'POST'
+    ? route.fulfill({ status: 401, json: { code: 'SESSION_DENIED' } })
+    : route.fulfill({ json: { items: [monitoredJob()], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  await dashboard.getByRole('button', { name: '작업 취소', exact: true }).click()
+  await expect(dashboard.getByRole('alert')).toBeVisible()
+  await expect(dashboard.getByRole('progressbar')).toHaveCount(0)
+  await expect(dashboard).not.toContainText('VWP 분석 모델')
+  await expect(dashboard).not.toContainText('아직 요청한 AI 작업이 없습니다')
+})
+
+test('resume permission denial removes cards and clears a retained request id', async ({ page }) => {
+  await mockOA(page)
+  const job = { ...monitoredJob(), status: 'FAILED', error: 'AI_CALL_FAILED', resumable: true, can_resume: true, can_cancel: false }
+  const requestIds: string[] = []
+  await page.route('**/api/workbench/ai/jobs**', route => {
+    if (route.request().method() === 'POST') {
+      requestIds.push(route.request().postDataJSON().request_id)
+      if (requestIds.length === 1) return route.abort('failed')
+      if (requestIds.length === 2) return route.fulfill({ status: 403, json: { code: 'ACCOUNT_DISABLED' } })
+      return route.fulfill({ json: job })
+    }
+    return route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } })
+  })
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  await dashboard.getByRole('button', { name: '중단 지점부터 재개' }).click()
+  await expect(dashboard.getByRole('alert')).toContainText('같은 요청으로 확인')
+  await dashboard.getByRole('button', { name: '중단 지점부터 재개' }).click()
+  await expect(dashboard.getByRole('progressbar')).toHaveCount(0)
+  await expect(dashboard).not.toContainText('VWP 분석 모델')
+  expect(requestIds[1]).toBe(requestIds[0])
+  await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+  await dashboard.getByRole('button', { name: '중단 지점부터 재개' }).click()
+  await expect.poll(() => requestIds.length).toBe(3)
+  expect(requestIds[2]).not.toBe(requestIds[0])
+})
+
+test('AI card cancellation uses the same-origin endpoint and waits for server state', async ({ page }) => {
+  await mockOA(page)
+  let job = monitoredJob()
+  let cancellations = 0
+  await page.route('**/api/workbench/ai/jobs**', route => {
+    if (route.request().method() === 'POST') {
+      expect(new URL(route.request().url()).pathname).toBe(`/api/workbench/ai/jobs/${job.id}/cancel`)
+      expect(route.request().headers()['x-sanity-request']).toBe('1')
+      expect(route.request().postDataJSON()).toEqual({})
+      cancellations++; job = { ...job, status: 'CANCELLED', can_cancel: false }
+      return route.fulfill({ json: job })
+    }
+    return route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } })
+  })
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  await dashboard.getByRole('button', { name: '작업 취소', exact: true }).click()
+  await expect(dashboard).toContainText('AI 작업이 취소되었습니다')
+  expect(cancellations).toBe(1)
+  await expect(dashboard.getByRole('button', { name: '작업 취소', exact: true })).toHaveCount(0)
+})
+
 type MockOptions = { holdJob?: boolean; connections?: { id: string; label: string; model: string; models: string[]; available: boolean; enabled: boolean; credential_required?: boolean; credential_ready?: boolean }[]; models?: string[]; modelMetadata?: Partial<ClusterModelMetadata>; preserved?: PreservedSource[]; collectionOnly?: boolean; configured?: boolean; personalToken?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
 
 async function mockOA(page: Page, options: MockOptions = {}) {
@@ -890,4 +1065,37 @@ test('preserved text viewer shows masked complete text pages and separate AI cit
   expect(reads).toEqual([0, 10])
   await page.screenshot({ path: test.info().outputPath('preserved-text.png'), fullPage: true })
   expect(state.unexpected).toEqual([])
+})
+
+const syntheticVwpConnection = { id: '10000000-0000-4000-8000-000000000099', label: '합성 VWP AI',
+  execution_site: 'vwp' as const, model: 'vwp-review', models: ['vwp-fast', 'vwp-review'], available: true,
+  enabled: true, credential_required: false, credential_ready: true }
+
+test('VWP connection uses its admin default for classification without a personal OA token', async ({ page }) => {
+  const local = { id: connectionId, label: 'OA 합성 연결', model: model.model, models: [model.model], available: true, enabled: true }
+  const state = await mockOA(page, { connections: [local, syntheticVwpConnection] })
+  await page.goto(url)
+  await page.getByRole('combobox', { name: '분류 AI 연결', exact: true }).selectOption(syntheticVwpConnection.id)
+  await expect(page.getByRole('combobox', { name: '분류 AI 모델', exact: true })).toHaveValue('vwp-review')
+  await page.getByRole('button', { name: 'AI로 그룹 만들기', exact: true }).click()
+  await expect.poll(() => state.writes.find(value => value.path.endsWith('/clustering/ai'))?.body).toMatchObject({ connection_id: syntheticVwpConnection.id, model_id: 'vwp-review' })
+})
+
+test('VWP group judgment sends the selected connection and model independently', async ({ page }) => {
+  const state = await mockOA(page, { initialRevision: 1, confirmed: true, connections: [syntheticVwpConnection] })
+  await page.goto(url)
+  await page.getByRole('button', { name: '그룹 판정 계속', exact: true }).click()
+  await page.getByRole('combobox', { name: '판정 AI 모델', exact: true }).selectOption('vwp-fast')
+  await page.getByRole('button', { name: 'AI 판정 받기', exact: true }).click()
+  await expect.poll(() => state.writes.find(value => value.path.endsWith('/review/ai'))?.body).toMatchObject({ connection_id: syntheticVwpConnection.id, model_id: 'vwp-fast' })
+})
+
+test('unavailable VWP profile explains the disabled action without requesting an OA token', async ({ page }) => {
+  const remote = { ...syntheticVwpConnection, available: false, credential_ready: false, credential_error: 'AI_VWP_PROFILE_UNAVAILABLE' }
+  const state = await mockOA(page, { connections: [remote] })
+  await page.goto(url)
+  await expect(page.getByRole('button', { name: 'AI로 그룹 만들기', exact: true })).toBeDisabled()
+  await expect(page.getByText('VWP AI 연결을 현재 사용할 수 없습니다.', { exact: false })).toBeVisible()
+  await expect(page.getByText('개인 AI 토큰을 사용할 수 없습니다.', { exact: false })).toHaveCount(0)
+  expect(state.writes).toEqual([])
 })

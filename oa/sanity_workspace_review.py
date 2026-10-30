@@ -14,11 +14,27 @@ from oa.sanity_workspace import WorkspaceStore, record_id, utcnow
 def validate_ai_receipt(metadata, retrieval, cases):
     """Only trusted worker receipts use this path; browser commands cannot mint one."""
     check(isinstance(metadata, dict) and metadata.get("model_called") is True
-          and metadata.get("provider") == "OA_OPENAI_COMPATIBLE"
+          and metadata.get("provider") in ("OA_OPENAI_COMPATIBLE", "VWP_OPENAI_COMPATIBLE")
           and isinstance(metadata.get("model"), str) and metadata["model"]
           and isinstance(metadata.get("prompt_version"), str) and metadata["prompt_version"]
           and isinstance(metadata.get("input_sha256"), str)
           and re.fullmatch(r"[0-9a-f]{64}", metadata["input_sha256"]), "INVALID_AI_RECEIPT")
+    if metadata["provider"] == "VWP_OPENAI_COMPATIBLE":
+        from common.sanity_vwp_ai import identifier
+        check(metadata.get("execution_site") == "vwp" and identifier(metadata.get("profile_id"))
+              and isinstance(metadata.get("profile_sha256"), str)
+              and re.fullmatch(r"[a-f0-9]{64}", metadata["profile_sha256"])
+              and isinstance(metadata.get("connection_id"), str)
+              and str(uuid_value(metadata["connection_id"])) == metadata["connection_id"]
+              and type(metadata.get("connection_revision")) is int and metadata["connection_revision"] >= 1,
+              "INVALID_AI_RECEIPT")
+        if "batch_receipt" not in metadata:
+            execution = metadata.get("execution")
+            check(isinstance(execution, dict) and set(execution) == {"site", "profile_id", "profile_sha256", "call_id", "job_id"}
+                  and execution["site"] == "vwp" and execution["profile_id"] == metadata["profile_id"]
+                  and execution["profile_sha256"] == metadata["profile_sha256"]
+                  and all(isinstance(execution[k], str) and str(uuid_value(execution[k])) == execution[k]
+                          for k in ("call_id", "job_id")), "INVALID_AI_RECEIPT")
     if 'batch_receipt' in metadata or 'input_hash_kind' in metadata:
         value=metadata.get('batch_receipt')
         check(metadata.get('input_hash_kind')=='BATCH_MANIFEST' and isinstance(value,dict)

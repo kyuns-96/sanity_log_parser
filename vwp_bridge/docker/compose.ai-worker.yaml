@@ -1,0 +1,34 @@
+# Standalone worker on VWP. No inbound ports, relay queue or schema migration.
+name: sanity-vwp-ai
+services:
+  ai-worker:
+    image: ${VWP_AI_IMAGE:-sanity-vwp-ai:local}
+    build:
+      context: ../..
+      dockerfile: vwp_bridge/docker/Dockerfile-ai-worker
+      args:
+        VWP_AI_BASE_IMAGE: ${VWP_AI_BASE_IMAGE:?Set an approved Python runtime image}
+    env_file:
+      - path: ${VWP_AI_ENV_FILE:?Set an absolute path to the private worker env file}
+        format: raw
+    environment:
+      SANITY_VWP_AI_PROFILES_FILE: /run/sanity-ai/profiles.json
+    command: [python, -m, oa.ai_worker, --site, vwp, --interval, "2"]
+    volumes:
+      - type: bind
+        source: ${VWP_AI_PRIVATE_DIR:?Set a private directory containing profiles.json and optional CA files}
+        target: /run/sanity-ai
+        read_only: true
+        bind:
+          create_host_path: false
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: ${VWP_AI_CPUS:-1.0}
+    mem_limit: ${VWP_AI_MEMORY:-2g}
+    pids_limit: 128
+    restart: "on-failure:5"
+    stop_grace_period: 30s

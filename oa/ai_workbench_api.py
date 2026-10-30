@@ -32,6 +32,11 @@ class GroupAIProposal(AIProposal):
     expected_cluster_revision: Annotated[StrictInt, Field(ge=1)]
 
 
+class AIResume(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    request_id: UUID
+
+
 class IntakeDecision(BaseModel):
     model_config = ConfigDict(extra='forbid')
     decision: Literal['CONFIRM','REJECT']
@@ -78,6 +83,19 @@ def create_workbench_router(authorized_actor):
     @router.get("/overview")
     def overview(scope=Depends(workspace)):
         return scope.ws.overview(scope.user_id)
+
+    @router.get("/ai/jobs")
+    def ai_jobs(scope=Depends(workspace)):
+        from oa.sanity_ai_monitor import Monitor
+        return Monitor(jobs(scope)).items(scope.user_id)
+
+    @router.post("/ai/jobs/{job_id}/cancel")
+    def cancel_ai_job(job_id: UUID,scope=Depends(workspace)):
+        return jobs(scope).cancel(scope.user_id,str(job_id))
+
+    @router.post("/ai/jobs/{job_id}/resume",status_code=202)
+    def resume_ai_job(job_id: UUID,body: AIResume,scope=Depends(workspace)):
+        return jobs(scope).resume(scope.user_id,str(job_id),body.request_id)
 
     @router.get("/blocks/{block_id}/versions")
     def versions(block_id: ID, scope=Depends(workspace)):
@@ -186,7 +204,7 @@ def create_workbench_router(authorized_actor):
     @router.post(report_path + "/clustering/ai", status_code=202)
     def cluster_ai_enqueue(block_id: ID, version_id: ID, report_id: ID, body: AIProposal,
                            scope=Depends(workspace)):
-        return jobs(scope).enqueue(scope.user_id, block_id, version_id, report_id, **body.model_dump(exclude_none=True))
+        return jobs(scope).request(scope.user_id, block_id, version_id, report_id, **body.model_dump(exclude_none=True))
 
     @router.get(report_path + "/clustering/groups")
     def groups_page(block_id: ID, version_id: ID, report_id: ID, expected_revision: Annotated[int, Query(ge=0)],
@@ -267,6 +285,6 @@ def create_workbench_router(authorized_actor):
     @router.post(report_path + "/groups/{group_id}/review/ai", status_code=202)
     def group_ai_enqueue(block_id: ID, version_id: ID, report_id: ID, group_id: ID, body: GroupAIProposal,
                          scope=Depends(workspace)):
-        return jobs(scope).enqueue(scope.user_id, block_id, version_id, report_id, group_id=group_id, **body.model_dump(exclude_none=True))
+        return jobs(scope).request(scope.user_id, block_id, version_id, report_id, group_id=group_id, **body.model_dump(exclude_none=True))
 
     return router

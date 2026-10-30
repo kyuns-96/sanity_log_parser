@@ -11,9 +11,12 @@ from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import re
+import time
 from uuid import uuid4
 
 from common.sanity_ai_contracts import validate_review_v2
+from common.sanity_ai_execution import worker_site
+from oa.sanity_ai_retry import MAX_RETRIES,MAX_RESUMES,receipt as failure_receipt,valid_receipt,retry_at,resumable
 from common.sanity_clustering import check
 from common.sanity_clustering_advice import evidence, identity_fields_valid, validate_clustering_advice
 from common.sanity_common import ReviewError, canonical_json, digest
@@ -31,8 +34,9 @@ NAMESPACE, PREFIX = "oa-ai-v1", "ai1.job."
 ACTIVE = frozenset(("PENDING", "RUNNING", "RESULT_READY"))
 TERMINAL = frozenset(("COMPLETED", "FAILED", "STALE", "UNKNOWN", "CANCELLED"))
 TRANSITIONS = {None: {"PENDING"}, "PENDING": {"RUNNING", "FAILED", "STALE", "CANCELLED"},
-               "RUNNING": {"RESULT_READY", "FAILED", "STALE", "UNKNOWN", "CANCELLED"},
-               "RESULT_READY": {"COMPLETED", "FAILED", "STALE", "CANCELLED"}}
+               "RUNNING": {"PENDING", "RESULT_READY", "FAILED", "STALE", "UNKNOWN", "CANCELLED"},
+               "RESULT_READY": {"COMPLETED", "FAILED", "STALE", "CANCELLED"},
+               "FAILED":{"PENDING","RUNNING"},"CANCELLED":{"PENDING","RUNNING"}}
 MAX_EVENT_BYTES = 64 * 1024 * 1024
 REVIEW_LOCK = lock_key("workspace-review-write")
 _UNSET = object()
@@ -73,7 +77,10 @@ def _public(event):
             "model": data["model"], "created_at": data["created_at"], "finished_at": data.get("finished_at"),
             "expected_revision": data["command"]["expected_revision"],
             "input_case_count": len(data["pins"]["cases"]), "event_id": data.get("event_id"),
-            "model_called": data.get("model_called", False), "model_attempted": data.get("model_attempted", False)}
+            "model_called": data.get("model_called", False), "model_attempted": data.get("model_attempted", False),
+            "resumable":resumable(event),
+            **({"retry_limit":MAX_RETRIES} if data.get("fail_safe") else {}),
+            **{k:data[k] for k in ("worker_site","total_records","started_at","call_seconds","retry_count","retry_after","resume_count") if k in data}}
 
 
 def _source_pin(context):
@@ -91,11 +98,23 @@ def _case_pins(cases):
             for case in cases]
 
 
+def _validate_retry(previous,data):
+    check(previous["data"].get("fail_safe") is True and "batch" not in data
+          and (valid_receipt(data.get("retry_failure")) and data["retry_failure"]["model_called"] is data.get("model_called")
+               and data["retry_failure"]["error"] == data.get("error")
+               and data.get("model_attempted") is data.get("model_called")
+               or "retry_failure" not in data and data.get("error")=="AI_CONNECT_FAILED" and data.get("model_called") is False)
+          and data.get("retry_count")==previous["data"].get("retry_count",0)+1
+          and 1<=data["retry_count"]<=MAX_RETRIES and "retry_after" in data,"AI_JOB_CORRUPT")
+
+
 def _validate_data(event):
     """Fail closed on malformed application-owned ledger links, before use."""
     data = event.get("data")
     required = {"command", "target", "pins", "retrieval", "model", "created_at", "model_called"}
-    optional = {"model_attempted", "call_token", "started_at", "deadline", "result", "error", "finished_at", "event_id", "cancelled_by", "batch", "result_ref", "connection_label"}
+    optional = {"model_attempted", "call_token", "started_at", "deadline", "result", "error", "finished_at", "event_id", "cancelled_by", "batch", "result_ref", "connection_label",
+                "worker_site","total_records","call_seconds","fail_safe","retry_count","retry_after","retry_failure",
+                "resume_count","resume_request_id","resumed_by","resume_checkpoint"}
     check(isinstance(data, dict) and required <= set(data) <= required | optional, "AI_JOB_CORRUPT")
     command, pins = data["command"], data["pins"]
     command_keys = {"user_id", "block_id", "version_id", "report_id", "expected_revision",
@@ -133,6 +152,17 @@ def _validate_data(event):
     for key in ("config_sha256", "criteria_sha256"):
         check(isinstance(pins[key], str) and re.fullmatch(r"[0-9a-f]{64}", pins[key]), "AI_JOB_CORRUPT")
     _timestamp(data["created_at"])
+    if "worker_site" in data:check(data["worker_site"] in ("oa","vwp"),"AI_JOB_CORRUPT")
+    if "total_records" in data:check(type(data["total_records"]) is int and 0<=data["total_records"]<=1000000,"AI_JOB_CORRUPT")
+    if "call_seconds" in data:check(type(data["call_seconds"]) in (int,float) and 0<=data["call_seconds"]<86400,"AI_JOB_CORRUPT")
+    if "fail_safe" in data:check(data["fail_safe"] is True,"AI_JOB_CORRUPT")
+    if "retry_count" in data:check(type(data["retry_count"]) is int and 0<=data["retry_count"]<=MAX_RETRIES,"AI_JOB_CORRUPT")
+    if "retry_failure" in data:check(valid_receipt(data["retry_failure"]),"AI_JOB_CORRUPT")
+    if "resume_count" in data:
+        check(type(data["resume_count"]) is int and 1<=data["resume_count"]<=MAX_RESUMES
+            and isinstance(data.get("resume_request_id"),str) and re.fullmatch(r"[0-9a-f-]{36}",data["resume_request_id"])
+            and data.get("resumed_by")==command["user_id"],"AI_JOB_CORRUPT")
+    if "retry_after" in data:_timestamp(data["retry_after"])
     if "error" in data:
         check(_error_code(ReviewError(data["error"], "")) == data["error"], "AI_JOB_CORRUPT")
     if "call_token" in data:
@@ -223,8 +253,16 @@ class AIJobService:
 
     def _personal_tokens(self, event=None, *, connection_id=None):
         if connection_id or event and event["data"]["command"].get("connection_id"):
-            return True
+            from oa.sanity_ai_connections import is_vwp
+            selected = connection_id or event["data"]["command"]["connection_id"]
+            return not is_vwp(self.connections.get(selected)["config"])
         return getattr(getattr(self.advisor, "settings", None), "token_source", "server") == "user"
+
+    @staticmethod
+    def _bind_advisor(advisor, event, call_id):
+        binder = getattr(advisor, "bind_execution", None)
+        return advisor if binder is None else binder(call_id=call_id, job_id=event["job_id"],
+            actor_id=event["data"]["command"]["user_id"], scope_sha256=digest(event["data"]["pins"]["source"]["scope"]))
 
     def _user_token(self, user_id, connection_id=None):
         if connection_id:
@@ -268,10 +306,19 @@ class AIJobService:
                   and event["status"] in TRANSITIONS.get(previous["status"] if previous else None, set()), "AI_JOB_CORRUPT")
             _timestamp(event["created_at"])
             _validate_data(event)
+            if previous is None:check("resume_count" not in event["data"],"AI_JOB_CORRUPT")
             if previous:
+                if previous["status"] in ("FAILED","CANCELLED"):
+                    from oa.sanity_ai_resume import validate_resume
+                    validate_resume(self,previous,event["status"],event["data"])
+                else:
+                    check(event["data"].get("resume_count",0)==previous["data"].get("resume_count",0),"AI_JOB_CORRUPT")
+                    for key in ("resume_request_id","resumed_by","resume_checkpoint"):
+                        check(event["data"].get(key)==previous["data"].get(key),"AI_JOB_CORRUPT")
+                if event["status"]=="PENDING" and previous["status"]=="RUNNING":_validate_retry(previous,event["data"])
                 check(_timestamp(event["created_at"]) >= _timestamp(previous["created_at"]), "AI_JOB_CORRUPT")
-                for key in ("command", "target", "pins", "retrieval", "model", "created_at"):
-                    check(event["data"][key] == previous["data"][key], "AI_JOB_CORRUPT")
+                for key in ("command", "target", "pins", "retrieval", "model", "created_at","worker_site","fail_safe","total_records"):
+                    check(event["data"].get(key) == previous["data"].get(key), "AI_JOB_CORRUPT")
                 check(('batch' in event['data'])==('batch' in previous['data']),'AI_JOB_CORRUPT')
                 if 'plan' in previous['data'].get('batch',{}):
                     check(event['data']['batch']==previous['data']['batch'],'AI_JOB_CORRUPT')
@@ -283,6 +330,10 @@ class AIJobService:
     def _append(self, previous, status, data, *, now=None):
         now = now or _db_now(self.db)
         check(status in TRANSITIONS.get(previous["status"] if previous else None, set()), "AI_JOB_STATE")
+        if previous and status=="PENDING" and previous["status"]=="RUNNING":_validate_retry(previous,data)
+        if previous and previous["status"] in ("FAILED","CANCELLED"):
+            from oa.sanity_ai_resume import validate_resume
+            validate_resume(self,previous,status,data)
         event = {"namespace": NAMESPACE, "schema_version": 1, "job_id": data["command"]["request_id"],
                  "sequence": previous["sequence"] + 1 if previous else 1,
                  "previous_sha256": previous["sha256"] if previous else None,
@@ -294,9 +345,11 @@ class AIJobService:
         check(len(canonical_json(event)) <= MAX_EVENT_BYTES, "AI_OUTPUT_LIMIT")
         key = PREFIX + event["job_id"] + "." + str(event["sequence"]).zfill(4)
         self.ws.put("WS_CONFIG", key, event)
+        from oa.sanity_ai_monitor import capture
+        capture(self,event)
         return event
 
-    def _latest(self, *, target=None, work=False, now=None):
+    def _latest(self, *, target=None, work=False, now=None, exclude=None):
         query = "SELECT payload FROM (SELECT DISTINCT ON (payload->>'job_id') payload,created_at,workspace_key " \
             "FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s AND payload->>'namespace'=%s " \
             "ORDER BY payload->>'job_id',workspace_key DESC) jobs WHERE TRUE "
@@ -304,10 +357,15 @@ class AIJobService:
         if target is not None:
             query += "AND payload->'data'->>'target'=%s "
             params.append(target)
+        if exclude:
+            query += "AND NOT (payload->>'job_id'=ANY(%s)) "
+            params.append(exclude)
         if work:
-            query += "AND (payload->>'status' IN ('PENDING','RESULT_READY') OR (payload->>'status'='RUNNING' " \
+            query += "AND COALESCE(payload->'data'->>'worker_site',%s)=%s " \
+                "AND (NOT (payload->'data' ? 'retry_after') OR (payload->'data'->>'retry_after')::timestamptz<=COALESCE(%s::timestamptz,clock_timestamp())) " \
+                "AND (payload->>'status' IN ('PENDING','RESULT_READY') OR (payload->>'status'='RUNNING' " \
                 "AND (payload->'data' ? 'batch' OR (payload->'data'->>'deadline')::timestamptz<=COALESCE(%s::timestamptz,clock_timestamp())))) ORDER BY created_at,workspace_key LIMIT 1"
-            params.append(now)
+            params.extend((worker_site(),worker_site(),now,now))
         else:
             query += "ORDER BY created_at DESC,workspace_key DESC LIMIT 1"
         row = self.db.execute(query, tuple(params)).fetchone()
@@ -320,24 +378,38 @@ class AIJobService:
     def capability(self, user_id, block_id, version_id, report_id, group_id=None, expected_cluster_revision=None):
         command = {"user_id": user_id, "block_id": block_id, "version_id": version_id,
                    "report_id": report_id, "group_id": group_id, "expected_cluster_revision": expected_cluster_revision}
-        _, context = self._context(command, write=False)
-        latest = self._latest(target=self._target(report_id, group_id))
-        supported = bool(context["ready"] and context["can_review"] and
-                         (context.get("group_evidence") if group_id is not None else evidence(context)))
+        from oa.sanity_ai_submissions import header
+        from oa.sanity_ai_monitor import Monitor
+        context = header(self,command)
+        monitor=Monitor(self)
+        target=self._target(report_id,group_id)
+        latest = monitor.latest(target=target) or monitor.legacy(target)
+        # Final group membership/current-revision checks happen on the worker.
+        supported = bool(context["ready"] and context["can_review"] and context["record_count"] and context["group_ready"])
         connections = self.connections.user_connections(user_id)
         for connection in connections:
             connection.update(available=bool(supported and connection["credential_ready"]), enabled=True,
-                              supported=supported, credential_required=True)
+                              supported=supported, credential_required=connection.get("credential_required", True))
         first = connections[0] if connections else {}
         credential = {key:first[key] for key in ("credential_required", "credential_ready", "credential_error") if key in first}
         return {"available": first.get("available", False), "supported": supported,
                 "enabled": bool(connections), "model": first.get("model", ""), "remaining": None,
                 "models": first.get("models", []),
                 "connections":connections, "connection_id":first.get("id", ""),
-                "provider": PROVIDER, "synthetic_only": False, "job": self.public(latest) if latest else None, **credential}
+                "provider": "VWP_OPENAI_COMPATIBLE" if first.get("execution_site") == "vwp" else PROVIDER,
+                "synthetic_only": False, "job": latest["job"] if latest else None, **credential}
+
+    def request(self,*args,**kwargs):
+        from oa.sanity_ai_submissions import Submissions
+        return Submissions(self).submit(*args,**kwargs)
+
+    def resume(self,user_id,job_id,request_id):
+        from oa.sanity_ai_resume import resume
+        return resume(self,user_id,job_id,request_id)
 
     def enqueue(self, user_id, block_id, version_id, report_id, *, expected_revision, request_id,
-                group_id=None, expected_cluster_revision=None, model_id=None, connection_id=None):
+                group_id=None, expected_cluster_revision=None, model_id=None, connection_id=None,
+                _worker_site=None,_requested_at=None):
         check(type(expected_revision) is int and expected_revision >= 0, "INVALID_REQUEST")
         check(group_id is None or isinstance(group_id, str) and 1 <= len(group_id) <= 100, "INVALID_REQUEST")
         check(group_id is None or type(expected_cluster_revision) is int and expected_cluster_revision >= 1, "INVALID_REQUEST")
@@ -352,13 +424,20 @@ class AIJobService:
             connection_id = str(uuid_value(connection_id))
             command["connection_id"] = connection_id
         self._lock(request_id)
+        target=self._target(report_id,group_id)
+        from oa.sanity_ai_submissions import Submissions,PREFIX as INTENT_PREFIX,ACTIVE as PREPARING
+        self.db.execute("SELECT pg_advisory_xact_lock(%s)",(lock_key(INTENT_PREFIX+target),))
         store, context = self._context(command, write=True)
         previous = self._load(request_id, required=False)
         if previous:
             check(previous["data"]["command"] == command, "REQUEST_CONFLICT")
             return self.public(previous)
+        intent=Submissions(self).latest(target=target)
+        check(not intent or intent["status"] not in PREPARING or intent["id"]==request_id,"AI_JOB_ACTIVE")
         model = self._description(model_id, connection_id)
         check(model["enabled"], "AI_NOT_CONFIGURED")
+        if connection_id:
+            self.connections.authorize_user(connection_id, user_id)
         if self._personal_tokens(connection_id=connection_id):
             self._user_token(user_id, connection_id)
         check(context["ready"] and context["can_review"], "CLUSTER_NOT_CONFIRMED" if group_id else "CLUSTER_BLOCKED")
@@ -385,6 +464,11 @@ class AIJobService:
         now = _db_now(self.db)
         data = {"command": command, "target": target, "pins": pins, "retrieval": selected["metadata"],
                 "model": model["model"], "created_at": now.isoformat(), "model_called": False}
+        if _worker_site is not None:
+            check(_worker_site == worker_site() == "vwp","AI_WORKER_SITE")
+            data.update(worker_site=_worker_site,created_at=_requested_at or now.isoformat(),fail_safe=True,
+                        total_records=len(context.get("group_evidence") or evidence(context)))
+        elif model.get("execution_site") == "vwp":data["worker_site"]="vwp"
         if connection_id:data["connection_label"] = model["connection_label"]
         if model.get('batch',{}).get('enabled'):
             from common.sanity_preserved_ai import available
@@ -392,18 +476,32 @@ class AIJobService:
         return self.public(self._append(None, "PENDING", data, now=now))
 
     def status(self, user_id, job_id):
-        event = self._load(job_id)
-        command = {**event["data"]["command"], "user_id": user_id}
-        self.ws.report(user_id, command["block_id"], command["version_id"], command["report_id"], hydrate_source=False)
+        from oa.sanity_ai_submissions import Submissions,header
+        job_id=str(uuid_value(job_id,"job_id"))
+        # This integrity/audit method validates the authoritative history.
+        # Web polling uses capability/Monitor's bounded display snapshots.
+        event=self._load(job_id,required=False)
+        if event is None:
+            store=Submissions(self);intent=store.load(job_id)
+            header(self,{**intent["data"]["command"],"user_id":user_id})
+            return store.public(intent)
+        header(self,{**event["data"]["command"],"user_id":user_id})
         return self.public(event)
 
     def cancel(self, user_id, job_id):
         job_id = str(uuid_value(job_id, "job_id"))
-        self._lock(job_id)
-        event = self._load(job_id)
+        from oa.sanity_ai_submissions import Submissions,header,job_lock,ACTIVE as PREPARING
+        job_lock(self,job_id)
+        submissions=Submissions(self)
+        intent=submissions.load(job_id,required=False)
+        event = self._load(job_id,required=False)
+        if event is None:
+            check(intent is not None,"AI_JOB_NOT_FOUND")
+            header(self,{**intent["data"]["command"],"user_id":user_id},write=True)
+            if intent["status"] not in PREPARING:return submissions.public(intent)
+            return submissions.public(submissions.append(intent,"CANCELLED",{**intent["data"],"cancelled_by":user_id}))
         command = event["data"]["command"]
-        self.ws.access(user_id, command["block_id"], write=True)
-        self.ws.report(user_id, command["block_id"], command["version_id"], command["report_id"], hydrate_source=False)
+        header(self,{**command,"user_id":user_id},write=True)
         if event["status"] in TERMINAL:
             return self.public(event)
         return self.public(self._append(event, "CANCELLED", {**event["data"], "cancelled_by": user_id}))
@@ -492,10 +590,30 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
     """
     dispatch = None
     with _transaction(db_factory, workspace_factory, advisor, criteria_provider) as service:
-        event = service._latest(work=True, now=now)
-        if event is None:
-            return None
-        batch_job = event['job_id'] if 'batch' in event['data'] else None
+        # Skip a batch in backoff so another job can use the single worker.
+        # The authoritative child ledger, not an observational snapshot,
+        # determines its retry deadline.
+        excluded=[]
+        event=None
+        while len(excluded)<1000:
+            candidate=service._latest(work=True, now=now, exclude=excluded)
+            if candidate is None:break
+            if candidate['status']=='RUNNING' and candidate['data'].get('fail_safe') and 'batch' in candidate['data']:
+                from oa.sanity_ai_batch_jobs import Ledger
+                try:
+                    step,_=Ledger(service,candidate).last()
+                    waiting=bool(step and step['status']=='READY' and step['state'].get('retry_after') and
+                        _timestamp(step['state']['retry_after']) > (now or _db_now(service.db)))
+                except ReviewError:waiting=False
+                if waiting:
+                    excluded.append(candidate['job_id'])
+                    continue
+            event=candidate
+            break
+        batch_job = event['job_id'] if event and 'batch' in event['data'] else None
+    if event is None:
+        from oa.sanity_ai_submissions import prepare_one
+        return prepare_one(db_factory,workspace_factory,advisor,criteria_provider)
     if batch_job is not None:
         from oa.sanity_ai_batch_jobs import run_step
         return run_step(db_factory,workspace_factory,advisor,criteria_provider,batch_job,now=now)
@@ -517,16 +635,22 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
             if service._personal_tokens(event):
                 token, credential_revision = service._user_token(event["data"]["command"]["user_id"], event["data"]["command"].get("connection_id"))
                 dispatch_advisor = dispatch_advisor.with_user_token(token)
+            call_id = str(uuid4())
+            dispatch_advisor = service._bind_advisor(dispatch_advisor, event, call_id)
+            from oa.sanity_ai_monitor import observer
+            dispatch_advisor=dispatch_advisor.with_observer(observer(db_factory,workspace_factory,advisor,criteria_provider,event,call_id))
         except ReviewError as error:
             return _public(service._failed(event, error, now=now))
         started = now or _db_now(service.db)
         deadline = started + timedelta(seconds=dispatch_advisor.settings.timeout + 60)
-        event = service._append(event, "RUNNING", {**event["data"], "call_token": str(uuid4()),
+        running={k:v for k,v in event["data"].items() if k not in ("error","retry_after","retry_failure")}
+        event = service._append(event, "RUNNING", {**running, "call_token": call_id,
                    "model_attempted": True, "model_called": None,
                    "started_at": started.isoformat(), "deadline": deadline.isoformat()}, now=started)
         dispatch = {"event": event, "context": context, "cases": cases, "criteria": criteria,
                     "advisor": dispatch_advisor, "credential_revision": credential_revision}
     # All DB handles and transaction-level authorization/review locks are gone.
+    call_started=time.monotonic()
     try:
         event, context, cases, criteria = (dispatch[k] for k in ("event", "context", "cases", "criteria"))
         stage = event["data"]["pins"]["stage"]
@@ -537,7 +661,7 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
             result = dispatch["advisor"].review(context, cases, criteria)
             advice = validate_review_v2(result["advice"], context, cases, criteria)
         check(isinstance(result["metadata"], dict) and result["metadata"].get("model_called") is True
-              and result["metadata"].get("provider") == PROVIDER, "INVALID_AI_RESPONSE")
+              and result["metadata"].get("provider") == dispatch["advisor"].describe()["provider"], "INVALID_AI_RESPONSE")
         from common.sanity_preserved_ai import receipt
         receipt(result["metadata"], advice, context)
         result = {"advice": advice, "metadata": result["metadata"]}
@@ -546,6 +670,7 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
         failure = None
     except Exception as error:
         result, failure = None, error
+    call_seconds=time.monotonic()-call_started
     with _transaction(db_factory, workspace_factory, advisor, criteria_provider) as service:
         service._lock(event["job_id"])
         current = service._load(event["job_id"])
@@ -560,7 +685,15 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
             unknown = code == "AI_OUTCOME_UNKNOWN" or not isinstance(failure, ReviewError)
             called = getattr(failure, "model_called", not predispatch)
             called = called if type(called) is bool else None
-            return _public(service._failed(current, failure, status="UNKNOWN" if unknown else "FAILED", called=called))
+            proof=failure_receipt(failure) if current["data"].get("fail_safe") else None
+            if proof is not None and current["data"].get("retry_count",0)<MAX_RETRIES:
+                count=current["data"].get("retry_count",0)+1
+                data={k:v for k,v in current["data"].items() if k not in ("call_token","started_at","deadline")}
+                data.update(error=code,model_called=proof["model_called"],model_attempted=proof["model_called"],
+                            retry_failure=proof,retry_count=count,retry_after=retry_at(_db_now(service.db),count,failure))
+                return _public(service._append(current,"PENDING",data))
+            if proof is not None:current={**current,"data":{**current["data"],"retry_failure":proof}}
+            return _public(service._failed(current, failure, status="UNKNOWN" if unknown else "STALE" if code in {"AI_CONFIG_CHANGED", "AI_CREDENTIAL_CHANGED", "FORBIDDEN", "UNAUTHORIZED"} else "FAILED", called=called))
         try:
             service._inputs(current)
             if dispatch["credential_revision"] is not None:
@@ -569,7 +702,7 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
         except ReviewError as error:
             return _public(service._failed(current, error, called=True))
         try:
-            service._append(current, "RESULT_READY", {**current["data"], "model_called": True, "result": result})
+            service._append(current, "RESULT_READY", {**current["data"], "model_called": True, "result": result,"call_seconds":call_seconds})
         except ReviewError as error:
             if error.code != "AI_OUTPUT_LIMIT":
                 raise
