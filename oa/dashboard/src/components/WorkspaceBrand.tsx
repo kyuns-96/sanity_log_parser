@@ -17,7 +17,7 @@ function homeHref() {
 export function WorkspaceBrand({ href }: { href?: string }) {
   const content = <>
     <span className="console-mark" aria-hidden="true">
-      <svg viewBox="0 0 30 30" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12.5" cy="12.5" r="8.5" /><path d="m19 19 7 7M8 14l4-4 5 4" /><g fill="currentColor" stroke="none"><circle cx="8" cy="14" r="1.4" /><circle cx="12" cy="10" r="1.4" /><circle cx="17" cy="14" r="1.4" /></g></svg>
+      <svg viewBox="0 0 30 30" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"><circle cx="15" cy="15" r="10.5" strokeWidth="1.5" /><circle cx="15" cy="15" r="7.7" strokeWidth="1.2" /><path d="M15 11.8 17.77 13.4 17.77 16.6 15 18.2 12.23 16.6 12.23 13.4Z M15 11.8 21.67 11.15 M17.77 13.4 21.67 18.85 M17.77 16.6 15 22.7 M15 18.2 8.33 18.85 M12.23 16.6 8.33 11.15 M12.23 13.4 15 7.3" strokeWidth="1.15" /></svg>
     </span>
     <span className="console-wordmark"><strong className="console-brand-name">Sanity Lens <span className="console-brand-ai">AI</span></strong><span className="console-brand-tagline">AI 로그 분석 · 판정 지원</span></span>
   </>
