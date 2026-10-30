@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Plus, RefreshCw, Settings2 } from 'lucide-react'
 import { Button } from './studio/components/ui/button'
+import { Badge } from './studio/components/ui/badge'
 import { Input } from './studio/components/ui/input'
 import { Textarea } from './studio/components/ui/textarea'
 import type { AccessApi } from './accessApi'
@@ -69,16 +70,16 @@ export default function AIConnectionsAdmin({ api }: { api: AccessApi }) {
   }
 
   return <section className="am-panel ai-connections-admin" aria-label="AI 연결·모델 관리">
-    <div className="am-panel-heading"><div><h2><Settings2 size={17} />AI 연결·모델 관리</h2><p>연결마다 인증 방식·모델 목록·개인 토큰 발급 링크를 관리합니다.</p></div><Button variant="outline" disabled={busy || !!draft} onClick={() => { setError(''); void load().catch(() => setError('목록을 불러오지 못했습니다.')) }}><RefreshCw size={14} />새로고침</Button></div>
+    <div className="am-panel-heading"><div><h2><Settings2 size={17} />{draft ? '연결 설정' : '등록된 AI 연결'}</h2><p>{draft ? '연결 정보와 모델 설정을 확인한 뒤 저장하세요.' : '연결별 인증 방식과 기본 모델을 확인하고 설정합니다.'}</p></div><div className="am-row-actions">{draft ? <Button variant="outline" disabled={busy} onClick={() => { setDraft(null); setClientKey('') }}>목록으로</Button> : <><Button variant="outline" disabled={busy} onClick={() => { setError(''); void load().catch(() => setError('목록을 불러오지 못했습니다.')) }}><RefreshCw size={14} />새로고침</Button><Button disabled={!ready || busy || loading} onClick={() => edit()}><Plus size={15} />AI 연결 추가</Button></>}</div></div>
     {error && <p role="alert" className="am-error">{error}</p>}{notice && <p role="status" className="am-notice">{notice}</p>}
     {!loading && !ready && <p role="alert" className="am-error">서버의 AI 인증값 암호화 키가 준비되지 않았습니다. 운영 담당자가 웹과 worker에 같은 SANITY_OA_AI_TOKEN_STORE_SECRET을 설정해야 합니다.</p>}
-    {loading ? <p role="status">AI 연결을 불러오고 있습니다.</p> : <>
-      <ul className="am-list ai-connection-list">{items.map(entry => <li key={entry.id}><div><strong>{entry.config.label}</strong><span>{modes[entry.config.auth_mode]} · 모델 {entry.config.models.length}개 · {entry.config.enabled ? '사용 중' : '사용 중지'}</span></div><div className="am-row-actions"><Button variant="outline" disabled={busy || !!draft} onClick={() => edit(entry)}>수정</Button><Button variant="outline" disabled={busy || !!draft || !ready} onClick={() => void toggle(entry)}>{entry.config.enabled ? '사용 중지' : '사용 허용'}</Button></div></li>)}</ul>
-      {!items.length && <p>등록된 AI 연결이 없습니다.</p>}
-      {!draft && <Button disabled={!ready || busy} onClick={() => edit()}><Plus size={15} />AI 연결 추가</Button>}
+    {loading ? <p role="status">AI 연결을 불러오고 있습니다.</p> : !draft && <>
+      <ul className="am-list ai-connection-list">{items.map(entry => <li key={entry.id} data-enabled={entry.config.enabled}><div><div className="ai-connection-title"><strong>{entry.config.label}</strong><Badge variant="outline" className="ai-connection-status">{entry.config.enabled ? '사용 중' : '사용 중지'}</Badge></div><span>{modes[entry.config.auth_mode]} · 모델 {entry.config.models.length}개</span><span className="ai-connection-default">기본 모델 <code>{entry.config.model}</code></span></div><div className="am-row-actions"><Button variant="outline" disabled={busy || !!draft} onClick={() => edit(entry)}>수정</Button><Button variant="outline" disabled={busy || !!draft || !ready} onClick={() => void toggle(entry)}>{entry.config.enabled ? '사용 중지' : '사용 허용'}</Button></div></li>)}</ul>
+      {!items.length && <div className="am-empty"><Settings2 size={26} /><h3>등록된 AI 연결이 없습니다</h3><p>AI 연결을 추가하고 인증 방식과 기본 모델을 설정해 주세요.</p></div>}
     </>}
     {draft && config && <form className="am-form ai-connection-form" onSubmit={save}>
-      <h3>{draft.revision ? 'AI 연결 수정' : 'AI 연결 추가'}</h3>
+      <div className="ai-connection-form-heading"><h3>{draft.revision ? 'AI 연결 수정' : 'AI 연결 추가'}</h3><p>연결 정보와 사용할 모델을 설정하세요. 처리 한도는 아래 고급 설정에서 조정할 수 있습니다.</p></div>
+      <fieldset className="ai-form-section"><legend>연결 정보</legend>
       <label>연결 이름<Input aria-label="AI 연결 이름" required maxLength={100} disabled={busy} value={config.label} onChange={event => change({ label: event.target.value })} /></label>
       <label>AI API URL<Input aria-label="AI API URL" type="url" required disabled={busy} value={config.endpoint} onChange={event => change({ endpoint: event.target.value })} placeholder="https://…/v1/chat/completions" /></label>
       <label>보조 API URL<Input aria-label="보조 API URL" type="url" disabled={busy} value={config.fallback_endpoint} onChange={event => change({ fallback_endpoint: event.target.value })} /><small>같은 모델·인증의 주소입니다. 요청 전 연결 실패에만 사용합니다.</small></label>
@@ -95,13 +96,16 @@ export default function AIConnectionsAdmin({ api }: { api: AccessApi }) {
         {config.session_mode === 'fixed' && <label>고정 세션 ID<Input aria-label="AI 고정 세션 ID" required disabled={busy} value={config.session_id} maxLength={200} onChange={event => change({ session_id: event.target.value })} /></label>}
         <p>공통 키는 암호화해 저장합니다. 사용자의 Bearer 토큰은 개인 설정에서 등록합니다.</p>
       </fieldset>}
-      <label>개인 토큰·API 키 발급 URL<Input aria-label="AI 인증값 발급 URL" type="url" disabled={busy} value={config.issuance_url} onChange={event => change({ issuance_url: event.target.value })} /><small>로그인한 사용자에게 표시할 HTTPS 발급 페이지입니다.</small></label>
+      </fieldset>
+      <fieldset className="ai-form-section"><legend>모델·개인 인증값</legend>
       <label>허용 모델 · 한 줄에 하나<Textarea aria-label="허용 AI 모델 목록" required disabled={busy} rows={4} maxLength={20100} value={models} onChange={event => {
         const text = event.target.value; const values = text.split(/\r?\n/).map(value => value.trim()).filter(Boolean); setModels(text)
-        change({ models: values, model: values.includes(config.model) ? config.model : values[0] || '' })
+        change({ models: values, model: values.includes(config.model) ? config.model : '' })
       }} /></label>
-      <label>기본 모델<select className="studio-native-select" aria-label="기본 AI 모델" required disabled={busy} value={config.model} onChange={event => change({ model: event.target.value })}><option value="" disabled>모델을 입력하세요</option>{config.models.map((model, i) => <option key={`${model}:${i}`} value={model}>{model}</option>)}</select></label>
+      <label>기본 모델<select className="studio-native-select" aria-label="기본 AI 모델" required disabled={busy} value={config.model} onChange={event => change({ model: event.target.value })}><option value="" disabled>기본 모델을 선택하세요</option>{config.models.map((model, i) => <option key={`${model}:${i}`} value={model}>{model}</option>)}</select><small>사용자가 별도로 선택하지 않으면 분류·판정에 이 모델을 사용합니다.</small></label>
+      <label>개인 토큰·API 키 발급 URL<Input aria-label="AI 인증값 발급 URL" type="url" disabled={busy} value={config.issuance_url} onChange={event => change({ issuance_url: event.target.value })} /><small>로그인한 사용자에게 표시할 HTTPS 발급 페이지입니다.</small></label>
       <label className="ai-checkbox"><input type="checkbox" disabled={busy} checked={config.enabled} onChange={event => change({ enabled: event.target.checked })} />이 연결 사용</label>
+      </fieldset>
       <details><summary>처리 한도와 전체 로그 배치 설정</summary><div className="ai-connection-fields">
         {([['timeout', '응답 제한 시간(초)', 1, 600], ['max_input_bytes', '요청 byte 한도', 1, 67108864], ['max_output_bytes', '응답 byte 한도', 1, 67108864]] as const).map(([key, label, min, max]) => <label key={key}>{label}<Input type="number" aria-label={label} required min={min} max={max} disabled={busy} value={config[key]} onChange={event => change({ [key]: Number(event.target.value) })} /></label>)}
       </div><label className="ai-checkbox"><input type="checkbox" disabled={busy} checked={config.json_mode} onChange={event => change({ json_mode: event.target.checked })} />JSON object 응답 옵션 사용</label>

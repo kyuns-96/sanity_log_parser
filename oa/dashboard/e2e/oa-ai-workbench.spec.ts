@@ -15,8 +15,10 @@ const at = '2026-10-22T00:00:00Z'
 const base = '/api/workbench/blocks/b1/versions/v1/reports/report-a'
 const url = '/?page=workbench&project=p1&block=b1&version=v1&eco=ECO-2&item=synthetic_check&tab=reports&review=report-a'
 const emptyPage = { items: [], total: 0, offset: 0, limit: 25 }
+const connectionId = '10000000-0000-4000-8000-000000000010'
+const credentialPath = `/api/ai/connections/${connectionId}/credentials`
 
-type MockOptions = { connections?: { id: string; label: string; model: string; models: string[]; available: boolean; enabled: boolean; credential_required?: boolean; credential_ready?: boolean }[]; models?: string[]; modelMetadata?: Partial<ClusterModelMetadata>; preserved?: PreservedSource[]; collectionOnly?: boolean; configured?: boolean; personalToken?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
+type MockOptions = { holdJob?: boolean; connections?: { id: string; label: string; model: string; models: string[]; available: boolean; enabled: boolean; credential_required?: boolean; credential_ready?: boolean }[]; models?: string[]; modelMetadata?: Partial<ClusterModelMetadata>; preserved?: PreservedSource[]; collectionOnly?: boolean; configured?: boolean; personalToken?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
 
 async function mockOA(page: Page, options: MockOptions = {}) {
   const actor = options.readOnly ? { ...user, role: 'TOP' } : user
@@ -33,7 +35,8 @@ async function mockOA(page: Page, options: MockOptions = {}) {
   state.current = options.currentCase || null
   state.reviewRevision = options.currentCase?.revision || 0
   state.proposal = options.proposal || null
-  const capability = (job: CodexJob | null) => ({ available: options.configured !== false && (!options.personalToken || credentialReady), supported: true, enabled: options.configured !== false, model: model.model, ...(options.models ? { models: options.models } : {}), remaining: null, provider: 'OA_OPENAI_COMPATIBLE', synthetic_only: false, job, ...(options.connections ? { connections: options.connections, connection_id: options.connections[0]?.id || '' } : {}), ...(options.personalToken ? { credential_required: true, credential_ready: credentialReady, credential_error: credentialReady ? null : 'AI_USER_TOKEN_REQUIRED' } : {}) })
+  const connections = () => options.configured === false ? [] : options.connections ?? [{ id: connectionId, label: '합성 AI 연결', model: model.model, models: options.models || [model.model], enabled: true, available: !options.personalToken || credentialReady, credential_required: true, credential_ready: !options.personalToken || credentialReady }]
+  const capability = (job: CodexJob | null) => ({ available: options.configured !== false && (!options.personalToken || credentialReady), supported: true, enabled: options.configured !== false, remaining: null, provider: 'OA_OPENAI_COMPATIBLE', synthetic_only: false, job, connections: connections(), connection_id: connections()[0]?.id || '', model: connections()[0]?.model || '', models: connections()[0]?.models || [], ...(options.personalToken ? { credential_required: true, credential_ready: credentialReady, credential_error: credentialReady ? null : 'AI_USER_TOKEN_REQUIRED' } : {}) })
   const cluster = () => state.revision ? { id: `cluster-${state.revision}`, report_id: report.id, revision: state.revision, action: state.confirmed ? 'CONFIRM' : 'PROPOSE', confirmed: state.confirmed, reusable: false, compatible_versions: false, criteria: '', reason: '전체 로그의 검토 의도에 따라 묶었습니다.', identity_fields: ['mode'], group_count: 1, record_count: sourceRecords.length, at, actor, references: [], advisor: 'OA_OPENAI_COMPATIBLE', model_called: true, model_metadata: { ...model, model: state.clusterJob?.model || model.model, ...options.modelMetadata }, rationale_counts: { MISSING: 0, DRAFT: Number(!state.confirmed), CONFIRMED: Number(state.confirmed), STALE: 0 } } : null
   const group = () => ({ id: 'g1', label: '확인이 필요한 합성 대상', record_count: sourceRecords.length, check_status: options.collectionOnly ? 'UNKNOWN' : 'FAIL', status: state.current?.conclusion || 'PENDING', revision: state.reviewRevision, example: {}, rationale: { status: state.confirmed ? 'CONFIRMED' : 'DRAFT', reason: '같은 조건의 확인 대상입니다.', reason_truncated: false, reason_omitted_chars: 0, source: 'AI', evidence_count: 1 } })
   const finish = (job: CodexJob) => {
@@ -48,8 +51,8 @@ async function mockOA(page: Page, options: MockOptions = {}) {
       if (options.readOnly) return route.fulfill({ status: 403, json: { code: 'FORBIDDEN' } })
     }
     if (path.startsWith('/workspace/api/')) { state.unexpected.push(path); return route.fulfill({ status: 404, json: { code: 'NOT_FOUND' } }) }
-    if (path === '/api/ai/connections') return route.fulfill({ json: { items: [] } })
-    if (path === '/api/ai/credentials' && options.personalToken) {
+    if (path === '/api/ai/connections') return route.fulfill({ json: { items: connections().map(value => ({ ...value, auth_mode: 'bearer', issuance_url: null, credential: { registered: credentialReady, revision: credentialRevision }, credential_error: null })) } })
+    if (path === credentialPath && options.personalToken) {
       if (body) { expect(body.expected_revision).toBe(credentialRevision); credentialReady = true; credentialRevision++ }
       return route.fulfill({ json: { enabled: true, registered: credentialReady, revision: credentialRevision, expires_at: null, expired: false, expires_soon: false } })
     }
@@ -67,12 +70,12 @@ async function mockOA(page: Page, options: MockOptions = {}) {
     if (path === base) return route.fulfill({ json: currentReport })
     if (path === base+'/clustering/ai' && body) {
       expect(body.expected_revision).toBe(state.revision)
-      state.clusterJob = { id: String(body.request_id), status: 'PENDING', error: null, model: String(body.model_id || model.model), ...(body.connection_id ? { connection_id: String(body.connection_id), connection_label: options.connections?.find(value => value.id === body.connection_id)?.label } : {}), created_at: at, expected_revision: state.revision, input_case_count: 0 }
+      state.clusterJob = { id: String(body.request_id), status: 'PENDING', error: null, model: String(body.model_id || model.model), ...(body.connection_id ? { connection_id: String(body.connection_id), connection_label: connections().find(value => value.id === body.connection_id)?.label } : {}), created_at: at, expected_revision: state.revision, input_case_count: 0 }
       state.clusterReads = 0
       return route.fulfill({ status: 202, json: state.clusterJob })
     }
     if (path === base+'/workbench') {
-      if (state.clusterJob && ['PENDING', 'RUNNING'].includes(state.clusterJob.status) && ++state.clusterReads >= 2) finish(state.clusterJob)
+      if (!options.holdJob && state.clusterJob && ['PENDING', 'RUNNING'].includes(state.clusterJob.status) && ++state.clusterReads >= 2) finish(state.clusterJob)
       return route.fulfill({ json: { report: currentReport, version, current: cluster(), revision: state.revision, ready: true, can_edit: !options.readOnly, stale: false, task: null, ai: capability(state.clusterJob), record_count: sourceRecords.length, raw_line_count: sourceRecords.length * 2, source_sha256: 'a'.repeat(64), case_count: 0, reusable_count: 0, removed_count: 0, corporate_ai_connected: options.configured !== false, summary: { confirmed: state.confirmed, total: state.revision ? 1 : 0, reviewed: Number(!!state.current), pending: Number(!state.current), complete: !!state.current, rationale_counts: cluster()?.rationale_counts || { MISSING: 0, DRAFT: 0, CONFIRMED: 0, STALE: 0 }, counts: { PASS: Number(state.current?.conclusion === 'PASS'), FAIL: Number(state.current?.conclusion === 'FAIL'), DEFER: 0, STALE: 0 } } } })
     }
     if (path === base+'/clustering/groups') return route.fulfill({ json: { items: [group()], total: 1, offset: 0, limit: 25 } })
@@ -98,7 +101,7 @@ async function mockOA(page: Page, options: MockOptions = {}) {
     if (path === base+'/groups/g1/review/ai' && body) {
       expect(body.expected_cluster_revision).toBe(state.revision)
       expect(body.expected_revision).toBe(state.reviewRevision)
-      state.reviewJob = { id: String(body.request_id), status: 'PENDING', error: null, model: String(body.model_id || model.model), ...(body.connection_id ? { connection_id: String(body.connection_id), connection_label: options.connections?.find(value => value.id === body.connection_id)?.label } : {}), created_at: at, expected_revision: state.reviewRevision, input_case_count: 0 }
+      state.reviewJob = { id: String(body.request_id), status: 'PENDING', error: null, model: String(body.model_id || model.model), ...(body.connection_id ? { connection_id: String(body.connection_id), connection_label: connections().find(value => value.id === body.connection_id)?.label } : {}), created_at: at, expected_revision: state.reviewRevision, input_case_count: 0 }
       return route.fulfill({ status: 202, json: state.reviewJob })
     }
     if (path === base+'/groups/g1/review') {
@@ -145,6 +148,28 @@ test('batch progress distinguishes complete-record classification from group int
   expect(state.unexpected).toEqual([])
 })
 
+test('admin default model is selected and classification controls align with the action button', async ({ page }) => {
+  const connections = [{ id: connectionId, label: '합성 AI 연결', model: 'synthetic-second-model', models: [model.model, 'synthetic-second-model'], enabled: true, available: true, credential_required: true, credential_ready: true }]
+  const state = await mockOA(page, { connections })
+  await page.goto(url)
+  const modelSelect = page.getByRole('combobox', { name: '분류 AI 모델', exact: true })
+  const connectionSelect = page.getByRole('combobox', { name: '분류 AI 연결', exact: true })
+  const action = page.getByRole('button', { name: 'AI로 그룹 만들기', exact: true })
+  await expect(modelSelect).toHaveValue('synthetic-second-model')
+  await expect(modelSelect.locator('option:checked')).toHaveText('synthetic-second-model · 기본')
+  await page.evaluate(() => document.fonts.ready)
+  const button = (await action.boundingBox())!
+  for (const control of [connectionSelect, modelSelect]) {
+    const box = (await control.boundingBox())!
+    expect(Math.abs(box.height - button.height)).toBeLessThan(1)
+    expect(Math.abs(box.y - button.y)).toBeLessThan(1)
+  }
+  await page.screenshot({ path: test.info().outputPath('ai-classification-controls.png') })
+  await action.click()
+  await expect(page.locator('.ws-rationale-text').first()).toBeVisible()
+  expect(state.writes.find(write => write.path.endsWith('/clustering/ai'))?.body).toMatchObject({ connection_id: connectionId, model_id: 'synthetic-second-model' })
+})
+
 test('connection selection is distinct from model ID and respects its personal credential readiness', async ({ page }) => {
   const connections = [
     { id: '10000000-0000-4000-8000-000000000001', label: '합성 Bearer 연결', model: model.model, models: [model.model], enabled: true, available: true, credential_required: true, credential_ready: true },
@@ -188,7 +213,7 @@ test('users select the allowed model independently for classification and group 
 for (const removed of [false, true]) test(`an in-progress model is restored and locked when ${removed ? 'removed from' : 'present in'} the catalog`, async ({ page }) => {
   const job: CodexJob = { id: 'selected-job', status: 'RUNNING', error: null, model: 'synthetic-second-model',
     created_at: at, expected_revision: 0, input_case_count: 0 }
-  await mockOA(page, { models: removed ? [model.model] : [model.model, job.model], initialJob: job })
+  await mockOA(page, { models: removed ? [model.model] : [model.model, job.model], initialJob: job, holdJob: true })
   await page.goto(url)
   const selector = page.getByRole('combobox', { name: '분류 AI 모델', exact: true })
   await expect(selector).toHaveValue('synthetic-second-model')
@@ -742,9 +767,9 @@ test('personal token registration enables AI judgment without discarding the hum
   const reason = review.getByRole('textbox', { name: '판정 근거', exact: true })
   await reason.fill('개인 토큰 등록 중에도 보존할 사람의 검토 근거')
   await page.getByRole('button', { name: '개인 AI 토큰', exact: true }).click()
-  await page.getByLabel('JWT 토큰', { exact: true }).fill('synthetic-personal-token')
-  await page.getByRole('button', { name: '토큰 저장', exact: true }).click()
-  await expect(page.getByRole('dialog')).toContainText('토큰을 저장했습니다')
+  await page.getByLabel('합성 AI 연결 개인 Bearer 토큰', { exact: true }).fill('synthetic-personal-token')
+  await page.getByRole('button', { name: '인증값 저장', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText('개인 인증값을 저장했습니다')
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(review.getByRole('button', { name: 'AI 판정 받기', exact: true })).toBeEnabled()

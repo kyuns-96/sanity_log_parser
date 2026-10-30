@@ -275,7 +275,9 @@ class RoutingJobTests(PgTestCase):
             self.assertEqual("selected-model", proposal["model_metadata"]["requested_model"])
             self.assertEqual("selected-model", proposal["model_metadata"]["model"])
             capability = service.capability(*self.c.path)
-            self.assertEqual(["synthetic-model", "selected-model"], capability["models"])
+            self.assertEqual(["synthetic-model", "selected-model"], service.advisor.model_choices())
+            self.assertEqual([], capability["connections"])
+            self.assertFalse(capability["enabled"])
             self.assertEqual("selected-model", capability["job"]["model"])
         self.assertEqual(["selected-model"], [json.loads(r.content)["model"] for r in self.wire])
 

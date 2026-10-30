@@ -4,18 +4,24 @@ import type { Page } from '@playwright/test'
 const actor = { id: 'synthetic-self', name: '합성 사용자', username: 'synthetic-self', role: 'OWNER' }
 const token = 'synthetic.personal.jwt-for-browser-test'
 const issuanceUrl = 'https://identity.example.test/ai/tokens?app=sanity'
+const connectionId = '20000000-0000-4000-8000-000000000010'
+const credentialPath = `/api/ai/connections/${connectionId}/credentials`
+const tokenInput = '합성 AI 연결 개인 Bearer 토큰'
+const issueLink = '합성 AI 연결 인증값 발급받기'
 
-async function setup(page: Page, options: { registered?: boolean; expired?: boolean; soon?: boolean; disabled?: boolean; failSave?: boolean; issuanceUrl?: string } = {}) {
+async function setup(page: Page, options: { registered?: boolean; expired?: boolean; soon?: boolean; empty?: boolean; failSave?: boolean; issuanceUrl?: string } = {}) {
   const state = { revision: options.registered ? 1 : 0, registered: !!options.registered, writes: [] as { path: string; body: Record<string, unknown> }[], unexpected: [] as string[] }
-  const status = () => ({ enabled: !options.disabled, registered: state.registered, revision: state.revision,
+  const status = () => ({ enabled: true, registered: state.registered, revision: state.revision,
     expires_at: state.registered ? new Date(Date.now() + (options.expired ? -1 : options.soon ? 10 : 365) * 86400000).toISOString() : null, expired: !!options.expired, expires_soon: !!options.soon, issuance_url: options.issuanceUrl ?? null })
   await page.route('**/api/**', async route => {
     const request = route.request()
     const path = new URL(request.url()).pathname
-    if (path === '/api/ai/connections') return route.fulfill({ json: { items: [] } })
+    if (path === '/api/ai/connections') return route.fulfill({ json: { items: options.empty ? [] : [
+      { id: connectionId, label: '합성 AI 연결', enabled: true, auth_mode: 'bearer', model: 'model-a', models: ['model-a'], issuance_url: options.issuanceUrl ?? null, credential: status(), credential_error: null },
+    ] } })
     if (path === '/api/workbench/session') return route.fulfill({ json: { user: actor, csrf: '', expires_at: '', environment: 'PRODUCTION_SSO' } })
     if (path === '/api/workbench/overview') return route.fulfill({ json: { user: actor, data_origin: 'PRODUCTION', projects: [] } })
-    if (path.startsWith('/api/ai/credentials')) {
+    if (path === credentialPath || path === credentialPath + '/remove') {
       if (request.method() === 'POST') {
         const body = request.postDataJSON() as Record<string, unknown>
         state.writes.push({ path, body })
@@ -39,7 +45,7 @@ async function setup(page: Page, options: { registered?: boolean; expired?: bool
 }
 
 test('users save separate Bearer and x-client credentials with separate issuance links', async ({ page }) => {
-  const state = await setup(page, { disabled: true })
+  const state = await setup(page, { empty: true })
   await page.getByRole('dialog').press('Escape')
   const connections = [
     { id: '20000000-0000-4000-8000-000000000001', label: 'Bearer 연결', enabled: true, auth_mode: 'bearer', model: 'model-a', models: ['model-a'], issuance_url: 'https://identity.example.test/bearer', credential: { registered: false, revision: 0 }, credential_error: null },
@@ -80,13 +86,13 @@ test('users save separate Bearer and x-client credentials with separate issuance
 
 test('personal JWT is masked, saved only for self, and never retained in browser storage', async ({ page }) => {
   const state = await setup(page)
-  const input = page.getByLabel('JWT 토큰', { exact: true })
+  const input = page.getByLabel(tokenInput, { exact: true })
   await expect(input).toHaveAttribute('type', 'password')
   await input.fill(token)
-  await page.getByRole('button', { name: '토큰 저장', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText('토큰을 저장했습니다')
-  await expect(page.getByLabel('교체할 JWT 토큰')).toHaveValue('')
-  expect(state.writes).toEqual([{ path: '/api/ai/credentials', body: { token, expected_revision: 0 } }])
+  await page.getByRole('button', { name: '인증값 저장', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText('개인 인증값을 저장했습니다')
+  await expect(page.getByLabel(tokenInput, { exact: true })).toHaveValue('')
+  expect(state.writes).toEqual([{ path: credentialPath, body: { token, expected_revision: 0 } }])
   expect(await page.locator('body').innerText()).not.toContain(token)
   const stored = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }))
   expect(stored).not.toContain(token)
@@ -95,24 +101,24 @@ test('personal JWT is masked, saved only for self, and never retained in browser
 
 test('replacement and removal use current revisions without returning saved tokens', async ({ page }) => {
   const state = await setup(page, { registered: true, issuanceUrl })
-  await expect(page.getByLabel('교체할 JWT 토큰')).toHaveValue('')
-  await page.getByLabel('교체할 JWT 토큰').fill(token)
-  await page.getByRole('button', { name: '토큰 교체', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText('토큰을 저장했습니다')
-  await expect(page.getByRole('link', { name: 'JWT 토큰 발급받기' })).toHaveAttribute('href', issuanceUrl)
+  await expect(page.getByLabel(tokenInput, { exact: true })).toHaveValue('')
+  await page.getByLabel(tokenInput, { exact: true }).fill(token)
+  await page.getByRole('button', { name: '인증값 교체', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText('개인 인증값을 저장했습니다')
+  await expect(page.getByRole('link', { name: issueLink })).toHaveAttribute('href', issuanceUrl)
   await page.getByRole('button', { name: '연결 해제', exact: true }).click()
   await expect(page.getByRole('status')).toContainText('연결을 해제했습니다')
-  await expect(page.getByLabel('AI 토큰 등록 상태')).toContainText('미등록')
-  await expect(page.getByLabel('JWT 토큰', { exact: true })).toHaveValue('')
+  await expect(page.getByRole('article', { name: '합성 AI 연결 개인 인증값' })).toContainText('미등록')
+  await expect(page.getByLabel(tokenInput, { exact: true })).toHaveValue('')
   expect(state.writes.map(write => write.body.expected_revision)).toEqual([1, 2])
   expect(state.writes[1].body).not.toHaveProperty('token')
   expect(state.registered).toBe(false)
-  await expect(page.getByRole('link', { name: 'JWT 토큰 발급받기' })).toHaveAttribute('href', issuanceUrl)
+  await expect(page.getByRole('link', { name: issueLink })).toHaveAttribute('href', issuanceUrl)
 })
 
 test('near-expiry and expired tokens give explicit renewal guidance', async ({ page }) => {
   await setup(page, { registered: true, expired: true })
-  await expect(page.getByRole('alert')).toContainText('토큰이 만료됐습니다')
+  await expect(page.getByRole('alert')).toContainText('인증값이 만료됐습니다')
   await page.screenshot({ path: test.info().outputPath('personal-token-desktop.png') })
 })
 
@@ -123,27 +129,28 @@ test('thirty-day expiry warning is shown for a registered personal token', async
 
 test('failed saves clear the token, do not echo server details, and do not auto-retry', async ({ page }) => {
   const state = await setup(page, { failSave: true })
-  await page.getByLabel('JWT 토큰', { exact: true }).fill(token)
-  await page.getByRole('button', { name: '토큰 저장', exact: true }).click()
-  await expect(page.getByRole('alert')).toContainText('다른 창에서 토큰 설정이 변경됐습니다')
-  await expect(page.getByLabel('JWT 토큰', { exact: true })).toHaveValue('')
+  await page.getByLabel(tokenInput, { exact: true }).fill(token)
+  await page.getByRole('button', { name: '인증값 저장', exact: true }).click()
+  await expect(page.getByRole('alert')).toHaveText('다른 창에서 설정이 바뀌었습니다. 창을 다시 열어 현재 상태를 확인해 주세요.')
+  await expect(page.getByLabel(tokenInput, { exact: true })).toHaveValue('')
   expect(await page.locator('body').innerText()).not.toContain(token)
   expect(state.writes).toHaveLength(1)
 })
 
-test('personal credentials are not entered when the service uses server credentials', async ({ page }) => {
-  const state = await setup(page, { disabled: true })
-  await expect(page.getByRole('dialog')).toContainText('활성화되어 있지 않습니다')
+test('an empty managed catalog shows guidance and never requests environment credentials', async ({ page }) => {
+  const state = await setup(page, { empty: true })
+  await expect(page.getByRole('dialog')).toContainText('관리자에게 AI 연결 등록을 요청해 주세요')
   await expect(page.locator('input[type=password]')).toHaveCount(0)
   expect(state.writes).toHaveLength(0)
+  expect(state.unexpected).toEqual([])
 })
 
 test('personal token dialog fits a small mobile screen', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await setup(page, { issuanceUrl })
-  await expect(page.getByRole('link', { name: 'JWT 토큰 발급받기' })).toBeVisible()
-  await expect(page.getByLabel('JWT 토큰', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: '토큰 저장', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: issueLink })).toBeVisible()
+  await expect(page.getByLabel(tokenInput, { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '인증값 저장', exact: true })).toBeVisible()
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)
   expect(overflow).toBe(false)
   await page.screenshot({ path: test.info().outputPath('personal-token-mobile.png') })
@@ -151,8 +158,8 @@ test('personal token dialog fits a small mobile screen', async ({ page }) => {
 
 test('issuance link opens the configured page in a new tab without sending the entered token', async ({ page }) => {
   const state = await setup(page, { issuanceUrl })
-  await page.getByLabel('JWT 토큰', { exact: true }).fill(token)
-  const link = page.getByRole('link', { name: 'JWT 토큰 발급받기' })
+  await page.getByLabel(tokenInput, { exact: true }).fill(token)
+  const link = page.getByRole('link', { name: issueLink })
   await expect(link).toHaveAttribute('href', issuanceUrl)
   await expect(link).toHaveAttribute('rel', 'noopener noreferrer')
   await expect(link).toHaveAttribute('referrerpolicy', 'no-referrer')
@@ -167,7 +174,7 @@ test('issuance link opens the configured page in a new tab without sending the e
   await expect(popup).toHaveURL(issuanceUrl)
   expect(await popup.evaluate(() => window.opener)).toBeNull()
   expect(requests).toEqual([{ url: issuanceUrl, referrer: undefined, authorization: undefined, body: null }])
-  await expect(page.getByLabel('JWT 토큰', { exact: true })).toHaveValue(token)
+  await expect(page.getByLabel(tokenInput, { exact: true })).toHaveValue(token)
   expect(state.writes).toEqual([])
   await popup.close()
   await page.screenshot({ path: test.info().outputPath('personal-token-issue-link.png') })
@@ -176,7 +183,7 @@ test('issuance link opens the configured page in a new tab without sending the e
 for (const url of [undefined, 'javascript:alert(1)', 'http://identity.example.test/tokens', '/tokens', 'https://user:password@identity.example.test/tokens']) {
   test(`issuance link is hidden for ${url ?? 'an unset address'}`, async ({ page }) => {
     await setup(page, { issuanceUrl: url })
-    await expect(page.getByRole('link', { name: 'JWT 토큰 발급받기' })).toHaveCount(0)
-    await expect(page.getByLabel('JWT 토큰', { exact: true })).toBeVisible()
+    await expect(page.getByRole('link', { name: issueLink })).toHaveCount(0)
+    await expect(page.getByLabel(tokenInput, { exact: true })).toBeVisible()
   })
 }
