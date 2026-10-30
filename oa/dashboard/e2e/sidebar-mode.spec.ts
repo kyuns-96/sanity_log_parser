@@ -124,6 +124,8 @@ test('the collapsed rail retains an accessible mode switch', async ({ page }) =>
   await page.getByRole('button', { name: '메뉴 접기', exact: true }).click()
   const trigger = page.getByRole('button', { name: '관리자 모드로 전환', exact: true })
   await expect(trigger).toBeVisible()
+  // The compact switch appears before the 220 ms width transition finishes.
+  await expect.poll(async () => (await page.getByRole('complementary').boundingBox())!.width).toBe(80)
   const target = (await trigger.boundingBox())!
   const sidebarWidth = (await page.getByRole('complementary').boundingBox())!.width
   expect(target.width).toBeGreaterThanOrEqual(44)

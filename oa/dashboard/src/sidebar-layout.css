@@ -52,6 +52,37 @@
   .sidebar-layout:not(.sidebar-is-collapsed) .sidebar nav button > svg,
   .sidebar-layout.ws-studio-workspace:not(.ws-collapsed) .ws-sidebar nav button > svg { flex-shrink: 0; }
 
+  /* Grid and flex items must be allowed to shrink before their text can ellipsize. */
+  .sidebar-layout > .sidebar nav,
+  .sidebar-layout > .ws-sidebar nav,
+  .sidebar-layout .ws-studio-project-node,
+  .sidebar-layout .ws-studio-project-blocks,
+  .sidebar-layout .ws-studio-sidebar-header,
+  .sidebar-layout .ws-sidebar-bottom,
+  .sidebar-layout .sidebar-footer > div:not(.avatar),
+  .sidebar-layout .ws-account > div { min-width: 0; }
+  .sidebar-layout > .ws-sidebar nav,
+  .sidebar-layout .ws-studio-project-blocks { grid-template-columns: minmax(0, 1fr); }
+  .sidebar-layout:not(.ws-collapsed) .ws-sidebar nav button,
+  .sidebar-layout:not(.sidebar-is-collapsed) .sidebar nav button { min-width: 0; max-width: 100%; }
+  .sidebar-layout:not(.ws-collapsed) .ws-sidebar nav button > span:not(.ws-studio-nav-por),
+  .sidebar-layout:not(.sidebar-is-collapsed) .sidebar nav button .nav-text { display: block; }
+  .sidebar-layout .ws-sidebar nav button :is(small, .ws-studio-nav-por),
+  .sidebar-layout .sidebar nav button .nav-count { flex-shrink: 0; }
+
+  .sidebar-layout :is(.sidebar, .ws-sidebar) .console-brand { min-width: 0; max-width: 100%; flex-shrink: 1; }
+  .sidebar-layout :is(.sidebar, .ws-sidebar) .console-wordmark { grid-template-columns: minmax(0, 1fr); overflow: hidden; }
+  .sidebar-layout :is(.sidebar, .ws-sidebar) .console-brand-tagline,
+  .sidebar-layout .sidebar-footer > div:not(.avatar) :is(strong, small),
+  .sidebar-layout .ws-account > div :is(strong, span),
+  .sidebar-layout .portal-sidebar-context > div :is(strong, small) {
+    display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sidebar-layout .sidebar-footer > div:not(.avatar),
+  .sidebar-layout .ws-account > div { flex: 1 1 0; }
+  .sidebar-layout .sidebar-footer > button { flex-shrink: 0; }
+  .sidebar-layout :is(.portal-sidebar-note, .ws-sidebar-bottom p) { overflow-wrap: anywhere; }
+
   .sidebar-resizer {
     position: absolute;
     z-index: 2;
