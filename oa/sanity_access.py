@@ -179,8 +179,8 @@ class AccessStore:
 
     @staticmethod
     def _role_scope(role, project_id, block_id, *, code="INVALID_REQUEST"):
-        if (role not in ("TOP", "OWNER") or not _identifier(project_id)
-                or (role == "TOP" and block_id is not None)
+        if (role not in ("MEMBER", "TOP", "OWNER") or not _identifier(project_id)
+                or (role in ("MEMBER", "TOP") and block_id is not None)
                 or (role == "OWNER" and not _identifier(block_id))):
             _error(code)
 
@@ -237,10 +237,13 @@ class AccessStore:
                 if data["project_id"] not in projects or (data["block_id"] is not None and
                         (data["block_id"] not in blocks or blocks[data["block_id"]]["project_id"] != data["project_id"])):
                     _error()
+                # Legacy histories may contain distinct TOP/OWNER scopes in the
+                # same project. New MEMBER requests have one project-wide scope.
+                scope_fields = ("project_id",) if data["role"] == "MEMBER" else ("role", "project_id", "block_id")
                 if (any(r["user_id"] == event["actor_id"] and r["status"] == "PENDING"
-                        and all(r[k] == data[k] for k in ("role", "project_id", "block_id")) for r in requests.values())
+                        and all(r[k] == data[k] for k in scope_fields) for r in requests.values())
                         or any(g["user_id"] == event["actor_id"] and all(g[k] == data[k]
-                               for k in ("role", "project_id", "block_id")) for g in grants.values())):
+                               for k in scope_fields) for g in grants.values())):
                     _error()
                 requests[event["command_id"]] = {"request_id": event["command_id"], "user_id": event["actor_id"],
                     **data, "status": "PENDING", "created_at": event["created_at"]}
@@ -256,17 +259,27 @@ class AccessStore:
                 request.update(status="APPROVED" if data["decision"] == "APPROVE" else "REJECTED",
                                decided_by=event["actor_id"], decision_reason=data["reason"])
                 if data["decision"] == "APPROVE":
-                    if any(all(g[k] == request[k] for k in ("user_id", "role", "project_id", "block_id")) for g in grants.values()):
+                    grant_fields = (("user_id", "project_id") if request["role"] == "MEMBER" else
+                                    ("user_id", "role", "project_id", "block_id"))
+                    if any(all(g[k] == request[k] for k in grant_fields) for g in grants.values()):
                         _error()
                     grants[request["request_id"]] = {"grant_id": request["request_id"], **{k: request[k]
                         for k in ("user_id", "role", "project_id", "block_id")}}
-            elif kind == "REVOKE":
+            elif kind in ("REVOKE", "REVOKE_PROJECT"):
                 if (set(data) != {"grant_id", "reason", "expected_revision"} or not isinstance(data["grant_id"], str)
                         or not _text(data["reason"], 2000)
                         or type(data["expected_revision"]) is not int or data["expected_revision"] != expected - 1
                         or data["grant_id"] not in grants):
                     _error()
-                del grants[data["grant_id"]]
+                if kind == "REVOKE":
+                    # Frozen legacy events retain their original one-grant meaning.
+                    del grants[data["grant_id"]]
+                else:
+                    target = grants[data["grant_id"]]
+                    for grant_id in [key for key, grant in grants.items()
+                                     if (grant["user_id"], grant["project_id"]) ==
+                                        (target["user_id"], target["project_id"])]:
+                        del grants[grant_id]
             else:
                 _error()
         self._validate_registry(projects, blocks)
@@ -324,8 +337,22 @@ class AccessStore:
         self._identity(user_id)
         state = self._state()
         return {"user_id": user_id, "is_admin": self.is_admin(user_id), "revision": state["revision"],
-                "grants": [dict(g) for g in state["grants"].values() if g["user_id"] == user_id],
+                "grants": [g for g in self._project_grants(state) if g["user_id"] == user_id],
                 "requests": [dict(r) for r in state["requests"].values() if r["user_id"] == user_id]}
+
+    @staticmethod
+    def _project_grants(state):
+        """Expose one membership per project without rewriting legacy audit rows.
+
+        The smallest existing grant UUID is a deterministic revocation anchor;
+        REVOKE_PROJECT removes every current grant for that account and project.
+        """
+        result = {}
+        for grant in sorted(state["grants"].values(), key=lambda value: value["grant_id"]):
+            key = (grant["user_id"], grant["project_id"])
+            if key not in result:
+                result[key] = {**grant, "role": "MEMBER", "block_id": None}
+        return [result[key] for key in sorted(result)]
 
     def admin_snapshot(self, actor):
         self._admin(actor)
@@ -338,7 +365,7 @@ class AccessStore:
                 if exc.code != "ACCOUNT_DISABLED":
                     raise
         return {"revision": state["revision"], "requests": [dict(r) for r in state["requests"].values()],
-                "grants": [dict(g) for g in state["grants"].values()], "users": users}
+                "grants": self._project_grants(state), "users": users}
 
     def create_project(self, actor, request_id, project_id, name, description=""):
         self._admin(actor)
@@ -388,11 +415,10 @@ class AccessStore:
             return self.snapshot(actor.user_id)
         self._registered_role_scope(role, project_id, block_id)
         state = self._state()
-        if any(r["user_id"] == actor.user_id and r["role"] == role and r["project_id"] == project_id
-               and r["block_id"] == block_id and r["status"] == "PENDING" for r in state["requests"].values()):
+        if any(r["user_id"] == actor.user_id and r["project_id"] == project_id
+               and r["status"] == "PENDING" for r in state["requests"].values()):
             _error("REQUEST_CONFLICT")
-        if any(g["user_id"] == actor.user_id and g["role"] == role and g["project_id"] == project_id
-               and g["block_id"] == block_id for g in state["grants"].values()):
+        if any(g["user_id"] == actor.user_id and g["project_id"] == project_id for g in state["grants"].values()):
             _error("REQUEST_CONFLICT")
         self._append(command_id, "REQUEST", actor, data)
         return self.snapshot(actor.user_id)
@@ -423,7 +449,7 @@ class AccessStore:
         # Removing a stale request is safe after account deactivation; creating
         # a new grant still requires an active, strictly validated SSO account.
         self._identity(request["user_id"], require_active=decision == "APPROVE")
-        if decision == "APPROVE" and any(all(g[k] == request[k] for k in ("user_id", "role", "project_id", "block_id"))
+        if decision == "APPROVE" and any(all(g[k] == request[k] for k in ("user_id", "project_id"))
                                          for g in state["grants"].values()):
             _error("REQUEST_CONFLICT")
         self._append(command_id, "DECISION", actor, data)
@@ -435,14 +461,16 @@ class AccessStore:
         if not _text(reason, 2000) or type(expected_revision) is not int or expected_revision < 0:
             _error("INVALID_REQUEST")
         data = {"grant_id": grant_id, "reason": reason, "expected_revision": expected_revision}
-        if self._retry(command_id, "REVOKE", actor, data):
+        existing = self._state()["commands"].get(command_id)
+        kind = "REVOKE" if existing is not None and existing["kind"] == "REVOKE" else "REVOKE_PROJECT"
+        if self._retry(command_id, kind, actor, data):
             return self.admin_snapshot(actor)
         state = self._state()
         if state["revision"] != expected_revision:
             _error("REVISION_CONFLICT")
         if grant_id not in state["grants"]:
             _error("RESOURCE_NOT_FOUND")
-        self._append(command_id, "REVOKE", actor, data)
+        self._append(command_id, "REVOKE_PROJECT", actor, data)
         return self.admin_snapshot(actor)
 
     def validate_scope(self, scope):
@@ -457,18 +485,18 @@ class AccessStore:
     def _scopes(self, user_id, *, write=False):
         self._identity(user_id)
         state = self._state()
-        grants = [g for g in state["grants"].values() if g["user_id"] == user_id]
+        # Legacy TOP/OWNER grants and new MEMBER grants all authorize the same
+        # project membership. The sealed project/block registry still bounds it.
+        projects = {g["project_id"] for g in state["grants"].values() if g["user_id"] == user_id}
         return [{"schema_version": 1, "project_id": b["project_id"], "block_id": b["id"]}
-                for b in state["blocks"].values() if any(
-                    g["project_id"] == b["project_id"] and
-                    ((g["role"] == "TOP" and not write) or (g["role"] == "OWNER" and g["block_id"] == b["id"]))
-                    for g in grants)]
+                for b in state["blocks"].values() if b["project_id"] in projects]
 
     def can_read_business(self, user_id):
-        return bool(self._scopes(user_id))
+        self._identity(user_id)
+        return any(grant["user_id"] == user_id for grant in self._state()["grants"].values())
 
     def can_write_business(self, user_id):
-        return bool(self._scopes(user_id, write=True))
+        return self.can_read_business(user_id)
 
     def read_predicate(self, user_id, alias="r"):
         if not isinstance(alias, str) or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", alias) is None:

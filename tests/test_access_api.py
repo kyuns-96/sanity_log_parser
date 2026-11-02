@@ -51,7 +51,7 @@ class AccessApiBoundaryTests(unittest.TestCase):
                 db.assert_not_called()
 
     def test_mutation_client_header_and_cross_origin_are_rejected_before_database(self):
-        body = {"request_id": str(uuid4()), "role": "TOP", "project_id": "synthetic.project", "block_id": None, "reason": "합성 요청"}
+        body = {"request_id": str(uuid4()), "role": "MEMBER", "project_id": "synthetic.project", "block_id": None, "reason": "합성 요청"}
         with patch.object(access_api, "Database") as db, TestClient(application(USER)) as client:
             for headers in ({}, {"X-Sanity-Request": "1", "Origin": "http://other.test"},
                             {"X-Sanity-Request": "1", "Sec-Fetch-Site": "cross-site"}):
@@ -106,7 +106,7 @@ class AccessApiDatabaseTests(PgTestCase):
         self.assertEqual("project.A", catalog["projects"][0]["id"])
         self.assertEqual("block.A", catalog["blocks"][0]["id"])
         request_id = str(uuid4())
-        request = {"request_id": request_id, "role": "OWNER", "project_id": "project.A", "block_id": "block.A", "reason": "업무 배정"}
+        request = {"request_id": request_id, "role": "MEMBER", "project_id": "project.A", "block_id": None, "reason": "업무 배정"}
         pending = self.post("/api/access/requests", request)
         self.assertEqual(200, pending.status_code, pending.text)
         self.assertEqual(USER.user_id, pending.json()["requests"][0]["user_id"])
@@ -116,7 +116,8 @@ class AccessApiDatabaseTests(PgTestCase):
         self.assertEqual(403, self.post(path, decision).status_code)
         approved = self.post(path, decision, admin=True)
         self.assertEqual(200, approved.status_code, approved.text)
-        self.assertEqual(request_id, self.client.get("/api/access/me").json()["grants"][0]["grant_id"])
+        self.assertEqual({"grant_id": request_id, "user_id": USER.user_id, "role": "MEMBER", "project_id": "project.A", "block_id": None},
+                         self.client.get("/api/access/me").json()["grants"][0])
         revoke = {"command_id": str(uuid4()), "reason": "업무 종료", "expected_revision": approved.json()["revision"]}
         result = self.post("/api/admin/grants/" + request_id + "/revoke", revoke, admin=True)
         self.assertEqual(200, result.status_code, result.text)

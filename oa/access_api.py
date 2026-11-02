@@ -37,7 +37,7 @@ class BlockCommand(AccessCommand):
 
 class PermissionCommand(AccessCommand):
     request_id: UUID
-    role: Literal["TOP", "OWNER"]
+    role: Literal["MEMBER", "TOP", "OWNER"]
     project_id: Identifier
     block_id: Identifier | None = None
     reason: str = Field(min_length=1, max_length=2000)

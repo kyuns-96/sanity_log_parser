@@ -67,17 +67,20 @@ class ProductionWorkspaceTests(PgTestCase):
             call()
         self.assertEqual(code, caught.exception.code)
 
-    def test_owner_top_and_admin_use_current_grants_without_synthetic_accounts(self):
+    def test_legacy_members_and_admin_use_current_project_grants_without_synthetic_accounts(self):
         with self.store(readonly=True) as store:
             block, _ = store.access(OWNER.user_id, "block.A1", write=True)
             self.assertTrue(store.can_write(OWNER.user_id, block))
             block, _ = store.access(TOP.user_id, "block.A2")
-            self.assertFalse(store.can_write(TOP.user_id, block))
-            self.assert_code("FORBIDDEN", lambda: store.access(TOP.user_id, "block.A1", write=True))
-            self.assert_code("RESOURCE_NOT_FOUND", lambda: store.access(OWNER.user_id, "block.A2"))
+            self.assertTrue(store.can_write(TOP.user_id, block))
+            self.assertEqual("block.A1", store.access(TOP.user_id, "block.A1", write=True)[0]["workspace_key"])
+            self.assertEqual("block.A2", store.access(OWNER.user_id, "block.A2", write=True)[0]["workspace_key"])
+            self.assert_code("RESOURCE_NOT_FOUND", lambda: store.access(TOP.user_id, "block.B1", write=True))
+            self.assert_code("RESOURCE_NOT_FOUND", lambda: store.access(OWNER.user_id, "block.B1"))
             self.assert_code("RESOURCE_NOT_FOUND", lambda: store.access(ADMIN.user_id, "block.A1"))
             self.assertEqual("USER", store.user(ADMIN.user_id)["role"])
-            self.assertEqual("OWNER", store.user(OWNER.user_id)["role"])
+            self.assertEqual("MEMBER", store.user(OWNER.user_id)["role"])
+            self.assertEqual("MEMBER", store.user(TOP.user_id)["role"])
             self.assert_code("FORBIDDEN", lambda: store.login("synthetic", "synthetic"))
             self.assert_code("FORBIDDEN", lambda: store.session("synthetic"))
             self.assert_code("FORBIDDEN", lambda: store.logout("synthetic"))
@@ -88,27 +91,28 @@ class ProductionWorkspaceTests(PgTestCase):
         with self.store(readonly=True) as store:
             self.assert_code("RESOURCE_NOT_FOUND", lambda: store.access(OWNER.user_id, "block.A1"))
 
-    def test_overview_and_versions_are_readonly_and_display_real_grants(self):
+    def test_overview_and_versions_show_project_membership_without_people_enumeration(self):
         with self.store(readonly=True) as store:
             overview = store.overview(OWNER.user_id)
             self.assertEqual("PRODUCTION_SSO", overview["data_origin"])
             self.assertEqual(["project.A"], [project["id"] for project in overview["projects"]])
             project = overview["projects"][0]
-            self.assertEqual([TOP.user_id], [user["id"] for user in project["tops"]])
-            self.assertEqual(["block.A1"], [block["id"] for block in project["blocks"]])
-            self.assertEqual([OWNER.user_id], [user["id"] for user in project["blocks"][0]["owners"]])
+            self.assertEqual([], project["tops"])
+            self.assertEqual(["block.A1", "block.A2"], [block["id"] for block in project["blocks"]])
+            self.assertTrue(all(block["owners"] == [] for block in project["blocks"]))
             self.assertTrue(project["blocks"][0]["can_assign_por"])
             self.assertIsNone(project["blocks"][0]["por"]["version"])
             self.assertEqual([], store.overview(ADMIN.user_id)["projects"])
             self.assertEqual(2, len(store.overview(TOP.user_id)["projects"][0]["blocks"]))
-            self.assertFalse(store.versions(TOP.user_id, "block.A1")["can_assign_por"])
+            self.assertTrue(store.versions(TOP.user_id, "block.A1")["can_assign_por"])
             self.assertTrue(store.versions(OWNER.user_id, "block.A1")["can_assign_por"])
         self.assertEqual(0, self.admin_query("SELECT count(*) FROM {oa} WHERE record_type='WS_POR'").fetchone()[0])
 
     def test_first_por_is_initialized_only_on_valid_write_and_retries_are_idempotent(self):
         request = uuid4()
         with self.store() as store:
-            self.assert_code("FORBIDDEN", lambda: store.assign_por(TOP.user_id, "block.A1", "block.A1.v1", 0, request, "Test reason"))
+            self.assert_code("RESOURCE_NOT_FOUND", lambda: store.assign_por(ADMIN.user_id, "block.A1", "block.A1.v1", 0, request, "Test reason"))
+            self.assert_code("RESOURCE_NOT_FOUND", lambda: store.assign_por(TOP.user_id, "block.B1", "block.B1.v1", 0, request, "Test reason"))
             self.assert_code("NOT_FOUND", lambda: store.assign_por(OWNER.user_id, "block.A1", "block.B1.v1", 0, request, "Test reason"))
             self.assert_code("INVALID_REQUEST", lambda: store.assign_por(OWNER.user_id, "block.A1", "block.A1.v1", 0, request, " "))
             self.assertEqual(0, store.db.execute("SELECT count(*) AS n FROM {oa} WHERE record_type='WS_POR'").fetchone()["n"])

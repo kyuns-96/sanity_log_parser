@@ -167,7 +167,7 @@ class TokenlessSubmissionTests(PgTestCase):
         sid=self.submit()
         self.assertEqual('AWAITING_CONFIRMATION',self.detail(sid)['delivery_state'])
         self.assertEqual(0,self.report_count())
-        self.assertEqual(403,self.decide(sid,user=TOP).status_code)
+        self.assertEqual(404,self.decide(sid,user=OTHER).status_code)
         self.success(self.decide(sid));self.bridge()
         self.assertEqual('READY',self.client.status(sid)['review_readiness'])
         original=self.collection_report()
@@ -359,7 +359,7 @@ class TokenlessSubmissionTests(PgTestCase):
     def test_only_current_owner_can_confirm_and_digest_revision_and_request_are_bound(self):
         sid=self.submit();body=self.body(sid)
         self.assertEqual(200,self.clients[TOP].get('/api/workbench/blocks/block-a1/intake/'+sid).status_code)
-        for user in (TOP,OTHER,ADMIN):self.assertIn(self.decide(sid,body,user).status_code,(403,404))
+        for user in (OTHER,ADMIN):self.assertIn(self.decide(sid,body,user).status_code,(403,404))
         for change in ({'confirmed_scope':False},{'manifest_sha256':'0'*64},{'content_sha256':'0'*64},
                        {'scope_sha256':'0'*64},{'expected_revision':body['expected_revision']+1}):
             self.assertEqual(409,self.decide(sid,{**body,**change}).status_code)
@@ -368,8 +368,35 @@ class TokenlessSubmissionTests(PgTestCase):
         self.assertEqual(0,self.report_count())
         first=self.success(self.decide(sid,body));second=self.success(self.decide(sid,body))
         self.assertEqual(first,second);self.assertEqual(2,self.report_count())
+        peer_retry=self.decide(sid,body,user=TOP)
+        self.assertEqual(409,peer_retry.status_code)
+        self.assertEqual('REQUEST_CONFLICT',peer_retry.json()['code'])
         self.assertEqual(409,self.decide(sid,{**body,'request_id':str(uuid.uuid4())}).status_code)
         self.assertEqual(409,self.decide(sid,{**body,'reason':'different'}).status_code)
+
+    def test_project_member_peer_can_confirm_once_and_receipt_remains_bound_to_that_actor(self):
+        sid=self.submit();body={**self.body(sid),'reason':'Synthetic project member verified the submitted scope'}
+        self.assertEqual(0,self.report_count())
+        self.assertTrue(self.detail(sid,user=TOP)['can_confirm'])
+        first=self.success(self.decide(sid,body,user=TOP))
+        self.assertEqual('OA_STORED',first['delivery_state'])
+        self.assertEqual(TOP,first['decision']['user_id'])
+        self.assertEqual(body['request_id'],first['decision']['request_id'])
+        self.assertEqual(body['expected_revision']+1,first['revision'])
+        # This fixture contains two reports; one confirmation publishes that
+        # exact pair once, rather than one publication per project member.
+        self.assertEqual(2,self.report_count())
+        before=self.admin_query("SELECT record_id,payload,state,version,created_at,updated_at FROM {oa} "
+            "WHERE record_type IN ('WS_REPORT','WS_SUBMISSION') ORDER BY record_type,workspace_key").fetchall()
+        self.assertEqual(first,self.success(self.decide(sid,body,user=TOP)))
+        peer_retry=self.decide(sid,body,user=OWNER)
+        self.assertEqual(409,peer_retry.status_code)
+        self.assertEqual('REQUEST_CONFLICT',peer_retry.json()['code'])
+        self.assertEqual(first,self.success(self.decide(sid,body,user=TOP)))
+        after=self.admin_query("SELECT record_id,payload,state,version,created_at,updated_at FROM {oa} "
+            "WHERE record_type IN ('WS_REPORT','WS_SUBMISSION') ORDER BY record_type,workspace_key").fetchall()
+        self.assertEqual(before,after)
+        self.assertEqual(2,self.report_count())
 
     def test_confirmation_revalidates_staged_parts_and_rolls_back_partial_publication(self):
         sid=self.submit();body=self.body(sid)

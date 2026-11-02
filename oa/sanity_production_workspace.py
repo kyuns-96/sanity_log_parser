@@ -33,8 +33,7 @@ class ProductionWorkspaceStore(WorkspaceStore):
         self.authorization.require_ready()
         identity = self.authorization._identity(user_id)
         grants = self.authorization.snapshot(user_id)["grants"]
-        roles = {grant["role"] for grant in grants}
-        role = "OWNER" if "OWNER" in roles else "TOP" if "TOP" in roles else "USER"
+        role = "MEMBER" if grants else "USER"
         return {"id": user_id, "name": identity["display_name"], "username": user_id, "role": role}
 
     def access(self, user_id, block_id, *, write=False):
@@ -44,7 +43,7 @@ class ProductionWorkspaceStore(WorkspaceStore):
         if scope is None:
             raise ReviewError("RESOURCE_NOT_FOUND", "Block is not available")
         if write and scope not in self.authorization._scopes(user_id, write=True):
-            raise ReviewError("FORBIDDEN", "Block ownership is required")
+            raise ReviewError("FORBIDDEN", "Project membership is required")
         block = self.get("WS_BLOCK", scope["block_id"])
         project = self.get("WS_PROJECT", scope["project_id"])
         if (block["record_id"] != record_id("WS_BLOCK", block_id)
@@ -99,24 +98,8 @@ class ProductionWorkspaceStore(WorkspaceStore):
         readable_blocks = {scope["block_id"] for scope in readable}
         writable_blocks = {scope["block_id"] for scope in self.authorization._scopes(user_id, write=True)}
         registry = self.authorization._state()
-        people = {}
-
-        def assigned_people(role, project_id, block_id=None):
-            result = []
-            members = sorted({grant["user_id"] for grant in registry["grants"].values()
-                              if grant["role"] == role and grant["project_id"] == project_id
-                              and grant["block_id"] == block_id})
-            for member in members:
-                if member not in people:
-                    try:
-                        people[member] = self.user(member)
-                    except ReviewError as error:
-                        if error.code != "ACCOUNT_DISABLED":
-                            raise
-                        people[member] = None
-                if people[member] is not None:
-                    result.append(people[member])
-            return result
+        member_projects = {grant["project_id"] for grant in registry["grants"].values()
+                           if grant["user_id"] == user_id}
 
         projects = []
         for project in sorted(registry["projects"].values(), key=lambda value: value["id"]):
@@ -139,11 +122,13 @@ class ProductionWorkspaceStore(WorkspaceStore):
                     (record_id("WS_BLOCK", block_id),
                      record_id("WS_VERSION", report_version["id"]) if report_version else None)).fetchall()
                 counts = {row["check_status"]: row["count"] for row in rows}
-                blocks.append({**value, "owners": assigned_people("OWNER", project["id"], block_id),
+                # Keep the response shape for older dashboards without enumerating
+                # everyone who can access this project on each block card.
+                blocks.append({**value, "owners": [],
                                "can_assign_por": block_id in writable_blocks, "por": por,
                                "report_version": report_version, "counts": counts, "total": sum(counts.values())})
-            if blocks:
-                projects.append({**project, "tops": assigned_people("TOP", project["id"]), "blocks": blocks})
+            if project["id"] in member_projects:
+                projects.append({**project, "tops": [], "blocks": blocks})
         return {"user": user, "projects": projects, "data_origin": "PRODUCTION_SSO"}
 
     def assign_por(self, user_id, block_id, version_id, expected_revision, request_id, reason):

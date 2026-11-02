@@ -216,7 +216,7 @@ class PreservedOwnerTests(unittest.TestCase):
             c.doCleanups()
 
     def test_tokenless_owner_confirms_exact_files_and_none_parser_stays_supported(self):
-        from tests.test_submission_tokenless import TokenlessSubmissionTests, TOP
+        from tests.test_submission_tokenless import TokenlessSubmissionTests, OTHER
         c = TokenlessSubmissionTests()
         try:
             c.setUp(); c.collection_input(); preserve(c.f, c.root)
@@ -224,7 +224,7 @@ class PreservedOwnerTests(unittest.TestCase):
             self.assertEqual(2, len(detail['preserved_files']))
             self.assertEqual('AWAITING_CONFIRMATION', detail['delivery_state'])
             self.assertEqual(0, c.report_count())
-            self.assertEqual(403, c.decide(sid, user=TOP).status_code)
+            self.assertEqual(404, c.decide(sid, user=OTHER).status_code)
             stale = c.body(sid); stale['scope_sha256'] = '0'*64
             self.assertEqual(409, c.decide(sid, body=stale).status_code)
             c.success(c.decide(sid)); c.bridge()

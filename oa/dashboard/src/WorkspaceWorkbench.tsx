@@ -391,7 +391,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
     {step === 1 && data.current && !confirmed && <p className="ws-bulk-confirm-note" id={`${inputId}-confirm-hint`}>분류 확정 시 전체 {n(data.summary.total)}개 그룹의 유효한 근거 초안을 일괄 채택합니다.</p>}
     {step === 1 && blockedHint && <p className="ws-step-hint" id={`${inputId}-step-hint`}>{blockedHint}</p>}
     {step === 1 && !confirmed && !blockedHint && <span id={`${inputId}-step-hint`} className="sr-only">전체 분류를 확정한 뒤 그룹별 판정을 진행할 수 있습니다.</span>}
-    {!data.can_edit && <p className="ws-step-hint">조회 전용 · 분류 및 사용자 판정은 블록 담당자만 변경할 수 있습니다.</p>}
+    {!data.can_edit && <p className="ws-step-hint">조회 전용 · 현재 분류 및 사용자 판정을 변경할 권한이 없습니다.</p>}
     {!data.current && <section className="ws-workbench-empty"><Layers3 size={28} /><h2>분류 초안을 생성하세요</h2><p>{production || data.ai?.enabled && data.ai.supported ? 'AI가 전체 로그와 확정 사례를 바탕으로 초기 그룹과 분류 근거를 제안합니다. 첫 보고서도 과거 사례 없이 시작할 수 있습니다.' : '참고 엔진이 원본 필드와 확정 사례를 바탕으로 그룹 초안을 생성합니다. 사내 AI는 미연결 상태입니다.'}</p></section>}
     {production && !data.ai?.enabled && <p className="ws-notice" role="status">OA AI가 아직 설정되지 않았습니다. 운영 담당자가 모델 연결을 설정한 뒤 AI 분류를 시작할 수 있습니다.</p>}
     {production && needsPersonalCredential(choice) && <p className="ws-notice" role="status">개인 AI 토큰을 사용할 수 없습니다. 화면 상단의 ‘개인 AI 토큰’에서 등록 상태와 만료일을 확인해 주세요.</p>}
@@ -415,7 +415,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
         <div className="ws-context-heading"><FileText size={16} /><h2>검사 보고서</h2></div>
         <div className="ws-context-file"><strong>{data.report.item_id || data.report.rule}</strong><span>{data.report.family}</span><span title={data.report.id}>{reportDisplayName(data.report)}</span><Badge variant="outline" className={`ws-status ws-status-${data.report.check_status.toLowerCase()}`}>도구 결과 {labels[toolResultStatus(data.report)]}</Badge></div>
         <dl className="ws-context-metrics"><div><dt>전체 로그</dt><dd>{n(data.record_count)}</dd></div><div><dt>분류 그룹</dt><dd>{n(data.summary.total)}</dd></div><div><dt>분류 개정</dt><dd>{data.revision}</dd></div></dl>
-        <p className="ws-context-permission">{data.can_edit ? '블록 담당자 · 검토 가능' : '조회 전용'}</p>
+        <p className="ws-context-permission">{data.can_edit ? production ? '프로젝트 멤버 · 검토 가능' : '블록 담당자 · 검토 가능' : '조회 전용'}</p>
         <Button variant="ghost" size="sm" onClick={onBack}><ArrowLeft size={14} />보고서 목록</Button>
       </aside>
       <section className="ws-workbench-groups ws-studio-groups" aria-label="분류 그룹 목록">

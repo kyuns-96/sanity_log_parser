@@ -11,7 +11,7 @@
 운영 중 report를 분류·판정하는 모델과, 사내 코드를 작성하는 내부 개발 AI는 서로 다른 역할이다.
 실제 report는 보안상 사내 AI/담당자가 사내에서만 열람·검증한다. Codex에는 원문을 보내지 않고 합성 재현 입력·기대값·비식별 코드만 전달한다.
 
-2026-10-22 운영 Welcome·관리·TOP/OWNER와 봉인된 legacy 결과 범위는 [oa/ACCESS_MANAGEMENT.md](oa/ACCESS_MANAGEMENT.md)를 따른다. 운영 `/`·`/api/*`와 합성 `/workspace`를 분리하며, 이 Codex 공통 변경은 내부 AI의 수정 허용 목록을 넓히지 않는다.
+2026-11-02 사용자 결정으로 운영 업무 권한은 프로젝트별 MEMBER 하나로 통일한다. 기존 TOP/OWNER 배정은 해당 프로젝트의 모든 등록 블록 조회·수정 권한으로 해석한다. 원래 배정/회수 이력은 보존하고 프로젝트 멤버 회수 시 그 프로젝트의 기존 배정을 함께 해제한다. 운영 Welcome·관리·봉인된 legacy 결과 범위는 [oa/ACCESS_MANAGEMENT.md](oa/ACCESS_MANAGEMENT.md)를 따른다. 운영 `/`·`/api/*`와 합성 `/workspace`를 분리하며, 이 업무 권한 변경은 내부 AI의 파일·메서드 수정 허용 목록을 넓히지 않는다.
 
 2026-10-16 사용자 요청의 통합 구현 지도는 [INTERNAL_AI_HANDOFF.md](INTERNAL_AI_HANDOFF.md)다. INT-01~06별 선행 정보·허용 메서드·수용 기준과 Codex의 COMMON 후속 작업을 구분한다. 이 가이드와 함께 읽으며, SDK 어댑터 검증을 운영 연결 완료로 보고하지 않는다. 현재 검토 UI와 업무 용어는 유지한다.
 

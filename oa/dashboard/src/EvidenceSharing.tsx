@@ -62,7 +62,7 @@ export default function EvidenceSharing({ base, stage, disabled = false, onError
         onClick={() => void change(!choice?.enabled)} onKeyDown={event => {
           if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); void change(event.key === 'ArrowRight') }
         }}><span className="ws-evidence-choice-thumb">{busy && <LoaderCircle size={13} className="animate-spin" />}</span></button></div></div>
-    {choice && !choice.can_manage && <small>블록 담당자가 등록 여부를 변경할 수 있습니다.</small>}
+    {choice && !choice.can_manage && <small>프로젝트 멤버가 등록 여부를 변경할 수 있습니다.</small>}
     {choice?.can_manage && !choice.can_enable && !choice.enabled && <small>{stage === 'CLUSTER' ? '분류 근거를 저장·확인한 뒤 등록할 수 있습니다.' : '현재 그룹의 PASS/FAIL 판정과 근거를 저장한 뒤 등록할 수 있습니다.'}</small>}
     {choice?.enabled && !choice.active && <small>{stage === 'CLUSTER' ? '전체 분류를 확정하면 AI 참고 사례로 사용합니다.' : '판정이나 그룹이 변경되어 현재 AI 참고에서 제외됩니다.'}</small>}
     {error && <><p className="ws-evidence-choice-error" role="alert">{error}</p><button className="ws-text-action" type="button" disabled={busy} onClick={() => setReload(value => value + 1)}>등록 상태 다시 조회</button></>}

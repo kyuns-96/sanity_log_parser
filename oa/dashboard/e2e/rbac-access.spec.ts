@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { makeDemo } from '../src/demo'
-import type { AccessCatalog, AccessGrant, AccessRequest } from '../src/accessApi'
+import type { AccessCatalog, AccessGrant, AccessRequest, AccessRole } from '../src/accessApi'
 import type { Detail } from '../src/types'
 
 // Browser contracts use synthetic fixtures only; no company account, DB or SDK.
@@ -28,10 +28,10 @@ async function accessServer(page: Page, admin = false, empty = false) {
     if (path === '/api/session') return route.fulfill({ json: {
       user_id: 'synthetic-user', reviewer: '합성 사용자', auth_method: 'sso', authorization_ready: true,
       is_admin: state.admin, can_read_business: state.readable, can_receive: false,
-      writable: state.grants.some(grant => grant.role === 'OWNER'), access_mode: 'postgresql', notice: '',
+      writable: state.grants.some(grant => grant.user_id === 'synthetic-user'), access_mode: 'postgresql', notice: '',
     } })
     if (path === '/api/access/catalog') return route.fulfill({ json: state.catalog })
-    if (path === '/api/access/me') return route.fulfill({ json: { user_id: 'synthetic-user', is_admin: state.admin, revision: state.revision, grants: state.grants, requests: state.requests } })
+    if (path === '/api/access/me') return route.fulfill({ json: { user_id: 'synthetic-user', is_admin: state.admin, revision: state.revision, grants: state.grants.filter(grant => grant.user_id === 'synthetic-user'), requests: state.requests.filter(item => item.user_id === 'synthetic-user') } })
     if (path === '/api/admin/ai/task-defaults') return route.fulfill({ json: { revision: 0, defaults: { CLUSTER: null, REVIEW: null } } })
     if (path === '/api/admin/ai/scheduler') return route.fulfill({ json: { revision: 0, limits: { max_concurrency: 8, max_jobs: 4 } } })
     if (path === '/api/admin/access') return state.adminForbidden
@@ -48,7 +48,7 @@ async function accessServer(page: Page, admin = false, empty = false) {
       return route.fulfill({ json: { status: 'CREATED' } })
     }
     if (body && path === '/api/access/requests') {
-      state.requests.push({ request_id: String(body.request_id), user_id: 'synthetic-user', role: body.role as 'TOP' | 'OWNER', project_id: String(body.project_id), block_id: body.block_id as string | null, reason: String(body.reason), status: 'PENDING', created_at: '2026-10-22T00:00:00Z' })
+      state.requests.push({ request_id: String(body.request_id), user_id: 'synthetic-user', role: body.role as AccessRole, project_id: String(body.project_id), block_id: body.block_id as string | null, reason: String(body.reason), status: 'PENDING', created_at: '2026-10-22T00:00:00Z' })
       state.revision++
       return route.fulfill({ json: { status: 'REQUESTED' } })
     }
@@ -59,7 +59,7 @@ async function accessServer(page: Page, admin = false, empty = false) {
       target.decision_reason = String(body.reason)
       target.decided_by = 'synthetic-user'
       if (body.decision === 'APPROVE') {
-        state.grants.push({ grant_id: 'grant-approved', user_id: target.user_id, role: target.role, project_id: target.project_id, block_id: target.block_id })
+        state.grants.push({ grant_id: 'grant-approved', user_id: target.user_id, role: 'MEMBER', project_id: target.project_id, block_id: null })
         state.readable = true
       }
       state.revision++
@@ -68,8 +68,10 @@ async function accessServer(page: Page, admin = false, empty = false) {
     if (body && path.endsWith('/revoke')) {
       expect(body.expected_revision).toBe(state.revision)
       if (state.revokeFailure) return route.fulfill({ status: 409, json: { code: state.revokeFailure } })
-      state.grants = state.grants.filter(grant => grant.grant_id !== path.split('/')[4])
-      state.readable = !!state.grants.length
+      const target = state.grants.find(grant => grant.grant_id === path.split('/')[4])
+      expect(target).toBeDefined()
+      state.grants = state.grants.filter(grant => grant.user_id !== target!.user_id || grant.project_id !== target!.project_id)
+      state.readable = state.grants.some(grant => grant.user_id === 'synthetic-user')
       state.revision++
       return route.fulfill({ json: { status: 'REVOKED' } })
     }
@@ -84,17 +86,18 @@ async function accessServer(page: Page, admin = false, empty = false) {
   return state
 }
 
-test('new SSO account requests its block without fetching business data or borrowing demo access', async ({ page }) => {
+test('new SSO account requests project membership without fetching business data or borrowing demo access', async ({ page }) => {
   const state = await accessServer(page)
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '내 프로젝트·권한', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '관리자 모드', exact: true })).toHaveCount(0)
   await page.getByRole('combobox', { name: '프로젝트', exact: true }).selectOption('project-alpha')
-  await page.getByLabel('블록', { exact: true }).selectOption('block-cpu')
+  await expect(page.getByRole('combobox', { name: '블록', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('radio')).toHaveCount(0)
   await page.getByLabel('요청 사유', { exact: true }).fill('합성 CPU 블록 검토 담당')
   await page.getByRole('button', { name: '권한 요청 보내기', exact: true }).click()
   await expect(page.getByText('승인 대기', { exact: true })).toBeVisible()
-  expect(state.writes[0]).toMatchObject({ path: '/api/access/requests', marker: '1', authorization: undefined, body: { role: 'OWNER', project_id: 'project-alpha', block_id: 'block-cpu' } })
+  expect(state.writes[0]).toMatchObject({ path: '/api/access/requests', marker: '1', authorization: undefined, body: { role: 'MEMBER', project_id: 'project-alpha', block_id: null } })
   expect(state.calls.some(call => call.includes('/api/bundles'))).toBeFalsy()
   expect(state.calls.some(call => call.includes('/workspace'))).toBeFalsy()
   expect(await page.evaluate(() => [localStorage.length, sessionStorage.length])).toEqual([0, 0])
@@ -170,13 +173,15 @@ test('administrator creates project and block, approves own request, and revokes
   await page.getByRole('button', { name: '사용자 모드', exact: true }).click()
   await expect(page).toHaveURL(/\?page=welcome$/)
   await page.getByRole('combobox', { name: '프로젝트', exact: true }).selectOption('project-alpha')
-  await page.getByLabel('블록', { exact: true }).selectOption('block-cpu')
+  await expect(page.getByRole('combobox', { name: '블록', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('radio')).toHaveCount(0)
   await page.getByLabel('요청 사유', { exact: true }).fill('본인 CPU 담당 권한 요청')
   await page.getByRole('button', { name: '권한 요청 보내기', exact: true }).click()
   await expect(page.getByText('승인 대기', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '관리자 모드', exact: true }).click()
   await expect(page.getByText('내 요청', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '승인', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText('프로젝트의 모든 블록을 조회·검토·수정')
   await page.getByLabel('처리 사유', { exact: true }).fill('담당 범위 확인 후 승인')
   await page.getByRole('button', { name: '승인 확정', exact: true }).click()
   await expect(page.getByText('권한 변경을 저장했습니다.', { exact: true })).toBeVisible()
@@ -203,10 +208,10 @@ test('user grants distinguish same-name accounts, search stable IDs, and retain 
   state.catalog.projects.push({ id: 'project-beta', name: 'Beta 프로젝트', description: '합성 프로젝트' })
   state.catalog.blocks.push({ id: 'block-io', project_id: 'project-beta', name: 'IO 블록' })
   state.grants = [
-    { grant_id: 'grant-a', user_id: 'synthetic-person-a', role: 'TOP', project_id: 'project-alpha', block_id: null },
-    { grant_id: 'grant-b', user_id: 'synthetic-person-b', role: 'OWNER', project_id: 'project-beta', block_id: 'block-io' },
+    { grant_id: 'grant-a', user_id: 'synthetic-person-a', role: 'MEMBER', project_id: 'project-alpha', block_id: null },
+    { grant_id: 'grant-b', user_id: 'synthetic-person-b', role: 'MEMBER', project_id: 'project-beta', block_id: null },
     // A formerly active account can retain grants even when absent from the active SSO directory.
-    { grant_id: 'grant-former', user_id: 'synthetic-former-account', role: 'TOP', project_id: 'project-alpha', block_id: null },
+    { grant_id: 'grant-former', user_id: 'synthetic-former-account', role: 'MEMBER', project_id: 'project-alpha', block_id: null },
   ]
   await page.goto('/?page=admin')
   const panel = page.getByRole('region', { name: '사용자별 권한 관리', exact: true })
@@ -214,14 +219,14 @@ test('user grants distinguish same-name accounts, search stable IDs, and retain 
   await panel.getByRole('button', { name: /synthetic-person-b/ }).click()
   await expect(panel.getByRole('heading', { name: '합성 동명이인', exact: true })).toBeVisible()
   await expect(rows).toHaveCount(1)
-  await expect(rows).toContainText('Beta 프로젝트 / IO 블록')
+  await expect(rows).toContainText('Beta 프로젝트')
   await expect(panel.getByRole('button', { name: /synthetic-person-b/ })).toHaveAttribute('aria-pressed', 'true')
   await panel.getByLabel('사용자 검색', { exact: true }).fill('합성 동명이인')
   await expect(panel.locator('button[aria-pressed]')).toHaveCount(2)
   await panel.getByLabel('사용자 검색', { exact: true }).fill('synthetic-person-a')
   await expect(panel.getByRole('button', { name: /synthetic-person-a/ })).toBeVisible()
   await expect(panel.getByRole('button', { name: /synthetic-person-b/ })).toHaveCount(0)
-  await expect(rows).toContainText('Beta 프로젝트 / IO 블록')
+  await expect(rows).toContainText('Beta 프로젝트')
   await panel.getByRole('button', { name: /synthetic-person-a/ }).click()
   await expect(rows).toContainText('Alpha 프로젝트')
   await expect(rows).not.toContainText('Beta 프로젝트')
@@ -241,22 +246,17 @@ test('user grants distinguish same-name accounts, search stable IDs, and retain 
   expect(state.writes).toEqual([])
 })
 
-test('user grants paginate people and permissions and reset permission filters when changing the selected user', async ({ page }) => {
+test('user grants paginate people and project memberships and reset project filters when changing the selected user', async ({ page }) => {
   const state = await accessServer(page, true)
   state.users = Array.from({ length: 13 }, (_, index) => ({ user_id: `synthetic-person-${String(index).padStart(2, '0')}`, display_name: `합성 사용자 ${String(index).padStart(2, '0')}` }))
-  state.catalog.projects.push({ id: 'project-beta', name: 'Beta 프로젝트', description: '합성 프로젝트' })
-  state.catalog.blocks = Array.from({ length: 12 }, (_, index) => ({ id: `block-${index}`, project_id: 'project-alpha', name: `합성 블록 ${String(index).padStart(2, '0')}` }))
-  state.catalog.blocks.push({ id: 'block-beta', project_id: 'project-beta', name: 'Beta 블록' })
-  state.grants = state.catalog.blocks.filter(block => block.project_id === 'project-alpha').map(block => ({ grant_id: `grant-${block.id}`, user_id: state.users[0].user_id, role: 'OWNER', project_id: block.project_id, block_id: block.id }))
-  state.grants.push(
-    { grant_id: 'grant-primary-alpha-top', user_id: state.users[0].user_id, role: 'TOP', project_id: 'project-alpha', block_id: null },
-    { grant_id: 'grant-primary-beta-top', user_id: state.users[0].user_id, role: 'TOP', project_id: 'project-beta', block_id: null },
-    { grant_id: 'grant-primary-beta-owner', user_id: state.users[0].user_id, role: 'OWNER', project_id: 'project-beta', block_id: 'block-beta' },
-    ...state.users.slice(1).map(user => ({ grant_id: `grant-${user.user_id}`, user_id: user.user_id, role: 'TOP' as const, project_id: 'project-alpha', block_id: null })),
-  )
+  state.catalog.projects = Array.from({ length: 15 }, (_, index) => ({ id: `project-${String(index).padStart(2, '0')}`, name: `합성 프로젝트 ${String(index).padStart(2, '0')}`, description: '합성 프로젝트' }))
+  state.catalog.blocks = []
+  state.grants = state.catalog.projects.map(project => ({ grant_id: `grant-${project.id}`, user_id: state.users[0].user_id, role: 'MEMBER', project_id: project.id, block_id: null }))
+  state.grants.push(...state.users.slice(1).map(user => ({ grant_id: `grant-${user.user_id}`, user_id: user.user_id, role: 'MEMBER' as const, project_id: state.catalog.projects[0].id, block_id: null })))
   await page.goto('/?page=admin')
   const panel = page.getByRole('region', { name: '사용자별 권한 관리', exact: true })
   const rows = panel.getByRole('listitem').filter({ has: page.getByRole('button', { name: '권한 회수', exact: true }) })
+  await expect(panel.getByRole('combobox', { name: '권한 역할', exact: true })).toHaveCount(0)
   await expect(panel.locator('button[aria-pressed]')).toHaveCount(10)
   await panel.getByRole('button', { name: '다음 사용자', exact: true }).click()
   await expect(panel.locator('button[aria-pressed]')).toHaveCount(3)
@@ -278,27 +278,24 @@ test('user grants paginate people and permissions and reset permission filters w
   state.revision++
   await page.getByRole('button', { name: '관리 상태 새로고침', exact: true }).click()
   await expect(page.getByRole('button', { name: '관리 상태 새로고침', exact: true })).toBeEnabled()
-  await panel.getByRole('combobox', { name: '권한 역할', exact: true }).selectOption('OWNER')
-  await panel.getByRole('combobox', { name: '권한 프로젝트', exact: true }).selectOption('project-alpha')
-  await expect(rows).toHaveCount(10)
-  await panel.getByRole('button', { name: '다음 권한', exact: true }).click()
-  await expect(rows).toHaveCount(2)
-  await panel.getByLabel('권한 검색', { exact: true }).fill('합성 블록 11')
+  await panel.getByLabel('권한 검색', { exact: true }).fill('합성 프로젝트 11')
   await expect(rows).toHaveCount(1)
-  await expect(rows).toContainText('합성 블록 11')
+  await expect(rows).toContainText('합성 프로젝트 11')
   await expect(panel.getByRole('button', { name: '이전 권한', exact: true })).toBeDisabled()
-  await expect(panel.getByRole('button', { name: '다음 권한', exact: true })).toBeDisabled()
-  await panel.getByLabel('권한 검색', { exact: true }).fill('')
-  await panel.getByRole('combobox', { name: '권한 역할', exact: true }).selectOption('TOP')
-  await panel.getByRole('combobox', { name: '권한 프로젝트', exact: true }).selectOption('project-beta')
+  await panel.getByLabel('권한 검색', { exact: true }).fill('project-14')
   await expect(rows).toHaveCount(1)
-  await expect(rows).toContainText('Beta 프로젝트')
+  await expect(rows).toContainText('합성 프로젝트 14')
+  await panel.getByLabel('권한 검색', { exact: true }).fill('')
+  await panel.getByRole('combobox', { name: '권한 프로젝트', exact: true }).selectOption('project-14')
+  await expect(rows).toHaveCount(1)
+  await expect(rows).toContainText('합성 프로젝트 14')
+  await expect(panel.getByRole('button', { name: '다음 권한', exact: true })).toBeDisabled()
   await panel.getByRole('button', { name: /synthetic-person-01/ }).click()
-  await expect(panel.getByRole('combobox', { name: '권한 역할', exact: true })).toHaveValue('')
   await expect(panel.getByRole('combobox', { name: '권한 프로젝트', exact: true })).toHaveValue('')
   await expect(panel.getByLabel('권한 검색', { exact: true })).toHaveValue('')
   await expect(rows).toHaveCount(1)
-  await expect(rows).toContainText('Alpha 프로젝트')
+  await expect(rows).toContainText('합성 프로젝트 00')
+  expect(state.writes).toEqual([])
 })
 
 test('user grants revoke only the selected account and keep its empty selection across refresh', async ({ page }) => {
@@ -308,7 +305,7 @@ test('user grants revoke only the selected account and keep its empty selection 
     { user_id: 'synthetic-person-a', display_name: '합성 담당자 A' },
     { user_id: 'synthetic-person-b', display_name: '합성 담당자 B' },
   ]
-  state.grants = state.users.map(user => ({ grant_id: `grant-${user.user_id}`, user_id: user.user_id, role: 'TOP', project_id: 'project-alpha', block_id: null }))
+  state.grants = state.users.map(user => ({ grant_id: `grant-${user.user_id}`, user_id: user.user_id, role: 'MEMBER', project_id: 'project-alpha', block_id: null }))
   await page.goto('/?page=admin')
   const panel = page.getByRole('region', { name: '사용자별 권한 관리', exact: true })
   await panel.getByRole('button', { name: /synthetic-person-b/ }).click()
@@ -316,6 +313,7 @@ test('user grants revoke only the selected account and keep its empty selection 
   const dialog = page.getByRole('dialog', { name: '권한 회수', exact: true })
   await expect(dialog).toContainText('합성 담당자 B')
   await expect(dialog).toContainText('synthetic-person-b')
+  await expect(dialog).toContainText('전체 블록 조회·검토·수정 권한을 모두 회수')
   await dialog.getByLabel('처리 사유', { exact: true }).fill('합성 담당자 B의 담당 해제')
   await dialog.getByRole('button', { name: '회수 확정', exact: true }).click()
   await expect(dialog).toHaveCount(0)
@@ -330,7 +328,7 @@ test('user grants revoke only the selected account and keep its empty selection 
   await expect(page.getByRole('button', { name: '관리 상태 새로고침', exact: true })).toBeEnabled()
   await expect(panel.getByRole('heading', { name: '합성 담당자 B', exact: true })).toBeVisible()
   await expect(panel.getByRole('button', { name: '권한 회수', exact: true })).toHaveCount(0)
-  state.grants.push({ grant_id: 'grant-b-again', user_id: 'synthetic-person-b', role: 'OWNER', project_id: 'project-alpha', block_id: 'block-cpu' })
+  state.grants.push({ grant_id: 'grant-b-again', user_id: 'synthetic-person-b', role: 'MEMBER', project_id: 'project-alpha', block_id: null })
   state.revision++
   await page.getByRole('button', { name: '관리 상태 새로고침', exact: true }).click()
   await expect(panel.getByRole('button', { name: '권한 회수', exact: true })).toHaveCount(1)
@@ -339,7 +337,7 @@ test('user grants revoke only the selected account and keep its empty selection 
 
 test('user grants retain a failed revoke and require confirmation after refreshed permissions', async ({ page }) => {
   const state = await accessServer(page, true)
-  state.grants = [{ grant_id: 'grant-conflict', user_id: 'synthetic-user', role: 'OWNER', project_id: 'project-alpha', block_id: 'block-cpu' }]
+  state.grants = [{ grant_id: 'grant-conflict', user_id: 'synthetic-user', role: 'MEMBER', project_id: 'project-alpha', block_id: null }]
   state.revokeFailure = 'REVISION_CONFLICT'
   await page.goto('/?page=admin')
   const panel = page.getByRole('region', { name: '사용자별 권한 관리', exact: true })
@@ -368,10 +366,10 @@ test('user grants retain a failed revoke and require confirmation after refreshe
   expect(state.writes[1].body.command_id).not.toBe(state.writes[0].body.command_id)
 })
 
-test('an OWNER elsewhere cannot edit a TOP-only bundle or receive the global inbox', async ({ page }) => {
+test('a member in another project follows resource permission flags and cannot receive the global inbox', async ({ page }) => {
   const state = await accessServer(page)
   state.readable = true
-  state.grants = [{ grant_id: 'grant-other-owner', user_id: 'synthetic-user', role: 'OWNER', project_id: 'project-other', block_id: 'block-other' }]
+  state.grants = [{ grant_id: 'grant-other-owner', user_id: 'synthetic-user', role: 'MEMBER', project_id: 'project-other', block_id: null }]
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'sanity-20261012-042', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '검토 의견 기록', exact: true })).toBeDisabled()
@@ -387,7 +385,7 @@ for (const denialStatus of [404, 403]) test(`scope revocation removes displayed 
   const state = await accessServer(page)
   state.readable = true
   state.resourceWritable = true
-  state.grants = [{ grant_id: 'grant-owner', user_id: 'synthetic-user', role: 'OWNER', project_id: 'project-alpha', block_id: 'block-cpu' }]
+  state.grants = [{ grant_id: 'grant-owner', user_id: 'synthetic-user', role: 'MEMBER', project_id: 'project-alpha', block_id: null }]
   await page.goto('/')
   await expect(page.getByText('CHECK-101', { exact: true })).toBeVisible()
   state.readable = false; state.grants = []; state.denyResource = true

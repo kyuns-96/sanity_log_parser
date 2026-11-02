@@ -144,7 +144,7 @@ class AccessStoreTests(PgTestCase):
                 if row["record_type"] == "WS_BLOCK":
                     self.assertEqual([], row["payload"]["owners"])
 
-    def test_top_and_owner_have_sql_scoped_lists_and_exact_bundle_permissions(self):
+    def test_legacy_grants_are_project_members_with_sql_scoped_read_and_write(self):
         self.registry()
         self.grant(OWNER, "OWNER", block="block.A1")
         self.grant(TOP, "TOP")
@@ -157,7 +157,7 @@ class AccessStoreTests(PgTestCase):
                      {"schema_version": 1.0, "project_id": "project.A", "block_id": "block.A1"}]
         for scope, suffix in zip(malformed, "def01"):
             self.bundle(scope, suffix)
-        for actor, expected in ((OWNER, [a1]), (TOP, [a1, a2]), (OTHER, []), (ADMIN, [])):
+        for actor, expected in ((OWNER, [a1, a2]), (TOP, [a1, a2]), (OTHER, []), (ADMIN, [])):
             with self.store() as store:
                 predicate, params = store.read_predicate(actor.user_id)
                 rows = store.db.execute("SELECT r.bundle_id FROM {oa} r WHERE r.record_type='RECEIVED_BUNDLE' AND "
@@ -168,8 +168,9 @@ class AccessStoreTests(PgTestCase):
                 self.assertEqual(len(expected), count)
         self.assertEqual("block.A1", self.call("require_bundle", OWNER.user_id, a1, write=True)["block_id"])
         self.assertEqual("block.A2", self.call("require_bundle", TOP.user_id, a2)["block_id"])
-        self.assert_code("FORBIDDEN", lambda: self.call("require_bundle", TOP.user_id, a2, write=True))
-        self.assert_code("RESOURCE_NOT_FOUND", lambda: self.call("require_bundle", OWNER.user_id, a2))
+        self.assertEqual("block.A2", self.call("require_bundle", TOP.user_id, a2, write=True)["block_id"])
+        self.assertEqual("block.A2", self.call("require_bundle", OWNER.user_id, a2, write=True)["block_id"])
+        self.assert_code("RESOURCE_NOT_FOUND", lambda: self.call("require_bundle", OWNER.user_id, b1, write=True))
         self.assert_code("RESOURCE_NOT_FOUND", lambda: self.call("require_bundle", TOP.user_id, b1))
         self.assert_code("RESOURCE_NOT_FOUND", lambda: self.call("require_bundle", OWNER.user_id, "b-" + "d" * 64))
         self.assert_code("AUTHORIZATION_CONFIG", lambda: self.call("read_predicate", OWNER.user_id, "r);DROP"))

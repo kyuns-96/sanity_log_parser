@@ -27,7 +27,7 @@
 .ug-role-counts { display: flex; gap: 15px; padding: 0 22px 18px; color: var(--text-muted); font-size: 11px; }
 .ug-role-counts span { display: flex; align-items: center; gap: 5px; }
 .ug-role-counts strong { color: var(--text-secondary); font-weight: 600; font-variant-numeric: tabular-nums; }
-.ug-filters { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, .85fr); gap: 10px; padding: 16px 22px; border-block: 1px solid var(--line-soft); }
+.ug-filters { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 10px; padding: 16px 22px; border-block: 1px solid var(--line-soft); }
 .ug-filters label { display: grid; align-content: start; gap: 7px; min-width: 0; font-size: 11px; color: var(--text-secondary); }
 .ug-filters :is(input, select) { width: 100%; min-width: 0; font-size: 12px; }
 .ug-grants > li { gap: 12px; }

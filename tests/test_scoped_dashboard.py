@@ -96,7 +96,7 @@ class ScopedDashboardTests(PgTestCase):
             value = self.success(self.clients[user].get('/api/workbench/session?is_admin=true&user_id=someone-else'))
             self.assertIs(is_admin, value['is_admin'])
             self.assertEqual(user, value['user']['id'])
-            self.assertEqual('OWNER', value['user']['role'])
+            self.assertEqual('MEMBER', value['user']['role'])
         self.assertEqual(403, self.clients[OWNER].get('/api/admin/access').status_code)
 
     def grant(self, user, role, project="project-a", block=None):
@@ -157,7 +157,7 @@ class ScopedDashboardTests(PgTestCase):
             return ClusterStore(db, value["bundle_id"], "u-numeric", lock=True).request(
                 uuid.uuid4(), 0, "", [], "RULES", OWNER)["job_id"]
 
-    def test_admin_starts_without_business_grants_and_can_approve_own_top_request(self):
+    def test_admin_starts_without_business_grants_and_can_approve_own_project_membership(self):
         self.register()
         value = self.receive()
         session = self.success(self.clients[ADMIN].get("/api/session"))
@@ -172,9 +172,9 @@ class ScopedDashboardTests(PgTestCase):
         self.grant(ADMIN, "TOP")
         session = self.success(self.clients[ADMIN].get("/api/session"))
         self.assertTrue(session["can_read_business"])
-        self.assertFalse(session["writable"])
+        self.assertTrue(session["writable"])
         self.assertEqual(200, self.clients[ADMIN].get(self.base(value)).status_code)
-        self.assertEqual(403, self.post(ADMIN, self.base(value) + "/reviews", self.review_body()).status_code)
+        self.success(self.post(ADMIN, self.base(value) + "/reviews", self.review_body()))
 
     def test_listing_filters_before_count_and_pagination_using_canonical_scope(self):
         self.register()
@@ -187,18 +187,18 @@ class ScopedDashboardTests(PgTestCase):
         self.receive(scoped=False)
         self.receive(project="project-b", block="block-b1")
         owner_pages = [self.success(self.clients[OWNER].get("/api/bundles", params={"limit": 1, "offset": offset}))
-                       for offset in range(3)]
-        self.assertEqual([2, 2, 2], [page["total"] for page in owner_pages])
-        self.assertEqual([1, 1, 0], [len(page["items"]) for page in owner_pages])
-        self.assertEqual({first["bundle_id"], second["bundle_id"]},
-                         {page["items"][0]["bundle_id"] for page in owner_pages[:2]})
+                       for offset in range(4)]
+        self.assertEqual([3, 3, 3, 3], [page["total"] for page in owner_pages])
+        self.assertEqual([1, 1, 1, 0], [len(page["items"]) for page in owner_pages])
+        self.assertEqual({first["bundle_id"], second["bundle_id"], sibling["bundle_id"]},
+                         {page["items"][0]["bundle_id"] for page in owner_pages[:3]})
         top = self.success(self.clients[TOP].get("/api/bundles"))
         self.assertEqual(3, top["total"])
         self.assertEqual({first["bundle_id"], second["bundle_id"], sibling["bundle_id"]},
                          {row["bundle_id"] for row in top["items"]})
         self.assertEqual({"same-free-source-project"}, {row["project"] for row in top["items"]})
 
-    def test_top_reads_own_scope_but_writes_are_403_and_foreign_routes_are_404(self):
+    def test_legacy_top_member_reads_and_writes_own_project_and_foreign_routes_are_404(self):
         self.register()
         self.grant(TOP, "TOP")
         own = self.receive()
@@ -218,30 +218,33 @@ class ScopedDashboardTests(PgTestCase):
                   ("/units/u-numeric/clustering/" + jid + "/receive", {}))
         for tail, body in writes:
             with self.subTest(write=tail):
-                self.assertEqual(403, self.post(TOP, self.base(own) + tail, body).status_code)
                 self.assertEqual(404, self.post(TOP, self.base(foreign) + tail, body).status_code)
+        detail = self.success(self.clients[TOP].get(self.base(own)))
+        self.assertTrue(all(detail["permissions"].values()))
+        self.success(self.post(TOP, self.base(own) + "/reviews", self.review_body()))
+        self.success(self.post(TOP, self.base(own) + "/evidence", self.evidence_body()))
         for tail in ("", "/records/r-1"):
             self.assertEqual(200, self.clients[TOP].get("/api/evidence/" + own_rid + tail).status_code)
             self.assertEqual(404, self.clients[TOP].get("/api/evidence/" + foreign_rid + tail).status_code)
-        self.assertEqual(403, self.post(TOP, "/api/evidence/" + own_rid + "/receive", {}).status_code)
+        self.success(self.post(TOP, "/api/evidence/" + own_rid + "/receive", {}))
         self.assertEqual(404, self.post(TOP, "/api/evidence/" + foreign_rid + "/receive", {}).status_code)
 
-    def test_owner_reviews_and_cluster_commands_record_stable_user_id(self):
+    def test_legacy_top_member_reviews_and_cluster_commands_record_stable_user_id(self):
         self.register()
-        self.grant(OWNER, "OWNER", block="block-a1")
+        self.grant(TOP, "TOP")
         value = self.receive()
-        self.success(self.post(OWNER, self.base(value) + "/reviews", self.review_body()))
-        detail = self.success(self.clients[OWNER].get(self.base(value)))
-        self.assertEqual(OWNER, detail["history"][0]["actor"])
-        self.assertEqual(OWNER, detail["units"][0]["decision"]["reviewer"])
+        self.success(self.post(TOP, self.base(value) + "/reviews", self.review_body()))
+        detail = self.success(self.clients[TOP].get(self.base(value)))
+        self.assertEqual(TOP, detail["history"][0]["actor"])
+        self.assertEqual(TOP, detail["units"][0]["decision"]["reviewer"])
         self.assertTrue(all(detail["permissions"].values()))
-        cluster = self.success(self.post(OWNER, self.base(value) + "/units/u-numeric/clustering", {
+        cluster = self.success(self.post(TOP, self.base(value) + "/units/u-numeric/clustering", {
             "request_id": str(uuid.uuid4()), "expected_revision": 0, "mode": "RULES", "rules": []}))
         reviewer = self.admin_query("SELECT payload->'command'->>'reviewer' FROM {oa_to_vwp} WHERE message_id=%s",
                                     (cluster["job_id"],)).fetchone()[0]
-        self.assertEqual(OWNER, reviewer)
-        session = self.success(self.clients[OWNER].get("/api/session"))
-        self.assertNotEqual(OWNER, session["reviewer"])
+        self.assertEqual(TOP, reviewer)
+        session = self.success(self.clients[TOP].get("/api/session"))
+        self.assertNotEqual(TOP, session["reviewer"])
 
     def test_revoke_hides_existing_bundle_requests_and_full_evidence_on_next_request(self):
         self.register()
@@ -263,7 +266,7 @@ class ScopedDashboardTests(PgTestCase):
     def test_response_id_alias_cannot_expose_another_blocks_evidence(self):
         self.register()
         self.grant(OWNER, "OWNER", block="block-a1")
-        own, foreign = self.receive(), self.receive(block="block-a2")
+        own, foreign = self.receive(), self.receive(project="project-b", block="block-b1")
         self.assertEqual(404, self.clients[OWNER].get(self.base(foreign)).status_code)
         raw = "SYNTHETIC-FOREIGN-BLOCK-PRIVATE-EVIDENCE"
         for already_received in (True, False):

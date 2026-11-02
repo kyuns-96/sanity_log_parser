@@ -6,7 +6,7 @@ import type { ClusterModelMetadata, CodexJob, RationaleContent, ReportReview, Re
 import { makeWorkspaceDemo } from '../src/workspaceDemo'
 
 // All identities, reports and model replies here are synthetic network fixtures.
-const user = { id: 'synthetic-owner', name: '합성 검토자', username: 'synthetic-owner', role: 'OWNER' }
+const user = { id: 'synthetic-owner', name: '합성 검토자', username: 'synthetic-owner', role: 'MEMBER' }
 const version = { id: 'v1', project_id: 'p1', block_id: 'b1', net_ver: 'NET-1', revision: 'REV-1', layout: 'POST' as const, source_pre_id: null, ecos: ['ECO-2'] }
 const report = { id: 'report-a', item_id: 'synthetic_check', project_id: 'p1', block_id: 'b1', version_id: 'v1', eco: 'ECO-2', family: 'GCA', rule: 'SYNTHETIC_RULE', check_status: 'FAIL', parse_status: 'COMPLETE', parser: 'synthetic-v1', record_count: 2, blockers: [], analysis_ready: true, source_storage: 'PARTS_V2' }
 const makeRecords = (count: number) => Array.from({ length: count }, (_, position) => position + 1).map(index => ({ id: `log-${index}`, fields: { mode: 'test', object: `node-${index}` }, check_status: 'FAIL', raw: `Synthetic log ${index}: verification required\nFull source evidence for node-${index}`, line_start: index * 2 - 1, line_end: index * 2, reasons: [], raw_display_truncated: false }))
@@ -227,7 +227,8 @@ test('AI card cancellation uses the same-origin endpoint and waits for server st
 type MockOptions = { holdJob?: boolean; connections?: { id: string; label: string; model: string; models: string[]; available: boolean; enabled: boolean; credential_required?: boolean; credential_ready?: boolean }[]; reviewModel?: string; models?: string[]; modelMetadata?: Partial<ClusterModelMetadata>; preserved?: PreservedSource[]; collectionOnly?: boolean; configured?: boolean; personalToken?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
 
 async function mockOA(page: Page, options: MockOptions & { rationale?: RationaleContent } = {}) {
-  const actor = options.readOnly ? { ...user, role: 'TOP' } : user
+  // Read-only is an explicit server capability fixture, separate from membership roles.
+  const actor = user
   const sourceRecords = makeRecords(options.recordCount || 2).map((value, index) => {
     const { reasons, ...record } = value
     return { ...record, ...(options.collectionOnly ? { check_status: 'UNKNOWN', evaluation_status: 'NOT_PERFORMED' } : {}), fields: options.longFields && index === 0 ? { object: 'node-1/' + 'long-path/'.repeat(20), mode: 'MODE_' + 'LONG_NAME_'.repeat(12) } : record.fields,
@@ -871,7 +872,7 @@ test('mobile keeps original tool failure separate from a saved human pass and ex
   await page.screenshot({ path: testInfo.outputPath('live-mobile-original-and-human-results.png'), fullPage: true })
 })
 
-test('TOP can inspect the live layout and confirmed judgment without gaining owner mutations', async ({ page }, testInfo) => {
+test('read only server capabilities allow inspection without granting mutations', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 800 })
   const state = await mockOA(page, { readOnly: true, initialRevision: 1, confirmed: true })
   await page.goto(url)
@@ -1702,7 +1703,7 @@ test('AI evidence does not register before the server confirms and reuses a lost
   expect(writes).toHaveLength(2); expect(writes[0]).toEqual(writes[1])
 })
 
-test('AI evidence switches stay read only for TOP and deferred judgments cannot be registered', async ({ page }) => {
+test('AI evidence switches respect read only capabilities and deferred judgments cannot be registered', async ({ page }) => {
   const state = await openConfirmedReview(page, { readOnly: true, currentCase: savedReview() })
   for (const label of ['분류 근거 AI 등록', '판정 근거 AI 등록']) {
     await expect(page.getByRole('switch', { name: label, exact: true })).toBeDisabled()
@@ -1770,7 +1771,7 @@ test('rationale summary labels legacy excerpts and read only users can still exp
   expect(state.writes).toHaveLength(0)
 })
 
-test('rationale disclosure keeps AI and human judgment details collapsed and readable for TOP without writing', async ({ page }) => {
+test('rationale disclosure keeps AI and human judgment details collapsed and readable without write capability', async ({ page }) => {
   const humanReason = '사람이 원본 조건을 확인했습니다. ' + '구조와 적용 조건을 비교했으며 반례는 별도 확인합니다. '.repeat(18) + '사람 근거의 마지막 조건입니다.'
   const aiReason = 'AI가 현재 그룹의 공통 실패를 확인했습니다. ' + '각 로그의 실제 값과 점검 기준을 비교한 설명입니다. '.repeat(18) + 'AI 근거의 마지막 조건입니다.'
   const state = await openConfirmedReview(page, { readOnly: true, currentCase: savedReview({ reason: humanReason }), proposal: {
@@ -1865,5 +1866,39 @@ test('rationale disclosure keeps classification registration pinned while the in
   expect(state.writes).toHaveLength(2)
   expect(state.writes.every(write => write.path.endsWith('/evidence/CLUSTER') && write.marker === '1')).toBe(true)
   expect(state.writes.map(write => write.body.expected_revision)).toEqual([0, 1])
+  expect(state.unexpected).toEqual([])
+})
+
+test('project membership hides large assignment name lists while preserving actual PoR actors and project names', async ({ page }, info) => {
+  const state = await mockOA(page)
+  const assigned = Array.from({ length: 80 }, (_, index) => ({ id: `synthetic-member-${index}`, username: `synthetic-member-${index}`, name: `합성 목록 멤버 ${index}`, role: 'MEMBER' }))
+  const porActor = { id: 'synthetic-por-actor', username: 'synthetic-por-actor', name: '합성 PoR 지정자', role: 'MEMBER' }
+  const por = { revision: 1, version, assigned_by: porActor, assigned_at: at }
+  await page.route('**/api/workbench/ai/jobs**', route => route.fulfill({ json: { items: [], server_time: at, worker: { site: 'vwp', online: false, last_seen: null } } }))
+  await page.route('**/api/workbench/overview', route => route.fulfill({ json: { user, data_origin: 'PRODUCTION', projects: [{
+    id: 'p1', name: '합성 프로젝트', description: '', tops: assigned,
+    blocks: [{ id: 'b1', project_id: 'p1', name: '합성 블록', owners: assigned, can_assign_por: true, por, report_version: version, counts: { FAIL: 1 }, total: 1 }],
+  }] } }))
+  await page.route('**/api/workbench/blocks/b1/versions', route => route.fulfill({ json: { items: [version], can_assign_por: true, por } }))
+  await page.route('**/api/workbench/blocks/b1/history', route => route.fulfill({ json: { items: [{ id: 'synthetic-por-event', previous_version_id: null, version, actor: porActor, reason: '합성 기준 버전 지정', at, revision: 1 }] } }))
+  await page.goto(url.replace('tab=reports', 'tab=overview').replace('&review=report-a', ''))
+  await expect(page.getByRole('button', { name: '합성 프로젝트 프로젝트', exact: true })).toBeVisible()
+  const table = page.locator('.ws-block-table')
+  await expect(table).toContainText('합성 블록')
+  await expect(table).toContainText('합성 PoR 지정자')
+  await expect(table.getByRole('columnheader', { name: '블록', exact: true })).toBeVisible()
+  await expect(page.getByText(/합성 목록 멤버/)).toHaveCount(0)
+  await page.getByRole('button', { name: '버전·검사 대장', exact: true }).click()
+  const strip = page.getByLabel('담당 블록 선택', { exact: true })
+  await expect(strip.getByRole('button', { name: '합성 블록', exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '블록의 현재 PoR', exact: true })).toContainText('합성 PoR 지정자')
+  await expect(page.getByText(/합성 목록 멤버/)).toHaveCount(0)
+  await page.getByRole('button', { name: 'PoR 변경 이력', exact: true }).click()
+  await expect(page.locator('.ws-history')).toContainText('합성 PoR 지정자')
+  await expect(page.locator('.ws-history')).toContainText('합성 기준 버전 지정')
+  await expect(page.getByText(/합성 목록 멤버/)).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '합성 프로젝트 프로젝트', exact: true })).toBeVisible()
+  await page.screenshot({ path: info.outputPath('project-membership-no-name-lists.png'), fullPage: true, animations: 'disabled' })
+  expect(state.writes).toEqual([])
   expect(state.unexpected).toEqual([])
 })
