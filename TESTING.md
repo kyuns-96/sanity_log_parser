@@ -39,12 +39,21 @@ mock은 새 소켓 전용 PostgreSQL·작업자별 독립 DB를 만들고 종료
 # 공통 변경의 기본 통합 회귀 — 3분 이내 목표, DB 준비/종료 포함
 .venv/bin/python db/tests/run_mock.py --profile quick
 
+# 변경한 기능의 전용 검사 + quick을 한 번에 실행 — 중복 ID는 한 번만
+.venv/bin/python db/tests/run_mock.py --include tests.test_ai_parallel_width
+
 # 이전의 넓은 quick 범위 / 전수·포털·10만 건 검증
 .venv/bin/python db/tests/run_mock.py --profile regression
 .venv/bin/python db/tests/run_mock.py --profile full
 ```
 
-역할 없는 명령의 기존 quick·regression·full 범위와 알려진 실패는 유지합니다. 카드의 지표·삭제 검사에 이어 제출 실행 ID/code 경계/전역 슬롯/보고서 삭제의 작은 계약과 DB 대표 경로를 quick에 추가합니다. 신규 전체 모듈은 명시적 regression/full 또는 전용 실행에서 확인합니다. 알려진 PG18 실패·파일 보안 검사·대용량/포털 시나리오를 기존 범위에서 제거하지 않습니다. 통합 DB·공통 변경 검토는 설계 Codex가 맡고, 사내 담당자는 자기 변경·역할 검사 결과와 필요한 후속 검증을 인계합니다.
+Codex는 변경 부분의 모듈·클래스·메서드를 `--include` 뒤에 공백으로 나열할 수 있습니다. 기본 프로필에 더한 전체 목록을 먼저 정하고, 겹치는 테스트 ID를 한 번만 실행한 뒤 최대 4개 독립 작업자 DB의 결과를 합칩니다. 전용 검사와 quick을 같은 소스로 합쳐 완료했다면 별도 quick을 반복하지 않습니다. 예를 들어 `--include tests.test_ai_evidence_choices tests.test_ai_parallel_width`는 두 기능의 전용 검사와 quick을 한 번에 확인합니다. 목록만 보려면 `run_tests.py --include 모듈명 --list`를 사용합니다.
+
+추가 선택은 공개 `tests.test_*`·`oa.test_*`·`vwp.test_*`·`vwp_bridge.test_*`의 실제 모듈/클래스/메서드만 받으며 없거나 비어 있으면 실패합니다. 콘솔과 JSON의 `include`에 선택을 기록하고 모든 병렬 작업자가 같은 선택을 사용했는지 대조합니다. 기본 프로필·실행 건수·실패/skip·완전성 보고는 유지합니다. `--role`과의 혼합은 거부하며 사내 담당자는 기존 자기 역할 명령을 계속 사용합니다.
+
+매번 32개 호출을 띄우는 통합 검사와 실제 source packet부터 분류·판정까지 끝내는 보존 본문 전체 흐름은 regression/full에 보존합니다. 병렬 예약/복구나 보존 본문 입력 계약을 바꿀 때 해당 검사를 `--include`로 추가합니다. 기본 quick에는 32개 상태의 순수 검사·실제 2개 병렬/8개 rolling 처리·근거/입력 계약의 대표 검사를 유지합니다. 회사 담당자의 기본 bridge DB 검사도 무거운 32개 전체 실행을 반복하지 않습니다.
+
+역할 없는 명령은 quick의 핵심 검사와 regression/full의 확장 검사를 구분합니다. 카드의 지표·삭제·제출 실행 ID/code 경계/전역 슬롯/보고서 삭제의 작은 계약과 DB 대표 경로는 quick에 유지합니다. 신규 전체 모듈은 명시적 regression/full 또는 `--include`에서 확인합니다. 알려진 PG18 실패·파일 보안 검사와 regression/full의 기존 대용량/포털 시나리오는 유지합니다. 통합 DB·공통 변경 검토는 설계 Codex가 맡고, 사내 담당자는 자기 변경·역할 검사 결과와 필요한 후속 검증을 인계합니다.
 
 ## 남은 실환경 확인과 보고
 
@@ -125,3 +134,11 @@ quick 실패 집합은 이전과 동일합니다. PG18 포털 카탈로그 호�
 전역 한도 상향 뒤 복구 검사/버튼에 남아 있던 고정 8개 제한을 작업에 저장된 최대 폭으로 대체했습니다. 전역 32·동시 작업 16에서 한 작업의 실제 32개 호출·진행 조회·실행 중 상한 축소, 미확인 16개 명시적 재시도와 완료분 보존, 잘못된 한도/중복 거부의 신규 6건이 통과했습니다. TypeScript/Vite 빌드와 새 복구 화면/이전 근거 등록을 포함한 브라우저 18건이 통과했습니다.
 
 최종 병렬/복구 전용 회귀 13건도 모두 통과했습니다. 독립 DB 준비/종료 포함 124.271초, skip 0입니다. 최종 quick은 447건 중 440 통과·기존 PG18 실패 5·Termux 오류 2·skip 0이며 DB 준비/종료 포함 56.998초입니다. 실패 이름은 이전 집합과 동일하고 모든 mock DB를 종료했습니다. 전체 성공으로 표시하지 않으며 사내 독립 Linux 검증 대기와 별도 기존 HTTP fixture 실패는 위 기록대로 남습니다. 운영 배포·실제 회사 모델 검증은 미실시입니다.
+
+## 전용 검사와 quick의 중복 실행 정리 — 2026-11-02
+
+무거운 32개 호출 전체 실행과 source packet부터 분류·판정까지의 보존 본문 전체 흐름 2건을 regression/full로 옮겼습니다. 해당 기능을 바꾸면 `--include`로 quick에 합쳐 확인합니다. 작은 상태/예약/입력 검사와 2개 병렬·8개 rolling 실제 DB 검사는 quick에 유지합니다. 업무·보안 테스트의 본문/입력/기대값과 SQL은 변경하지 않았습니다.
+
+이번 실행은 `db/tests/run_mock.py --include tests.test_test_runner tests.test_mock_runner tests.test_role_runner` 한 번입니다. 이미 quick에 있는 모듈을 추가해도 검사 ID가 중복되지 않았고, 새 선택/전파/누락 거부/역할 혼합 거부를 포함한 실행기 검사 **39건이 통과**했습니다. 합산 451건의 실제 실행 ID와 timing을 대조했으며 누락·중복·작업자 오류·skip은 0입니다. 444건 통과·기존 PG18 실패 5·Termux 오류 2이며 실패 이름은 직전과 같습니다. 모든 mock DB를 종료했고 변경 Python 5개가 실행 snapshot과 일치합니다.
+
+Termux/PostgreSQL 18.6의 DB 준비·종료 포함 시간은 직전 **56.998초 → 49.388초**입니다. 무거운 2건을 별도 범위로 옮기고 실행기 6건을 추가한 비교이며 같은 전체 회귀의 속도 향상으로 해석하지 않습니다. 더 큰 절감은 전용 회귀를 직렬로 먼저 실행한 뒤 quick에서 반복하던 흐름을 한 번의 병렬 실행으로 합치는 데서 얻습니다. 이번 실행으로 regression/full·회사 어댑터·실제 모델 품질을 검증했다고 표시하지 않습니다. 실제 파일 보안 2건의 사내 독립 Linux 검증 대기, PG18 호환 문제와 기존 HTTP fixture 실패는 계속 별도입니다.

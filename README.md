@@ -149,7 +149,7 @@ OA 또는 VWP 개인 인증값을 처리하려면 웹과 작업자에 같은 암
 
 DB 검사가 필요한 OA·VWP-bridge는 별도 개발 머신에서 `db/tests/run_mock.py --role oa` 또는 `--role vwp-bridge`를 사용합니다. 역할 mock은 공개 대표 검사만 실행하며 회사 구현/비공개 fixture·통합 demo·scale probe는 포함하지 않습니다. 실제 파일 보안의 Termux 한계는 아래 미해결 기록과 같습니다.
 
-설계 Codex의 공통 변경은 관련 전용 테스트와 기본 통합 **`quick`** 프로필로 확인합니다. 기본 실행은 독립 mock DB 준비·종료를 포함해 **3분 이내 완료를 목표**로 합니다. 이전의 넓은 quick 범위는 `regression`, 전체 회귀·포털 전체 단계·10만 건 검사는 `full`로 보존합니다. 기본 실행은 느린 테스트 5건의 시간을 표시하며 `--report-json 새파일.json`으로 전체 테스트별 시간을 기록할 수 있습니다.
+설계 Codex의 공통 변경은 관련 전용 테스트와 기본 통합 **`quick`** 프로필을 `--include`로 합쳐 한 번에 확인합니다. 같은 테스트 ID는 한 번만 실행하며 DB 준비·병렬 실행·종료도 한 실행에서 처리합니다. 기본 실행은 독립 mock DB 준비·종료를 포함해 **3분 이내 완료를 목표**로 합니다. 무거운 전체 흐름과 이전의 넓은 quick 범위는 `regression`, 전체 회귀·포털 전체 단계·10만 건 검사는 `full`로 보존합니다. 기본 실행은 느린 테스트 5건의 시간을 표시하며 `--report-json 새파일.json`으로 전체 테스트별 시간을 기록할 수 있습니다.
 
 ```bash
 # 선택 대상 확인 / 기본 회귀
@@ -158,6 +158,9 @@ DB 검사가 필요한 OA·VWP-bridge는 별도 개발 머신에서 `db/tests/ru
 
 # 별도의 새 로컬 PostgreSQL + 합성 입력·모의 AI 응답으로 통합 검증
 .venv/bin/python db/tests/run_mock.py --profile quick
+
+# quick + 변경 기능의 전용 검사를 중복 없이 한 번에 실행
+.venv/bin/python db/tests/run_mock.py --include tests.test_ai_parallel_width
 
 # 이전의 넓은 quick 회귀 범위가 필요한 경우
 .venv/bin/python db/tests/run_mock.py --profile regression

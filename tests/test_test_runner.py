@@ -12,6 +12,51 @@ import run_tests as runner
 
 
 class TestRunnerTests(unittest.TestCase):
+    def test_include_unions_overlapping_modules_and_methods_without_repeating_tests(self):
+        name = 'tests.test_ai_parallel_width.ParallelWidthTests'
+        baseline = unittest.defaultTestLoader.loadTestsFromName(name + '.test_running_status_accepts_nine_sixteen_and_thirty_two_reservations')
+        expected = {test.id() for test in runner.test_cases(unittest.defaultTestLoader.loadTestsFromName(name))}
+        suite = runner.include_tests(baseline, [name, name, next(iter(expected))])
+        ids = [test.id() for test in runner.test_cases(suite)]
+        self.assertEqual(expected, set(ids))
+        self.assertEqual(len(expected), len(ids))
+        shards = [test.id() for i in range(3) for test in runner.test_cases(runner.shard_suite(suite, i, 3))]
+        self.assertCountEqual(ids, shards)
+
+    def test_include_manifest_records_the_added_scope_without_running_it(self):
+        name = 'tests.test_ai_parallel_width.ParallelWidthTests'
+        case = unittest.FunctionTestCase(lambda: self.fail('Manifest ran a baseline test'))
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'manifest.json'
+            with patch.object(runner, 'build_suite', return_value=unittest.TestSuite([case])), redirect_stdout(io.StringIO()):
+                self.assertEqual(0, runner.main(['--include', name, name, '--manifest-json', str(path)]))
+            manifest = json.loads(path.read_text())
+            self.assertEqual([name], manifest['include'])
+            self.assertEqual(('quick', False, 5), (manifest['profile'], manifest['full_suite'], manifest['tests_selected']))
+            self.assertIn(case.id(), manifest['test_ids'])
+
+    def test_missing_empty_or_nonpublic_include_cannot_silently_run_only_the_baseline(self):
+        for name in ('tests.missing', 'oa.integration.company_sso.test_adapter', 'tests.test_missing_extra_module'):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                runner.include_tests(unittest.TestSuite(), [name])
+        with patch.object(unittest.TestLoader, 'loadTestsFromName', return_value=unittest.TestSuite()), self.assertRaises(ValueError):
+            runner.include_tests(unittest.TestSuite(), ['tests.test_empty'])
+
+    def test_expensive_flows_stay_in_regression_and_full_with_runtime_smoke_in_quick(self):
+        quick = {test.id() for test in runner.test_cases(runner.build_suite('quick'))}
+        regression = {test.id() for test in runner.test_cases(runner.build_suite('regression'))}
+        full = {test.id() for test in runner.test_cases(runner.build_suite('full'))}
+        for name in (
+            'tests.test_ai_parallel_width.ParallelWidthDatabaseTests.test_global_32_jobs_16_displays_live_calls_and_drains_after_budget_reduction',
+            'tests.test_ai_evidence_batches.EvidenceTextDatabaseTests.test_real_source_packet_reader_and_ledger_cover_text_for_classification_and_review',
+        ):
+            self.assertNotIn(name, quick)
+            self.assertIn(name, regression)
+            self.assertIn(name, full)
+        self.assertIn('tests.test_ai_parallel_width.ParallelWidthTests.test_running_status_accepts_nine_sixteen_and_thirty_two_reservations', quick)
+        self.assertIn('tests.test_ai_parallel_batches.ParallelVwpJobsTests.test_true_overlap_out_of_order_commit_and_merge_waits_for_all_siblings', quick)
+        self.assertIn('tests.test_ai_rolling_batches.RollingJobsTests.test_eight_slots_refill_while_the_first_seven_are_blocked_and_merge_waits', quick)
+
     def test_shards_execute_the_exact_original_scope_once(self):
         class Sample(unittest.TestCase):
             def test_a(self): pass

@@ -46,7 +46,6 @@ QUICK_TESTS = (
     "tests.test_rule_groups.RuleGroupTests",
     "tests.test_submission_runs",
     "tests.test_ai_parallel_width.ParallelWidthTests",
-    "tests.test_ai_parallel_width.ParallelWidthDatabaseTests.test_global_32_jobs_16_displays_live_calls_and_drains_after_budget_reduction",
     "tests.test_ai_evidence_choices.EvidenceChoiceTests", "tests.test_ai_evidence_choices.EvidenceChoiceApiTests",
     "tests.test_ai_evidence_choices.EvidenceChoiceDatabaseTests.test_existing_confirmed_classification_and_judgment_are_not_auto_registered",
     "tests.test_ai_evidence_choices.EvidenceChoiceDatabaseTests.test_only_chosen_group_is_sent_and_stages_have_independent_switches",
@@ -78,7 +77,6 @@ QUICK_TESTS = (
     "tests.test_ai_unknown_recovery.UnknownRecoveryBatchTests.test_acknowledged_retry_keeps_finished_child_and_is_idempotent",
     "tests.test_ai_connection_deletion.ConnectionDeletionDatabaseTests.test_deletion_during_http_rejects_returned_result_and_publication",
     "tests.test_ai_input_projection.ProjectionJobTests.test_policy_is_pinned_and_change_stops_batch_without_another_http_call",
-    "tests.test_ai_evidence_batches.EvidenceTextDatabaseTests.test_real_source_packet_reader_and_ledger_cover_text_for_classification_and_review",
     "tests.test_oa_ai_feedback.OAFeedbackCycleTests.test_human_corrections_and_counterexamples_reach_the_next_eco_model_calls",
     "tests.test_submission_tokenless.InternalIntakeContracts",
     "tests.test_submission_tokenless.TokenlessSubmissionTests.test_real_tls_without_token_reaches_pending_then_sso_owner_publishes",
@@ -104,6 +102,10 @@ QUICK_TESTS = (
 # Full still discovers every original test, including large datasets and all
 # portal migration replays. No test input, assertion or skip rule is changed.
 REGRESSION_TESTS = (
+    # Keep expensive complete flows explicit; add only the affected one to a
+    # daily run with --include instead of repeating quick and a separate DB.
+    "tests.test_ai_parallel_width.ParallelWidthDatabaseTests.test_global_32_jobs_16_displays_live_calls_and_drains_after_budget_reduction",
+    "tests.test_ai_evidence_batches.EvidenceTextDatabaseTests.test_real_source_packet_reader_and_ledger_cover_text_for_classification_and_review",
     "tests.test_ai_parallel_width",
     "tests.test_ai_evidence_choices", "tests.test_ai_retrieval", "tests.test_ai_knowledge",
     "tests.test_submission_runs",
@@ -258,7 +260,6 @@ ROLE_TESTS = {
 }
 ROLE_DB_TESTS = {
     "vwp-bridge": (
-        "tests.test_ai_parallel_width.ParallelWidthDatabaseTests.test_global_32_jobs_16_displays_live_calls_and_drains_after_budget_reduction",
         "tests.test_ai_evidence_choices.EvidenceChoiceDatabaseTests.test_unregistering_a_reference_keeps_the_dependent_human_partition_valid",
         "tests.test_ai_scheduler.SchedulerDatabaseTests.test_rolling_jobs_share_slots_and_a_fast_job_finishes_before_a_slow_job",
         "tests.test_rule_groups.RuleGroupDatabaseTests.test_rolling_worker_keeps_all_codes_separate_through_publication",
@@ -365,6 +366,28 @@ def test_cases(suite):
             yield test
 
 
+def include_tests(suite, names):
+    """Add public change-specific tests once, retaining the selected baseline."""
+    cases = list(test_cases(suite))
+    seen = {test.id() for test in cases}
+    if len(seen) != len(cases):
+        raise ValueError("Duplicate test IDs in the selected profile")
+    loader = unittest.TestLoader()
+    for name in dict.fromkeys(names):
+        parts = name.split('.')
+        if (len(parts) < 2 or parts[0] not in ('tests', 'oa', 'vwp', 'vwp_bridge')
+                or not parts[1].startswith('test_') or not all(part.isidentifier() for part in parts)):
+            raise ValueError("--include requires public dotted test module/class/method names")
+        extra = list(test_cases(loader.loadTestsFromName(name)))
+        if loader.errors or not extra:
+            raise ValueError("--include did not load tests: " + name)
+        for test in extra:
+            if test.id() not in seen:
+                seen.add(test.id())
+                cases.append(test)
+    return unittest.TestSuite(cases)
+
+
 def shard_suite(suite, index, count):
     """Disjoint, deterministic shards; each original test ID belongs to one worker."""
     cases = list(test_cases(suite))
@@ -395,6 +418,8 @@ def main(argv=None):
                         help="quick: three-minute core checks (default); regression: broader checks; full: all tests including 100,000-record workloads")
     parser.add_argument("--role", choices=ROLES,
                         help="only this owner's quick contracts and company tests; DB tests require --require-db")
+    parser.add_argument("--include", action="extend", nargs="+", default=[],
+                        help="add public test modules/classes/methods to the profile, without duplicate execution")
     parser.add_argument("--list", action="store_true", help="list selected test IDs without executing them")
     parser.add_argument("--require-db", action="store_true", help="fail rather than skip PostgreSQL integration tests")
     parser.add_argument("--report-json", type=Path, help="write a new machine-readable result file (will not overwrite)")
@@ -406,6 +431,9 @@ def main(argv=None):
         parser.error("--durations must be nonnegative")
     if args.role and args.profile != "quick":
         parser.error("--role selects quick role checks; run regression/full without --role for integrated validation")
+    if args.role and args.include:
+        parser.error("--include cannot extend an owner's --role scope")
+    args.include = list(dict.fromkeys(args.include))
     if args.role == "vwp" and args.require_db:
         parser.error("VWP collection has no DB tests; run --role vwp without --require-db")
     try:
@@ -430,6 +458,11 @@ def main(argv=None):
             parser.error(str(exc))
     else:
         suite = build_suite(args.profile)
+        if args.include:
+            try:
+                suite = include_tests(suite, args.include)
+            except ValueError as exc:
+                parser.error(str(exc))
     total = suite.countTestCases()
     suite = shard_suite(suite, shard_index - 1, shard_count)
     selected = suite.countTestCases()
@@ -438,10 +471,12 @@ def main(argv=None):
     full_suite = args.profile == "full" and shard_count == 1 and not args.role
     selected_ids = [test.id() for test in test_cases(suite)]
     company_ids = {name for group in company for name in group["test_ids"]}
-    scope = {"role": args.role, "database_tests": args.require_db,
+    scope = {"role": args.role, "database_tests": args.require_db, "include": args.include,
              "company_test_directories": company,
              "company_tests_selected": sum(name in company_ids for name in selected_ids)}
     print(f"profile={args.profile} tests_selected={selected} full_suite={str(full_suite).lower()} shard={args.shard} role={args.role or 'all'} database_tests={str(args.require_db).lower()}", flush=True)
+    if args.include:
+        print("additional_tests=" + ",".join(args.include), flush=True)
     if args.role:
         print(f"company_tests_selected={scope['company_tests_selected']} (zero means company adapters are not verified)", flush=True)
     if args.manifest_json:

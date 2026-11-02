@@ -16,6 +16,59 @@ spec.loader.exec_module(runner)
 
 
 class MockRunnerTests(unittest.TestCase):
+    def test_additional_scope_is_forwarded_once_in_a_single_serial_fixture(self):
+        names = ['tests.test_common', 'tests.test_auth']
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            database = Mock(root=root, server_version_num=180000)
+            calls = []
+            def execute(staged, environment, log, script, *args):
+                calls.append((script, args))
+                if script == 'run_tests.py':
+                    start = args.index('--include') + 1
+                    self.assertEqual(names, list(args[start:start + len(names)]))
+                    (root / 'tests.json').write_text(json.dumps({'profile':'quick', 'include':names,
+                        'tests_run':2, 'skipped':0, 'successful':True}))
+                elif script == 'devtools/demo.py':
+                    output = Path(args[args.index('--out') + 1]);output.mkdir()
+                    (output / 'receipt.json').write_text('{"coverage":{}}')
+                elif script == 'tests/benchmark_postgresql.py':log.write_text('{}')
+            with patch.object(runner, 'pg_binaries', return_value=Path('/synthetic/bin')), \
+                    patch.object(runner, 'MockDatabase', return_value=database) as create, \
+                    patch.object(runner, 'stage_source'), patch.object(runner, 'execute', side_effect=execute), \
+                    redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(0, runner.main(['--jobs','1','--include',*names,names[0]]))
+            self.assertEqual(1, create.call_count)
+            database.stop.assert_called_once()
+            self.assertEqual(1, sum(script == 'run_tests.py' for script, _ in calls))
+            self.assertEqual(names, json.loads((root/'summary.json').read_text())['include'])
+
+    def test_additional_scope_is_bound_to_manifest_and_each_parallel_worker(self):
+        names = ['tests.test_common']
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp);database = Mock(root=root)
+            database.worker_environment.return_value = {}
+            manifest, reports = self.shard_reports()
+            manifest['include'] = names
+            manifest['tests_selected'] = len(manifest['test_ids'])
+            for index, report in enumerate(reports, 1):
+                report['include'] = names
+                (root/f'tests-worker-{index}.json').write_text(json.dumps(report))
+            def discover(staged, environment, log, script, *args):
+                self.assertEqual(names[0], args[args.index('--include') + 1])
+                (root/'manifest.json').write_text(json.dumps(manifest))
+            child = Mock();child.wait.return_value = 0;child.poll.return_value = 0
+            with patch.object(runner, 'execute', side_effect=discover), \
+                    patch.object(runner.subprocess, 'Popen', return_value=child) as popen, redirect_stdout(io.StringIO()):
+                result = runner.parallel_regression(root, {}, database, 'full', 2, include=names)
+            self.assertTrue(result['successful'])
+            self.assertEqual(names, result['include'])
+            for call in popen.call_args_list:
+                command = call.args[0]
+                self.assertEqual(names[0], command[command.index('--include') + 1])
+            reports[1]['include'] = []
+            self.assertFalse(runner.combine_shards(manifest, reports, [0,0], 1)['complete'])
+
     def shard_reports(self):
         manifest = {"profile": "full", "test_ids": ["test-d", "test-a", "test-c", "test-b"]}
         reports = []

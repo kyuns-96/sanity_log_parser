@@ -132,12 +132,14 @@ class RoleRunnerTests(unittest.TestCase):
                 self.assertEqual(not skipped, data["successful"])
 
     def test_invalid_role_combinations_fail_before_loading_or_db_setup(self):
-        for args in (["--role", "oa", "--profile", "full"], ["--role", "vwp", "--require-db"], ["--role", "unknown"]):
+        for args in (["--role", "oa", "--profile", "full"], ["--role", "vwp", "--require-db"], ["--role", "unknown"],
+                     ["--role", "oa", "--include", "tests.test_common"]):
             with self.subTest(args=args), patch.object(runner, "build_role_suite") as build, redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit):
                     runner.main(args)
                 build.assert_not_called()
-        for args in (["--role", "vwp"], ["--role", "oa", "--profile", "regression"], ["--role", "oa", "--rows", "10"]):
+        for args in (["--role", "vwp"], ["--role", "oa", "--profile", "regression"], ["--role", "oa", "--rows", "10"],
+                     ["--role", "oa", "--include", "tests.test_common"]):
             with self.subTest(args=args), patch.object(mock_runner, "MockDatabase") as database, redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit):
                     mock_runner.main(args)

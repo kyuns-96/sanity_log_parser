@@ -230,6 +230,7 @@ def combine_shards(manifest, reports, returncodes, seconds):
               "seconds": round(seconds, 3), "elapsed_clock": ELAPSED_CLOCK, "failed_tests": [], "timings": [],
               "test_ids": expected, "jobs": jobs, "worker_errors": [], "complete": False}
     result.update(role=manifest.get("role"), database_tests=manifest.get("database_tests"),
+                  include=manifest.get("include", []),
                   company_test_directories=manifest.get("company_test_directories", []),
                   company_tests_selected=manifest.get("company_tests_selected", 0))
     selected, executed = [], []
@@ -240,6 +241,7 @@ def combine_shards(manifest, reports, returncodes, seconds):
         valid = (isinstance(report, dict) and report.get("profile") == profile
                  and report.get("role") == manifest.get("role")
                  and report.get("database_tests") == manifest.get("database_tests")
+                 and report.get("include", []) == manifest.get("include", [])
                  and report.get("shard") == f"{index + 1}/{jobs}"
                  and report.get("tests_total") == len(expected)
                  and report.get("test_ids") == ordered[index::jobs]
@@ -268,13 +270,15 @@ def combine_shards(manifest, reports, returncodes, seconds):
     return result
 
 
-def parallel_regression(staged, environment, database, profile, jobs, *, role=None):
+def parallel_regression(staged, environment, database, profile, jobs, *, role=None, include=()):
     role_args = ("--role", role) if role else ()
+    include_args = ("--include", *include) if include else ()
     manifest_path = database.root / "manifest.json"
     execute(staged, environment, database.root / "discovery.log", "run_tests.py", "--profile", profile,
-            "--require-db", *role_args, "--manifest-json", manifest_path)
+            "--require-db", *role_args, *include_args, "--manifest-json", manifest_path)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if (manifest["profile"] != profile or manifest.get("role") != role
+            or manifest.get("include", []) != list(include)
             or (role and manifest.get("database_tests") is not True) or not manifest["test_ids"]
             or manifest["tests_selected"] != len(manifest["test_ids"])
             or len(set(manifest["test_ids"])) != len(manifest["test_ids"])):
@@ -288,7 +292,7 @@ def parallel_regression(staged, environment, database, profile, jobs, *, role=No
             for index, worker_env in enumerate(environments):
                 log = files.enter_context((database.root / f"tests-worker-{index + 1}.log").open("wb"))
                 command = [sys.executable, str(staged / "run_tests.py"), "--profile", profile, "--require-db",
-                           *role_args,
+                           *role_args, *include_args,
                            "--shard", f"{index + 1}/{jobs}", "--report-json", str(database.root / f"tests-worker-{index + 1}.json")]
                 children.append(subprocess.Popen(command, cwd=staged, env=worker_env, stdout=log, stderr=subprocess.STDOUT))
                 print(f"phase=worker_started shard={index + 1}/{jobs}", flush=True)
@@ -323,6 +327,8 @@ def main(argv=None):
                         help="quick: three-minute core checks + 100-row probe; regression: broader checks + 100-row probe; full: all tests + 10,000-row probe")
     parser.add_argument("--role", choices=("oa", "vwp-bridge"),
                         help="only this role's public quick + DB tests, without integrated demo/scale probes; VWP uses run_tests.py --role vwp")
+    parser.add_argument("--include", action="extend", nargs="+", default=[],
+                        help="add affected public tests to the profile and execute each test once in the same DB run")
     parser.add_argument("--rows", type=int, help="override parser/storage probe rows; does not change test fixtures")
     parser.add_argument("--groups", type=int, help="override parser/storage probe groups")
     parser.add_argument("--jobs", type=int, default=default_jobs(), help="isolated test worker databases (default: available CPUs, up to 4; 1: serial)")
@@ -333,12 +339,16 @@ def main(argv=None):
         parser.error("--jobs must be between 1 and 16")
     if args.role and (args.profile != "quick" or args.rows is not None or args.groups is not None):
         parser.error("--role selects quick role checks without scale probes; omit --role for regression/full/--rows/--groups")
+    if args.role and args.include:
+        parser.error("--include cannot extend an owner's --role scope")
+    args.include = list(dict.fromkeys(args.include))
     args.rows = args.rows if args.rows is not None else (10000 if args.profile == "full" else 100)
     args.groups = args.groups if args.groups is not None else min(args.rows, 100 if args.profile == "full" else 10)
     if not 1 <= args.groups <= args.rows <= 100000:
         parser.error("Require 1 <= groups <= rows <= 100000")
     database = None
     summary = {"status": "FAILED", "db_stopped": False, "profile": args.profile, "role": args.role,
+               "include": args.include,
                "full_suite": args.profile == "full", "jobs": args.jobs, "durability": args.durability,
                "elapsed_clock": ELAPSED_CLOCK}
     started = elapsed_time()
@@ -361,18 +371,22 @@ def main(argv=None):
             try:
                 execute(staged, environment, database.root / "tests.log", "run_tests.py", "--require-db",
                         "--profile", args.profile, *(("--role", args.role) if args.role else ()),
+                        *(("--include", *args.include) if args.include else ()),
                         "--report-json", database.root / "tests.json")
             finally:
                 if (database.root / "tests.json").is_file():
                     summary["tests"] = json.loads((database.root / "tests.json").read_text(encoding="utf-8"))
         else:
-            summary["tests"] = parallel_regression(staged, environment, database, args.profile, args.jobs, role=args.role)
+            summary["tests"] = parallel_regression(staged, environment, database, args.profile, args.jobs, role=args.role,
+                                                   **({'include':args.include} if args.include else {}))
             if not summary["tests"]["successful"]:
                 raise MockError("Regression tests failed; see tests.json and tests-worker-*.log")
         if summary["tests"].get("profile") != args.profile:
             raise MockError("Test report profile does not match the requested scope")
         if summary["tests"].get("role") != args.role:
             raise MockError("Test report role does not match the requested scope")
+        if summary["tests"].get("include", []) != args.include:
+            raise MockError("Test report additional scope does not match the requested tests")
         if args.role and summary["tests"].get("database_tests") is not True:
             raise MockError("Role DB report must include database tests")
         if summary["tests"]["skipped"]:
