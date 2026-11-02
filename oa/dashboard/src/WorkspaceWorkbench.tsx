@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, Check, ChevronLeft, ChevronRight, Download, FileText, FolderTree, GitBranch, GripVertical, Layers3, LoaderCircle, Pencil, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, ChevronLeft, ChevronRight, Download, FileText, FolderTree, GitBranch, GitMerge, GripVertical, Layers3, LoaderCircle, Pencil, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react'
 import { Button } from './studio/components/ui/button'
 import { Badge } from './studio/components/ui/badge'
 import { Checkbox } from './studio/components/ui/checkbox'
@@ -45,8 +45,9 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
   const [groupId, setGroupId] = useState('')
   const [member, setMember] = useState<GroupRecords | null>(null)
   const [selectedRecords, setSelectedRecords] = useState<Set<string>>(new Set())
-  const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set())
+  const [selectedGroups, setSelectedGroups] = useState<Map<string, GroupBrief>>(new Map())
   const [mergeMode, setMergeMode] = useState(false)
+  const [mergeDestination, setMergeDestination] = useState('')
   const [groupName, setGroupName] = useState('')
   const [newName, setNewName] = useState('새로 분리한 그룹')
   const [reason, setReason] = useState('')
@@ -105,7 +106,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
   }
   function initialize(value: WorkbenchView) {
     if (lastRevision.current !== value.revision) {
-      setSelectedGroups(new Set()); setSelectedRecords(new Set()); selectionGroups.current.clear(); setGroupId(''); setGroupOffset(0); setGroups(null); setMember(null); setNameEditing(false)
+      setSelectedGroups(new Map()); setMergeMode(false); setMergeDestination(''); setSelectedRecords(new Set()); selectionGroups.current.clear(); setGroupId(''); setGroupOffset(0); setGroups(null); setMember(null); setNameEditing(false)
       setEditor(null); setSplitMove(null)
       setReason(''); setFields(value.current?.identity_fields || ['object', 'check_point', 'mode'])
       setCriteria(value.current?.criteria || ''); setReusable(value.current?.reusable || false)
@@ -143,7 +144,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
       setTimeout(() => URL.revokeObjectURL(url), 1000)
     } catch (value) { fail(value) }
   }
-  function beginJudgment() { setGroupSearch(''); setGroupOffset(0); setFilter(''); setStep(2) }
+  function beginJudgment() { setMergeMode(false); setSelectedGroups(new Map()); setGroupSearch(''); setGroupOffset(0); setFilter(''); setStep(2) }
   useEffect(() => {
     alive.current = true
     const controller = new AbortController()
@@ -202,6 +203,8 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
           const operation = body.operation as Record<string, unknown> | undefined
           if (operation?.new_group_id || operation?.kind === 'RENAME' && groupSearch) {
             setGroupSearch(String(operation.label).slice(0, 100)); setGroupOffset(0)
+          } else if (operation?.kind === 'MERGE') {
+            setGroupSearch(''); setRationaleFilter(''); setGroupOffset(0)
           } else setGroupOffset(groupOffset)
         }
         if (body.action === 'CONFIRM' && value.summary.confirmed) beginJudgment()
@@ -279,11 +282,30 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
   }
   function select(ids: string[], checked: boolean, kind: 'records' | 'groups') {
     if (kind === 'records') {
-      setSelectedGroups(new Set())
+      setSelectedGroups(new Map())
       ids.forEach(id => checked ? selectionGroups.current.set(id, groupId) : selectionGroups.current.delete(id))
-    } else { setSelectedRecords(new Set()); selectionGroups.current.clear() }
-    const setter = kind === 'records' ? setSelectedRecords : setSelectedGroups
-    setter(previous => { const next = new Set(previous); ids.forEach(id => checked ? next.add(id) : next.delete(id)); return next })
+      setSelectedRecords(previous => { const next = new Set(previous); ids.forEach(id => checked ? next.add(id) : next.delete(id)); return next })
+    } else {
+      setSelectedRecords(new Set()); selectionGroups.current.clear()
+      setSelectedGroups(previous => {
+        const next = new Map(previous)
+        ids.forEach(id => { const group = groups?.items.find(value => value.id === id); if (checked && group) next.set(id, group); else next.delete(id) })
+        return next
+      })
+    }
+  }
+  function beginMerge() {
+    if (!writable || dirtyName || dirtyRationale) return
+    const current = groups?.items.find(group => group.id === groupId)
+    setStep(1); setGroupSearch(''); setRationaleFilter(''); setFilter(''); setGroupOffset(0)
+    setSelectedRecords(new Set()); selectionGroups.current.clear()
+    setSelectedGroups(current ? new Map([[current.id, current]]) : new Map())
+    setMergeMode(true); setError(''); setNotice('')
+  }
+  function openMergeEditor() {
+    if (!writable || dirtyName || dirtyRationale || selectedGroups.size < 2) return
+    setMergeDestination(selectedGroups.has(groupId) ? groupId : selectedGroups.keys().next().value || '')
+    setEditReason(reason); setError(''); setEditor('merge')
   }
   function editGroup(operation: Record<string, unknown>, auditReason = reason, destination?: string) {
     if (dirtyName && operation.kind !== 'RENAME') { setError('그룹 이름 변경을 저장하거나 취소한 뒤 구성을 수정하세요.'); return }
@@ -337,6 +359,9 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
 
   if (!data) return <section className="ws-panel ws-workbench ws-studio-workbench"><p role={error ? 'alert' : 'status'} className="ws-loading-status">{!error && <LoaderCircle size={16} className="spin" aria-hidden="true" />}{error || '전체 입력과 현재 분류 상태를 확인하고 있습니다.'}</p><Button variant="outline" onClick={onBack}>보고서 목록</Button></section>
   const task = data.task
+  const mergeGroups = [...selectedGroups.values()]
+  const mergeRecordCount = mergeGroups.reduce((total, group) => total + group.record_count, 0)
+  const mergeConflict = new Set(mergeGroups.map(group => typeof group.example.code === 'string' ? group.example.code.trim() : '').filter(Boolean)).size > 1
   const chosen = member?.group
   const model = data.current?.model_metadata
   const reviewReport = { ...data.report, check_status: chosen?.check_status || 'UNKNOWN' }
@@ -369,6 +394,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
       </nav>
       <div className="ws-workbench-stage-actions">
         {production && step === 1 && !data.current && data.can_edit && !historyEvent && <AiModelSelect ai={data.ai} connectionValue={connectionId} onConnectionChange={value => { setSelectedConnection(value); setSelectedModel('') }} value={modelId} onChange={setSelectedModel} disabled={!writable || !data.ready || aiSubmitting} label="분류 AI 모델" />}
+        {data.current && data.can_edit && !historyEvent && <Button variant="outline" disabled={!writable || dirtyName || dirtyRationale || data.summary.total < 2} onClick={beginMerge}><GitMerge size={15} />그룹 병합</Button>}
         {step === 1 && confirmed && <Button disabled={transitionBlocked} onClick={beginJudgment}>{data.can_edit ? '그룹 판정 계속' : '판정 보기'}<ArrowRight size={16} /></Button>}
         {step === 1 && data.current && data.can_edit && !historyEvent && !confirmed && <Button aria-describedby={`${inputId}-confirm-hint`} disabled={confirmBlocked} onClick={() => mutate('/clustering?compact=true', { action: 'CONFIRM', reason, reusable, compatible_versions: reusable && compatible, criteria: reusable ? criteria : '' }, '전체 분류를 확정했습니다. 그룹별 사용자 판정을 저장하세요.')}>분류 확정 · 판정 시작<ArrowRight size={16} /></Button>}
         {step === 1 && !data.current && data.can_edit && !historyEvent && <>
@@ -419,13 +445,19 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
         <Button variant="ghost" size="sm" onClick={onBack}><ArrowLeft size={14} />보고서 목록</Button>
       </aside>
       <section className="ws-workbench-groups ws-studio-groups" aria-label="분류 그룹 목록">
-        <div className="ws-workbench-group-heading"><h3>분류 그룹 <span>{n(data.summary.total)}</span></h3>{step === 1 && data.can_edit && !historyEvent && <Button variant="ghost" size="sm" aria-expanded={mergeMode} disabled={!writable || dirtyRationale} onClick={() => { setMergeMode(value => !value); setSelectedGroups(new Set()) }}>{mergeMode ? '취소' : '병합'}</Button>}</div>
-        {mergeMode && <p className="ws-muted">병합할 그룹을 2개 이상 선택하세요.</p>}
+        <div className="ws-workbench-group-heading"><h3>분류 그룹 <span>{n(data.summary.total)}</span></h3>{step === 1 && data.can_edit && !historyEvent && <Button variant="ghost" size="sm" aria-expanded={mergeMode} disabled={!writable || dirtyName || dirtyRationale || data.summary.total < 2} onClick={() => { if (mergeMode) { setMergeMode(false); setSelectedGroups(new Map()) } else beginMerge() }}>{mergeMode ? '취소' : '병합'}</Button>}</div>
+        {step === 1 && mergeMode && !historyEvent && <div className="ws-merge-selection" aria-label="그룹 병합 선택">
+          <p>같은 rule code의 그룹을 2개 이상 선택하세요. 검색·페이지를 바꿔도 선택이 유지됩니다.</p>
+          <strong role="status">{n(selectedGroups.size)}개 그룹 · 로그 {n(mergeRecordCount)}건 선택</strong>
+          {!!selectedGroups.size && <ul aria-label="병합할 그룹">{mergeGroups.map(group => <li key={group.id}><span>{group.label}<small>로그 {n(group.record_count)}건</small></span><Button variant="ghost" size="icon" aria-label={`${group.label} 병합 선택 해제`} disabled={!writable} onClick={() => select([group.id], false, 'groups')}><X size={13} /></Button></li>)}</ul>}
+          {mergeConflict && <p role="alert" className="ws-error">서로 다른 rule code의 그룹은 병합할 수 없습니다.</p>}
+          <Button className="ws-group-merge" variant="outline" disabled={!writable || dirtyName || dirtyRationale || selectedGroups.size < 2 || mergeConflict} onClick={openMergeEditor}>선택한 {selectedGroups.size}개 그룹 병합</Button>
+        </div>}
         <div className="ws-workbench-filter"><label><span className="sr-only">그룹 검색</span><div className="ws-group-search"><Input aria-label="그룹 검색" disabled={dirtyRationale || dirtyName} value={groupSearch} maxLength={100} placeholder="그룹 검색" onChange={event => { setGroupSearch(event.target.value); setGroupOffset(0) }} />{groupSearch && <button type="button" aria-label="그룹 검색 지우기" disabled={dirtyRationale || dirtyName} onClick={() => { setGroupSearch(''); setGroupOffset(0) }}><X size={13} /></button>}</div></label>{step === 1 && <label><span className="sr-only">근거 상태</span><select aria-label="그룹 근거 필터" disabled={dirtyRationale || dirtyName} value={rationaleFilter} onChange={event => { setRationaleFilter(event.target.value); setGroupOffset(0); setGroupId('') }}><option value="">전체 그룹</option><option value="UNRESOLVED">미검토·재검토</option>{Object.entries(rationaleLabels).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>}{step === 2 && <label><span className="sr-only">판정 상태</span><select aria-label="그룹 판정 필터" value={filter} onChange={event => { setFilter(event.target.value); setGroupOffset(0) }}><option value="">모든 판정</option><option value="UNREVIEWED">미검토·보류·재검토</option>{['PASS', 'FAIL', 'DEFER', 'STALE'].map(key => <option key={key} value={key}>{statusLabels[key]}</option>)}</select></label>}</div>
         <div className="ws-workbench-group-list">{groups?.items.map((group, index) => {
           const ordinal = (group as GroupBrief & { ordinal?: number }).ordinal ?? (!groupSearch && !rationaleFilter && !filter ? groupOffset + index + 1 : null)
           return <div key={group.id} data-log-drop={step === 1 && writable && !dirtyRationale ? group.id : undefined} className={[group.id === groupId ? 'ws-workbench-selected' : '', drag.drag?.target === group.id ? 'ws-log-drop-active' : ''].join(' ')}>
-            {step === 1 && mergeMode && data.can_edit && !historyEvent && <Checkbox aria-label={`${group.label} 그룹 전체 선택`} checked={selectedGroups.has(group.id)} disabled={!writable} onCheckedChange={checked => select([group.id], checked === true, 'groups')} />}
+            {step === 1 && mergeMode && data.can_edit && !historyEvent && <Checkbox aria-label={`${group.label} 그룹 전체 선택`} checked={selectedGroups.has(group.id)} disabled={!writable || dirtyName || dirtyRationale} onCheckedChange={checked => select([group.id], checked === true, 'groups')} />}
             <button type="button" data-log-drop={step === 1 && writable && !dirtyRationale ? group.id : undefined} data-drop-label={group.label} aria-pressed={group.id === groupId} aria-describedby={drag.drag ? drag.helpId : undefined} onClick={() => { if (dirtyRationale) { setError('작성 중인 그룹 근거를 저장하거나 취소한 뒤 다른 그룹을 선택하세요.'); return } if (dirtyName) { setError('그룹 이름 변경을 저장하거나 취소한 뒤 다른 그룹을 선택하세요.'); return } setGroupId(group.id); setMember(null); setNameEditing(false) }}><span className="ws-group-ordinal" aria-hidden="true">{ordinal === null ? '·' : String(ordinal).padStart(2, '0')}</span><div><strong>{group.label}</strong><span className={`ws-group-rationale ws-rationale-${group.rationale.status.toLowerCase()}`}>{n(group.record_count)}건 · {step === 1 ? rationaleLabels[group.rationale.status] : statusLabels[group.status]}</span></div></button>
           </div>
         })}</div>
@@ -433,7 +465,6 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
         {step === 1 && data.can_edit && !historyEvent && <button type="button" className={`ws-log-new-group${drag.drag?.target === NEW_LOG_GROUP ? ' ws-log-drop-active' : ''}`} data-log-drop={writable ? NEW_LOG_GROUP : undefined} data-drop-label="새 그룹" disabled={!writable || dirtyRationale} onClick={() => { if (!selectedRecords.size) { setNotice('새 그룹으로 옮길 로그를 먼저 선택하거나 이곳으로 끌어다 놓으세요.'); return } moveLogs(selectionMove(), NEW_LOG_GROUP) }}><Plus size={15} />새 그룹으로 분리</button>}
         {groups && <Pager {...groups} label="그룹" onChange={offset => { if (dirtyRationale || dirtyName) { setError('작성 중인 내용을 저장하거나 취소한 뒤 그룹 페이지를 변경하세요.'); return } setGroupOffset(offset) }} />}
         {step === 1 && data.current && confirmedReasons < data.summary.total && <Button className="ws-next-explanation" variant="ghost" size="sm" disabled={dirtyRationale || dirtyName || busy || groupNavigating || !!historyEvent} onClick={nextExplanation}>다음 미검토 근거<ArrowRight size={14} /></Button>}
-        {step === 1 && selectedGroups.size >= 2 && <Button className="ws-group-merge" variant="outline" disabled={!writable || dirtyRationale} onClick={() => { setEditReason(reason); setEditor('merge') }}>선택한 {selectedGroups.size}개 그룹 병합</Button>}
       </section>
       <section className="ws-workbench-detail ws-studio-evidence" aria-label="선택 그룹 상세">
         {groupId ? <>
@@ -456,7 +487,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
       {step === 1 && data.current && data.can_edit && !historyEvent && <details><summary>{production ? '전체 분류 메모 (선택)' : '전체 메모와 참고 엔진 설정 (선택)'}</summary><div className="ws-review-field"><label htmlFor={`${inputId}-reason`}>전체 분류 메모 (선택)</label><textarea id={`${inputId}-reason`} value={reason} maxLength={2000} disabled={busy} onChange={event => setReason(event.target.value)} placeholder="전체 분류에 대한 추가 검토 내용을 입력하세요." /></div>{!production && !model?.synthetic_only && <div className="ws-reuse-options"><p className="ws-muted">운영 AI 참고에는 사용자가 등록한 근거만 제공합니다. 등록한 지식은 블록·revision·ECO를 넘어 비교합니다. 아래 설정은 AI 참고와 별개인 참고 엔진의 조건 일치 규칙용입니다.</p><label className="ws-review-checkbox"><input type="checkbox" checked={reusable} disabled={busy} onChange={event => { setReusable(event.target.checked); if (!event.target.checked) setCompatible(false) }} />동일 조건의 참고 엔진에 분류 규칙 적용 허용</label>{reusable && <><div className="ws-review-field"><label htmlFor={`${inputId}-criteria`}>재사용할 분류 기준</label><textarea id={`${inputId}-criteria`} value={criteria} maxLength={2000} disabled={busy} onChange={event => setCriteria(event.target.value)} /></div><label className="ws-review-checkbox"><input type="checkbox" checked={compatible} disabled={busy} onChange={event => setCompatible(event.target.checked)} />같은 블록의 호환되는 다른 버전에도 적용</label></>}</div>}{confirmed && <><p className="ws-muted">확정 해제 사유를 전체 분류 메모에 입력하세요.</p><Button variant="outline" disabled={!writable || !reason.trim()} onClick={() => mutate('/clustering?compact=true', { action: 'WITHDRAW', reason }, '분류 확정을 해제했습니다. 이전 판정은 이력으로 보존됩니다.')}>분류 확정 해제</Button></>}</details>}
       {step === 1 && data.current && data.can_edit && !historyEvent && data.ai?.enabled && data.ai.supported && <details className="ws-rebuild-groups"><summary>AI로 그룹 다시 만들기</summary>{production && <AiModelSelect ai={data.ai} connectionValue={connectionId} onConnectionChange={value => { setSelectedConnection(value); setSelectedModel('') }} value={modelId} onChange={setSelectedModel} disabled={!writable || !data.ready} label="분류 AI 모델" />}<p className="ws-muted">{production ? '전체 로그와 관련 확정 사례를 OA AI가 검토합니다. 새 초안과 이전 구성은 이력으로 남습니다.' : '현재 그룹 구성을 새 초안으로 대체하며 기존 구성은 이력에 보존합니다. 합성 보고서와 검토 근거가 외부 AI에 전달됩니다.'}</p><Button variant="outline" disabled={!writable || !data.ready || !choice?.available || dirtyName || dirtyRationale || recoverableUnknown} onClick={() => proposeAI()}><Layers3 size={15} />AI로 그룹 만들기</Button><small>{choice?.connection_label ? `${choice.connection_label} / ` : ''}{modelId}{!production && <> · 남은 테스트 {data.ai.remaining}회</>}</small></details>}
       {step === 1 && data.can_edit && !historyEvent && !production && <details className="ws-workbench-settings"><summary>분류 설정</summary><p className="ws-muted">{data.ai?.enabled && data.ai.supported ? `합성 report 전용 · ${data.ai.model} 실제 호출 · 남은 테스트 ${data.ai.remaining}회. 새 초안은 기존 확정을 대체하며 이전 구성은 이력으로 남습니다. 이 테스트에 작성한 그룹 이름·검토 사유도 외부 모델에 전달됩니다.` : '사내 AI 미연결 · 현재 초안과 판정 제안은 확정 사례와 원본 필드를 참고하는 엔진입니다.'}</p><div className="ws-workbench-propose"><fieldset disabled={busy || activeTask(task) || aiRunning}><legend>참고 엔진에서 구분할 필드</legend>{Object.entries({ object: '대상', check_point: '검사 지점', mode: '모드', observed: '측정값', expected: '기준값', unit: '단위' }).map(([key, name]) => <label key={key}><input type="checkbox" checked={fields.includes(key)} disabled={key === 'mode'} onChange={event => setFields(previous => event.target.checked ? [...previous, key] : previous.filter(value => value !== key))} />{name}</label>)}</fieldset><Button variant="outline" disabled={!writable || !data.ready || dirtyRationale} onClick={() => propose()}><Layers3 size={15} />참고 엔진으로 초안 생성</Button></div></details>}
-      {data.current && <details className="ws-cluster-references"><summary>현재 분류의 기준과 출처</summary><p>{data.current.reason}<small>구분 필드: {data.current.identity_fields.join(', ')} · {data.current.actor.name} · {time(data.current.at)}</small></p>{model && <p>초기 분류 모델: {model.model}<small>입력 사례 {model.input_case_count}건 · 입력 토큰 {n(model.usage.input_tokens || 0)} · 출력 토큰 {n(model.usage.output_tokens || 0)} · {model.seconds}초</small></p>}{data.current.references.map(reference => <p key={reference.id}>{reference.report_id} · 분류 개정 {reference.revision}<small>{reference.criteria || '공유 확정 분류 사례'}</small><CaseSource value={reference} report={data.report} version={data.version} /></p>)}<p className="ws-muted">{production ? `이번 조회에서 선정한 관련 분류 후보 ${n(data.case_count)}건 · 현재 분류의 인용 사례 ${data.current.references.length}건. 전체 누적 건수가 아닙니다. 블록·revision·ECO를 넘어 관련 사례를 찾고 이번 조건과의 차이를 다시 확인합니다. 과거 확정 근거를 참고하며 원문은 기존 조회 권한을 따릅니다.` : `다른 report의 확정 사례 ${n(data.case_count)}건 · 참고 엔진 재사용 기준 ${n(data.reusable_count)}건`}</p></details>}
+      {data.current && <details className="ws-cluster-references"><summary>현재 분류의 기준과 출처</summary><p>{data.current.reason}<small>구분 필드: {data.current.identity_fields.join(', ')} · {data.current.actor.name} · {time(data.current.at)}</small></p>{model && <p>초기 분류 모델: {model.model}<small>입력 사례 {model.input_case_count}건 · 입력 토큰 {n(model.usage.input_tokens || 0)} · 출력 토큰 {n(model.usage.output_tokens || 0)} · {model.seconds}초</small></p>}{data.current.references.map(reference => <p key={reference.id}>{reference.report_id} · 분류 개정 {reference.revision}<small>{reference.criteria || '공유 확정 분류 사례'}</small><CaseSource value={reference} report={data.report} version={data.version} /></p>)}<p className="ws-muted">{production ? data.case_count_scope === 'REFERENCED' ? `현재 분류에서 참조한 유효 사례 ${n(data.case_count)}건 · 전체 누적 건수가 아닙니다. AI 분류 실행 시 전체 로그로 관련 사례를 검색하며 원문은 기존 조회 권한을 따릅니다.` : `이번 조회에서 선정한 관련 분류 후보 ${n(data.case_count)}건 · 현재 분류의 인용 사례 ${data.current.references.length}건. 전체 누적 건수가 아닙니다. 블록·revision·ECO를 넘어 관련 사례를 찾고 이번 조건과의 차이를 다시 확인합니다. 과거 확정 근거를 참고하며 원문은 기존 조회 권한을 따릅니다.` : `다른 report의 확정 사례 ${n(data.case_count)}건 · 참고 엔진 재사용 기준 ${n(data.reusable_count)}건`}</p></details>}
       {task && <details className="ws-workbench-task-history"><summary><span>{task.status === 'COMPLETED' ? task.id === data.current?.id ? '분류 초안 생성 완료' : '이전 참고 엔진의 분류 작업' : '분류 작업 근거'}</span> · {n(task.processed)} / {n(task.record_count)}건</summary>{task.chunks.map(chunk => <p key={chunk.index}>{n(chunk.start+1)}–{n(chunk.stop)}번째 로그 · {chunk.record_count}건 · {chunk.status}<code>{chunk.input_sha256}</code></p>)}</details>}
       <details className="ws-workbench-source" onToggle={event => setShowSource(event.currentTarget.open)}><summary>원본 로그 검색·조회 · {n(data.record_count)}건</summary>{showSource && <Records base={base} revision={data.revision} selected={new Set()} onSelect={() => {}} onError={fail} />}</details>
       <details className="ws-cluster-history" onToggle={event => setShowHistory(event.currentTarget.open)}><summary>분류 변경 이력</summary>{showHistory && history && <>{history.items.map(event => <article key={event.id}><strong>{actions[event.action]} · 개정 {event.revision} · {n(event.group_count)}개 그룹</strong><span>{event.actor.name} · {time(event.at)}</span><p>{event.reason}</p><Button variant="outline" size="sm" onClick={() => { setHistoryEvent(event.id); setGroupId(''); setGroupOffset(0); setStep(1) }}>당시 그룹 구성 조회</Button></article>)}<Pager {...history} label="분류 이력" onChange={setHistoryOffset} /></>}</details>
@@ -466,13 +497,17 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
     {drag.drag && <div className={`ws-log-drag-preview${drag.drag.keyboard ? ' ws-log-keyboard-preview' : ''}`} style={drag.drag.keyboard ? undefined : { left: Math.max(8, Math.min(drag.drag.x+14, window.innerWidth-238)), top: Math.max(8, Math.min(drag.drag.y+14, window.innerHeight-80)) }} aria-hidden="true"><GripVertical size={17} /><div><strong>{n(drag.drag.ids.length)}건 이동</strong><span>{drag.drag.keyboard ? '↑ ↓ 그룹 선택 · Enter 이동 · Esc 취소' : drag.drag.target === NEW_LOG_GROUP ? '놓아서 새 그룹 만들기' : drag.drag.target && drag.drag.target !== drag.drag.sourceGroup ? '놓아서 이 그룹으로 이동' : '왼쪽 그룹에 놓으세요'}</span></div></div>}
     <Dialog open={!!editor} onOpenChange={open => { if (!open) closeEditor() }}>
       <DialogContent className="ws-group-dialog" onEscapeKeyDown={event => { if (busy) event.preventDefault() }} onInteractOutside={event => { if (busy) event.preventDefault() }}>
-        <DialogHeader><DialogTitle>{editor === 'rename' ? '그룹 이름 변경' : editor === 'merge' ? '선택 그룹 병합' : '새 그룹으로 분리'}</DialogTitle><DialogDescription>{editor === 'rename' ? '간단한 그룹 설명을 입력하세요. 저장 시 원본 rule code가 이름 맨 앞에 붙습니다.' : editor === 'merge' ? `선택한 ${n(selectedGroups.size)}개 그룹의 전체 로그를 하나로 합칩니다. 같은 rule code끼리만 병합할 수 있습니다.` : `선택한 ${n(splitMove?.ids.length || 0)}건을 새 그룹으로 옮깁니다. 서로 다른 rule code는 같은 그룹에 넣을 수 없습니다.`}</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>{editor === 'rename' ? '그룹 이름 변경' : editor === 'merge' ? '선택 그룹 병합' : '새 그룹으로 분리'}</DialogTitle><DialogDescription>{editor === 'rename' ? '간단한 그룹 설명을 입력하세요. 저장 시 원본 rule code가 이름 맨 앞에 붙습니다.' : editor === 'merge' ? `선택한 ${n(selectedGroups.size)}개 그룹의 전체 로그 ${n(mergeRecordCount)}건을 하나로 합칩니다. 같은 rule code끼리만 병합할 수 있습니다.` : `선택한 ${n(splitMove?.ids.length || 0)}건을 새 그룹으로 옮깁니다. 서로 다른 rule code는 같은 그룹에 넣을 수 없습니다.`}</DialogDescription></DialogHeader>
+        {editor === 'merge' && <>
+          <label>병합 후 유지할 그룹<select autoFocus aria-label="병합 후 유지할 그룹" value={mergeDestination} disabled={busy} onChange={event => setMergeDestination(event.target.value)}>{mergeGroups.map(group => <option key={group.id} value={group.id}>{group.label} · {n(group.record_count)}건</option>)}</select></label>
+          <p className="ws-muted">선택한 그룹의 이름과 ID를 유지합니다. 병합 후 분류 근거를 검토하고 분류를 다시 확정하세요. 이전 구성·근거·판정은 이력으로 보존됩니다.</p>
+        </>}
         {editor !== 'merge' && <label>{editor === 'rename' ? '그룹 이름' : '새 그룹 이름'}<Input autoFocus aria-label={editor === 'rename' ? '선택 그룹 이름' : '분리할 새 그룹 이름'} maxLength={120} value={editor === 'rename' ? groupName : newName} disabled={busy} onChange={event => { if (editor === 'rename') { setNameEditing(true); setGroupName(event.target.value) } else setNewName(event.target.value) }} /></label>}
         <label>변경 사유 <span>(선택)</span><textarea aria-label="이번 변경 사유" value={editReason} maxLength={2000} disabled={busy} placeholder="입력하지 않으면 이동·이름 변경 내역이 기록됩니다." onChange={event => setEditReason(event.target.value)} /></label>
         {error && <p className="ws-error" role="alert">{error}</p>}
-        <DialogFooter><Button variant="outline" disabled={busy} onClick={closeEditor}>취소</Button><Button disabled={!writable || editor === 'rename' && (!groupName.trim() || !dirtyName) || editor === 'split' && (!newName.trim() || !splitMove?.ids.length)} onClick={() => {
+        <DialogFooter><Button variant="outline" disabled={busy} onClick={closeEditor}>취소</Button><Button disabled={!writable || editor === 'rename' && (!groupName.trim() || !dirtyName) || editor === 'merge' && (selectedGroups.size < 2 || !selectedGroups.has(mergeDestination) || mergeConflict) || editor === 'split' && (!newName.trim() || !splitMove?.ids.length)} onClick={() => {
           if (editor === 'rename') editGroup({ kind: 'RENAME', destination_id: groupId, label: groupName }, editReason.trim() || `사용자가 그룹 이름을 “${groupName}”(으)로 변경했습니다.`, groupId)
-          else if (editor === 'merge') editGroup({ kind: 'MERGE', group_ids: [...selectedGroups], destination_id: [...selectedGroups][0] }, editReason.trim() || `사용자가 ${n(selectedGroups.size)}개 그룹을 병합했습니다.`, [...selectedGroups][0])
+          else if (editor === 'merge') editGroup({ kind: 'MERGE', group_ids: [...selectedGroups.keys()], destination_id: mergeDestination }, editReason.trim() || `사용자가 ${n(selectedGroups.size)}개 그룹의 로그 ${n(mergeRecordCount)}건을 “${selectedGroups.get(mergeDestination)?.label}” 그룹으로 병합했습니다.`, mergeDestination)
           else if (splitMove && splitMove.revision === data.revision) {
             const id = (newGroup.current ||= `manual-${crypto.randomUUID()}`)
             editGroup({ kind: 'MOVE', record_ids: splitMove.ids, new_group_id: id, label: newName }, editReason.trim() || `사용자가 로그 ${n(splitMove.ids.length)}건을 새 그룹 “${newName}”(으)로 분리했습니다.`, id)
