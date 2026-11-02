@@ -85,7 +85,7 @@ class SecretGuard:
         def visit(item):
             if isinstance(item, str):
                 string(item)
-            elif isinstance(item, list):
+            elif isinstance(item, (list, tuple)):
                 for child in item: visit(child)
             elif isinstance(item, dict):
                 truncated_hex = (type(item.get('raw_omitted_chars')) is int and item['raw_omitted_chars'] > 0

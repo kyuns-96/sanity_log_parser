@@ -115,15 +115,4 @@ OA API는 기존 인증/CSRF/블록 범위를 적용한다.
 
 정규화 개정은 [PROTOCOL.md](../PROTOCOL.md#정규화원문-위치전송-개정)를 따른다. OA 수신기를 먼저 갱신하고 VWP를 갱신한다. `SUBMISSION_CONTRACT_MISMATCH`로 거부된 구버전 PARSING 제출은 archive와 불변 outbox를 남기고 새 UUID로 다시 제출한다. 기존 UUID의 packet을 편집하지 않는다. UTF-8 실패 원문은 VWP에서 보관하며 OA에는 마스킹된 UNKNOWN 근거를 전달한다.
 
-## 6. 합성 검증
-
-회사 자료/DB endpoint를 받지 않는 별도 도구가 새 socket 전용 PostgreSQL과 합성 입력을 만들고 실제 제출·분할 송수신·OA 마지막 로그·receipt·PoR 보존을 확인한 뒤 DB를 종료한다.
-
-```bash
-.venv/bin/python tools/demo_submission.py --pg-bin /path/to/postgresql/16/bin --rows 10000
-.venv/bin/python tools/demo_submission.py --pg-bin /path/to/postgresql/16/bin --rows 100000 --padding 250
-```
-
-큰 예시는 전체 전달이 64MiB를 넘더라도 한 메시지 예산 안에서 모든 로그를 전달하는 시험이다. 실제 크기는 실행 결과로 확인하며 운영 성능을 보장하지 않는다. 결과는 `artifacts/submission-demo-<rows>.json`에 남긴다. `devtools/sanity_submission_fixture.py`는 이 시험에서만 명시적으로 주입하며 회사 명령/설정이 자동 선택하지 않는다.
-
-일반 단위 시험은 `.venv/bin/python -m unittest tests.test_submission_contracts -v`, 실제 PostgreSQL 회귀는 [기존 독립 mock runner](../db/tests/run_mock.py)를 사용한다. 구체적인 결과와 범위는 [REVIEW.md](../REVIEW.md)에 기록한다.
+일반 단위 시험은 `.venv/bin/python -m unittest tests.test_submission_contracts -v`, 실제 PostgreSQL 회귀는 [기존 독립 mock runner](../db/tests/run_mock.py)를 사용한다.

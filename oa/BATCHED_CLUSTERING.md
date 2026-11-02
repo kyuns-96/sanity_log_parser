@@ -180,12 +180,5 @@ token/body 한도·한 기록 과대, 보존 본문·별도 인용, DB 자식 �
 실제 source packet 재조회·분류/판정 전체 흐름도 검증한다. 전체 검증에는 분류와 그룹 판정
 각각 10만 건 합성 입력을 포함한다. 실제 모델 품질 검증은 별도다.
 
-감사 이력/최종 사람 이력이 추가되므로 기존 수집만의 용량 수치를 그대로 적용하지 않는다.
-`db/tests/benchmark_total_storage.py --measure-ai`는 같은 합성 제출에 mock 모델을 연결하고
-전체 네 테이블의 TOAST/index 포함 크기, 실제 전달 기록 hash·최종 배정과 호출 수를 기록한다.
-`ledger_storage_by_kind`는 자식 이력 종류별 행 수와 `pg_column_size(payload)` 합계다.
-이 값은 원인 분석용이며 네 테이블의 TOAST/index 포함 물리 합계를 대신하지 않는다.
-현재는 보존 본문 없는 입력용 측정이다. 임의 초기화·삭제·repack으로 용량 목표를 맞추지 않는다.
-
 현장 담당은 지원된 설정/토크나이저 자료·모델 한도·독립 정답 평가를 준비한다. 공통 모델/worker/
 partition/SQL/기존 테스트의 자체 수정 권한은 확대하지 않는다. [기존 가이드](../INTERNAL_AI_GUIDE.md)를 따른다.

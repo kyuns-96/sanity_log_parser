@@ -78,5 +78,3 @@ DBA가 010을 적용한 뒤 검토된 service 계정에서 기존 private archiv
 원본 보관에 더해 2026-10-27 [토큰 없는 내부 접수와 OA OWNER 범위 확정](HTTPS_SUBMISSION.md)을 연결했다. 제출자 표시는 미확인 상태로 보존하고, OA의 현재 권한·정확한 범위 확인 후에만 보고서를 공개한다. 이는 사람의 최종 분류/판정이나 정답 사례 확정과 별도다. 기존 SSO/RBAC 보호를 유지하며 추가 DB migration은 없다.
 
 실제 회사 SDK·report 형식/완료 의미·SSO/범위 연결·운영 DB 배포·모델 판단 품질은 사내 검증 대상이다. VWP private에 저장했다고 OA에 원본 직접 조회/다운로드 권한을 자동 부여하지 않는다. 기존 V2 원본 다운로드 API의 경계도 별도 구현 전까지 유지한다.
-
-검증 기록은 [REVIEW.md](../REVIEW.md)에 남긴다. PostgreSQL 16.15의 최종 `quick` 230개와 PostgreSQL 12.1의 원본/migration/포털 전용 20개가 실패·오류·skip 없이 통과했다. 포털 59단계와 Docker의 DB 보관/재생성도 합성 입력으로 확인했으며 실제 사내 배포나 AI 판단 품질 검증을 대신하지 않는다.

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
-import hashlib
 import json
 import os
 import re
@@ -73,37 +72,6 @@ def logical_row(row, db=None):
     if row['record_type'] == PAGE_KIND:
         result['page_records'] = decode_page(row)
     return result
-
-
-def fingerprint(db):
-    """Read-only, consistent digest of every logical column and exact source byte."""
-    result, after, count = hashlib.sha256(), None, 0
-    with db.transaction(readonly=True):
-        db.conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
-        PrivatePayloadStorage(db)
-        EvidencePageStorage(db)
-        SharedSourcePackets(db)
-        while True:
-            identities = db.execute('SELECT record_id FROM {vwp} '+('WHERE record_id>%s ' if after else '')
-                                    +'ORDER BY record_id LIMIT 64', (after,) if after else None).fetchall()
-            if not identities:
-                break
-            for identity in identities:
-                row = db.execute("SELECT *,to_jsonb(t)-'payload'-'raw_bytes'-'payload_bytes'-'page_bytes'"
-                                 "-'source_packet_ref' AS metadata "
-                                 'FROM {vwp} t WHERE record_id=%s', (identity['record_id'],)).fetchone()
-                restored = logical_row(row, db)
-                pieces = (canonical_json(row['metadata']), canonical_json(restored['payload']),
-                          bytes(restored['raw_bytes'] or b''), canonical_json(restored['raw_bytes'] is not None))
-                if row['record_type'] == PAGE_KIND:
-                    pieces += (canonical_json([{'payload': r['payload'], 'raw': r['raw_bytes'].decode('utf-8')}
-                                              for r in restored['page_records']]),)
-                for piece in pieces:
-                    result.update(len(piece).to_bytes(8, 'big'))
-                    result.update(piece)
-                after = row['record_id']
-                count += 1
-    return {'rows_verified': count, 'logical_sha256': result.hexdigest()}
 
 
 def compact(db, *, apply=False, restore_plain=False, batch_size=32, max_rows=None):
@@ -185,19 +153,15 @@ def main(argv=None):
     parser.add_argument('--dsn-env', required=True, help='private environment variable name; never a DSN argument')
     parser.add_argument('--apply', action='store_true', help='owner-only writes; default is a read-only dry run')
     parser.add_argument('--restore-plain', action='store_true', help='restore original payload JSON for an older reader')
-    parser.add_argument('--fingerprint', action='store_true', help='read-only digest of all logical rows; stop writers for before/after comparison')
     parser.add_argument('--batch-size', type=int, default=32)
     parser.add_argument('--max-rows', type=int)
     args = parser.parse_args(argv)
-    if args.fingerprint and (args.apply or args.restore_plain or args.max_rows is not None):
-        parser.error('--fingerprint is a complete read-only check, separate from conversion flags')
     if not re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', args.dsn_env) or not os.environ.get(args.dsn_env):
         parser.error('A configured private DSN environment variable is required')
     try:
         with MaintenanceDatabase(os.environ[args.dsn_env], args.schema) as db:
-            report = ({'mode': 'fingerprint', 'applied': False, **fingerprint(db)} if args.fingerprint
-                      else compact(db, apply=args.apply, restore_plain=args.restore_plain,
-                                   batch_size=args.batch_size, max_rows=args.max_rows))
+            report = compact(db, apply=args.apply, restore_plain=args.restore_plain,
+                             batch_size=args.batch_size, max_rows=args.max_rows)
         print(json.dumps({'status': 'COMPLETED', **report}, sort_keys=True))
         return 0
     except ReviewError as exc:

@@ -224,7 +224,6 @@ delivery와 별도로 `review_readiness=READY/BLOCKED`, `blockers`, 예상/수�
 
 ## 8. 후속 구현 수용 기준
 
-아래는 시험 명세다. 실제 실행한 합성 검증 결과와 미확인 사내 조건은 [REVIEW.md](../REVIEW.md)에 구분한다.
 
 | 시나리오 | 기대 결과 |
 |---|---|

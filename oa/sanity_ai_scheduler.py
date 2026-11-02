@@ -3,7 +3,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import timedelta
 
-from common.sanity_common import digest
 from common.sanity_db import json_value, lock_key, uuid_value
 from common.sanity_submission import check
 from oa.sanity_workspace import WorkspaceStore, record_id
@@ -20,29 +19,23 @@ _lease = ContextVar('sanity_ai_scheduler_lease',default=None)
 def limits(value, code='AI_SCHEDULER_CONFIG'):
     check(isinstance(value,dict) and set(value)==set(DEFAULTS) and all(
         type(value[k]) is int and 1 <= value[k] <= MAX_SLOTS for k in DEFAULTS),code)
-    return dict(value)
+    return value
 
 
 class Settings:
     def __init__(self,db):self.db=db
 
     def current(self):
-        rows=self.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s "
-            "ORDER BY workspace_key",(CONFIG+'%',)).fetchall()
-        previous=None
-        for index,row in enumerate(rows,1):
-            value=row['payload']
-            check(isinstance(value,dict) and set(value)=={'namespace','revision','actor_id','limits','previous_sha256','sha256'}
-                and value['namespace']==NAMESPACE and type(value['revision']) is int and value['revision']==index
-                and isinstance(value['actor_id'],str) and 1<=len(value['actor_id'])<=200
-                and row['workspace_key']==CONFIG+f'{index:010d}'
-                and row['record_id']==record_id('WS_CONFIG',row['workspace_key'])
-                and row['state']=={} and row['version']==0 and row['status']=='RECORDED'
-                and row['created_at']==row['updated_at']
-                and value['previous_sha256']==(previous['sha256'] if previous else None)
-                and value['sha256']==digest({k:v for k,v in value.items() if k!='sha256'}), 'AI_SCHEDULER_CORRUPT')
-            limits(value['limits'],'AI_SCHEDULER_CORRUPT');previous=value
-        return {'revision':len(rows),'limits':dict(previous['limits'] if previous else DEFAULTS)}
+        row=self.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s "
+            "ORDER BY workspace_key DESC LIMIT 1",(CONFIG+'%',)).fetchone()
+        if row is None:
+            return {'revision':0,'limits':dict(DEFAULTS)}
+        value=row['payload']
+        check(isinstance(value,dict) and type(value.get('revision')) is int
+              and 1<=value['revision']<=9999999999
+              and row['workspace_key']==CONFIG+f"{value['revision']:010d}"
+              and row['record_id']==record_id('WS_CONFIG',row['workspace_key']), 'AI_SCHEDULER_CORRUPT')
+        return {'revision':value['revision'],'limits':limits(value.get('limits'),'AI_SCHEDULER_CORRUPT')}
 
     def read(self,actor):
         from oa.sanity_ai_task_defaults import TaskDefaults
@@ -56,11 +49,7 @@ class Settings:
         check(type(expected_revision) is int and 0<=expected_revision<9999999999,'INVALID_REQUEST')
         self.db.execute('SELECT pg_advisory_xact_lock(%s)',(lock_key(CONFIG),))
         current=self.current();check(current['revision']==expected_revision,'REVISION_CONFLICT')
-        old=self.db.execute("SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key=%s",
-            (CONFIG+f'{expected_revision:010d}',)).fetchone() if expected_revision else None
-        body={'namespace':NAMESPACE,'revision':expected_revision+1,'actor_id':actor.user_id,'limits':value,
-              'previous_sha256':old['payload']['sha256'] if old else None}
-        body['sha256']=digest(body)
+        body={'revision':expected_revision+1,'actor_id':actor.user_id,'limits':value}
         WorkspaceStore(self.db).put('WS_CONFIG',CONFIG+f"{body['revision']:010d}",body)
         return {'revision':body['revision'],'limits':value}
 

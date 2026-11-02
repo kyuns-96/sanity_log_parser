@@ -138,7 +138,7 @@ class RoleRunnerTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     runner.main(args)
                 build.assert_not_called()
-        for args in (["--role", "vwp"], ["--role", "oa", "--profile", "regression"], ["--role", "oa", "--rows", "10"],
+        for args in (["--role", "vwp"], ["--role", "oa", "--profile", "regression"],
                      ["--role", "oa", "--include", "tests.test_common"]):
             with self.subTest(args=args), patch.object(mock_runner, "MockDatabase") as database, redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit):
@@ -148,17 +148,16 @@ class RoleRunnerTests(unittest.TestCase):
     def test_parallel_reports_cannot_mix_roles_or_db_modes(self):
         manifest = {"profile": "quick", "role": "oa", "database_tests": True, "test_ids": ["one"]}
         report = {**manifest, "shard": "1/1", "tests_total": 1, "tests_selected": 1, "tests_run": 1,
-                  "failures": 0, "errors": 0, "skipped": 0, "successful": True, "failed_tests": [],
-                  "timings": [{"test": "one", "seconds": 0.1}]}
-        combined = mock_runner.combine_shards(manifest, [report], [0], 0.2)
+                  "failures": 0, "errors": 0, "skipped": 0, "successful": True, "failed_tests": []}
+        combined = mock_runner.combine_shards(manifest, [report], [0])
         self.assertTrue(combined["successful"])
         self.assertEqual("oa", combined["role"])
         for defect in ({"role": "vwp-bridge"}, {"role": None}, {"database_tests": False}):
-            combined = mock_runner.combine_shards(manifest, [{**report, **defect}], [0], 0.2)
+            combined = mock_runner.combine_shards(manifest, [{**report, **defect}], [0])
             self.assertFalse(combined["successful"])
             self.assertFalse(combined["complete"])
 
-    def test_mock_role_runs_only_selected_tests_and_stops_without_demo_or_scale(self):
+    def test_mock_role_runs_only_selected_tests_and_stops_database(self):
         for role in ("oa", "vwp-bridge"):
             with self.subTest(role=role), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
@@ -183,8 +182,6 @@ class RoleRunnerTests(unittest.TestCase):
                 result = json.loads((root / "summary.json").read_text())
                 self.assertEqual(("PASSED", role, False, True),
                                  (result["status"], result["role"], result["full_suite"], result["db_stopped"]))
-                self.assertNotIn("scenarios", result)
-                self.assertNotIn("scale", result)
 
     def test_parallel_role_is_forwarded_to_discovery_and_each_worker(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -196,8 +193,7 @@ class RoleRunnerTests(unittest.TestCase):
             for index, name in enumerate(("a", "b"), 1):
                 report = {**manifest, "test_ids": [name], "tests_total": 2, "tests_selected": 1,
                           "shard": f"{index}/2", "tests_run": 1, "failures": 0, "errors": 0,
-                          "skipped": 0, "successful": True, "failed_tests": [],
-                          "timings": [{"test": name, "seconds": 0.1}]}
+                          "skipped": 0, "successful": True, "failed_tests": []}
                 (root / f"tests-worker-{index}.json").write_text(json.dumps(report))
 
             def execute(staged, environment, log, script, *args):

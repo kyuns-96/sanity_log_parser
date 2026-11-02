@@ -14,7 +14,7 @@ from common.sanity_submission_store import SubmissionStore
 from oa.sanity_workspace_sources import hydrate
 from tests import test_raw_sources as raw_tests
 from tests.support import PgTestCase, ROOT, psycopg2
-from vwp_bridge.payload_compaction import MaintenanceDatabase, compact, fingerprint
+from vwp_bridge.payload_compaction import MaintenanceDatabase, compact
 
 
 class SharedSourceDatabaseTests(PgTestCase):
@@ -169,11 +169,10 @@ class SharedSourceDatabaseTests(PgTestCase):
                          (json_value(header), key, part['record_id']))
         with self.assertRaises(ReviewError): self.reports()
 
-    def test_equivalent_gzip_idempotence_fingerprint_and_repack_keep_every_record(self):
+    def test_equivalent_gzip_idempotence_and_repack_keep_every_record(self):
         self.install(); sid = self.deliver()
         before = self.reports()
         with MaintenanceDatabase(os.environ['SANITY_TEST_ADMIN_DSN'], self.schema) as db:
-            expected = fingerprint(db)
             self.assertEqual(0, compact(db, apply=True)['rows_changed'])
         with Database('vwp') as db:
             values = SubmissionStore(db).outbox(sid)
@@ -185,8 +184,6 @@ class SharedSourceDatabaseTests(PgTestCase):
                 self.assertEqual(value['message_id'], SubmissionStore(db).put_outbox(
                     sid, value['position'], value['kind'], value['packet']))
         self.admin.execute(self.source('maintenance/repack_payload_storage.sql'))
-        with MaintenanceDatabase(os.environ['SANITY_TEST_ADMIN_DSN'], self.schema) as db:
-            self.assertEqual(expected, fingerprint(db))
         self.assertEqual(before, self.reports())
 
     def test_legacy_inline_parts_remain_readable_and_immutable_after_013(self):

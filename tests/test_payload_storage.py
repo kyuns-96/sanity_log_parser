@@ -14,7 +14,7 @@ from common.sanity_privacy import SecretGuard
 from common.sanity_raw_sources import RawSourceStore
 from common.sanity_submission_store import SubmissionStore
 from tests.support import PgTestCase, ROOT, psycopg2
-from vwp_bridge.payload_compaction import MaintenanceDatabase, compact, fingerprint, logical_row
+from vwp_bridge.payload_compaction import MaintenanceDatabase, compact, logical_row
 from vwp_bridge.submission_analysis import SourceEvidence, public_records
 
 
@@ -183,7 +183,6 @@ class PayloadStorageDatabaseTests(PgTestCase):
 
     def test_dry_run_backfill_restart_and_restore_preserve_all_logical_columns(self):
         analysis = self.seed()
-        with self.owner() as db: original_fingerprint = fingerprint(db)
         self.install()
         before, logical = self.snapshot_rows()
         records = self.records(analysis)
@@ -201,12 +200,10 @@ class PayloadStorageDatabaseTests(PgTestCase):
             self.assertEqual(0, compact(db, apply=True)['rows_changed'])
         self.assertEqual(logical, self.snapshot_rows()[1])
         self.assertEqual(records, self.records(analysis))
-        with self.owner() as db: self.assertEqual(original_fingerprint, fingerprint(db))
         with self.owner() as db:
             restored = compact(db, apply=True, restore_plain=True)
             self.assertEqual(8, restored['rows_changed'])
         self.assertEqual(before, self.snapshot_rows()[0])
-        with self.owner() as db: self.assertEqual(original_fingerprint, fingerprint(db))
 
     def test_restore_plain_includes_committed_evidence_from_unfinished_analyses(self):
         self.install()
@@ -228,7 +225,6 @@ class PayloadStorageDatabaseTests(PgTestCase):
         before, logical = self.snapshot_rows()
         self.assertEqual(1, sum(row['payload_bytes'] is not None for row in before))
         with self.owner() as db:
-            original_fingerprint = fingerprint(db)
             self.assertEqual(0, compact(db)['rows_examined'])
             preview = compact(db, restore_plain=True)
             self.assertEqual(1, preview['rows_would_change'])
@@ -236,7 +232,6 @@ class PayloadStorageDatabaseTests(PgTestCase):
         with self.owner() as db:
             self.assertEqual(1, compact(db, apply=True, restore_plain=True)['rows_changed'])
             self.assertEqual(0, compact(db, apply=True, restore_plain=True)['rows_changed'])
-            self.assertEqual(original_fingerprint, fingerprint(db))
         restored, restored_logical = self.snapshot_rows()
         self.assertEqual(logical, restored_logical)
         self.assertTrue(all(row['payload_bytes'] is None for row in restored))

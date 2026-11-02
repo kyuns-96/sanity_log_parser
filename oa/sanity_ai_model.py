@@ -537,10 +537,7 @@ class OAAdvisor:
         settings = self.settings
         input_tokens = None
         encoded = canonical_json(packet)
-        # Scan the exact JSON value that will go on the wire. The JSON scanner
-        # retains the existing redaction rules without rebuilding a redacted
-        # copy and applying every regexp to every repeated key and string.
-        self._guard.ensure_public_json(json.loads(encoded))
+        self._guard.ensure_public_json(packet)
         messages = [{"role": "system", "content": instruction},
                     {"role": "user", "content": encoded.decode("utf-8")}]
         body = {"model": settings.model, "stream": False}

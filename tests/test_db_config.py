@@ -24,6 +24,11 @@ class ConnectionConfigTests(unittest.TestCase):
         self.assertEqual("dbaas_http", access_mode({"SANITY_DB_ACCESS": "dbaas_http"}))
         with self.assertRaises(ReviewError):
             access_mode({"SANITY_DB_ACCESS": "sqlite"})
+        with patch.object(sanity_db, "load_environment", return_value={
+                "SANITY_DB_ACCESS": "dbaas_http", "SANITY_VWP_DSN": "unused-secret-dsn"}), \
+                self.assertRaises(ReviewError) as err:
+            sanity_db.Database("vwp")
+        self.assertEqual("DBAAS_SQL_CONTRACT_REQUIRED", err.exception.code)
 
     def test_single_account_requires_exact_explicit_true(self):
         self.assertEqual("restricted", database_privilege_mode({}))
@@ -59,6 +64,8 @@ class ConnectionConfigTests(unittest.TestCase):
                 self.assertEqual("restricted", database_privilege_mode(load_environment(path)))
             self.assertNotIn("UNRELATED", values)
             self.assertNotIn("SANITY_DB_PASSWORD", os.environ)
+            with patch.dict(os.environ, {"SANITY_DB_HOST": ""}):
+                self.assertEqual("", load_environment(path)["SANITY_DB_HOST"])
 
     def test_each_required_field_is_required_without_libpq_implicit_defaults(self):
         for key in self.settings:

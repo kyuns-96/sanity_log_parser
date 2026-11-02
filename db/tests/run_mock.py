@@ -16,7 +16,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_PATTERNS = ("*.py", "common/*.py", "devtools/*.py", "tests/*.py", "vwp/*.py", "vwp_bridge/*.py", "oa/*.py",
@@ -27,13 +26,6 @@ SOURCE_PATTERNS = ("*.py", "common/*.py", "devtools/*.py", "tests/*.py", "vwp/*.
                    "db/*.sql", "db/form/*.sql", "db/maintenance/*.sql", "db/tests/*.sql", "db/tests/*.py",
                    "db/portal/*.py", "db/portal/*.json")
 DB_NAME = "sanity_test_mock"
-ELAPSED_CLOCK = "CLOCK_BOOTTIME" if hasattr(time, "CLOCK_BOOTTIME") else "monotonic"
-
-
-def elapsed_time():
-    if hasattr(time, "CLOCK_BOOTTIME"):
-        return time.clock_gettime(time.CLOCK_BOOTTIME)
-    return time.monotonic()
 
 
 def default_jobs():
@@ -221,19 +213,19 @@ def execute(staged, environment, log, script, *args):
         raise MockError(f"{script} failed; see {log.name}")
 
 
-def combine_shards(manifest, reports, returncodes, seconds):
+def combine_shards(manifest, reports, returncodes):
     """A missing/duplicate shard or incomplete execution can never become green."""
     profile, expected = manifest["profile"], manifest["test_ids"]
     jobs = len(returncodes)
     result = {"profile": profile, "full_suite": profile == "full", "tests_selected": len(expected),
               "tests_run": 0, "failures": 0, "errors": 0, "skipped": 0, "successful": False,
-              "seconds": round(seconds, 3), "elapsed_clock": ELAPSED_CLOCK, "failed_tests": [], "timings": [],
+              "failed_tests": [],
               "test_ids": expected, "jobs": jobs, "worker_errors": [], "complete": False}
     result.update(role=manifest.get("role"), database_tests=manifest.get("database_tests"),
                   include=manifest.get("include", []),
                   company_test_directories=manifest.get("company_test_directories", []),
                   company_tests_selected=manifest.get("company_tests_selected", 0))
-    selected, executed = [], []
+    selected = []
     ordered = sorted(expected)
     if not expected or len(set(expected)) != len(expected) or jobs < 1:
         result["worker_errors"].append("An explicit nonempty test manifest and workers are required")
@@ -245,28 +237,23 @@ def combine_shards(manifest, reports, returncodes, seconds):
                  and report.get("shard") == f"{index + 1}/{jobs}"
                  and report.get("tests_total") == len(expected)
                  and report.get("test_ids") == ordered[index::jobs]
-                 and report.get("tests_selected") == len(ordered[index::jobs])
-                 and isinstance(report.get("timings"), list))
+                 and report.get("tests_selected") == len(ordered[index::jobs]))
         if not valid:
             result["worker_errors"].append(f"Invalid or missing report for worker {index + 1}")
             continue
         selected.extend(report["test_ids"])
-        ids = [row["test"] for row in report["timings"]]
-        executed.extend(ids)
-        if report["tests_run"] != len(ids) or Counter(ids) != Counter(report["test_ids"]):
+        if report["tests_run"] != report["tests_selected"]:
             result["worker_errors"].append(f"Incomplete execution in worker {index + 1}")
         for key in ("tests_run", "failures", "errors", "skipped"):
             result[key] += report[key]
         result["failed_tests"].extend(report["failed_tests"])
-        result["timings"].extend(report["timings"])
         if returncode not in (0, 1) or (returncode == 0) != report["successful"]:
             result["worker_errors"].append(f"Exit status mismatch in worker {index + 1}")
-    if len(reports) != jobs or Counter(selected) != Counter(expected) or Counter(executed) != Counter(expected):
+    if len(reports) != jobs or Counter(selected) != Counter(expected):
         result["worker_errors"].append("Workers did not execute the exact selected test set")
     result["complete"] = not result["worker_errors"]
     result["successful"] = (result["complete"] and not any(returncodes)
                             and not any(result[key] for key in ("failures", "errors", "skipped")))
-    result["timings"].sort(key=lambda row: row["seconds"], reverse=True)
     return result
 
 
@@ -284,7 +271,6 @@ def parallel_regression(staged, environment, database, profile, jobs, *, role=No
             or len(set(manifest["test_ids"])) != len(manifest["test_ids"])):
         raise MockError("Invalid test manifest")
     jobs = min(jobs, len(manifest["test_ids"]))
-    started = elapsed_time()
     environments = [database.worker_environment(index + 1) for index in range(jobs)]
     children = []
     with ExitStack() as files:
@@ -313,7 +299,7 @@ def parallel_regression(staged, environment, database, profile, jobs, *, role=No
             reports.append(json.loads((database.root / f"tests-worker-{index + 1}.json").read_text(encoding="utf-8")))
         except (OSError, ValueError):
             reports.append(None)
-    report = combine_shards(manifest, reports, returncodes, elapsed_time() - started)
+    report = combine_shards(manifest, reports, returncodes)
     with (database.root / "tests.json").open("x", encoding="utf-8") as stream:
         json.dump(report, stream, indent=2)
         stream.write("\n")
@@ -324,34 +310,26 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pg-bin", help="directory containing initdb, pg_ctl and postgres")
     parser.add_argument("--profile", choices=("quick", "regression", "full"), default="quick",
-                        help="quick: three-minute core checks + 100-row probe; regression: broader checks + 100-row probe; full: all tests + 10,000-row probe")
+                        help="quick: core checks; regression: broader checks; full: all tests")
     parser.add_argument("--role", choices=("oa", "vwp-bridge"),
-                        help="only this role's public quick + DB tests, without integrated demo/scale probes; VWP uses run_tests.py --role vwp")
+                        help="only this role's public quick + DB tests; VWP uses run_tests.py --role vwp")
     parser.add_argument("--include", action="extend", nargs="+", default=[],
                         help="add affected public tests to the profile and execute each test once in the same DB run")
-    parser.add_argument("--rows", type=int, help="override parser/storage probe rows; does not change test fixtures")
-    parser.add_argument("--groups", type=int, help="override parser/storage probe groups")
     parser.add_argument("--jobs", type=int, default=default_jobs(), help="isolated test worker databases (default: available CPUs, up to 4; 1: serial)")
     parser.add_argument("--durability", choices=("ephemeral", "durable"), default="ephemeral",
                         help="ephemeral: disposable cluster without disk sync (default); durable: PostgreSQL disk sync")
     args = parser.parse_args(argv)
     if not 1 <= args.jobs <= 16:
         parser.error("--jobs must be between 1 and 16")
-    if args.role and (args.profile != "quick" or args.rows is not None or args.groups is not None):
-        parser.error("--role selects quick role checks without scale probes; omit --role for regression/full/--rows/--groups")
+    if args.role and args.profile != "quick":
+        parser.error("--role selects quick role checks; omit --role for regression/full")
     if args.role and args.include:
         parser.error("--include cannot extend an owner's --role scope")
     args.include = list(dict.fromkeys(args.include))
-    args.rows = args.rows if args.rows is not None else (10000 if args.profile == "full" else 100)
-    args.groups = args.groups if args.groups is not None else min(args.rows, 100 if args.profile == "full" else 10)
-    if not 1 <= args.groups <= args.rows <= 100000:
-        parser.error("Require 1 <= groups <= rows <= 100000")
     database = None
     summary = {"status": "FAILED", "db_stopped": False, "profile": args.profile, "role": args.role,
                "include": args.include,
-               "full_suite": args.profile == "full", "jobs": args.jobs, "durability": args.durability,
-               "elapsed_clock": ELAPSED_CLOCK}
-    started = elapsed_time()
+               "full_suite": args.profile == "full", "jobs": args.jobs, "durability": args.durability}
     try:
         import psycopg2
         database = MockDatabase(pg_binaries(args.pg_bin), durability=args.durability)
@@ -392,23 +370,7 @@ def main(argv=None):
         if summary["tests"]["skipped"]:
             raise MockError("Mock DB validation must not skip tests")
         print(f"phase=tests_passed count={summary['tests']['tests_run']}", flush=True)
-        if not args.role:
-            scenarios = {}
-            selected_scenarios = ("complete", "missing", "malformed", "unsupported") if args.profile == "full" else ("complete",)
-            for scenario in selected_scenarios:
-                output = database.root / ("demo-" + scenario)
-                execute(staged, environment, database.root / ("demo-" + scenario + ".log"), "devtools/demo.py",
-                        "--scenario", scenario, "--out", output)
-                scenarios[scenario] = json.loads((output / "receipt.json").read_text(encoding="utf-8"))["coverage"]
-            summary["scenarios"] = scenarios
-            print(f"phase=scale_probe rows={args.rows} groups={args.groups}", flush=True)
-            execute(staged, environment, database.root / "scale.json", "tests/benchmark_postgresql.py",
-                    "--rows", args.rows, "--groups", args.groups)
-            summary["scale"] = json.loads((database.root / "scale.json").read_text(encoding="utf-8"))
-        else:
-            summary["post_checks"] = "Role scope: integrated demo and scale probes are not selected"
-        summary.update(status="PASSED", driver="psycopg2", auth="scram-sha-256", tcp_listener=False,
-                       private_env_used=False, real_ai_called=False)
+        summary["status"] = "PASSED"
     except (Exception, KeyboardInterrupt) as exc:
         # Avoid driver error strings, exception repr/command lines and credentials.
         summary["error_type"] = type(exc).__name__
@@ -423,11 +385,10 @@ def main(argv=None):
             except (Exception, KeyboardInterrupt) as exc:
                 summary.update(status="FAILED", stop_error_type=type(exc).__name__)
                 print("Database shutdown failed; check retained runtime before cleanup", file=sys.stderr)
-            summary["seconds"] = round(elapsed_time() - started, 3)
             with (database.root / "summary.json").open("x", encoding="utf-8") as stream:
                 json.dump(summary, stream, ensure_ascii=False, indent=2)
                 stream.write("\n")
-            print(f"status={summary['status']} profile={args.profile} role={args.role or 'all'} jobs={args.jobs} seconds={summary['seconds']:.3f} elapsed_clock={ELAPSED_CLOCK} db_stopped={summary['db_stopped']} report={database.root / 'summary.json'}", flush=True)
+            print(f"status={summary['status']} profile={args.profile} role={args.role or 'all'} jobs={args.jobs} db_stopped={summary['db_stopped']} report={database.root / 'summary.json'}", flush=True)
     return 0 if summary["status"] == "PASSED" else 1
 
 

@@ -230,7 +230,7 @@ STALE로 처리하며 토큰을 다른 연결/사용자로 대체하지 않는�
 | OA AI 판단·검색·작업·기준 | `oa/sanity_ai_*.py`, `oa/ai_worker.py`, `common/sanity_ai_*.py`, `oa/sanity_production_workspace.py`, workbench API | 완전한 모델 입력, schema 2·근거/기준/사례 참조, 현재 유효성·권한·개정, 불변 작업과 결과 불명 재호출 금지 |
 | 검토·보고서·인증·업무 API | `oa/sanity_oa_store.py`, `oa/sanity_auth.py`, `oa/main.py`, `oa/dashboard_api.py` | 검토 개정·불변 이력·서버 검토자, 신원/권한 검사, API 계약 |
 | 대시보드 전체 | `oa/dashboard/` | 로그인·권한·사용자 범위, 데모와 실데이터 분리, 분류/검토/PoR의 의미 |
-| 설정·의존성·기존 테스트 | `common/sanity_config.py`, `common/sanity_dbaas.py`, 각 서버의 `.env.example`·`requirements.txt`, 루트 `requirements.txt`, 모든 기존 test/runner와 lockfile | 설정/실패 처리, 재현성, 기존 테스트 기대값과 skip 조건 |
+| 설정·의존성·기존 테스트 | `common/sanity_config.py`, 각 서버의 `.env.example`·`requirements.txt`, 루트 `requirements.txt`, 모든 기존 test/runner와 lockfile | 설정/실패 처리, 재현성, 기존 테스트 기대값과 skip 조건 |
 | 작업 지침·명세·설치 문서 | `AGENTS.md`, 이 문서, `requirement.md`, `PROTOCOL.md`, 기존 README/인수인계/검토 문서, `.gitignore` | 작업 범위·업무 기준·완료 조건. 문서 변경으로 권한을 스스로 확대하지 않음 |
 
 특히 다음 변경은 하지 않는다.

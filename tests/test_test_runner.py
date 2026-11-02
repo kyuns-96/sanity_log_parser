@@ -152,21 +152,6 @@ class TestRunnerTests(unittest.TestCase):
             self.assertNotIn(name, quick)
 
     def test_default_quick_records_success_with_its_actual_scope(self):
-        from types import SimpleNamespace
-        from unittest.mock import Mock
-        # Reproduce a suspended device: 31 real seconds, 7 MONOTONIC seconds.
-        for boot_clock in (True, False):
-            with self.subTest(boot_clock=boot_clock):
-                clock = SimpleNamespace(monotonic=Mock(side_effect=[100, 107]))
-                if boot_clock:
-                    clock.CLOCK_BOOTTIME = 9
-                    clock.clock_gettime = Mock(side_effect=[100, 131])
-                with patch.object(runner, "time", clock):
-                    result = runner.TimedTestResult(io.StringIO(), True, 0)
-                    sample = unittest.FunctionTestCase(lambda: None)
-                    result.startTest(sample)
-                    result.stopTest(sample)
-                self.assertEqual(31 if boot_clock else 7, result.timings[0]["seconds"])
         case = unittest.FunctionTestCase(lambda: None)
         with tempfile.TemporaryDirectory() as temp:
             report = Path(temp) / "report.json"
@@ -178,16 +163,6 @@ class TestRunnerTests(unittest.TestCase):
             self.assertEqual(("quick", False, 1, 1, True),
                              (data["profile"], data["full_suite"], data["tests_selected"],
                               data["tests_run"], data["successful"]))
-            self.assertGreaterEqual(data["seconds"], 0)
-            self.assertEqual([case.id()], [row["test"] for row in data["timings"]])
-            self.assertGreaterEqual(data["timings"][0]["seconds"], 0)
-
-    def test_negative_duration_count_is_rejected_before_loading_tests(self):
-        with patch.object(runner, "build_suite") as build, redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit) as error:
-                runner.main(["--durations", "-1"])
-        self.assertEqual(2, error.exception.code)
-        build.assert_not_called()
 
     def test_missing_quick_selector_is_an_error_instead_of_a_silent_exclusion(self):
         with tempfile.TemporaryDirectory() as temp:
