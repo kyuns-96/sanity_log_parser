@@ -59,6 +59,7 @@ owner/DBA가 점검 시간에 파일 전체를 한 트랜잭션으로 실행한�
 앱은 자동 migration을 실행하지 않으며 성공한 SQL의 재실행은 실패한다. 합성 로컬 fixture 전용 upgrade는 [WORKSPACE](../oa/WORKSPACE.md)를 따른다.
 단일 문장 DDL·FK를 지원하는 회사 포털에는 [별도 초기 설치 실행 안내](portal/README.md)를 사용한다. 네 테이블 0행·쓰기 중지 조건에서 원본 `002/004/005/006/007/008/009`와 동등한 실행본을 오프라인 생성·검증한다. 기존 54단계는 보존하며 008 완료 snapshot에서는 009 한 문장만 생성한다. `003` 역할·권한은 별도 DBA 경로다. 기존 SQL을 분해 편집하거나 트랜잭션/DO만 삭제해 실행하지 않는다. 포털 경로는 문장별 커밋이며 전체 파일 원자성은 제공하지 않는다. 실제 포털 적용은 사용자/승인 운영 담당자 책임이다. 009는 [계정 저장 계약](../oa/SSO_IDENTITY.md)이며 JIT 앱 구현을 포함하지 않는다.
 `tests/`는 개발자용 로컬 검증 도구이며 DB 신청이나 운영 설치 시 실행할 파일이 아니다.
+사내 담당자는 먼저 [역할별 기본 검사](../TESTING.md)를 실행한다. DB 확인이 필요한 경우에만 `db/tests/run_mock.py --role oa` 또는 `--role vwp-bridge`로 해당 역할의 공개 기본+DB 대표 검사를 실행한다. 역할 mock은 통합 demo·scale probe를 실행하지 않으며 회사 구현/테스트·비공개 fixture의 snapshot 제외 정책을 유지한다. VWP 원천은 DB 검사가 없다. `--role`과 regression/full·rows/groups는 함께 사용하지 않는다.
 사내 DB 없이 새 합성 DB를 만드는 명령은 `.venv/bin/python db/tests/run_mock.py`다.
 기본은 3분 이내 완료를 목표로 하는 `quick` 핵심 회귀와 100건/10그룹 검사다. 이전의 넓은 quick 범위는 `--profile regression`으로 실행하며 probe는 동일한 100건/10그룹이다. 전수 회귀·포털 전체 단계·10만 건 검증은 `--profile full`로 별도 실행한다. 모든 프로필은 실제 DB의 원본 DDL/SQL smoke와 제한 계정 권한 검사를 수행한다. 프로필 선택은 테스트 데이터 범위이며 앱의 처리 한도나 무결성 검사를 변경하지 않는다. 실패 시에도 `summary.json`에 실제 회귀 건수·소요 시간·실패 ID와 테스트별 시간을 보존한다. 임시 DB는 OS의 임시 디렉터리를 사용하므로 Termux에서도 `/tmp` 쓰기 권한이 필요하지 않다.
 

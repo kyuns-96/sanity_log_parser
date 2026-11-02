@@ -2,6 +2,8 @@
 
 먼저 루트 [AGENTS.md](../AGENTS.md), [INTERNAL_AI_GUIDE.md](../INTERNAL_AI_GUIDE.md) 전체와 [자기 지시문](INTERNAL_AI_TASK.md)을 읽는다.
 
+기본 검증은 저장소 루트에서 `.venv/bin/python run_tests.py --role vwp`다. 자기 공개 계약과 company_plan 모의 테스트만 실행하며 DB 검사는 없다. 다른 역할의 통합 검사를 반복하지 않고 [역할별 테스트](../TESTING.md)의 결과 구분을 따른다.
+
 [AI 판단 설계](../AI_DECISION_DESIGN.md)의 최초 분류·그룹 판정과 확정 근거의 다음 판단 활용이 최우선 목표다. 이번 모델 연동은 OA API를 우선 사용하며, VWP 원천 단계는 전체 입력·실행 조건·점검 기준·정답/반례를 누락 없이 준비한다. 이 문서가 모델 호출이나 DB 코드의 수정 권한을 추가하지 않는다.
 
 사내 VWP AI의 수정 위치는 `integration/corporate_plan.py`, `integration/corporate_submission.py`의 가이드에 열거된 메서드/명시적 주입과 `integration/company_plan/`뿐이다. `main.py`, `submission_cli.py`, 공통 코드·SQL·UI·기존 테스트는 읽기 전용이다. DB·모델 계정을 사용하지 않는다. 실제 원문/비밀은 사내에만 두고, 예상 밖 오류는 수정/재시도를 중단해 비식별 문의와 `WAITING_FOR_CODEX`로 인계한다. 이 파일은 루트 가이드의 권한을 넓히지 않는다.

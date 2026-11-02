@@ -52,15 +52,15 @@ Q1 이후에는 [분산 수집·PRE/POST 설계](SOURCE_COLLECTION_DESIGN.md)도
 
 ## 5. 검증과 완료 조건
 
-아래 명령은 저장소 루트에서 실행한다. 회사 테스트는 해당 디렉터리에 작성한 뒤 실행한다.
+저장소 루트에서 아래 **VWP 역할 명령 하나**를 실행한다. 수집/plan·제출·파일 보안·보존 파일/AI 필드의 공개 계약과 `company_plan/`에 작성한 자기 모의 테스트만 실행한다. [역할별 테스트](../TESTING.md)를 따른다.
 
 ```bash
-python3 -m unittest discover -s vwp/integration/company_plan -p 'test_*.py' -v
+.venv/bin/python run_tests.py --role vwp
 ```
 
-공통 계약 회귀는 전체 개발 의존성 설치 후 `.venv/bin/python -m unittest tests.test_integration_contracts -v`로 실행한다. 자기 회사 테스트와 별개로 결과를 기록하고, `git status --short`·`git diff --check`로 변경을 확인한다. 기존 테스트는 수정하지 않는다.
+회사 검사 수가 0이면 어댑터 검증 미실시로 기록한다. 수정한 회사 모듈만 좁게 확인할 때는 기존 `python3 -m unittest discover -s vwp/integration/company_plan -p 'test_*.py' -v`도 사용할 수 있다. `git status --short`·`git diff --check`로 변경을 확인하며 기존 테스트는 수정하지 않는다.
 
-새 제출의 공통 오프라인 계약은 `.venv/bin/python -m unittest tests.test_submission_contracts -v`로 확인한다. 현재 배포의 provider/HTTPS/TLS와 OA 범위 확정은 사내에서 별도 검증한다. mount/ACL·계정 대응은 legacy 경로에 한정하며 합성 fixture를 운영 factory에 주입하지 않는다.
+새 제출의 공통 오프라인 계약은 역할 검사에 포함된다. 실제 하드링크 보안 검사도 유지하며 Termux 오류는 사내 독립 Linux 실환경 검증 대기로 보고한다. VWP 원천에는 DB 검사가 없고 다른 역할이나 통합 quick/regression/full을 매번 반복하지 않는다. 현재 배포의 provider/HTTPS/TLS와 OA 범위 확정은 사내에서 별도 검증한다. mount/ACL·계정 대응은 legacy 경로에 한정하며 합성 fixture를 운영 factory에 주입하지 않는다.
 
 - 정상·미승인 목록, report 누락, 실행 실패/미실행, 승인된 적용 제외, 원천 장애를 구분한다. 실패를 빈 목록이나 성공으로 대체하지 않는다.
 - 합성/모의 시험과 사내 실제 원천/정답 검증을 따로 기록한다. `validate_plan` 통과는 목록 승인·파싱 완료가 아니다.
@@ -75,5 +75,7 @@ python3 -m unittest discover -s vwp/integration/company_plan -p 'test_*.py' -v
 정상 인계에는 `담당: VWP / INT-02·INT-06`, 기준 commit, 수정 파일/메서드, 검증 명령·통과/실패/skip, 사내 검증 여부, 미확정 사항과 다음 담당자를 적는다. `ADAPTER_VERIFIED`는 회사 입력 어댑터 검증 완료이며 전체 운영 연결·배포 완료가 아니다. 코드/SQL/UI/기존 테스트/지침 변경으로 자신의 범위를 넓히지 않는다.
 
 ## 7. 그대로 전달할 시작 명령
+
+> 기본 검증은 저장소 루트의 `.venv/bin/python run_tests.py --role vwp`로 자기 역할만 실행하라. 회사 검사 수가 0이면 어댑터 검증 미실시로 보고하고 다른 역할의 DB/통합 검사를 반복하지 말라.
 
 > 너는 VWP 원천 입력 담당이다. AI_DECISION_DESIGN.md, AGENTS.md, INTERNAL_AI_GUIDE.md 전체와 vwp/INTERNAL_AI_TASK.md, vwp/SUBMISSION.md를 읽어라. AI 최초 분류·그룹 판정과 사람 확정 근거의 다음 판단 활용이 최우선 목표다. 현재 토큰 없는 모드에서는 corporate_submission의 prepare/명시적 factory와 company_plan/의 원천 구현만 연결하라. corporate_plan/get_plan과 신원·권한·승인 메서드는 해당 legacy 경로를 유지할 때만 자기 허용 범위에서 구현하라. 제출 토큰/인증 SDK를 요구하지 마라. 전체 로그·실행 조건·원천 ID/순서·점검 기준·정답/반례를 사내에서 확인해 준비하라. 파서는 VWP-bridge, OA 모델 API 계약은 OA 담당자에게 인계하라. 앱 DB·모델 계정을 사용하지 않고 공통 CLI·collector·DB·worker·UI·기존 테스트를 수정하지 말라. 예상 밖 오류는 WAITING_FOR_CODEX로 문의하고 수집 성공과 실제 AI 판단 순환 완료를 구분해 보고하라.

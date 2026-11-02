@@ -52,5 +52,7 @@ demo 결과의 `run.json`도 `collect --plan` 입력으로 사용할 수 있으�
 수집 성공은 입력 전달 준비 완료일 뿐, 파싱·검토 완료나 sanity PASS가 아닙니다.
 
 ```bash
-python3 -m unittest discover -s vwp -p 'test_*.py' -v
+.venv/bin/python run_tests.py --role vwp
 ```
+
+[역할별 테스트](../TESTING.md)의 수집/plan·제출·파일 보안·보존 파일 계약과 자기 company_plan 모의 테스트만 실행합니다. VWP 원천에는 DB 검사가 없으며 다른 담당자의 worker/API·포털·대용량 검사를 반복하지 않습니다.

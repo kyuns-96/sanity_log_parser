@@ -63,16 +63,15 @@ Q1의 [분산 수집 설계](../vwp/SOURCE_COLLECTION_DESIGN.md)는 제출 묶�
 
 ## 5. 검증과 완료 조건
 
-저장소 루트에서 **구현한 어댑터의 테스트만**, 테스트 디렉터리를 작성한 뒤 실행한다.
+저장소 루트에서 아래 **VWP-bridge 역할 명령 하나**를 실행한다. parser·제출 HTTPS·중앙 AI worker 전송/배치의 공개 계약과 자기 `company_parsers/submission/clustering/review` 모의 테스트만 실행한다. [역할별 테스트](../TESTING.md)를 따른다.
 
 ```bash
-.venv/bin/python -m unittest discover -s vwp_bridge/integration/company_parsers -p 'test_*.py' -v
-.venv/bin/python -m unittest discover -s vwp_bridge/integration/company_clustering -p 'test_*.py' -v
-.venv/bin/python -m unittest discover -s vwp_bridge/integration/company_review -p 'test_*.py' -v
-.venv/bin/python -m unittest discover -s vwp_bridge/integration/company_submission -p 'test_*.py' -v
+.venv/bin/python run_tests.py --role vwp-bridge
 ```
 
-공통 계약 회귀는 전체 개발 의존성 설치 후 `.venv/bin/python -m unittest tests.test_integration_contracts -v`로 실행한다. 자기 회사 테스트와 별개로 결과를 기록하고, `git status --short`·`git diff --check`로 변경을 확인한다. 기존 테스트는 수정하지 않는다.
+회사 검사 수가 0이면 어댑터 검증 미실시로 기록한다. 수정한 회사 모듈만 좁게 확인할 때는 해당 company 디렉터리에 기존 unittest discover를 사용할 수 있다. `git status --short`·`git diff --check`로 변경을 확인하며 기존 테스트는 수정하지 않는다.
+
+parser 봉인/DB 전달·AI worker 저장/재개를 확인해야 할 때만 독립 개발 머신에서 `.venv/bin/python db/tests/run_mock.py --role vwp-bridge`를 추가한다. 이 mock은 회사 구현/비공개 fixture를 제외한 공개 대표 검사이며 통합 demo·scale probe를 실행하지 않는다. root 소유 설정 파일 보안 검사는 유지하며 Termux 오류는 사내 독립 Linux 실환경 검증 대기로 구분한다. 다른 역할·포털·통합 regression/full은 매번 반복하지 않는다.
 
 - parser: 정상·위반·경계값·명시적 0건·빈 파일·잘림·미해석/encoding·버전 변경, 실제 기대/추출 건수와 원문 위치를 비교한다.
 - 수집 전용: 공통 합성 시험은 `tests/test_collection_only.py`와 tokenless 접수의 전용 시나리오로 확인한다. 실제 형식·필드·완료/건수 정확성과 사내 모델 판단 품질은 현장에서 별도 검증한다. 수집 완료와 최종 판단 완료를 구분한다.
@@ -87,5 +86,7 @@ Q1의 [분산 수집 설계](../vwp/SOURCE_COLLECTION_DESIGN.md)는 제출 묶�
 인계에는 `담당: VWP-bridge / INT-03·04·05·INT-06 접속`, 기준 commit, 수정 파일/메서드, parser/item/도구 버전, SDK 입력/출력/실패/한도, 모의·실제 검증 결과, DB 점검 상태, 남은 COMMON 작업을 적는다. 실제 접속값·report·SDK 예외 원문은 외부 인계에서 제외한다. `ADAPTER_VERIFIED`와 운영 적용을 구분한다.
 
 ## 7. 그대로 전달할 시작 명령
+
+> 기본 검증은 저장소 루트의 `.venv/bin/python run_tests.py --role vwp-bridge`로 자기 역할만 실행하라. 회사 검사 수가 0이면 어댑터 검증 미실시로 보고하고, DB/worker 연결 확인이 필요한 경우만 독립 개발 머신의 `db/tests/run_mock.py --role vwp-bridge`를 추가하라.
 
 > 너는 VWP-bridge 회사 parser·원천 검증/전달 담당이다. AI_DECISION_DESIGN.md, AGENTS.md, INTERNAL_AI_GUIDE.md 전체와 vwp_bridge/INTERNAL_AI_TASK.md, vwp/SUBMISSION.md를 읽어라. AI 최초 분류·그룹 판정과 확정 근거의 다음 판단 활용이 최우선이며 이번 모델은 OA API 연동을 우선한다. INT-03의 허용 parser/명시적 등록과 company_parsers/ 테스트를 구현하라. 새 토큰 없는 경로에는 제출 토큰/신원 SDK가 필요 없다. corporate_submission의 신원·권한·승인 메서드는 해당 legacy 경로를 유지할 때만 자기 허용 범위에서 연결하라. 전체 로그·원본 위치·실행 조건·점검 기준·정답/반례를 보존해 OA 판단 입력으로 인계하라. 기존 VWP SDK는 그 경로를 유지할 때만 자기 허용 범위에서 구현하고 OA 실행의 선행 조건으로 삼지 말라. DB 점검은 4절을 따르고 공통 bridge·DB SQL·전송·worker·UI·기존 테스트·보호 장치를 수정하지 말라. 예상 밖 오류는 WAITING_FOR_CODEX로 문의하며 파싱/접속·모의 SDK 검증과 실제 AI 판단 순환 완료를 구분하라.

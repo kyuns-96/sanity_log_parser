@@ -101,4 +101,4 @@ AI는 최대 64개 표본으로 선언형 규칙만 제안하고 프로그램이
 불확실한 API 결과를 자동 재호출하거나 CLI/합성 결과로 대체하지 않습니다. 확정은 OA의 사람이 합니다.
 실제 사내 API·report 형식·정식 DB 접속 검증은 아직 대기 중입니다.
 
-검증: 루트에서 DB 테스트 설정 후 `.venv/bin/python run_tests.py --require-db`.
+검증: 루트에서 `.venv/bin/python run_tests.py --role vwp-bridge`. 자기 공개 계약과 company 모의 테스트만 실행합니다. parser 봉인/DB 전달·AI worker 연결을 확인해야 할 때만 별도 개발 머신에서 `.venv/bin/python db/tests/run_mock.py --role vwp-bridge`를 추가합니다. 범위·보고와 남은 실환경 검증은 [역할별 테스트](../TESTING.md)를 따릅니다.

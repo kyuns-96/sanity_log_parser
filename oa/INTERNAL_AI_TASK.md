@@ -75,13 +75,15 @@ Q1의 [분산 수집 설계](../vwp/SOURCE_COLLECTION_DESIGN.md)에 필요한 �
 
 ## 5. 검증과 완료 조건
 
-회사 테스트는 작성한 후, 아래 명령을 저장소 루트에서 실행한다.
+저장소 루트에서 아래 **OA 역할 명령 하나**를 실행한다. 인증/SSO·관리 연결/개인 키·모델/캐시 설정·업무 API의 공개 계약과 `company_sso/`에 작성한 자기 모의 테스트만 실행한다. [역할별 테스트](../TESTING.md)를 따른다.
 
 ```bash
-.venv/bin/python -m unittest discover -s oa/integration/company_sso -p 'test_*.py' -v
+.venv/bin/python run_tests.py --role oa
 ```
 
-기존 인증 회귀는 전체 개발 의존성 설치 후 `.venv/bin/python -m unittest tests.test_auth oa.test_sso -v`로 실행한다. 회사 전용 테스트와 결과를 구분하며 기존 시험은 수정하지 않는다. `git status --short`·`git diff --check`로 변경을 확인한다.
+회사 검사 수가 0이면 어댑터 검증 미실시로 기록한다. 수정한 회사 모듈만 좁게 확인할 때는 기존 `python -m unittest discover -s oa/integration/company_sso -p 'test_*.py' -v`도 사용할 수 있다. 회사 전용 테스트와 공개 검사 결과를 구분하며 기존 시험은 수정하지 않는다. `git status --short`·`git diff --check`로 변경을 확인한다.
+
+연결/인증 개정·암호화·기본 모델·OWNER 확정의 DB 동작을 확인해야 할 때만 독립 개발 머신에서 `.venv/bin/python db/tests/run_mock.py --role oa`를 추가한다. 이 mock은 회사 구현/비공개 fixture를 제외한 공개 대표 검사이며 통합 demo·scale probe를 실행하지 않는다. VWP 원천/parser/worker·포털·통합 regression/full은 매번 반복하지 않는다.
 
 - 정상·위조·만료·잘못된 issuer/audience·SDK 장애와 동명이인·이름 변경·미연결·비활성·동시 요청을 명시적 모의 client로 검증한다. 기존 시험을 수정하지 않는다.
 - 모의 검증과 사내 실제 SSO/계정 조회 검증을 나눠 보고한다. 세션 성공을 업무 API 공개·사용자 범위 검증 완료로 표시하지 않는다.
@@ -96,5 +98,7 @@ Q1의 [분산 수집 설계](../vwp/SOURCE_COLLECTION_DESIGN.md)에 필요한 �
 인계에는 `담당: OA / INT-04·05 모델 계약·품질 자료, INT-01·06 사용자·접속`, 기준 commit, 수정 파일/메서드, API/한도·점검 기준·정답/반례 준비 상태, 모의/실제 검증·DB 점검과 남은 COMMON 작업을 적는다. 자료 준비·`ADAPTER_VERIFIED`·실제 AI 판단 품질·운영 적용 완료를 구분한다.
 
 ## 7. 그대로 전달할 시작 명령
+
+> 기본 검증은 저장소 루트의 `.venv/bin/python run_tests.py --role oa`로 자기 역할만 실행하라. 회사 검사 수가 0이면 어댑터 검증 미실시로 보고하고, DB 연결 동작 확인이 필요한 경우만 독립 개발 머신의 `db/tests/run_mock.py --role oa`를 추가하라.
 
 > 너는 OA 회사 연동 담당이다. AI_DECISION_DESIGN.md, AGENTS.md, INTERNAL_AI_GUIDE.md 전체와 oa/INTERNAL_AI_TASK.md를 읽어라. 최우선 목표는 AI 최초 분류·그룹 판정과 사람 확정 근거의 검색·피드백 순환이다. 우선 OA OpenAI 호환 API의 세부 요청/응답·인증·모델·JSON/도구 지원·입출력/동시성/timeout/조회·취소 한도와 item별 기준·정답/반례를 비공개 위치에 준비해 비식별 계약을 인계하라. oa/AI_RUNTIME.md와 oa/.env.example의 지원 설정 및 승인된 비공개 기준 catalog를 준비하고 제공된 공통 실행으로 첫 판단 순환을 검증하라. 모델 실행·검색·검증·worker/저장 공통 코드는 읽기 전용이다. 대량 모델 분할 공통 구현과 사내 실제 품질 검증 상태를 구분하라. 기존 SSO/source 작업이 필요하면 위 허용 파일/메서드만 사용하고 완료한 작업을 반복하지 말라. VWP 전용 자격증명·원본 파일과 외부 합성 모델 경로를 사용하지 않는다. 공통 코드·SQL·UI·기존 테스트·보호 장치를 수정하지 말고 예상 밖 오류는 WAITING_FOR_CODEX로 문의하라. API 접속·사례 준비·실제 판단 품질·운영 적용 완료를 구분해 보고하라.

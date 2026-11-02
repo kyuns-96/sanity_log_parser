@@ -193,24 +193,20 @@ COMMON-03의 판단 작업은 원본 snapshot·project/block/item/버전 scope·
 1. [AI 판단 설계](AI_DECISION_DESIGN.md)의 첫 분류·판정·사례 검색·피드백 순환에서 맡을 부분을 확인한다. 기존 변경과 자기 INT 작업·수정 파일/메서드·확인된 사내 사실을 기록한다. 로그인·DB 연결만으로 핵심 AI 기능 완료를 보고하지 않는다.
 2. 필요한 사실이 없으면 `FACTS_REQUIRED`, 허용된 구현과 모의 검증이 끝나면 `ADAPTER_VERIFIED`로 기록한다. 이 상태는 운영 연결 완료가 아니다.
 3. SDK/형식별 신규 전용 테스트와 비공개 실제 자료 비교를 각각 수행한다. 예상된 실패 입력이 올바르게 거부되어 테스트가 통과하는 것은 정상이다. **예상 밖 오류/테스트 실패/보호 파일 수정 필요는 `WAITING_FOR_CODEX`로 전환**하고 수정·재시도를 중단한다.
-4. 아래 공통 계약 시험과 자기 어댑터 시험 결과를 분리해 인계한다. 회사 디렉터리는 기존 runner가 자동 수집하지 않는다.
+4. 아래 자기 역할 명령으로 공개 계약과 자기 어댑터 시험 결과를 분리해 인계한다. `--role`만 자기 회사 테스트를 찾아 실행하며 mock snapshot에는 회사 구현/비공개 fixture를 포함하지 않는다.
 5. Codex 검토 후 승인된 공통 연결을 받고, 사용자 관리 아래 사내 전체 흐름을 검증한다. 사내 AI가 보호 코드를 수정하거나 실제 DB/배포를 자동 실행하지 않는다.
 
 위 상태는 인계 문서의 작업 보고용이며 DB/AI job의 상태 코드를 추가하는 것이 아니다. `READY_FOR_REVIEW`는 변경·검증·남은 의존성을 정리해 Codex 검토에 제출할 준비가 되었다는 뜻이며 운영 사용 가능을 의미하지 않는다.
 
-전체 개발 의존성을 설치한 Git checkout의 저장소 루트에서 사내망·DB·모델 호출 없이 실행하는 공통 시험:
+전체 개발 의존성을 설치한 Git checkout의 저장소 루트에서 **자기 역할 한 줄만** 실행한다. 공개 검사는 DB·실제 모델을 호출하지 않으며 회사 시험도 모의 SDK/합성 입력으로 작성한다. 상세 선택 범위와 DB 후속은 [역할별 테스트](TESTING.md)를 따른다.
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -p test_integration_contracts.py -v
-.venv/bin/python -m unittest discover -s tests -p test_auth.py -v
-.venv/bin/python -m unittest discover -s tests -p test_parsers.py -v
-.venv/bin/python -m unittest discover -s tests -p test_review_advice.py -v
-.venv/bin/python -m unittest discover -s tests -p test_workspace_pipeline_advice.py -v
-.venv/bin/python -m unittest discover -s tests -p test_workspace_rationale.py -v
-.venv/bin/python -m unittest discover -s oa -p test_sso.py -v
+.venv/bin/python run_tests.py --role oa
+.venv/bin/python run_tests.py --role vwp-bridge
+.venv/bin/python run_tests.py --role vwp
 ```
 
-회사 어댑터 테스트를 해당 디렉터리에 **작성한 후**, 맡은 작업의 명령만 실행한다:
+위 역할 명령은 자기 회사 디렉터리의 `test_*.py`도 함께 실행한다. 회사 검사 수가 0이면 어댑터 검증 미실시이며 공개 검사 성공과 구분한다. 수정한 회사 모듈만 더 좁게 확인할 때는 해당 디렉터리에 **작성한 후**, 맡은 작업의 명령만 실행할 수 있다:
 
 | 작업 | 전용 테스트 명령 |
 |---|---|

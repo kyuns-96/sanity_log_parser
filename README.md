@@ -139,7 +139,17 @@ OA 또는 VWP 개인 인증값을 처리하려면 웹과 작업자에 같은 암
 
 ## 검증과 현재 확인 범위
 
-일상 수정은 관련 전용 테스트와 기본 **`quick`** 프로필로 확인합니다. 기본 실행은 독립 mock DB 준비·종료를 포함해 **3분 이내 완료를 목표**로 합니다. 이전의 넓은 quick 범위는 `regression`, 전체 회귀·포털 전체 단계·10만 건 검사는 `full`로 보존합니다. 기본 실행은 느린 테스트 5건의 시간을 표시하며 `--report-json 새파일.json`으로 전체 테스트별 시간을 기록할 수 있습니다.
+사내 담당자는 [역할별 테스트 안내](TESTING.md)에 따라 아래 자기 명령만 실행합니다. 기본은 DB 없는 공개 계약과 자기 `company_*` 테스트이며, 다른 역할의 DB·포털·대용량 검사를 반복하지 않습니다.
+
+```bash
+.venv/bin/python run_tests.py --role oa
+.venv/bin/python run_tests.py --role vwp-bridge
+.venv/bin/python run_tests.py --role vwp
+```
+
+DB 검사가 필요한 OA·VWP-bridge는 별도 개발 머신에서 `db/tests/run_mock.py --role oa` 또는 `--role vwp-bridge`를 사용합니다. 역할 mock은 공개 대표 검사만 실행하며 회사 구현/비공개 fixture·통합 demo·scale probe는 포함하지 않습니다. 실제 파일 보안의 Termux 한계는 아래 미해결 기록과 같습니다.
+
+설계 Codex의 공통 변경은 관련 전용 테스트와 기본 통합 **`quick`** 프로필로 확인합니다. 기본 실행은 독립 mock DB 준비·종료를 포함해 **3분 이내 완료를 목표**로 합니다. 이전의 넓은 quick 범위는 `regression`, 전체 회귀·포털 전체 단계·10만 건 검사는 `full`로 보존합니다. 기본 실행은 느린 테스트 5건의 시간을 표시하며 `--report-json 새파일.json`으로 전체 테스트별 시간을 기록할 수 있습니다.
 
 ```bash
 # 선택 대상 확인 / 기본 회귀

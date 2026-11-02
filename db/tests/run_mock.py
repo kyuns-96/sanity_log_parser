@@ -229,12 +229,17 @@ def combine_shards(manifest, reports, returncodes, seconds):
               "tests_run": 0, "failures": 0, "errors": 0, "skipped": 0, "successful": False,
               "seconds": round(seconds, 3), "elapsed_clock": ELAPSED_CLOCK, "failed_tests": [], "timings": [],
               "test_ids": expected, "jobs": jobs, "worker_errors": [], "complete": False}
+    result.update(role=manifest.get("role"), database_tests=manifest.get("database_tests"),
+                  company_test_directories=manifest.get("company_test_directories", []),
+                  company_tests_selected=manifest.get("company_tests_selected", 0))
     selected, executed = [], []
     ordered = sorted(expected)
     if not expected or len(set(expected)) != len(expected) or jobs < 1:
         result["worker_errors"].append("An explicit nonempty test manifest and workers are required")
     for index, (report, returncode) in enumerate(zip(reports, returncodes)):
         valid = (isinstance(report, dict) and report.get("profile") == profile
+                 and report.get("role") == manifest.get("role")
+                 and report.get("database_tests") == manifest.get("database_tests")
                  and report.get("shard") == f"{index + 1}/{jobs}"
                  and report.get("tests_total") == len(expected)
                  and report.get("test_ids") == ordered[index::jobs]
@@ -263,12 +268,14 @@ def combine_shards(manifest, reports, returncodes, seconds):
     return result
 
 
-def parallel_regression(staged, environment, database, profile, jobs):
+def parallel_regression(staged, environment, database, profile, jobs, *, role=None):
+    role_args = ("--role", role) if role else ()
     manifest_path = database.root / "manifest.json"
     execute(staged, environment, database.root / "discovery.log", "run_tests.py", "--profile", profile,
-            "--require-db", "--manifest-json", manifest_path)
+            "--require-db", *role_args, "--manifest-json", manifest_path)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if (manifest["profile"] != profile or not manifest["test_ids"]
+    if (manifest["profile"] != profile or manifest.get("role") != role
+            or (role and manifest.get("database_tests") is not True) or not manifest["test_ids"]
             or manifest["tests_selected"] != len(manifest["test_ids"])
             or len(set(manifest["test_ids"])) != len(manifest["test_ids"])):
         raise MockError("Invalid test manifest")
@@ -281,6 +288,7 @@ def parallel_regression(staged, environment, database, profile, jobs):
             for index, worker_env in enumerate(environments):
                 log = files.enter_context((database.root / f"tests-worker-{index + 1}.log").open("wb"))
                 command = [sys.executable, str(staged / "run_tests.py"), "--profile", profile, "--require-db",
+                           *role_args,
                            "--shard", f"{index + 1}/{jobs}", "--report-json", str(database.root / f"tests-worker-{index + 1}.json")]
                 children.append(subprocess.Popen(command, cwd=staged, env=worker_env, stdout=log, stderr=subprocess.STDOUT))
                 print(f"phase=worker_started shard={index + 1}/{jobs}", flush=True)
@@ -313,6 +321,8 @@ def main(argv=None):
     parser.add_argument("--pg-bin", help="directory containing initdb, pg_ctl and postgres")
     parser.add_argument("--profile", choices=("quick", "regression", "full"), default="quick",
                         help="quick: three-minute core checks + 100-row probe; regression: broader checks + 100-row probe; full: all tests + 10,000-row probe")
+    parser.add_argument("--role", choices=("oa", "vwp-bridge"),
+                        help="only this role's public quick + DB tests, without integrated demo/scale probes; VWP uses run_tests.py --role vwp")
     parser.add_argument("--rows", type=int, help="override parser/storage probe rows; does not change test fixtures")
     parser.add_argument("--groups", type=int, help="override parser/storage probe groups")
     parser.add_argument("--jobs", type=int, default=default_jobs(), help="isolated test worker databases (default: available CPUs, up to 4; 1: serial)")
@@ -321,12 +331,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not 1 <= args.jobs <= 16:
         parser.error("--jobs must be between 1 and 16")
+    if args.role and (args.profile != "quick" or args.rows is not None or args.groups is not None):
+        parser.error("--role selects quick role checks without scale probes; omit --role for regression/full/--rows/--groups")
     args.rows = args.rows if args.rows is not None else (10000 if args.profile == "full" else 100)
     args.groups = args.groups if args.groups is not None else min(args.rows, 100 if args.profile == "full" else 10)
     if not 1 <= args.groups <= args.rows <= 100000:
         parser.error("Require 1 <= groups <= rows <= 100000")
     database = None
-    summary = {"status": "FAILED", "db_stopped": False, "profile": args.profile,
+    summary = {"status": "FAILED", "db_stopped": False, "profile": args.profile, "role": args.role,
                "full_suite": args.profile == "full", "jobs": args.jobs, "durability": args.durability,
                "elapsed_clock": ELAPSED_CLOCK}
     started = elapsed_time()
@@ -348,31 +360,39 @@ def main(argv=None):
         if args.jobs == 1:
             try:
                 execute(staged, environment, database.root / "tests.log", "run_tests.py", "--require-db",
-                        "--profile", args.profile, "--report-json", database.root / "tests.json")
+                        "--profile", args.profile, *(("--role", args.role) if args.role else ()),
+                        "--report-json", database.root / "tests.json")
             finally:
                 if (database.root / "tests.json").is_file():
                     summary["tests"] = json.loads((database.root / "tests.json").read_text(encoding="utf-8"))
         else:
-            summary["tests"] = parallel_regression(staged, environment, database, args.profile, args.jobs)
+            summary["tests"] = parallel_regression(staged, environment, database, args.profile, args.jobs, role=args.role)
             if not summary["tests"]["successful"]:
                 raise MockError("Regression tests failed; see tests.json and tests-worker-*.log")
         if summary["tests"].get("profile") != args.profile:
             raise MockError("Test report profile does not match the requested scope")
+        if summary["tests"].get("role") != args.role:
+            raise MockError("Test report role does not match the requested scope")
+        if args.role and summary["tests"].get("database_tests") is not True:
+            raise MockError("Role DB report must include database tests")
         if summary["tests"]["skipped"]:
             raise MockError("Mock DB validation must not skip tests")
         print(f"phase=tests_passed count={summary['tests']['tests_run']}", flush=True)
-        scenarios = {}
-        selected_scenarios = ("complete", "missing", "malformed", "unsupported") if args.profile == "full" else ("complete",)
-        for scenario in selected_scenarios:
-            output = database.root / ("demo-" + scenario)
-            execute(staged, environment, database.root / ("demo-" + scenario + ".log"), "devtools/demo.py",
-                    "--scenario", scenario, "--out", output)
-            scenarios[scenario] = json.loads((output / "receipt.json").read_text(encoding="utf-8"))["coverage"]
-        summary["scenarios"] = scenarios
-        print(f"phase=scale_probe rows={args.rows} groups={args.groups}", flush=True)
-        execute(staged, environment, database.root / "scale.json", "tests/benchmark_postgresql.py",
-                "--rows", args.rows, "--groups", args.groups)
-        summary["scale"] = json.loads((database.root / "scale.json").read_text(encoding="utf-8"))
+        if not args.role:
+            scenarios = {}
+            selected_scenarios = ("complete", "missing", "malformed", "unsupported") if args.profile == "full" else ("complete",)
+            for scenario in selected_scenarios:
+                output = database.root / ("demo-" + scenario)
+                execute(staged, environment, database.root / ("demo-" + scenario + ".log"), "devtools/demo.py",
+                        "--scenario", scenario, "--out", output)
+                scenarios[scenario] = json.loads((output / "receipt.json").read_text(encoding="utf-8"))["coverage"]
+            summary["scenarios"] = scenarios
+            print(f"phase=scale_probe rows={args.rows} groups={args.groups}", flush=True)
+            execute(staged, environment, database.root / "scale.json", "tests/benchmark_postgresql.py",
+                    "--rows", args.rows, "--groups", args.groups)
+            summary["scale"] = json.loads((database.root / "scale.json").read_text(encoding="utf-8"))
+        else:
+            summary["post_checks"] = "Role scope: integrated demo and scale probes are not selected"
         summary.update(status="PASSED", driver="psycopg2", auth="scram-sha-256", tcp_listener=False,
                        private_env_used=False, real_ai_called=False)
     except (Exception, KeyboardInterrupt) as exc:
@@ -393,7 +413,7 @@ def main(argv=None):
             with (database.root / "summary.json").open("x", encoding="utf-8") as stream:
                 json.dump(summary, stream, ensure_ascii=False, indent=2)
                 stream.write("\n")
-            print(f"status={summary['status']} profile={args.profile} jobs={args.jobs} seconds={summary['seconds']:.3f} elapsed_clock={ELAPSED_CLOCK} db_stopped={summary['db_stopped']} report={database.root / 'summary.json'}", flush=True)
+            print(f"status={summary['status']} profile={args.profile} role={args.role or 'all'} jobs={args.jobs} seconds={summary['seconds']:.3f} elapsed_clock={ELAPSED_CLOCK} db_stopped={summary['db_stopped']} report={database.root / 'summary.json'}", flush=True)
     return 0 if summary["status"] == "PASSED" else 1
 
 

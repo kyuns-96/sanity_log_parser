@@ -157,16 +157,14 @@ OA 결과 수신을 계속 실행하려면 별도 프로세스에서 `.venv/bin/
 
 ## 검증
 
-브라우저 테스트에는 Playwright용 Chromium이 설치되어 있어야 합니다.
-의존성·브라우저 설치는 승인된 개발 환경에서 준비하며 사내 DB 접근을 대신하지 않습니다.
+OA 담당자는 [역할별 테스트](../TESTING.md)에 따라 기본 명령 하나를 실행합니다. DB 확인은 필요한 경우만 별도 독립 mock으로 추가합니다.
 
 ```bash
-# 저장소 루트, 별도 테스트 DB와 제한된 계정 설정 후
-.venv/bin/python run_tests.py --require-db
-# dashboard 폴더에서 프런트엔드 빌드 및 브라우저 테스트
-npm run build
-npm run test:e2e
+# 저장소 루트 — OA 공개 계약과 자기 company_sso 모의 테스트
+.venv/bin/python run_tests.py --role oa
+# DB 연결 동작까지 확인해야 할 때만, 별도 개발 머신의 새 mock DB
+.venv/bin/python db/tests/run_mock.py --role oa
 ```
 
-실제 실행 환경·성공 범위·누락 사항은 [REVIEW.md](../REVIEW.md)에 기록합니다.
+화면을 변경한 경우 dashboard 폴더에서 `npm run build`와 해당 Playwright spec을 확인합니다. 브라우저 테스트에는 Chromium이 필요하며, 모든 E2E를 매번 반복하지 않습니다. 설치는 승인된 개발 환경에서 준비하며 사내 DB 접근을 대신하지 않습니다. 실제 실행 환경·성공 범위·누락 사항은 [REVIEW.md](../REVIEW.md)에 기록합니다.
 실제 사내 DB·report·운영 AI·다중 사용자 인증 검증을 로컬 테스트로 대신하지 않습니다.
