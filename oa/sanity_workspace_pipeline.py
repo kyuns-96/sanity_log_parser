@@ -95,6 +95,21 @@ def tool_status(records):
 
 
 class WorkspacePipelineStore(WorkspaceClusteringStore):
+    def view_cases(self, context, event):
+        """Validate displayed dependencies without reranking every source log.
+
+        AI execution and human writes still use the complete catalog. A paged
+        read only needs the pinned examples used by the displayed explanation.
+        Keep the synthetic reference engine's existing catalog behavior.
+        """
+        if not self.ai_case_policy:
+            return self.catalog(context)
+        if not event or not event.get("references"):
+            return []
+        from oa.sanity_ai_cases import CaseRetriever
+        return CaseRetriever(self.db, self.ws).resolve_references(
+            context, event["references"], stage="CLUSTER", require_evidence=False)["cases"]
+
     def judgments(self, report_id):
         rows = self.db.execute("SELECT e.payload->>'group_id' AS id,e.payload->>'conclusion' AS conclusion,"
             "(e.payload->>'revision')::int AS revision,e.payload->>'cluster_event_id' AS cluster_id,"
@@ -122,11 +137,14 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
         context = self.reviews.context(user_id, block_id, version_id, report_id,hydrate_source=False)
         current, revision = self.current(report_id)
         if current or context['report'].get('source_storage')!='PARTS_V2':
-            context = self.context(user_id, block_id, version_id, report_id)
+            if context['report'].get('source_storage') == 'PARTS_V2':
+                from oa.sanity_workspace_sources import hydrate
+                context['report'] = hydrate(self.db, context['report'])
+            records = evidence(context)
         if current:
             check(current["source_sha256"] == context["source_sha256"], "STATE_CORRUPT")
-            partition(current["groups"], evidence(context))
-        cases = self.catalog(context)
+            partition(current["groups"], records)
+        cases = self.view_cases(context, current)
         head = self.reviews.row("WS_CLUSTER", report_id)
         task = head["state"].get("task") if head else None
         decisions = self.judgments(report_id)
@@ -142,6 +160,7 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
                 "can_edit": context["can_review"], "stale": bool(current and self.stale(current, context)),
                 "task": task_brief(task) if task else None, "summary": self.summary(context, current, decisions, case_ids),
                 "case_count": len(cases), "reusable_count": sum(case["reusable"] for case in cases),
+                "case_count_scope": "REFERENCED" if self.ai_case_policy else "CANDIDATES",
                 "corporate_ai_connected": False, "record_count": report['record_count'],
                 "removed_count": len(set(decisions) - {group["id"] for group in current["groups"]}) if current else 0})
 
@@ -163,8 +182,8 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
         event = self.selected_event(context, expected_revision, event_id)
         decisions = self.judgments(report_id)
         valid = bool(event and event["confirmed"] and rationale.complete(event) and not event_id and not self.stale(event, context))
-        case_ids = {case["id"] for case in self.catalog(context)}
-        records = {record["id"]: record for record in evidence(context)}
+        case_ids = {case["id"] for case in self.view_cases(context, event)}
+        records = {record["id"]: record for record in context["report"]["records"]}
         items, needle = [], search.casefold()
         for ordinal, group in enumerate(event["groups"] if event else [], 1):
             group_rationale = rationale.brief(event, group, case_ids)
@@ -189,11 +208,10 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
 
     def records_page(self, user_id, block_id, version_id, report_id, *, expected_revision, offset=0, limit=50,
                      search="", group_id=None, event_id=None):
-        header = self.ws.report(user_id,block_id,version_id,report_id,hydrate_source=False)
+        context = self.reviews.context(user_id, block_id, version_id, report_id, hydrate_source=False)
+        header = context['report']
         if header.get('source_storage') == 'PARTS_V2':
-            from common.sanity_submission import source_digest
             from oa.sanity_workspace_sources import records_page
-            context = {'report':header,'source_sha256':source_digest(header)}
             event = self.selected_event(context,expected_revision,event_id)
             group = next((g for g in event['groups'] if g['id']==group_id),None) if event and group_id else None
             check(not group_id or group is not None,'NOT_FOUND')
@@ -205,23 +223,23 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
             status = 'FAIL' if counts['FAIL'] else 'UNKNOWN' if counts['UNKNOWN'] else 'PASS'
             return {**result,'group':{'id':group['id'],'label':group['label'],'record_count':len(group['record_ids']),
                        'check_status':status} if group else None,'cluster_revision':event['revision'] if event else 0}
-        context = self.context(user_id, block_id, version_id, report_id)
+        original = evidence(context)
         event = self.selected_event(context, expected_revision, event_id)
         group = next((group for group in event["groups"] if group["id"] == group_id), None) if event and group_id else None
         check(not group_id or group is not None, "NOT_FOUND")
         ids = set(group["record_ids"]) if group else None
         needle = search.casefold()
-        records = [record for record in evidence(context) if (ids is None or record["id"] in ids)
+        records = [record for record in original if (ids is None or record["id"] in ids)
                    and (not needle or needle in (record["id"]+" "+record.get("raw", "")+" "+str(record["fields"])).casefold())]
         page = [{**record, "raw": record.get("raw", "")[:4096],
                  "raw_display_truncated": len(record.get("raw", "")) > 4096} for record in records[offset:offset+limit]]
         return {"items": page, "total": len(records), "offset": offset, "limit": limit,
                 "group": {"id": group["id"], "label": group["label"], "record_count": len(group["record_ids"]),
-                    "check_status": tool_status([record for record in evidence(context) if record["id"] in ids])} if group else None,
+                    "check_status": tool_status([record for record in original if record["id"] in ids])} if group else None,
                 "cluster_revision": event["revision"] if event else 0}
 
     def history_page(self, user_id, block_id, version_id, report_id, *, offset=0, limit=25, removed=False):
-        self.context(user_id, block_id, version_id, report_id)
+        self.reviews.context(user_id, block_id, version_id, report_id, hydrate_source=False)
         if removed:
             current, _ = self.current(report_id)
             ids = {group["id"] for group in current["groups"]} if current else set()
@@ -243,11 +261,11 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
         event = self.selected_event(context, expected_revision, event_id)
         group = next((g for g in event["groups"] if g["id"] == group_id), None) if event else None
         check(group is not None, "NOT_FOUND")
-        cases = self.catalog(context)
+        cases = self.view_cases(context, event)
         row = event.get("rationales", {}).get(group_id)
         ids = set(row["content"]["evidence_ids"]) & set(group["record_ids"]) if row else set()
         samples = [{**r, "raw": r.get("raw", "")[:4096], "raw_display_truncated": len(r.get("raw", "")) > 4096}
-                   for r in evidence(context) if r["id"] in ids]
+                   for r in context["report"]["records"] if r["id"] in ids]
         # Only this group's rationale is materialized, including its deletion
         # history. Never transfer all partitions/rationales for the history panel.
         parameters = (record_id("WS_REPORT", report_id), group_id)

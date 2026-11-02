@@ -125,6 +125,15 @@
 .ws-log-new-group { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; min-height: 42px; margin-top: 12px; border: 1px dashed var(--accent-line); border-radius: 4px; background: transparent; color: var(--accent); font-size: 12px; cursor: pointer; }
 .ws-log-new-group:disabled { opacity: .5; cursor: not-allowed; }
 .ws-group-merge { width: 100%; margin-top: 12px; }
+.ws-merge-selection { margin-bottom: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); font-size: 11px; }
+.ws-merge-selection p { margin: 0 0 8px; color: var(--text-secondary); line-height: 1.6; }
+.ws-merge-selection > strong { display: block; font-size: 12px; }
+.ws-merge-selection ul { max-height: 140px; overflow-y: auto; list-style: none; margin: 8px 0 0; padding: 0; }
+.ws-merge-selection li { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding-block: 5px; border-top: 1px solid var(--line); }
+.ws-merge-selection li > span { min-width: 0; overflow-wrap: anywhere; }
+.ws-merge-selection li small { display: block; color: var(--text-muted); }
+.ws-merge-selection li button { flex-shrink: 0; }
+.ws-merge-selection .ws-error { margin-top: 8px; color: var(--danger); }
 .ws-workbench-detail { min-width: 0; }
 .ws-workbench-edit { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; align-items: center; min-height: 43px; padding-bottom: 10px; }
 .ws-workbench-edit > span { font-size: 11px; color: var(--text-muted); }
@@ -176,7 +185,7 @@
 .ws-group-dialog { max-height: calc(100dvh - 32px); overflow-y: auto; color: var(--ink); font-family: var(--font-sans); }
 .ws-group-dialog > label { display: grid; gap: 7px; font-size: 12px; color: var(--text-secondary); }
 .ws-group-dialog > label > span { display: inline; color: var(--text-muted); }
-.ws-group-dialog input, .ws-group-dialog textarea { width: 100%; min-width: 0; min-height: 40px; padding: 10px 12px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; font: 13px/1.7 var(--font-sans); }
+.ws-group-dialog input, .ws-group-dialog textarea, .ws-group-dialog select { width: 100%; min-width: 0; min-height: 40px; padding: 10px 12px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; font: 13px/1.7 var(--font-sans); }
 .ws-group-dialog textarea { min-height: 78px; resize: vertical; }
 @media (max-width: 1100px) {
   .ws-workbench { padding: 20px; }
