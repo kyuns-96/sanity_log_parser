@@ -158,7 +158,7 @@ class WorkspaceClusteringStore:
             # A still-valid cited group must remain editable/confirmable even
             # when unrelated cases move it outside the ranked selection window.
             pinned = retriever.resolve_references(context, current.get("references", []) if current else [],
-                                                  stage="CLUSTER")["cases"]
+                                                  stage="CLUSTER", require_evidence=False)["cases"]
             return list({case["id"]: case for case in [*selected, *pinned]}.values())
         source = "FROM {oa} h " \
             "JOIN {oa} e ON e.record_id=h.workspace_pipeline_event_ref "
@@ -216,7 +216,8 @@ class WorkspaceClusteringStore:
                                                           "version_id": event["version_id"]}}
             if context and context.get("_actor_user_id"):
                 reference_context["_actor_user_id"] = context["_actor_user_id"]
-            resolved = CaseRetriever(self.db, self.ws).resolve_references(reference_context, event["references"], stage="CLUSTER")
+            resolved = CaseRetriever(self.db, self.ws).resolve_references(reference_context, event["references"],
+                                                                        stage="CLUSTER",require_evidence=False)
             return not resolved["stale_ids"] and not resolved["over_budget_ids"]
         pending, visited = list(event["references"]), set()
         while pending:

@@ -13,7 +13,7 @@ _SCOPE = ("project_id", "block_id", "item_id", "family", "parser", "rule_version
           "layout", "eco", "target_type")
 _IDENTITY_TEXT = ("id", "report_id", "version_id", "project_id", "block_id", "eco",
                   "source_sha256", "sha256", "membership_sha256", "cluster_event_id",
-                  "group_id", "report_rule", "reason", "criteria", "at", "previous_event_id")
+                  "group_id", "report_rule", "reason", "criteria", "at", "previous_event_id", "evidence_selection_sha256")
 _IDENTITY_INTS = ("revision", "cluster_revision", "record_count", "source_record_count")
 _IDENTITY_BOOLS = ("confirmed", "reusable", "compatible_versions")
 _PIN_TEXT = ("id", "report_id", "group_id", "source_sha256", "sha256")

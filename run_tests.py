@@ -45,6 +45,10 @@ QUICK_TESTS = (
     "tests.test_ai_progress_metrics",
     "tests.test_rule_groups.RuleGroupTests",
     "tests.test_submission_runs",
+    "tests.test_ai_evidence_choices.EvidenceChoiceTests", "tests.test_ai_evidence_choices.EvidenceChoiceApiTests",
+    "tests.test_ai_evidence_choices.EvidenceChoiceDatabaseTests.test_existing_confirmed_classification_and_judgment_are_not_auto_registered",
+    "tests.test_ai_evidence_choices.EvidenceChoiceDatabaseTests.test_only_chosen_group_is_sent_and_stages_have_independent_switches",
+    "tests.test_ai_evidence_choices.EvidenceChoiceDatabaseTests.test_unregistering_a_reference_keeps_the_dependent_human_partition_valid",
     "tests.test_ai_scheduler.SchedulerContractTests", "tests.test_ai_scheduler.SchedulerApiTests",
     "tests.test_workspace_removal.RemovalApiTests",
     "tests.test_rule_groups.RuleGroupDatabaseTests.test_rolling_worker_keeps_all_codes_separate_through_publication",
@@ -98,6 +102,7 @@ QUICK_TESTS = (
 # Full still discovers every original test, including large datasets and all
 # portal migration replays. No test input, assertion or skip rule is changed.
 REGRESSION_TESTS = (
+    "tests.test_ai_evidence_choices", "tests.test_ai_retrieval", "tests.test_ai_knowledge",
     "tests.test_submission_runs",
     "tests.test_rule_groups", "tests.test_ai_scheduler", "tests.test_workspace_removal", "tests.test_ai_iteration_completion",
     "tests.test_ai_job_deletion", "tests.test_ai_progress_metrics",
@@ -217,6 +222,7 @@ ROLE_TESTS = {
     ),
     "vwp-bridge": (
         "tests.test_parsers", "tests.test_collection_only", "tests.test_submission_https",
+        "tests.test_ai_evidence_choices.EvidenceChoiceTests",
         "tests.test_submission_runs",
         "tests.test_rule_groups.RuleGroupTests", "tests.test_ai_scheduler.SchedulerContractTests",
         "tests.test_ai_progress_metrics",
@@ -231,6 +237,7 @@ ROLE_TESTS = {
     ),
     "oa": (
         "tests.test_auth", "oa.test_auth_config", "oa.test_sso",
+        "tests.test_ai_evidence_choices.EvidenceChoiceTests", "tests.test_ai_evidence_choices.EvidenceChoiceApiTests",
         "tests.test_submission_runs",
         "tests.test_rule_groups.RuleGroupTests", "tests.test_ai_scheduler.SchedulerApiTests", "tests.test_workspace_removal.RemovalApiTests",
         "tests.test_ai_progress_metrics",
@@ -246,6 +253,7 @@ ROLE_TESTS = {
 }
 ROLE_DB_TESTS = {
     "vwp-bridge": (
+        "tests.test_ai_evidence_choices.EvidenceChoiceDatabaseTests.test_unregistering_a_reference_keeps_the_dependent_human_partition_valid",
         "tests.test_ai_scheduler.SchedulerDatabaseTests.test_rolling_jobs_share_slots_and_a_fast_job_finishes_before_a_slow_job",
         "tests.test_rule_groups.RuleGroupDatabaseTests.test_rolling_worker_keeps_all_codes_separate_through_publication",
         "tests.test_ai_iteration_completion",
@@ -260,6 +268,7 @@ ROLE_DB_TESTS = {
         "tests.test_ai_rolling_batches.RollingJobsTests.test_eight_slots_refill_while_the_first_seven_are_blocked_and_merge_waits",
     ),
     "oa": (
+        "tests.test_ai_evidence_choices.EvidenceChoiceDatabaseTests.test_only_chosen_group_is_sent_and_stages_have_independent_switches",
         "tests.test_workspace_removal.WorkspaceRemovalTests.test_report_deletes_private_original_and_confirmed_history_but_keeps_other_report",
         "tests.test_submission_database.SubmissionDatabaseTests.test_resubmission_has_distinct_reports_and_preserves_a_human_decision",
         "tests.test_ai_job_deletion.AIJobDeletionDatabaseTests.test_completed_job_removes_execution_rows_and_preserves_report_and_proposal",

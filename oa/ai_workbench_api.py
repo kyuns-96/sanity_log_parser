@@ -47,6 +47,14 @@ class RemoveWorkspaceData(BaseModel):
     snapshot_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
 
 
+class EvidenceChoice(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    enabled: StrictBool
+    expected_revision: Annotated[StrictInt, Field(ge=0,lt=9999999999)]
+    binding_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    request_id: UUID
+
+
 class AIRetryUnknown(AIResume):
     expected_event_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
     expected_step_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
@@ -294,6 +302,19 @@ def create_workbench_router(authorized_actor):
         return WorkspacePipelineStore(scope.db, ws=scope.ws).rationale_detail(
             scope.user_id, block_id, version_id, report_id, group_id, expected_revision=expected_revision,
             event_id=str(event_id) if event_id else None, offset=offset, limit=limit)
+
+    @router.get(report_path+'/groups/{group_id}/evidence/{stage}')
+    def evidence_choice(block_id: ID, version_id: ID, report_id: ID, group_id: ID,
+                        stage: Literal['CLUSTER','REVIEW'], scope=Depends(workspace)):
+        from oa.sanity_ai_evidence_choices import EvidenceChoices
+        return EvidenceChoices(scope.db,scope.ws).view(scope.user_id,block_id,version_id,report_id,group_id,stage)
+
+    @router.post(report_path+'/groups/{group_id}/evidence/{stage}')
+    def save_evidence_choice(block_id: ID, version_id: ID, report_id: ID, group_id: ID,
+                             stage: Literal['CLUSTER','REVIEW'], body: EvidenceChoice, scope=Depends(workspace)):
+        from oa.sanity_ai_evidence_choices import EvidenceChoices
+        return EvidenceChoices(scope.db,scope.ws).save(scope.user_id,block_id,version_id,report_id,group_id,stage,
+                                                     **body.model_dump())
 
     @router.post(report_path + "/groups/{group_id}/rationale")
     def group_rationale_save(block_id: ID, version_id: ID, report_id: ID, group_id: ID,

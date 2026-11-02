@@ -11,6 +11,7 @@ from common.sanity_common import ReviewError, canonical_json, digest
 from oa.sanity_ai_cases import CaseRetriever
 from common.sanity_submission import source_digest
 import common.sanity_workspace_rationale as rationale
+from tests.evidence_support import register_evidence
 
 
 def context():
@@ -187,6 +188,15 @@ class GraphRetriever(CaseRetriever):
     def _scan(self, context, stage, profile):
         yield {"case": self.events[-1], "score": 1, "bytes": 1000, "active": False}
 
+    def _choices(self,stage,report_id):
+        # The graph fixture explicitly registers its synthetic human cases.
+        # Default-off and database selection guards have dedicated tests.
+        from oa.sanity_ai_evidence_choices import binding
+        event=next(event for event in self.events if event['report_id']==report_id)
+        keys=[g['id'] for g in event['groups']] if stage=='CLUSTER' else [event.get('group_id')]
+        return [{'group_id':key,'enabled':True,'event_id':event['id'],
+                 'binding_sha256':binding(event,stage,key),'sha256':digest([event['id'],key])} for key in keys]
+
     def add_cycle(self):
         last = self.events[-1]
         reference = {key: last[key] for key in ("id", "report_id", "revision", "source_sha256")}
@@ -335,6 +345,7 @@ class RetrievalDatabaseTests(PgTestCase):
             event = store.save(*path, source["id"], conclusion="FAIL", reason="clock synchronizer 누락 확인",
                 criteria="", conditions={}, reusable=False, compatible_versions=False,
                 expected_revision=0, request_id=str(uuid.uuid4()))["event"]
+            register_evidence(db,event,'REVIEW')
             target = store.context(*self.path, "retrieval-target")
             retriever = CaseRetriever(db)
             result = retriever.select(target, stage="REVIEW")
@@ -362,6 +373,7 @@ class RetrievalDatabaseTests(PgTestCase):
                                  request_id=str(uuid.uuid4()))
             event = store.change(*path, source["id"], action="CONFIRM", expected_revision=draft["revision"],
                                  request_id=str(uuid.uuid4()), reason="clock synchronizer 누락 분류 확인")
+            register_evidence(db,event,'CLUSTER')
             target = store.context(*self.path, "retrieval-target")
             result = CaseRetriever(db).select(target, stage="CLUSTER")
             self.assertEqual([event["id"]], [case["id"] for case in result["cases"]])
@@ -389,6 +401,7 @@ class RetrievalDatabaseTests(PgTestCase):
             event = store.save(*path, source["id"], conclusion="FAIL", reason="clock synchronizer 누락 확인",
                 criteria="", conditions={}, reusable=False, compatible_versions=False,
                 expected_revision=0, request_id=str(uuid.uuid4()))["event"]
+            register_evidence(db,event,'REVIEW')
             target = store.context(*self.path, "retrieval-target")
             retriever = CaseRetriever(db)
             cases = retriever.select(target, stage="REVIEW")["cases"]
@@ -416,6 +429,7 @@ class RetrievalDatabaseTests(PgTestCase):
             event = store.save(*path, source["id"], conclusion="FAIL", reason="clock synchronizer 누락 확인",
                 criteria="", conditions={}, reusable=False, compatible_versions=False,
                 expected_revision=0, request_id=str(uuid.uuid4()))["event"]
+            register_evidence(db,event,'REVIEW')
             target = store.context(*self.path, "retrieval-target")
             retriever = CaseRetriever(db)
             cases = retriever.select(target, stage="REVIEW")["cases"]
@@ -445,6 +459,7 @@ class RetrievalDatabaseTests(PgTestCase):
                 store.save(*location, report_id, conclusion="FAIL", reason="clock synchronizer 누락 확인",
                     criteria="", conditions={}, reusable=False, compatible_versions=False,
                     expected_revision=0, request_id=str(uuid.uuid4()))
+                register_evidence(db,store.current(report_id)[0],'REVIEW')
             target = store.context(*self.path, "retrieval-target")
             target.pop("_actor_user_id", None)
             cases = CaseRetriever(db).select(target, stage="REVIEW")["cases"]
@@ -457,7 +472,7 @@ class RetrievalDatabaseTests(PgTestCase):
         from oa.sanity_workspace_clustering import WorkspaceClusteringStore
         token = "mesochronous"
         def mutate(source):
-            source["records"][0].update(raw="PRIVATE-SOURCE-SENTINEL", fields={"object": "independent-object"})
+            source["records"][0].update(raw="PRIVATE-SOURCE-SENTINEL", fields={"object": "independent-object", "code": "INDEPENDENT"})
             source.update(raw_report="PRIVATE-SOURCE-SENTINEL", rule=None)
         with Database("oa") as db, db.transaction():
             path, source = self.cross_scope_source(db, mutate=mutate)
@@ -478,6 +493,7 @@ class RetrievalDatabaseTests(PgTestCase):
                                      request_id=str(uuid.uuid4()), prepared=prepared)
                 event = store.change(*path, source["id"], action="CONFIRM", expected_revision=draft["revision"],
                                      request_id=str(uuid.uuid4()), reason="별도 합성 분류 확정")
+                register_evidence(db,event,'CLUSTER')
             stored = WorkspaceStore(db).get("WS_CLUSTER_EVENT", event["id"])["payload"]
             self.assertEqual("bucket-zlib-v1", stored["rationale_encoding"])
             self.assertNotIn(token, canonical_json(stored).decode())
@@ -503,6 +519,7 @@ class RetrievalDatabaseTests(PgTestCase):
             event = store.save(*path, source["id"], conclusion="FAIL", reason="clock synchronizer 누락 확인",
                 criteria="", conditions={}, reusable=False, compatible_versions=False,
                 expected_revision=0, request_id=str(uuid.uuid4()))["event"]
+            register_evidence(db,event,'REVIEW')
             context = store.context(*self.path, "retrieval-target")
             result = CaseRetriever(db).select(context, stage="REVIEW", max_bytes=5000)
             self.assertEqual([event["id"]], [case["id"] for case in result["cases"]])
@@ -522,11 +539,13 @@ class RetrievalDatabaseTests(PgTestCase):
                                      request_id=str(uuid.uuid4()))
                 packed = store.change(*path, source["id"], action="CONFIRM", expected_revision=draft["revision"],
                                       request_id=str(uuid.uuid4()), reason="clock synchronizer 누락 분류 확인")
+                register_evidence(db,packed,'CLUSTER')
             self.assertEqual("bucket-zlib-v1", WorkspaceStore(db).get("WS_CLUSTER_EVENT", packed["id"])["payload"]["rationale_encoding"])
             draft = store.change(*self.path, "sample-0001", action="PROPOSE", expected_revision=0,
                                  request_id=str(uuid.uuid4()))
             fallback = store.change(*self.path, "sample-0001", action="CONFIRM", expected_revision=draft["revision"],
                                     request_id=str(uuid.uuid4()), reason="clock synchronizer 누락 분류 확인")
+            register_evidence(db,fallback,'CLUSTER')
             self.assertNotIn("rationale_encoding", WorkspaceStore(db).get("WS_CLUSTER_EVENT", fallback["id"])["payload"])
             retriever = CaseRetriever(db)
             read = retriever._bounded_row
@@ -563,6 +582,7 @@ class RetrievalDatabaseTests(PgTestCase):
             event = store.save(*path, source["id"], conclusion="FAIL", reason=reason,
                 criteria="", conditions={}, reusable=False, compatible_versions=False,
                 expected_revision=0, request_id=str(uuid.uuid4()))["event"]
+            register_evidence(db,event,'REVIEW')
             target = copy.deepcopy(WorkspaceStore(db).get("WS_REPORT", "retrieval-target")["payload"])
             target["id"] = "metadata-query-target"
             target["records"][0].update(raw="quantization boundary", fields={})
@@ -588,9 +608,11 @@ class RetrievalDatabaseTests(PgTestCase):
             initial = store.save(*self.path, "sample-0001", conclusion="PASS", reason="clock synchronizer 확인",
                 criteria="", conditions={}, reusable=False, compatible_versions=False, expected_revision=0,
                 request_id=str(uuid.uuid4()))["event"]
+            register_evidence(db,initial,'REVIEW')
             corrected = store.save(*self.path, "sample-0001", conclusion="FAIL", reason="clock synchronizer 누락 정정",
                 criteria="", conditions={}, reusable=False, compatible_versions=False, expected_revision=1,
                 request_id=str(uuid.uuid4()))["event"]
+            register_evidence(db,corrected,'REVIEW')
             target = store.context(*self.path, "retrieval-target")
             result = CaseRetriever(db).select(target, stage="REVIEW")
             self.assertEqual([corrected["id"]], [case["id"] for case in result["cases"]])
@@ -608,6 +630,7 @@ class RetrievalDatabaseTests(PgTestCase):
             saved = store.save(*self.path, "sample-0001", conclusion="FAIL", reason="clock synchronizer 누락",
                 criteria="", conditions={}, reusable=False, compatible_versions=False, expected_revision=0,
                 request_id=str(uuid.uuid4()))["event"]
+            register_evidence(db,saved,'REVIEW')
         # Synthetic integrity fault injected by the test DBA path only.
         self.admin_query("UPDATE {oa} SET payload=jsonb_set(payload,ARRAY['source_sha256'],%s) "
             "WHERE record_type='WS_REVIEW_EVENT' AND workspace_key=%s", (json_value("f" * 64), saved["id"]))
@@ -626,6 +649,7 @@ class RetrievalDatabaseTests(PgTestCase):
             saved = store.save(*self.path, "sample-0001", conclusion="FAIL", reason="clock synchronizer 누락 확인",
                 criteria="", conditions={}, reusable=False, compatible_versions=False,
                 expected_revision=0, request_id=str(uuid.uuid4()))["event"]
+            register_evidence(db,saved,'REVIEW')
         # This is a deliberate immutable-event integrity fault via the test DBA.
         # Cross-parser references are valid only when the source really used it.
         self.admin_query("UPDATE {oa} SET payload=jsonb_set(payload,ARRAY['scope','parser'],%s) "
@@ -645,6 +669,7 @@ class RetrievalDatabaseTests(PgTestCase):
                                  request_id=str(uuid.uuid4()))
             confirmed = store.change(*self.path, "sample-0001", action="CONFIRM", expected_revision=draft["revision"],
                 request_id=str(uuid.uuid4()), reason="clock synchronizer 누락을 함께 검토하는 분류")
+            register_evidence(db,confirmed,'CLUSTER')
             target = store.context(*self.path, "retrieval-target")
             result = CaseRetriever(db).select(target, stage="CLUSTER")
             self.assertEqual([confirmed["id"]], [case["id"] for case in result["cases"]])
@@ -668,6 +693,7 @@ class RetrievalDatabaseTests(PgTestCase):
             store.save(*self.path, "sample-0001", conclusion="FAIL", reason="clock synchronizer 누락",
                 criteria="", conditions={}, reusable=False, compatible_versions=False, expected_revision=0,
                 request_id=str(uuid.uuid4()))
+            register_evidence(db,store.current("sample-0001")[0],'REVIEW')
             target = store.context(*self.path, "retrieval-target")
             retriever = CaseRetriever(db)
             cases = retriever.select(target, stage="REVIEW")["cases"]
@@ -678,12 +704,14 @@ class RetrievalDatabaseTests(PgTestCase):
             store.save(*self.path, "another-report", conclusion="PASS", reason="clock synchronizer 연결 확인",
                 criteria="", conditions={}, reusable=False, compatible_versions=False, expected_revision=0,
                 request_id=str(uuid.uuid4()))
+            register_evidence(db,store.current("another-report")[0],'REVIEW')
             self.assertTrue(retriever.revalidate(target, cases, stage="REVIEW"))
             self.assertEqual({"cases": cases, "stale_ids": [], "over_budget_ids": []},
                              retriever.resolve_references(target, pins, stage="REVIEW"))
             store.save(*self.path, "sample-0001", conclusion="PASS", reason="clock synchronizer 확인 후 정정",
                 criteria="", conditions={}, reusable=False, compatible_versions=False, expected_revision=1,
                 request_id=str(uuid.uuid4()))
+            register_evidence(db,store.current("sample-0001")[0],'REVIEW')
             self.assertFalse(retriever.revalidate(target, cases, stage="REVIEW"))
             self.assertEqual({"cases": [], "stale_ids": [cases[0]["id"]], "over_budget_ids": []},
                              retriever.resolve_references(target, pins, stage="REVIEW"))
@@ -700,11 +728,13 @@ class RetrievalDatabaseTests(PgTestCase):
                                         request_id=str(uuid.uuid4()))
                 confirmed[report_id] = clusters.change(*self.path, report_id, action="CONFIRM", expected_revision=draft["revision"],
                     request_id=str(uuid.uuid4()), reason="clock synchronizer 누락 분류 확인")
+                register_evidence(db,clusters.current(report_id)[0],'CLUSTER')
             source = confirmed["sample-0001"]
             store = WorkspaceGroupReviewStore(db, source["groups"][0]["id"], source["revision"])
             event = store.save(*self.path, "sample-0001", conclusion="FAIL", reason="clock synchronizer 누락 판정",
                 criteria="", conditions={}, reusable=False, compatible_versions=False, expected_revision=0,
                 request_id=str(uuid.uuid4()))["event"]
+            register_evidence(db,event,'REVIEW')
             target_store = WorkspaceGroupReviewStore(db, confirmed["retrieval-target"]["groups"][0]["id"])
             target = target_store.context(*self.path, "retrieval-target")
             result = CaseRetriever(db).select(target, stage="REVIEW")

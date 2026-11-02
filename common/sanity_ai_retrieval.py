@@ -1,7 +1,8 @@
 """Bounded lexical retrieval policy, shared independently of DB/model clients.
 
 Similarity selects examples for an AI to compare; it never decides a group or
-verdict. Human confirmation makes an example eligible. ``reusable`` continues
+verdict. Human confirmation and explicit evidence registration make a case
+eligible in the DB retriever. ``reusable`` continues
 to mean approval of automatic rule reuse, not permission to read an example.
 """
 from collections import Counter

@@ -11,6 +11,7 @@ from oa.sanity_workspace import SYNTHETIC_PASSWORD, WorkspaceStore, record_id, s
 from oa.sanity_workspace_review import WorkspaceReviewStore
 from oa.test_workspace import ORIGIN, api, fixture
 from tests.support import PgTestCase
+from tests.evidence_support import register_evidence
 
 
 BASE = "/workspace/api/blocks/project-1-cpu/versions/project-1-cpu-post-1/reports/"
@@ -154,6 +155,7 @@ class WorkspaceReviewExceptionTests(PgTestCase):
         with Database("oa") as db, db.transaction():
             store = WorkspaceReviewStore(db)
             same = store.context(*self.path, "same-condition")
+            register_evidence(db,first,'REVIEW')
             other = store.context("user-04", "project-1-cpu", "project-1-cpu-post-0", "other-version")
             cases = CaseRetriever(db).select(same, stage="REVIEW")["cases"]
             self.assertEqual([first["id"]], [case["id"] for case in cases])
@@ -169,6 +171,7 @@ class WorkspaceReviewExceptionTests(PgTestCase):
         self.assertFalse(corrected["reusable"])
         self.assertTrue(corrected["compatible_versions"])
         with Database("oa") as db, db.transaction():
+            register_evidence(db,corrected,'REVIEW')
             context = WorkspaceReviewStore(db).context("user-04", "project-1-cpu", "project-1-cpu-post-0", "other-version")
             cases = CaseRetriever(db).select(context, stage="REVIEW")["cases"]
             self.assertEqual([corrected["id"]], [case["id"] for case in cases])
@@ -186,6 +189,7 @@ class WorkspaceReviewExceptionTests(PgTestCase):
         with Database("oa") as db, db.transaction():
             ws = WorkspaceStore(db)
             target = copy.deepcopy(ws.report(*self.path, "same-condition"))
+            register_evidence(db,saved,'REVIEW')
             target.pop("rule", None)
             target.update(id="exception-query-report", raw_report=marker,
                           records=[{"id": "exception-query-log", "raw": marker, "fields": {}}])
@@ -240,6 +244,8 @@ class WorkspaceReviewExceptionTests(PgTestCase):
 
     def test_corrupt_stored_exception_fails_closed_in_view_and_ai_retrieval(self):
         saved = self.post("sample-0001/review", self.command(exception=EXCEPTION))["event"]
+        with Database('oa') as db,db.transaction():
+            register_evidence(db,saved,'REVIEW')
         self.admin_query("UPDATE {oa} SET payload=jsonb_set(payload,ARRAY['exception','reason'],%s::jsonb) "
                          "WHERE record_type='WS_REVIEW_EVENT' AND workspace_key=%s", ('" "', saved["id"]))
         response = self.client.get(BASE + "sample-0001/review")

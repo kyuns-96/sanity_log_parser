@@ -30,6 +30,7 @@ from oa.sanity_workspace import record_id
 from oa.sanity_workspace_clustering import WorkspaceClusteringStore
 from oa.sanity_workspace_group_review import WorkspaceGroupReviewStore
 from tests.support import PgTestCase, ROOT
+from tests.evidence_support import register_evidence
 
 
 ADMIN = Actor("feedback.test.admin", "Synthetic administrator", "sso")
@@ -278,6 +279,7 @@ class OAFeedbackCycleTests(PgTestCase):
                             "evidence_ids": ["C1"], "reference_groups": []}]})
             confirmed = clusters.change(OWNER.user_id, block, version, report_id, action="CONFIRM",
                 expected_revision=draft["revision"], request_id=str(uuid4()), reason=reason)
+            register_evidence(ws.db,confirmed,'CLUSTER',ws=ws)
             self.assertEqual(report_id, ws.report(OWNER.user_id, block, version, report_id)["id"])
         with self.store(management=True) as ws:
             access = ws.authorization
@@ -337,6 +339,7 @@ class OAFeedbackCycleTests(PgTestCase):
             self.assertFalse(confirmed["reusable"])
             self.assertEqual(initial_id, confirmed["initial_ai_event_id"])
             self.assertEqual(first["model_metadata"], confirmed["model_metadata"])
+            register_evidence(ws.db,confirmed,'CLUSTER',ws=ws)
 
         # Cold-start review cites current group evidence and an approved criterion.
         review_id = self.run_job("report-A", group_id="human-derived", cluster_revision=confirmed["revision"])
@@ -366,6 +369,8 @@ class OAFeedbackCycleTests(PgTestCase):
                 OWNER.user_id, BLOCK, VERSION, "report-A", conclusion="FAIL", reason=HUMAN_FAIL_REASON,
                 criteria="", conditions={}, reusable=False, compatible_versions=False,
                 expected_revision=0, request_id=str(uuid4()))["event"]
+            register_evidence(ws.db,corrected,'REVIEW',ws=ws)
+            register_evidence(ws.db,negative,'REVIEW',ws=ws)
 
         # Next ECO: confirmed human knowledge is shared; the current target's
         # complete records remain evidence, while prior raw sources stay private.

@@ -8,6 +8,7 @@ import { Input } from './studio/components/ui/input'
 import CaseSource from './CaseSource'
 import AiModelSelect, { selectedAiModel, selectedAiConnection, aiConnectionNotice, needsPersonalCredential, taskDefaultNotice } from './AiModelSelect'
 import UnknownBatchRecovery, { canRetryUnknown } from './UnknownBatchRecovery'
+import EvidenceSharing from './EvidenceSharing'
 import { PreservedCitations } from './PreservedSources'
 import { aiJobActive, aiJobMessage, aiExecutionLabel, WorkspaceError, toolResultStatus, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
 import type { CodexJob, Judgment, ReportReview, ReviewCase, WorkspaceReport, WorkspaceSession, WorkspaceVersion } from './workspaceApi'
@@ -120,7 +121,7 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
       } })
       onSaved(result.event)
       await reload(true)
-      if (alive.current) setNotice(production ? '사용자 판정과 근거를 저장했습니다. 다음 AI 판단의 참고 사례 후보로 축적됩니다.' : '사용자 판정과 근거를 저장했습니다. 원본 규칙 판정은 보존됩니다.')
+      if (alive.current) setNotice(production ? '사용자 판정과 근거를 저장했습니다. AI 참고에 사용하려면 판정 근거 AI 등록을 켜 주세요.' : '사용자 판정과 근거를 저장했습니다. 원본 규칙 판정은 보존됩니다.')
     } catch (error) {
       fail(error)
       if (error instanceof WorkspaceError && ['REVISION_CONFLICT', 'PROPOSAL_STALE'].includes(error.code)) {
@@ -168,6 +169,7 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
     {notice && <p className="ws-notice" role="status"><Check size={15} />{notice}</p>}
     <div className="ws-judgment-summary ws-studio-meta-row"><div><span>도구 판정</span><Badge variant="outline" className={`ws-status ws-status-${report.check_status.toLowerCase()}`}>{labels[toolResultStatus(report)]}</Badge></div><div><span>사용자 판정</span><Badge variant="secondary">{data.current_stale ? `재검토 · 이전 ${labels[data.current!.conclusion]}` : data.current ? labels[data.current.conclusion] : '미판정'}</Badge></div></div>
     {!data.current_stale && data.current?.exception && <div className="ws-review-current-exception" aria-label="현재 확정된 규칙 예외"><ExceptionEvidence value={data.current.exception} /></div>}
+    {production && group && data.current && <EvidenceSharing key={`evidence:${data.current.id}:${group.cluster_revision}`} base={base} stage="REVIEW" disabled={!!busy || aiRunning} onError={fail} />}
     <section className="ws-review-advice ws-studio-ai-card" aria-label="AI review와 누적 기준 제안">
       <header className="ws-studio-ai-title"><div><h4><Sparkles size={16} />AI 판정 제안</h4>{(!production || !group || !data.can_review || !data.ai?.enabled) && <p>{production ? group ? data.ai?.enabled ? `OA AI · ${modelId}` : 'OA AI 연결 설정이 필요합니다.' : '분류 확정 후 각 그룹에서 AI 판정을 요청하세요.' : demo ? '합성 데모 · AI 호출 없음' : '사내 AI 미연결 · 확정 사례 참고 엔진'}</p>}</div>
         {production && group && data.can_review && <AiModelSelect ai={data.ai} connectionValue={connectionId} onConnectionChange={value => { setSelectedConnection(value); setSelectedModel('') }} value={modelId} onChange={setSelectedModel} disabled={!!busy || aiRunning} label="판정 AI 모델" />}
@@ -201,7 +203,7 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
         </RadioGroup>
       </fieldset>
       <div className="ws-review-field"><div className="ws-studio-field-label"><span className="ws-studio-field-title"><label htmlFor={`${inputId}-reason`}>판정 근거</label><span className="ws-studio-field-required" aria-hidden="true">*</span></span><span>{reason.length.toLocaleString()} / 2,000</span></div><Textarea id={`${inputId}-reason`} value={reason} maxLength={2000} required disabled={!!busy} onChange={event => { edit(); setReason(event.target.value) }} placeholder="판정에 적용한 조건, 확인 내용 및 예외를 입력하세요." /></div>
-      <p className="ws-studio-memory-note">{production ? '확정한 분류·판정과 근거는 블록·revision·ECO를 넘어 관련 AI 참고 사례로 축적됩니다.' : '원본 도구 결과와 별도로 검토 결과와 근거를 기록합니다.'}</p>
+      <p className="ws-studio-memory-note">{production ? '판정 저장 후 AI 등록을 켠 근거만 다음 AI의 참고 사례로 사용합니다.' : '원본 도구 결과와 별도로 검토 결과와 근거를 기록합니다.'}</p>
       <section className="ws-review-exception-settings" aria-label="규칙 예외 기록">
         <label className="ws-review-checkbox"><input type="checkbox" checked={exceptionEnabled} disabled={!!busy || conclusion === 'DEFER' || !data.ready} onChange={event => { edit(); setExceptionEnabled(event.target.checked) }} />이번 판정을 규칙 예외로 기록</label>
         {exceptionEnabled && <div className="ws-review-exception-fields">

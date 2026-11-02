@@ -11,6 +11,7 @@ from oa.sanity_workspace_clustering import WorkspaceClusteringStore
 from oa.sanity_workspace_group_review import WorkspaceGroupReviewStore
 from oa.test_workspace import fixture
 from tests.support import PgTestCase
+from tests.evidence_support import register_evidence
 
 
 class SyntheticOAWorkspace(WorkspaceStore):
@@ -91,6 +92,7 @@ class AIStoreTests(PgTestCase):
                        "criteria": "", "conditions": {}, "reusable": False, "compatible_versions": False,
                        "expected_revision": 0, "request_id": str(uuid.uuid4()), "exception": annotation}
             saved = review.save(*self.path, "sample-0001", **command)["event"]
+            register_evidence(db,saved,'REVIEW',ws=SyntheticOAWorkspace(db))
             self.assertEqual(annotation, saved["exception"])
             self.assertEqual(annotation, saved["command"]["exception"])
             self.assertEqual(source["id"], saved["cluster_event_id"])
@@ -191,6 +193,7 @@ class AIStoreTests(PgTestCase):
         with Database("oa") as db, db.transaction():
             store = self.store(db)
             source = self.confirm(store, self.apply(store))
+            register_evidence(db,source,'CLUSTER',ws=store.ws)
             context = store.context(*self.path, "next-report")
             selection = CaseRetriever(db, store.ws).select(context, stage="CLUSTER")
             self.assertEqual([source["id"]], [case["id"] for case in selection["cases"]])
@@ -209,6 +212,7 @@ class AIStoreTests(PgTestCase):
         with Database("oa") as db, db.transaction():
             store = self.store(db)
             source = self.confirm(store, self.apply(store))
+            register_evidence(db,source,'CLUSTER',ws=store.ws)
             context = store.context(*self.path, "next-report")
             selection = CaseRetriever(db, store.ws).select(context, stage="CLUSTER")
             store.change(*self.path, "sample-0001", action="WITHDRAW", expected_revision=source["revision"],

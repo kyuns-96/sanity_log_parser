@@ -236,6 +236,7 @@ async function mockOA(page: Page, options: MockOptions = {}) {
   const currentReport = { ...report, ...(options.preserved ? { preserved_sources: options.preserved } : {}), record_count: sourceRecords.length, ...(options.collectionOnly ? { check_status: 'UNKNOWN', evaluation_mode: 'none', not_evaluated_count: sourceRecords.length } : {}) }
   const state = { revision: options.initialRevision || 0, confirmed: options.confirmed || false, reviewRevision: 0, clusterJob: options.initialJob || null as CodexJob | null, reviewJob: null as CodexJob | null, clusterReads: 0, reviewReads: 0, current: null as ReviewCase | null, proposal: null as ReviewProposal | null, writes: [] as { path: string; body: Record<string, unknown>; marker: string | undefined }[], unexpected: [] as string[], calls: [] as string[], recordRequests: [] as { offset: number; limit: number; search: string; group: string | null; revision: string | null }[], recordPause: null as { offset: number; promise: Promise<void> } | null, recordFailure: null as { offset: number; remaining: number } | null }
   const reviewHistory = options.currentCase ? [options.currentCase] : []
+  const evidenceChoices = { CLUSTER: { enabled: false, revision: 0 }, REVIEW: { enabled: false, revision: 0 } }
   let credentialReady = false
   let credentialRevision = 0
   state.current = options.currentCase || null
@@ -299,6 +300,18 @@ async function mockOA(page: Page, options: MockOptions = {}) {
       return route.fulfill({ json: { items: filtered.slice(offset, offset + limit), total: filtered.length, offset, limit, cluster_revision: state.revision, group: group() } })
     }
     if (path === base+'/groups/g1/rationale') return route.fulfill({ json: { group_id: 'g1', cluster_revision: state.revision, event_id: cluster()!.id, status: group().rationale.status, rationale: { content: { reason: group().rationale.reason, evidence_ids: ['log-1'], reference_groups: [] }, source: 'AI', status: group().rationale.status, binding: {}, reviewed_by: null, reviewed_at: null, change_reason: '', previous_event_id: null }, samples: [sourceRecords[0]], references: [], history: emptyPage } })
+    if (path === base+'/groups/g1/evidence/CLUSTER' || path === base+'/groups/g1/evidence/REVIEW') {
+      const stage = path.endsWith('CLUSTER') ? 'CLUSTER' : 'REVIEW'
+      const choice = evidenceChoices[stage]
+      if (body) {
+        expect(body.expected_revision).toBe(choice.revision)
+        expect(body.binding_sha256).toBe('d'.repeat(64))
+        choice.enabled = body.enabled === true; choice.revision++
+      }
+      const eligible = stage === 'CLUSTER' ? state.confirmed : !!state.current && state.current.conclusion !== 'DEFER' && !options.currentStale
+      return route.fulfill({ json: { ...choice, stage, group_id: 'g1', binding_sha256: 'd'.repeat(64), eligible,
+        can_manage: !options.readOnly, can_enable: eligible, active: choice.enabled && eligible } })
+    }
     if (path === base+'/clustering' && body) {
       expect(body.action).toBe('CONFIRM'); expect(body.expected_revision).toBe(state.revision)
       state.confirmed = true; state.revision++
@@ -449,7 +462,7 @@ test('production first classification and direct-evidence judgment retain human 
   await review.getByRole('radio', { name: 'PASS', exact: true }).check()
   await review.getByRole('textbox', { name: '판정 근거', exact: true }).fill('확인한 예외 조건에 해당하므로 사람 검토 결과 통과로 정정합니다.')
   await review.getByRole('button', { name: '판정 저장', exact: true }).click()
-  await expect(review.getByText('다음 AI 판단의 참고 사례 후보로 축적됩니다.', { exact: false })).toBeVisible()
+  await expect(review.getByText('AI 참고에 사용하려면 판정 근거 AI 등록을 켜 주세요.', { exact: false })).toBeVisible()
   expect(state.current).toMatchObject({ conclusion: 'PASS', reusable: false, proposal_id: 'proposal-1' })
   expect(state.writes).toHaveLength(4)
   expect(state.writes.every(write => write.marker === '1')).toBe(true)
@@ -1622,4 +1635,71 @@ test('iteration-capped AI cards show successful completion and the saved group c
   await expect(card.getByText('현재 그룹 수').locator('..').locator('dd')).toHaveText('17개')
   await expect(card.getByRole('progressbar')).toHaveAttribute('value', '100')
   await expect(card.locator('.ai-job-progress-motion')).toHaveCount(0)
+})
+
+test('AI evidence switches start off and register classification and judgment independently', async ({ page }, info) => {
+  const state = await openConfirmedReview(page, { currentCase: savedReview({ conclusion: 'FAIL' }) })
+  const classification = page.getByRole('switch', { name: '분류 근거 AI 등록', exact: true })
+  const judgment = page.getByRole('switch', { name: '판정 근거 AI 등록', exact: true })
+  await expect(classification).toBeEnabled(); await expect(judgment).toBeEnabled()
+  await expect(classification).not.toBeChecked(); await expect(judgment).not.toBeChecked()
+  expect(state.writes).toHaveLength(0)
+  await classification.click()
+  await expect(classification).toBeChecked(); await expect(judgment).not.toBeChecked()
+  await judgment.focus(); await judgment.press('ArrowRight')
+  await expect(judgment).toBeChecked()
+  await classification.focus(); await classification.press('ArrowLeft')
+  await expect(classification).not.toBeChecked(); await expect(judgment).toBeChecked()
+  expect(state.writes).toHaveLength(3)
+  expect(state.writes.map(write => [write.path.split('/').pop(), write.body.enabled])).toEqual([
+    ['CLUSTER', true], ['REVIEW', true], ['CLUSTER', false],
+  ])
+  expect(state.writes.every(write => write.marker === '1')).toBe(true)
+  expect(state.writes.every(write => Object.keys(write.body).sort().join(',') === 'binding_sha256,enabled,expected_revision,request_id')).toBe(true)
+  expect(state.reviewRevision).toBe(1); expect(state.confirmed).toBe(true)
+  const thumb = judgment.locator('.ws-evidence-choice-thumb')
+  await expect.poll(() => thumb.evaluate(element => getComputedStyle(element).transform)).toBe('matrix(1, 0, 0, 1, 24, 0)')
+  expect(state.unexpected).toEqual([])
+  await page.screenshot({ path: info.outputPath('ai-evidence-switches-desktop.png'), fullPage: true })
+})
+
+test('AI evidence does not register before the server confirms and reuses a lost request', async ({ page }) => {
+  await mockOA(page, { confirmed: true, initialRevision: 1 })
+  const writes: Record<string, unknown>[] = []
+  let finish: (() => void) | undefined
+  const blocked = new Promise<void>(resolve => { finish = resolve })
+  await page.route(`**${base}/groups/g1/evidence/CLUSTER`, async route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: { stage: 'CLUSTER', enabled: false, active: false,
+      revision: 0, binding_sha256: 'a'.repeat(64), can_enable: true, eligible: true, can_manage: true } })
+    writes.push(route.request().postDataJSON())
+    if (writes.length === 1) { await blocked; return route.abort('failed') }
+    return route.fulfill({ json: { stage: 'CLUSTER', enabled: true, active: true, revision: 1,
+      binding_sha256: 'a'.repeat(64), can_enable: true, eligible: true, can_manage: true } })
+  })
+  await page.goto(url)
+  const control = page.getByRole('switch', { name: '분류 근거 AI 등록', exact: true })
+  const panel = page.getByRole('region', { name: '분류 근거 AI 등록', exact: true })
+  await expect(control).toBeEnabled(); await control.click()
+  await expect(control).toBeDisabled(); await expect(control).not.toBeChecked()
+  await expect(panel).toContainText('저장 중')
+  finish!()
+  await expect(panel.getByRole('alert')).toContainText('같은 요청')
+  await expect(control).not.toBeChecked(); await control.click()
+  await expect(control).toBeChecked()
+  expect(writes).toHaveLength(2); expect(writes[0]).toEqual(writes[1])
+})
+
+test('AI evidence switches stay read only for TOP and deferred judgments cannot be registered', async ({ page }) => {
+  const state = await openConfirmedReview(page, { readOnly: true, currentCase: savedReview() })
+  for (const label of ['분류 근거 AI 등록', '판정 근거 AI 등록']) {
+    await expect(page.getByRole('switch', { name: label, exact: true })).toBeDisabled()
+  }
+  expect(state.writes).toHaveLength(0)
+  await page.unroute('**/api/**')
+  const second = await mockOA(page, { confirmed: true, initialRevision: 1, currentCase: savedReview({ conclusion: 'DEFER' }) })
+  await page.reload()
+  await page.getByRole('button', { name: /그룹별 판정/ }).click()
+  await expect(page.getByRole('switch', { name: '판정 근거 AI 등록', exact: true })).toBeDisabled()
+  await expect(page.getByRole('region', { name: '판정 근거 AI 등록', exact: true })).toContainText('PASS/FAIL 판정과 근거를 저장')
+  expect(second.writes).toHaveLength(0)
 })

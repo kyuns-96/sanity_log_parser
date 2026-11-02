@@ -210,7 +210,7 @@ def create_app(*, auth_mode: AuthMode | None = None,
                   413 if code in {"AI_INPUT_LIMIT", "AI_OUTPUT_LIMIT", "CLUSTER_LIMIT", "REPORT_LIMIT", "SOURCE_CONTEXT_LIMIT"} else
                   503 if code in {"AI_NOT_CONFIGURED", "AI_CONFIG", "INVALID_AI_CRITERIA", "WORKSPACE_NOT_CONFIGURED",
                                   "AI_TOKEN_STORE_NOT_CONFIGURED", "AI_TOKEN_UNAVAILABLE", "AI_JOB_DELETE_NOT_CONFIGURED",
-                                  "DATA_DELETE_NOT_CONFIGURED","AI_SCHEDULER_CONFIG","AI_SCHEDULER_CORRUPT"} else
+                                  "DATA_DELETE_NOT_CONFIGURED","AI_SCHEDULER_CONFIG","AI_SCHEDULER_CORRUPT","AI_EVIDENCE_CORRUPT"} else
                   503 if code.startswith(("DATABASE_", "DBAAS_", "DASHBOARD_", "AUTH_", "AUTHORIZATION_")) else
                   409 if code in {"REVISION_CONFLICT", "REQUEST_CONFLICT", "REVIEW_BLOCKED", "FAIL_CANNOT_PASS",
                                  "STATE_CORRUPT", "STATE_CONFLICT", "EVIDENCE_NOT_RECEIVED", "LEASE_LOST",
@@ -219,6 +219,7 @@ def create_app(*, auth_mode: AuthMode | None = None,
                                  "RATIONALE_REQUIRED", "RATIONALE_STALE", "SOURCE_FILE_ON_VWP", "AI_BUSY",
                                  "AI_JOB_ACTIVE", "AI_JOB_DELETED", "AI_INPUT_STALE", "AI_CASES_STALE", "AI_CRITERIA_STALE", "AI_CONFIG_CHANGED",
                                  "REMOVAL_CHANGED","POR_VERSION_IN_USE","VERSION_REFERENCED","SUBMISSION_BUSY","SOURCE_REMOVED",
+                                 "AI_EVIDENCE_CHANGED","AI_EVIDENCE_NOT_READY",
                                  "SOURCE_INTAKE_NOT_READY", "SOURCE_SCOPE_CONFIRMATION_REQUIRED"} else 400)
         return JSONResponse({"code": code}, status, headers={"Cache-Control": "no-store"})
 

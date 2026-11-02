@@ -107,11 +107,19 @@ class WorkspaceRemovalTests(unittest.TestCase):
 
     def test_report_deletes_private_original_and_confirmed_history_but_keeps_other_report(self):
         sent,pre,post=self.delivered();self.originals(sent['submission_id']);self.human(post)
+        from oa.sanity_ai_evidence_choices import EvidenceChoices
+        with Database('oa') as db,db.transaction():
+            store=EvidenceChoices(db)
+            path=('user-04',post['block_id'],post['version_id'],post['id'],None,'REVIEW')
+            state=store.view(*path)
+            store.save(*path,enabled=True,expected_revision=state['revision'],binding_sha256=state['binding_sha256'],request_id=uuid4())
         result=self.remove(post);self.assertTrue(result['deleted'])
         self.assertEqual([pre],self.c.report_headers())
         self.assertEqual(0,self.c.admin_query("SELECT count(*) FROM {vwp} WHERE analysis_id=%s",(post['analysis_id'],)).fetchone()[0])
         self.assertEqual(0,self.c.admin_query("SELECT count(*) FROM {oa} WHERE record_type='WS_REVIEW_EVENT' "
             "AND payload->>'report_id'=%s",(post['id'],)).fetchone()[0])
+        self.assertEqual(0,self.c.admin_query("SELECT count(*) FROM {oa} WHERE record_type='WS_CONFIG' "
+            "AND payload->>'namespace'='ai-evidence-choice-v1' AND payload->>'report_id'=%s",(post['id'],)).fetchone()[0])
         self.assertEqual(0,self.c.admin_query("SELECT count(*) FROM {vwp} WHERE record_type='RAW_FILE' "
             "AND payload->'file'->>'path'='reports/post/sample.rpt'").fetchone()[0])
         self.assertEqual(1,self.c.admin_query("SELECT count(*) FROM {vwp} WHERE record_type='RAW_FILE'").fetchone()[0])

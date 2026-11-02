@@ -20,6 +20,7 @@ from common.sanity_review_advice import validate_stored_review_exception
 import common.sanity_workspace_rationale as rationale
 from oa.sanity_workspace import WorkspaceStore, record_id
 from oa.sanity_workspace_review import WorkspaceReviewStore
+from oa.sanity_ai_evidence_choices import EvidenceChoices,selected_case
 
 
 def _validation_operation(method):
@@ -37,6 +38,7 @@ def _validation_operation(method):
             self._validation_seen.clear()
             self._validation_target = None
             self._validation_scopes = ()
+            self._choice_cache.clear()
     return run
 
 
@@ -57,6 +59,7 @@ class CaseRetriever:
         self._validation_target = (target, stage)
         self._validation_memo, self._validation_active, self._validation_seen = {}, set(), set()
         self._validation_work, self._validation_bytes = 0, 0
+        self._choice_cache = {}
         scope = (context or {}).get("scope", {})
         actor = (context or {}).get("_actor_user_id")
         # Missing authority is a narrow diagnostic, never a global read grant.
@@ -70,6 +73,18 @@ class CaseRetriever:
         return ("EXISTS (SELECT 1 FROM jsonb_array_elements(%s::jsonb) grant_scope "
                 "WHERE grant_scope->>0=" + alias + ".workspace_project_ref::text "
                 "AND grant_scope->>1=" + alias + ".workspace_block_ref::text)", (json_value(pairs),))
+
+    def _choices(self,stage,report_id):
+        self._load_choices(stage,[report_id])
+        return self._choice_cache[(stage,report_id)]
+
+    def _load_choices(self,stage,report_ids):
+        missing=sorted({key for key in report_ids if (stage,key) not in self._choice_cache})
+        if not missing:return
+        for report_id,rows in EvidenceChoices(self.db).for_reports(stage,missing).items():
+            self._validation_bytes+=len(canonical_json(rows))
+            check(self._validation_bytes<=self.max_reference_bytes,'AI_REFERENCE_LIMIT')
+            self._choice_cache[(stage,report_id)]=rows
 
     def _report_authorized(self, report_id):
         """Internal registered-knowledge capability, not an actor raw grant."""
@@ -203,20 +218,31 @@ class CaseRetriever:
                                    parameters + (self.page_size,)).fetchall()
             if not rows:
                 return
+            # Read choices once per metadata page and cache per operation;
+            # one report with many group judgments must not repeat the query.
+            self._load_choices(stage,[row['candidate']['report_id'] for row in rows])
             for row in rows:
                 candidate = row["candidate"]
                 check(candidate["id"] == row["head_event_id"]
                       and candidate["revision"] == row["head_revision"], "STATE_CORRUPT")
+                choices=self._choices(stage,candidate['report_id'])
+                if not any(choice['enabled'] for choice in choices):
+                    continue
+                if stage=='REVIEW' and not any(choice['enabled'] and choice['group_id']==candidate.get('group_id')
+                                               and choice['event_id']==candidate['id'] for choice in choices):
+                    continue
                 score = rank_case(profile, candidate, matched_terms=row["matched_terms"])
                 over_budget = False
-                if row["rationale_encoding"]:
+                if stage=='CLUSTER':
                     # Compressed rationale strings are opaque to SQL lexical
                     # matching. Unpack one bounded event at a time; raw source
                     # reports/parts are still never scanned for relevance.
                     try:
                         packed = self._bounded_row("WS_CLUSTER_EVENT", candidate["id"])
                         check(packed is not None, "STATE_CORRUPT")
-                        knowledge = shared_case({**rationale.unpack(packed["payload"]), "report_rule": row.get("report_rule")})
+                        selected=selected_case(rationale.unpack(packed['payload']),stage,choices)
+                        if selected is None:continue
+                        knowledge = shared_case({**selected, "report_rule": row.get("report_rule")})
                         score = rank_case(profile, knowledge)
                     except ReviewError as error:
                         if error.code != "AI_CASE_BUDGET":
@@ -323,7 +349,7 @@ class CaseRetriever:
                     return None
         return event
 
-    def _hydrate(self, candidate, context, stage):
+    def _hydrate(self, candidate, context, stage, *, require_evidence=True):
         meta = candidate["case"]
         target_id, source_id = context["report"]["id"], meta["report_id"]
         if not self._report_authorized(source_id):
@@ -340,6 +366,9 @@ class CaseRetriever:
                 cluster = self._cluster(source_id, target_id, set())
         if not compatible(context, event, stage=stage):
             return None
+        if require_evidence:
+            event=selected_case(event,stage,self._choices(stage,source_id))
+            if event is None:return None
         source_row = self._bounded_row("WS_REPORT", source_id)
         check(source_row is not None, "STATE_CORRUPT")
         source = source_row["payload"]
@@ -351,7 +380,9 @@ class CaseRetriever:
             source = hydrate(self.db, source)
         records = evidence({"report": source})
         if stage == "CLUSTER":
-            partition(event["groups"], records)
+            # The complete immutable partition was checked by _cluster.
+            # The outbound knowledge can contain only explicitly chosen groups.
+            if not require_evidence:partition(event["groups"], records)
         elif context.get("group_id"):
             partition(cluster["groups"], records)
             members = set(event["group_snapshot"]["record_ids"])
@@ -454,8 +485,8 @@ class CaseRetriever:
                     "omitted_query_features": profile["omitted_query_features"],
                     "source_record_count": profile["source_record_count"], "scope_keys": list(SCOPE_KEYS),
                     "eco_policy": "COMPARE_AS_EXECUTION_CONDITION",
-                    "version_policy": "COMPARE_ALL_VERSIONS_WITHOUT_OPT_IN",
-                    "reference_policy": "GLOBAL_REGISTERED_SHARED_HUMAN_CONFIRMED_KNOWLEDGE",
+                    "version_policy": "COMPARE_ALL_VERSIONS_FOR_SELECTED_EVIDENCE",
+                    "reference_policy": "EXPLICITLY_REGISTERED_HUMAN_CONFIRMED_KNOWLEDGE",
                     "evidence_mode": "SHARED_CONFIRMED_KNOWLEDGE",
                     "source_access_policy": "ORIGINAL_SOURCE_ENDPOINTS_KEEP_CURRENT_RBAC",
                     "scope_policy": "GLOBAL_REGISTERED_PROJECTS_BLOCKS_COMPARE_METADATA",
@@ -493,7 +524,7 @@ class CaseRetriever:
         return True
 
     @_validation_operation
-    def resolve_references(self, context, references, *, stage, max_bytes=1024 * 1024):
+    def resolve_references(self, context, references, *, stage, max_bytes=1024 * 1024, require_evidence=True):
         """Resolve pinned IDs without a relevance search or a catalog hash.
 
         ``sha256`` may pin the entire hydrated example for background jobs.
@@ -526,7 +557,7 @@ class CaseRetriever:
                 stale.append(ref["id"])
                 continue
             try:
-                case = self._hydrate({"case": row["candidate"]}, context, stage)
+                case = self._hydrate({"case": row["candidate"]}, context, stage, require_evidence=require_evidence)
             except ReviewError as error:
                 if error.code != "AI_CASE_BUDGET":
                     raise

@@ -106,6 +106,8 @@ class Removal:
         service=SimpleNamespace(db=self.db,ws=self.ws)
         from oa.sanity_ai_deletion import purge_locked
         for job in sorted(jobs,key=lambda j:j['id']):purge_locked(service,job['id'],job['actor'])
+        self.db.execute("DELETE FROM {oa} WHERE record_type='WS_CONFIG' AND payload->>'namespace'=%s "
+                        "AND payload->>'report_id'=ANY(%s)",('ai-evidence-choice-v1',report_ids))
         remaining=self.db.execute("SELECT payload-'records'-'raw_report' AS payload FROM {oa} WHERE "
             "record_type='WS_REPORT' AND workspace_block_ref=%s AND NOT(workspace_key=ANY(%s))",
             (record_id('WS_BLOCK',block_id),report_ids)).fetchall()
