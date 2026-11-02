@@ -34,6 +34,68 @@ def response(packet):
 
 
 class BatchPureTests(unittest.TestCase):
+    def test_serialized_budget_keeps_exact_utf8_and_tokenizer_inputs(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        budget=TokenBudget(batch_settings(input_tokens=64000))
+        packet={'raw':'합성 😀\n"', 'fields':{'zero':0,'false':False,'missing':None}}
+        prompt='전체 입력을 검사';raw=canonical_json(packet)
+        expected=len(prompt.encode())+len(raw)
+        self.assertEqual(expected,budget.measure(packet,prompt))
+        self.assertEqual(expected,budget.measure_serialized(raw,prompt))
+        self.assertEqual(expected,budget.check_serialized(raw,prompt))
+        tokenizer=Mock();tokenizer.encode.side_effect=lambda text,**kwargs:SimpleNamespace(ids=list(text))
+        budget.tokenizer=tokenizer
+        self.assertEqual(len(prompt)+len(raw.decode()),budget.measure_serialized(raw,prompt))
+        self.assertEqual([(prompt,), (raw.decode(),)], [call.args for call in tokenizer.encode.call_args_list])
+        self.assertTrue(all(call.kwargs=={'add_special_tokens':True} for call in tokenizer.encode.call_args_list))
+
+    def test_full_chunk_planning_checks_every_chunk_once_and_keeps_exact_hashes(self):
+        model=self.model(max_records=7,input_tokens=64000,output_tokens=40000)
+        template=model.records[0]
+        model.records=[{**template,'id':f'planning-{i}'} for i in range(30)]
+        with patch.object(model,'fits',wraps=model.fits) as fits:
+            plan=model.leaf_plan()
+        self.assertEqual([(0,7),(7,14),(14,21),(21,28),(28,30)],[(p['start'],p['stop']) for p in plan])
+        self.assertEqual(len(plan),fits.call_count)
+        for part in plan:
+            self.assertEqual(digest(model.records[part['start']:part['stop']]),part['records_sha256'])
+        self.assertEqual([],self.requests)
+
+    def test_fast_plan_matches_original_binary_search_for_full_and_size_limited_chunks(self):
+        for budget in (64000,10000):
+            with self.subTest(input_tokens=budget):
+                model=self.model(max_records=7,input_tokens=budget,output_tokens=40000)
+                template=model.records[0]
+                model.records=[{**template,'id':f'planning-{i}','raw':'합성 경계 '+('x'*(100+500*(i%3)))} for i in range(30)]
+                expected=[];start=0;reference_checks=0
+                while start<len(model.records):
+                    lo,hi,count=1,min(7,len(model.records)-start),0
+                    while lo<=hi:
+                        mid=(lo+hi)//2
+                        reference_checks+=1
+                        if model.fits(model.leaf(start,start+mid)):count=mid;lo=mid+1
+                        else:hi=mid-1
+                    self.assertGreater(count,0)
+                    expected.append({'start':start,'stop':start+count,'records_sha256':digest(model.records[start:start+count])})
+                    start+=count
+                with patch.object(model,'fits',wraps=model.fits) as fits:
+                    actual=model.leaf_plan()
+                self.assertEqual(expected,actual)
+                self.assertLessEqual(fits.call_count,reference_checks+1)
+                if budget==10000:
+                    self.assertTrue(any(part['stop']-part['start']<7 for part in actual))
+                self.assertEqual([],self.requests)
+        # A custom tokenizer need not count longer prefixes monotonically.
+        # Preserve the original search even when the largest prefix would fit.
+        model=self.model(max_records=3)
+        template=model.records[0]
+        model.records=[{**template,'id':f'nonmonotonic-{i}'} for i in range(3)]
+        model.budget.tokenizer=object()
+        with patch.object(model,'fits',side_effect=lambda prepared:len(prepared[0]['context']['report']['records'])!=2):
+            plan=model.leaf_plan()
+        self.assertEqual([(0,1),(1,2),(2,3)],[(p['start'],p['stop']) for p in plan])
+
     def model(self, **options):
         context=clustering_example()['context']
         self.requests=[]

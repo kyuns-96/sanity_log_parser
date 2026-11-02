@@ -10,6 +10,17 @@ import unittest
 
 ROOT = Path(__file__).resolve().parent
 PROFILES = ("quick", "regression", "full")
+ELAPSED_CLOCK = "CLOCK_BOOTTIME" if hasattr(time, "CLOCK_BOOTTIME") else "monotonic"
+
+
+def elapsed_time():
+    # On Android/Linux, MONOTONIC stops during device suspend. A three-minute
+    # budget must include that time rather than silently underreport it.
+    if hasattr(time, "CLOCK_BOOTTIME"):
+        return time.clock_gettime(time.CLOCK_BOOTTIME)
+    return time.monotonic()
+
+
 # Keep everyday checks within a three-minute target on the development device.
 # Select representative DB workflows explicitly: adding an entire integration
 # module here silently repeats schema setup and complete AI/submission cycles.
@@ -17,6 +28,7 @@ QUICK_TESTS = (
     "tests.test_auth", "tests.test_db_config", "tests.test_db_single_account",
     "tests.test_common", "tests.test_parsers", "tests.test_scope_contract",
     "tests.test_schema", "tests.test_normalization", "tests.test_integration_contracts",
+    "tests.test_pg_fixture",
     "tests.test_submission_contracts", "tests.test_submission_https", "tests.test_submission_files",
     "tests.test_collection_only", "tests.test_retry_policy",
     "tests.test_vwp_inference.VwpInferenceContractTests",
@@ -64,7 +76,7 @@ QUICK_TESTS = (
     "tests.test_payload_storage_migration.PayloadStorageMigrationTests.test_checkpoint_59_prepares_and_verifies_the_exact_original_011_catalog",
     "tests.test_evidence_pages_migration.EvidencePagesMigrationTests.test_checkpoint_60_applies_only_012_with_exact_original_catalog",
     "tests.test_shared_source_migration.SharedPacketMigrationTests.test_checkpoint_62_runs_exact_original_013_catalog",
-    "tests.test_mock_runner", "tests.test_test_runner", "oa.test_auth_config", "oa.test_sso",
+    "tests.test_mock_runner", "tests.test_test_runner", "tests.test_http_support", "oa.test_auth_config", "oa.test_sso",
 )
 # Preserve the previous quick scope for explicit, broader regression runs.
 # Full still discovers every original test, including large datasets and all
@@ -200,17 +212,27 @@ def test_cases(suite):
             yield test
 
 
+def shard_suite(suite, index, count):
+    """Disjoint, deterministic shards; each original test ID belongs to one worker."""
+    cases = list(test_cases(suite))
+    if len({test.id() for test in cases}) != len(cases):
+        raise ValueError("Duplicate test IDs in the selected profile")
+    if count == 1:
+        return suite
+    return unittest.TestSuite(sorted(cases, key=lambda test: test.id())[index::count])
+
+
 class TimedTestResult(unittest.TextTestResult):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.timings = []
 
     def startTest(self, test):
-        self.started = time.monotonic()
+        self.started = elapsed_time()
         super().startTest(test)
 
     def stopTest(self, test):
-        self.timings.append({"test": test.id(), "seconds": round(time.monotonic() - self.started, 6)})
+        self.timings.append({"test": test.id(), "seconds": round(elapsed_time() - self.started, 6)})
         super().stopTest(test)
 
 
@@ -222,9 +244,17 @@ def main(argv=None):
     parser.add_argument("--require-db", action="store_true", help="fail rather than skip PostgreSQL integration tests")
     parser.add_argument("--report-json", type=Path, help="write a new machine-readable result file (will not overwrite)")
     parser.add_argument("--durations", type=int, default=5, help="show the N slowest tests (default: 5; 0: hide)")
+    parser.add_argument("--shard", default="1/1", help="run disjoint shard INDEX/COUNT (one-based)")
+    parser.add_argument("--manifest-json", type=Path, help="write selected test IDs without running tests")
     args = parser.parse_args(argv)
     if args.durations < 0:
         parser.error("--durations must be nonnegative")
+    try:
+        shard_index, shard_count = map(int, args.shard.split("/"))
+        if not 1 <= shard_index <= shard_count <= 16:
+            raise ValueError
+    except ValueError:
+        parser.error("--shard requires 1 <= INDEX <= COUNT <= 16")
     if args.require_db and not all(os.environ.get(key) for key in ("SANITY_TEST_ADMIN_DSN", "SANITY_VWP_DSN", "SANITY_OA_DSN")):
         parser.error("--require-db needs SANITY_TEST_ADMIN_DSN, SANITY_VWP_DSN and SANITY_OA_DSN")
     if args.require_db:
@@ -232,27 +262,38 @@ def main(argv=None):
             import psycopg2
         except ImportError:
             parser.error("--require-db needs psycopg2; install requirements.txt")
-    started = time.monotonic()
+    started = elapsed_time()
     suite = build_suite(args.profile)
+    total = suite.countTestCases()
+    suite = shard_suite(suite, shard_index - 1, shard_count)
     selected = suite.countTestCases()
     if not selected:
         parser.error("No tests selected")
-    print(f"profile={args.profile} tests_selected={selected} full_suite={str(args.profile == 'full').lower()}", flush=True)
-    if args.list:
+    full_suite = args.profile == "full" and shard_count == 1
+    selected_ids = [test.id() for test in test_cases(suite)]
+    print(f"profile={args.profile} tests_selected={selected} full_suite={str(full_suite).lower()} shard={args.shard}", flush=True)
+    if args.manifest_json:
+        with args.manifest_json.open("x", encoding="utf-8") as stream:
+            json.dump({"profile": args.profile, "test_ids": selected_ids, "tests_selected": selected,
+                       "tests_total": total, "shard": args.shard, "full_suite": full_suite}, stream, indent=2)
+            stream.write("\n")
+    if args.list or args.manifest_json:
         for test in test_cases(suite):
             print(test.id())
         return 0
     result = unittest.TextTestRunner(verbosity=2, resultclass=TimedTestResult).run(suite)
-    seconds = round(time.monotonic() - started, 3)
+    seconds = round(elapsed_time() - started, 3)
+    print(f"elapsed_seconds={seconds:.3f} elapsed_clock={ELAPSED_CLOCK}", flush=True)
     print(f"profile={args.profile} tests_run={result.testsRun} seconds={seconds:.3f}", flush=True)
     timings = sorted(result.timings, key=lambda row: row["seconds"], reverse=True)
     for row in timings[:args.durations]:
         print(f"slow_test seconds={row['seconds']:.3f} test={row['test']}", flush=True)
     if args.report_json:
-        report = {"profile": args.profile, "full_suite": args.profile == "full", "tests_selected": selected,
+        report = {"profile": args.profile, "full_suite": full_suite, "tests_selected": selected,
                   "tests_run": result.testsRun, "failures": len(result.failures), "errors": len(result.errors),
                   "skipped": len(result.skipped), "successful": result.wasSuccessful(),
-                  "seconds": seconds, "timings": timings,
+                  "seconds": seconds, "elapsed_clock": ELAPSED_CLOCK, "timings": timings,
+                  "tests_total": total, "test_ids": selected_ids, "shard": args.shard,
                   "failed_tests": [test.id() for test, _ in result.failures + result.errors]}
         with args.report_json.open("x", encoding="utf-8") as stream:
             json.dump(report, stream, ensure_ascii=False, indent=2)

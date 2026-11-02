@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 from cryptography.fernet import Fernet
 from fastapi import Request
-from fastapi.testclient import TestClient
+from tests.http_support import TestClient
 
 from common.sanity_common import ReviewError, canonical_json
 from common.sanity_config import load_environment

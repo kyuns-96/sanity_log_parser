@@ -120,9 +120,17 @@ class TokenBudget:
     def measure(self, packet, instruction):
         # Message framing/reasoning overhead is an explicit deployment budget,
         # not an assertion that every compatible model has OpenAI's template.
-        return self.tokens(instruction) + self.tokens(canonical_json(packet).decode('utf-8'))
+        return self.measure_serialized(canonical_json(packet), instruction)
+
+    def measure_serialized(self, raw, instruction):
+        if self.tokenizer is None:
+            return len(instruction.encode('utf-8')) + len(raw)
+        return self.tokens(instruction) + self.tokens(raw.decode('utf-8'))
 
     def check(self, packet, instruction):
-        count = self.measure(packet,instruction)
+        return self.check_serialized(canonical_json(packet), instruction)
+
+    def check_serialized(self, raw, instruction):
+        count = self.measure_serialized(raw, instruction)
         check(count <= self.settings.input_limit, 'AI_INPUT_LIMIT', 'Complete batch exceeds its token budget')
         return count

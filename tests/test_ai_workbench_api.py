@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from fastapi.testclient import TestClient
+from tests.http_support import TestClient
 
 from common.sanity_common import ReviewError
 from oa import ai_workbench_api as api

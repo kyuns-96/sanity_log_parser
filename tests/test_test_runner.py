@@ -12,6 +12,40 @@ import run_tests as runner
 
 
 class TestRunnerTests(unittest.TestCase):
+    def test_shards_execute_the_exact_original_scope_once(self):
+        class Sample(unittest.TestCase):
+            def test_a(self): pass
+            def test_b(self): pass
+            def test_c(self): pass
+            def test_d(self): pass
+            def test_e(self): pass
+
+        original = unittest.defaultTestLoader.loadTestsFromTestCase(Sample)
+        ids = [test.id() for test in runner.test_cases(original)]
+        shards = [[test.id() for test in runner.test_cases(runner.shard_suite(original, index, 3))]
+                  for index in range(3)]
+        self.assertEqual(sorted(ids), sorted(name for shard in shards for name in shard))
+        self.assertTrue(all(set(shards[a]).isdisjoint(shards[b]) for a in range(3) for b in range(a)))
+        self.assertEqual([2, 2, 1], [len(shard) for shard in shards])
+
+    def test_duplicate_ids_and_invalid_shards_are_not_silently_discarded(self):
+        case = unittest.FunctionTestCase(lambda: None)
+        with self.assertRaises(ValueError):
+            runner.shard_suite(unittest.TestSuite([case, case]), 0, 2)
+        for value in ("0/2", "3/2", "1/0", "1/17", "1", "a/b"):
+            with self.subTest(shard=value), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                runner.main(["--shard", value])
+
+    def test_manifest_lists_scope_without_executing_or_claiming_a_full_run(self):
+        case = unittest.FunctionTestCase(lambda: self.fail("Manifest ran a test"))
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "manifest.json"
+            with patch.object(runner, "build_suite", return_value=unittest.TestSuite([case])), redirect_stdout(io.StringIO()):
+                self.assertEqual(0, runner.main(["--profile", "full", "--shard", "1/2", "--manifest-json", str(path)]))
+            manifest = json.loads(path.read_text())
+            self.assertEqual([case.id()], manifest["test_ids"])
+            self.assertEqual(("full", 1, "1/2", False), (manifest["profile"], manifest["tests_total"], manifest["shard"], manifest["full_suite"]))
+
     def test_regression_preserves_previous_scope_and_includes_quick_without_duplicates(self):
         quick = {test.id() for test in runner.test_cases(runner.build_suite("quick"))}
         previous = {test.id() for test in runner.test_cases(unittest.TestLoader().loadTestsFromNames(runner.REGRESSION_TESTS))}
@@ -73,6 +107,21 @@ class TestRunnerTests(unittest.TestCase):
             self.assertNotIn(name, quick)
 
     def test_default_quick_records_success_with_its_actual_scope(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        # Reproduce a suspended device: 31 real seconds, 7 MONOTONIC seconds.
+        for boot_clock in (True, False):
+            with self.subTest(boot_clock=boot_clock):
+                clock = SimpleNamespace(monotonic=Mock(side_effect=[100, 107]))
+                if boot_clock:
+                    clock.CLOCK_BOOTTIME = 9
+                    clock.clock_gettime = Mock(side_effect=[100, 131])
+                with patch.object(runner, "time", clock):
+                    result = runner.TimedTestResult(io.StringIO(), True, 0)
+                    sample = unittest.FunctionTestCase(lambda: None)
+                    result.startTest(sample)
+                    result.stopTest(sample)
+                self.assertEqual(31 if boot_clock else 7, result.timings[0]["seconds"])
         case = unittest.FunctionTestCase(lambda: None)
         with tempfile.TemporaryDirectory() as temp:
             report = Path(temp) / "report.json"

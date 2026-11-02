@@ -9,7 +9,7 @@ import uuid
 import unittest
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
+from tests.http_support import TestClient
 
 from common.sanity_common import ReviewError, canonical_json, digest
 from common.sanity_db import Database, Queue, json_value, stable_uuid

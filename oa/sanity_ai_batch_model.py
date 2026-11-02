@@ -90,20 +90,32 @@ class BatchModel:
         packet, instruction = prepared[:2]
         # Bound the nested JSON string and gateway envelope before dispatch.
         # _call also checks the exact final body, including its actual session ID.
-        wire_bound = 2*(len(canonical_json(packet))+len(instruction.encode('utf-8')))+4096
-        return wire_bound <= self.advisor.settings.max_input_bytes and self.budget.measure(packet,instruction) <= self.settings.input_limit
+        raw = canonical_json(packet)
+        wire_bound = 2*(len(raw)+len(instruction.encode('utf-8')))+4096
+        return wire_bound <= self.advisor.settings.max_input_bytes and self.budget.measure_serialized(raw,instruction) <= self.settings.input_limit
 
     def leaf_plan(self):
         result, start = [], 0
+        # Keep the previous search for custom tokenizers and projected input,
+        # whose token counts/context can change nonmonotonically by prefix.
+        try_full = self.budget.tokenizer is None and self.policy is None
         # Reserve output for a difficult batch with many distinct groups. This
         # is a planning estimate; incomplete/over-limit responses still fail.
         limit = min(self.settings.max_records,max(1,self.settings.output_tokens//192))
         while start < len(self.records):
             lo, hi, count = 1, min(limit,len(self.records)-start), 0
-            while lo <= hi:
-                mid = (lo+hi)//2
-                if self.fits(self.leaf(start,start+mid)): count=mid; lo=mid+1
-                else: hi=mid-1
+            # Most complete chunks fit their record/output limit. Avoid
+            # serializing the same prefix at every binary-search midpoint.
+            # After the first miss retain the original search for all later
+            # chunks, adding at most one failed probe to variable-size inputs.
+            if try_full:
+                if self.fits(self.leaf(start,start+hi)): count=hi
+                else: try_full=False
+            if not count:
+                while lo <= hi:
+                    mid = (lo+hi)//2
+                    if self.fits(self.leaf(start,start+mid)): count=mid; lo=mid+1
+                    else: hi=mid-1
             check(count > 0, 'AI_INPUT_LIMIT','A complete record and its required context exceed the batch budget')
             result.append({'start':start,'stop':start+count,
                            'records_sha256':digest(self.records[start:start+count])})

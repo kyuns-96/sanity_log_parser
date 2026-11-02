@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from fastapi import APIRouter
-from fastapi.testclient import TestClient
+from tests.http_support import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))

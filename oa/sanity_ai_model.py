@@ -528,16 +528,20 @@ class OAAdvisor:
     def _body(self, packet, instruction, *, budget=None):
         settings = self.settings
         input_tokens = None
-        self._guard.ensure_public(packet)
+        encoded = canonical_json(packet)
+        # Scan the exact JSON value that will go on the wire. The JSON scanner
+        # retains the existing redaction rules without rebuilding a redacted
+        # copy and applying every regexp to every repeated key and string.
+        self._guard.ensure_public_json(json.loads(encoded))
         messages = [{"role": "system", "content": instruction},
-                    {"role": "user", "content": canonical_json(packet).decode("utf-8")}]
+                    {"role": "user", "content": encoded.decode("utf-8")}]
         body = {"model": settings.model, "stream": False}
         if settings.reasoning is not None:
             body.update(settings.reasoning.body(settings.api))
         if settings.cache is not None:
             body.update(settings.cache.body())
         if budget is not None:
-            input_tokens = budget.check(packet, instruction)
+            input_tokens = budget.check_serialized(encoded, instruction)
             body[budget.settings.output_parameter] = budget.settings.output_tokens
         if settings.api == "chat_completions":
             body["messages"] = messages
