@@ -273,7 +273,7 @@ def create_app(*, auth_mode: AuthMode | None = None,
                 "notice": "SSO 사용자 연결 확인 · 프로젝트·블록 권한 연동은 아직 준비되지 않았습니다." if not authorization_ready else
                           "프로젝트·블록 권한을 요청하고 승인 상태를 확인하세요." if actor.auth_method == "sso" and not readable else
                           "직접 PostgreSQL 검증 모드 · 접속/권한은 데이터 요청 시 검증" if direct else
-                          "현재 DBaaS 방식은 임시 읽기 전용입니다. 정식 전체 접근 방식이 필요합니다."}
+                          "DBaaS HTTP 저장 연결은 지원하지 않습니다. PostgreSQL 연결 설정을 확인해 주세요."}
 
     @app.get("/api/bundles")
     def bundles(offset: Offset = 0, limit: Limit = 20, actor=Depends(authorized_actor)):

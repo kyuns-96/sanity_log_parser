@@ -10,7 +10,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from common.sanity_common import ReviewError, atomic_json
+from common.sanity_common import ReviewError
 
 
 def stage(name, *args):
@@ -27,18 +27,15 @@ def demo(out, scenario="complete"):
         raise ReviewError("OUTPUT_EXISTS", "Use an absent or empty output directory")
     out.mkdir(parents=True, exist_ok=True)
     stage("vwp", "demo", "--out", out / "vwp", "--scenario", scenario)
-    sent = json.loads(stage("vwp_bridge", "analyze", "--input", out / "vwp/run.json", "--out", out / "vwp_bridge"))
+    sent = json.loads(stage("vwp_bridge", "analyze", "--input", out / "vwp/run.json"))
     received = json.loads(stage("oa", "receive", "--message-id", sent["message_id"]))
     if received.get("status") not in ("RECEIVED", "ALREADY_RECEIVED"):
         raise ReviewError("DEMO_RECEIVE", "Shared DB message was not received; check endpoint, schema and lease")
     bundle_id = received["bundle_id"]
     stage("oa", "report", "--bundle-id", bundle_id,
           "--out", out / "report.md")
-    receipt = {"scenario": scenario, "bundle_id": bundle_id, "coverage": received["coverage"],
-               "interface": "OA_DASHBOARD", "jira_enabled": False,
-               "report": str(out / "report.md"), "analysis_id": sent["analysis_id"], "transport": "POSTGRESQL"}
-    atomic_json(out / "receipt.json", receipt)
-    return receipt
+    return {"bundle_id": bundle_id, "coverage": received["coverage"],
+            "report": str(out / "report.md"), "analysis_id": sent["analysis_id"]}
 
 
 def main():
@@ -53,7 +50,7 @@ def main():
         print(f"expected={c['expected']} reviewed={c['reviewed']} approved_na={c['approved_na']} "
               f"unresolved={c['unresolved']} missing={c['missing']} "
               f"review={c['review_status']} check={c['check_status']}")
-        print(f"transport=POSTGRESQL interface=OA_DASHBOARD ai=NOT_CONFIGURED report={receipt['report']}")
+        print(f"report={receipt['report']}")
         return 0
     except ReviewError as exc:
         print(f"code={exc.code} {exc}", file=sys.stderr)

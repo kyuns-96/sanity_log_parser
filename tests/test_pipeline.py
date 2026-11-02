@@ -26,9 +26,6 @@ class PipelineTests(PgTestCase):
     def test_two_formats_grouping_dashboard_and_human_finality(self):
         receipt = demo(self.root / "complete")
         root = self.root / "complete"
-        self.assertEqual(receipt["interface"], "OA_DASHBOARD")
-        self.assertIs(receipt["jira_enabled"], False)
-        self.assertNotIn("publication", receipt)
         with Database("oa") as db:
             payload = unpack_bundle(Queue(db, "vwp_to_oa").get(receipt["bundle_id"]))
         units = {u["review_unit_id"]: u for u in payload["review_units"]}
@@ -82,9 +79,7 @@ class PipelineTests(PgTestCase):
     def test_receive_cli_rejects_semantic_forgery_without_creating_state(self):
         source = self.root / "source"
         stage("vwp", "demo", "--out", str(source))
-        export = self.root / "export"
-        receipt = json.loads(stage("vwp_bridge", "analyze", "--input", str(source / "run.json"),
-              "--out", str(export)))
+        receipt = json.loads(stage("vwp_bridge", "analyze", "--input", str(source / "run.json")))
         with Database("vwp") as db:
             original = unpack_bundle(Queue(db, "vwp_to_oa").get(receipt["message_id"]))
         for variant in ("wrong_report", "incomplete_identity"):

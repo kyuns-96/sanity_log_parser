@@ -33,7 +33,7 @@ class BridgeTests(PgTestCase):
                      "evaluation": {"operator": "le", "limit": 10, "unit": "ns"},
                      "execution_status": "COMPLETED", "applicable": True, "exclusion": None}
 
-    def run_analysis(self, body=None, unit=None, extra_units=None, output="output"):
+    def run_analysis(self, body=None, unit=None, extra_units=None):
         if body is not None:
             atomic_text(self.report, body)
         files = []
@@ -48,7 +48,7 @@ class BridgeTests(PgTestCase):
                             "tool": "test", "tool_version": "1"},
                     "inventory": inventory, "files": files, "unexpected_files": []}
         atomic_json(self.root / "run.json", manifest)
-        return bridge.analyze(self.root / "run.json", self.root / output)
+        return bridge.analyze(self.root / "run.json")
 
     @staticmethod
     def numeric(rows, footer=True):
@@ -120,10 +120,10 @@ class BridgeTests(PgTestCase):
 
     def test_identical_analysis_is_deterministic_and_samples_bounded(self):
         body = self.numeric(["A,P1,M1,C-1,WARNING,12,ns"] * 8)
-        first, path1 = self.run_analysis(body)
-        second, path2 = self.run_analysis(body, output="other")
+        first, first_receipt = self.run_analysis(body)
+        second, second_receipt = self.run_analysis(body)
         self.assertEqual(first["bundle_id"], second["bundle_id"])
-        self.assertEqual(path1, path2)
+        self.assertEqual(first_receipt, second_receipt)
         self.assertEqual(1, self.admin_query("SELECT count(*) FROM {vwp_to_oa}").fetchone()[0])
         self.assertEqual(3, len(first["finding_groups"][0]["examples"]))
         self.assertEqual(5, first["finding_groups"][0]["examples_omitted"])
@@ -224,7 +224,7 @@ class BridgeTests(PgTestCase):
         self.run_analysis(self.numeric(["A,P1,M1,C-1,WARNING,1,ns"]))
         atomic_text(self.report, "tampered")
         with self.assertRaises(ReviewError) as context:
-            bridge.analyze(self.root / "run.json", self.root / "bad")
+            bridge.analyze(self.root / "run.json")
         self.assertEqual("FILE_INTEGRITY", context.exception.code)
 
     def test_empty_results_and_invalid_exclusion_never_pass(self):
@@ -262,7 +262,7 @@ class BridgeTests(PgTestCase):
                 "C,P1,M1,C-1,WARNING,10.0000000000000000,ns"]
         for operator in ("le", "ge"):
             unit = {**self.unit, "evaluation": {"operator": operator, "limit": 10, "unit": "ns"}}
-            payload, _ = self.run_analysis(self.numeric(rows), unit=unit, output=operator)
+            payload, _ = self.run_analysis(self.numeric(rows), unit=unit)
             self.assertEqual({"PASS": 2, "FAIL": 1, "UNKNOWN": 0}, payload["review_units"][0]["status_counts"])
             group = payload["finding_groups"][0]
             self.assertEqual("A" if operator == "le" else "B", group["identity"]["object"])
@@ -274,11 +274,11 @@ class BridgeTests(PgTestCase):
                 "C,P1,M1,C-1,WARNING,10.0000000000000002,ns"]
         for operator in ("le", "ge"):
             unit = {**self.unit, "evaluation": {"operator": operator, "limit": "10.0000000000000001", "unit": "ns"}}
-            payload, _ = self.run_analysis(self.numeric(rows), unit=unit, output="exact-" + operator)
+            payload, _ = self.run_analysis(self.numeric(rows), unit=unit)
             self.assertEqual({"PASS": 2, "FAIL": 1, "UNKNOWN": 0}, payload["review_units"][0]["status_counts"])
             self.assertEqual("C" if operator == "le" else "A", payload["finding_groups"][0]["identity"]["object"])
         unit = {**self.unit, "evaluation": {"operator": "le", "limit": 10.1, "unit": "ns"}}
-        payload, _ = self.run_analysis(self.numeric(rows), unit=unit, output="float")
+        payload, _ = self.run_analysis(self.numeric(rows), unit=unit)
         self.assertIn("INVALID_EVALUATION_RULE", payload["review_units"][0]["blockers"])
         self.assertEqual({"PASS": 0, "FAIL": 0, "UNKNOWN": 3}, payload["review_units"][0]["status_counts"])
 
@@ -287,12 +287,12 @@ class BridgeTests(PgTestCase):
         extra = self.root / "reports/unlisted.txt"
         atomic_text(extra, "unlisted")
         with self.assertRaises(ReviewError) as context:
-            bridge.analyze(self.root / "run.json", self.root / "bad")
+            bridge.analyze(self.root / "run.json")
         self.assertEqual("FILE_INTEGRITY", context.exception.code)
         extra.unlink()
         extra.symlink_to(self.report)
         with self.assertRaises(ReviewError) as context:
-            bridge.analyze(self.root / "run.json", self.root / "bad")
+            bridge.analyze(self.root / "run.json")
         self.assertEqual("UNSAFE_PATH", context.exception.code)
 
     def test_manifest_boolean_schema_and_bad_provenance_rejected(self):
@@ -308,7 +308,7 @@ class BridgeTests(PgTestCase):
                 manifest["inventory"]["sha256"] = digest({k: v for k, v in manifest["inventory"].items() if k != "sha256"})
             atomic_json(path, manifest)
             with self.assertRaises(ReviewError):
-                bridge.analyze(path, self.root / "bad")
+                bridge.analyze(path)
 
 
 if __name__ == "__main__":

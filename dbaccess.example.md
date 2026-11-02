@@ -10,7 +10,6 @@ VWP·VWP-bridge·OA별 담당과 접속 설정/권한/확인 명령·비공개 �
 변수 이름은 `SANITY_DB_HOST`, `SANITY_DB_PORT`, `SANITY_DB_NAME`, `SANITY_DB_USER_NAME`,
 `SANITY_DB_PASSWORD`, `SANITY_DB_SCHEMA`, `SANITY_DB_SSLMODE`, `SANITY_DB_SSLROOTCERT`다.
 기존 side DSN이 있으면 우선하므로 필드 방식으로 전환할 때는 DSN을 비우거나 제거한다.
-이전 DBaaS HTTP 방식은 **임시 읽기 전용**으로만 남으며 HTTP 인증 성공을 쓰기·트랜잭션 지원으로 해석하지 않는다.
 
 설정할 변수 이름은 [VWP-bridge 예제](vwp_bridge/.env.example) 또는 [OA 예제](oa/.env.example) 중 자기 역할을 참고한다. 실제 값은 프로젝트 루트의
 비공개 `.env` 또는 해당 실행 환경에만 설정한다. DBaaS 인증 토큰과 대시보드 로그인 토큰은 별개다.

@@ -313,7 +313,7 @@ unevaluated/UNKNOWN records. COMMON-02F owns this common implementation.
 
 ## vwp-bridge payload
 
-CLI: `python3 vwp_bridge/main.py analyze --input DIR/run.json [--out RECEIPT_DIR]`
+CLI: `python3 vwp_bridge/main.py analyze --input DIR/run.json`
 Must validate readiness, inventory hash, safe paths and actual file hashes/sizes before
 parsing. Produce valid incomplete payload for missing/unsupported/malformed units.
 Integrity mismatch is an operational error. Preserve all occurrence/evidence records in the VWP private PostgreSQL table.
@@ -450,7 +450,7 @@ OA는 `sanity_oa_to_vwp`에 EVIDENCE_REQUEST를 넣는다.
 
 VWP `respond --request-id ... [--reject]`는 특정 요청만 점유한다. `work`는 다음 요청을 처리한다.
 유효 기간·봉인된 분석·단위·파일 연결·전체 선택 기록·원문 해시를 검사한다.
-일반 sanity 원문은 요청별 수동 승인 없이 응답한다. `--approve-export`는 호환용 선택 옵션이다.
+일반 sanity 원문은 요청별 수동 승인 없이 응답한다.
 EVIDENCE_RESPONSE의 message_id는 `response-<UUID>`, correlation_id는 요청 message_id다.
 project/run/bundle 일치는 DB FK로도 확인한다. 최종 결과는 FULFILLED/REJECTED/EXPIRED다.
 FULFILLED에만 gzip을 저장하며 내부에는 schema_version, request_id(요청 message_id),
