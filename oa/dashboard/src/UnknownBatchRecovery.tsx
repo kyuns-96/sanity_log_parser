@@ -19,7 +19,8 @@ export function canRetryUnknown(job?: CodexJob | null): job is CodexJob {
   const ref = job?.unknown_recovery
   return !!job && job.status === 'UNKNOWN' && job.can_retry_unknown === true && job.progress?.mode === 'BATCH' && !!ref &&
     validRecovery(ref) && (!aiJobParallel(job) || Array.isArray(job.unknown_recoveries) && job.unknown_recoveries.length > 0 &&
-      job.unknown_recoveries.length <= 8 && job.unknown_recoveries.every(validRecovery) &&
+      Number.isSafeInteger(job.progress.concurrency) && job.progress.concurrency! >= 2 && job.progress.concurrency! <= 1000000 &&
+      job.unknown_recoveries.length <= job.progress.concurrency! && job.unknown_recoveries.every(validRecovery) &&
       new Set(job.unknown_recoveries.map(value => `${value.phase}:${value.round}:${value.index}`)).size === job.unknown_recoveries.length)
 }
 

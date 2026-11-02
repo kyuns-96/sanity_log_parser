@@ -96,6 +96,41 @@ test('parallel unknown recovery confirms the complete set with one acknowledgmen
   expect(state.calls[0]).toMatchObject({ expected_event_sha256: eventHash, expected_step_sha256: stepHash, acknowledge_duplicate: true })
 })
 
+test('wide parallel unknown recovery uses the saved job width and preserves completed progress', async ({ page }) => {
+  const { state, dashboard } = await setup(page)
+  const members = Array.from({ length: 16 }, (_, index) => ({ ...state.job.unknown_recovery, index, total: 32,
+    call_token: `synthetic-call-${index}`, step_sha256: index.toString(16).padStart(64, '0') }))
+  state.job = { ...state.job, unknown_recovery: { ...members[0], step_sha256: stepHash }, unknown_recoveries: members,
+    progress: { ...state.job.progress, execution: 'parallel-v2', concurrency: 32, allocated_concurrency: 2, inflight_calls: 0 } } as typeof state.job
+  await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+  await dashboard.getByRole('button', { name: '결과 불명 배치 재시도' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.locator('.unknown-batch-list li')).toHaveCount(16)
+  await expect(dialog).toContainText('배치 16 / 32')
+  await expect(dialog).toContainText('20,000 / 50,000건')
+  expect(state.calls).toHaveLength(0)
+  state.mode = 'success'
+  await dialog.getByRole('button', { name: '확인하고 미확인 16개 재시도' }).click()
+  await expect(dashboard).toContainText('처리 중')
+  await expect(dashboard).toContainText('20,000 / 50,000건')
+  expect(state.calls).toHaveLength(1)
+  expect(state.calls[0]).toMatchObject({ expected_event_sha256: eventHash, expected_step_sha256: stepHash, acknowledge_duplicate: true })
+})
+
+test('wide recovery still refuses sets above the job limit and duplicate members', async ({ page }) => {
+  const { state, dashboard } = await setup(page)
+  const makeMember = (index: number) => ({ ...state.job.unknown_recovery, index, total: 64,
+    call_token: `synthetic-call-${index}`, step_sha256: index.toString(16).padStart(64, '0') })
+  for (const [width, members] of [[8, Array.from({ length: 9 }, (_, i) => makeMember(i))],
+    [32, Array.from({ length: 33 }, (_, i) => makeMember(i))], [32, [makeMember(0), makeMember(0)]]] as const) {
+    state.job = { ...state.job, unknown_recoveries: members,
+      progress: { ...state.job.progress, execution: 'parallel-v2', concurrency: width, inflight_calls: 0 } } as typeof state.job
+    await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+    await expect(dashboard.getByRole('button', { name: '결과 불명 배치 재시도' })).toHaveCount(0)
+    expect(state.calls).toHaveLength(0)
+  }
+})
+
 test('changed checkpoint requires fresh confirmation and a new request ID', async ({ page }) => {
   const { state, dashboard } = await setup(page)
   await dashboard.getByRole('button', { name: '결과 불명 배치 재시도' }).click()

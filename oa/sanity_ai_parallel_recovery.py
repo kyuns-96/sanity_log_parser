@@ -19,10 +19,14 @@ def _ledger(service, event):
     return ParallelLedger(service, event)
 
 
-def _wave(state):
+def _wave(event, state):
     check(isinstance(state, dict), 'AI_BATCH_CORRUPT')
     wave = state.get('wave', [])
-    check(isinstance(wave, list) and len(wave) <= 8, 'AI_BATCH_CORRUPT')
+    # Check the immutable job limit, not the former eight-call default or the
+    # scheduler's current allocation, which can shrink while calls drain.
+    width = event['data']['batch']['max_concurrency']
+    check(type(width) is int and 2 <= width <= 1000000
+          and isinstance(wave, list) and len(wave) <= width, 'AI_BATCH_CORRUPT')
     check(all(isinstance(slot, dict) and slot.get('status') in
               ('RESERVED', 'DONE', 'RETRY', 'FAILED', 'UNKNOWN') and
               type(slot.get('index')) is int and slot['index'] >= 0 for slot in wave), 'AI_BATCH_CORRUPT')
@@ -31,7 +35,7 @@ def _wave(state):
 
 
 def can_resume(event, state):
-    wave = _wave(state)
+    wave = _wave(event, state)
     return (not state.get('dispatch_error') and not any(slot['status'] in ('RESERVED', 'UNKNOWN') for slot in wave)
             and not any(slot['status'] == 'FAILED' and
                         (not valid_receipt(slot.get('receipt')) or
@@ -48,7 +52,7 @@ def _info(event, step, ref):
     state = step.get('state')
     if isinstance(state,dict) and state.get('dispatch_error'):
         return None
-    wave = _wave(state)
+    wave = _wave(event, state)
     unknown = [slot for slot in wave if slot['status'] == 'UNKNOWN']
     if not unknown or any(slot['status'] == 'RESERVED' for slot in wave):
         return None
@@ -114,7 +118,7 @@ def unknown_availability(service, event, user_id, meta, job):
         if intent:
             check(intent['data']['snapshot'] == current['snapshot'], 'AI_INPUT_STALE')
         service._check_credential_pin(event)
-        _budget(service, event, step['state'], sum(slot['status'] != 'DONE' for slot in _wave(step['state'])))
+        _budget(service, event, step['state'], sum(slot['status'] != 'DONE' for slot in _wave(event, step['state'])))
         return True, None
     except ReviewError as error:
         if error.code not in AVAILABILITY_ERRORS:
@@ -122,9 +126,9 @@ def unknown_availability(service, event, user_id, meta, job):
         return False, error.code
 
 
-def _reset(state, statuses):
+def _reset(event, state, statuses):
     result = {**state, 'wave':[]}
-    for slot in _wave(state):
+    for slot in _wave(event, state):
         if slot['status'] in statuses:
             slot = {**slot, 'status':'RETRY', 'retries':0, 'retry_after':None}
             slot.pop('receipt', None)
@@ -164,7 +168,7 @@ def _before_after(service, previous, data):
     # Revalidate the historical reservations at this transition, even after
     # later waves have changed what ParallelLedger.last() returns.
     state = before.get('state')
-    for slot in _wave(state):
+    for slot in _wave(previous, state):
         reservation = slot.get('reservation')
         if reservation is None:
             check(slot['status'] in ('RETRY','DONE') and slot.get('attempt', 0) == 0, 'AI_JOB_CORRUPT')
@@ -193,12 +197,12 @@ def validate_resume(service, previous, status, data):
     before, _, after = _before_after(service, previous, data)
     check(can_resume(previous, before['state'])
           and after.get('resume') == {'request_id':data['resume_request_id'], 'actor_id':data['resumed_by']}
-          and after.get('state') == _reset(before['state'], {'FAILED','RETRY'}), 'AI_JOB_CORRUPT')
+          and after.get('state') == _reset(previous, before['state'], {'FAILED','RETRY'}), 'AI_JOB_CORRUPT')
 
 
 def _resolution(previous, ref, state, user_id, request_id):
     return {'actor_id':user_id, 'request_id':request_id, 'event_sha256':previous['sha256'],
-            'step_sha256':ref['sha256'], 'call_tokens':sorted(slot['call_token'] for slot in _wave(state)
+            'step_sha256':ref['sha256'], 'call_tokens':sorted(slot['call_token'] for slot in _wave(previous, state)
                                                                 if slot['status'] == 'UNKNOWN'),
             'acknowledge_duplicate':True}
 
@@ -209,7 +213,7 @@ def validate_recovery(service, previous, status, data):
     check(_info(previous, before, ref) is not None
           and after.get('unknown_resolution') == _resolution(previous, ref, before['state'],
                                                              data['resumed_by'], data['resume_request_id'])
-          and after.get('state') == _reset(before['state'], {'UNKNOWN','FAILED','RETRY'}), 'AI_JOB_CORRUPT')
+          and after.get('state') == _reset(previous, before['state'], {'UNKNOWN','FAILED','RETRY'}), 'AI_JOB_CORRUPT')
 
 
 def _start(service, user_id, job_id, request_id, *, unknown=False, expected_event=None, expected_step=None):
@@ -268,8 +272,8 @@ def resume(service, user_id, job_id, request_id):
     if intent:
         check(intent['data']['snapshot'] == meta['snapshot'], 'AI_INPUT_STALE')
     service._check_credential_pin(event)
-    _budget(service,event,step['state'],sum(slot['status'] != 'DONE' for slot in _wave(step['state'])))
-    _, checkpoint = ledger.step(step,ref,'READY',_reset(step['state'], {'FAILED','RETRY'}),
+    _budget(service,event,step['state'],sum(slot['status'] != 'DONE' for slot in _wave(event, step['state'])))
+    _, checkpoint = ledger.step(step,ref,'READY',_reset(event, step['state'], {'FAILED','RETRY'}),
                                 resume={'request_id':request_id,'actor_id':user_id})
     result = _append(service,event,user_id,request_id,checkpoint)
     value = {'namespace':NAMESPACE,'id':request_id,'job_id':job_id,'actor_id':user_id}
@@ -298,9 +302,9 @@ def retry_unknown(service, user_id, job_id, request_id, expected_event_sha256, e
     if intent:
         check(intent['data']['snapshot'] == meta['snapshot'], 'AI_INPUT_STALE')
     service._check_credential_pin(event)
-    _budget(service,event,step['state'],sum(slot['status'] != 'DONE' for slot in _wave(step['state'])))
+    _budget(service,event,step['state'],sum(slot['status'] != 'DONE' for slot in _wave(event, step['state'])))
     resolution = _resolution(event,ref,step['state'],user_id,request_id)
-    _, checkpoint = ledger.step(step,ref,'READY',_reset(step['state'], {'UNKNOWN','FAILED','RETRY'}),unknown_resolution=resolution)
+    _, checkpoint = ledger.step(step,ref,'READY',_reset(event, step['state'], {'UNKNOWN','FAILED','RETRY'}),unknown_resolution=resolution)
     result = _append(service,event,user_id,request_id,checkpoint)
     value = {'namespace':NAMESPACE,'id':request_id,'job_id':job_id,'actor_id':user_id,
              'event_sha256':expected_event_sha256,'step_sha256':expected_step_sha256}
