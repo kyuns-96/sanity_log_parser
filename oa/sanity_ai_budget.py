@@ -11,7 +11,7 @@ import hashlib
 from pathlib import Path
 import re
 
-from common.sanity_common import ReviewError, canonical_json
+from common.sanity_common import ReviewError
 from common.sanity_submission import check
 
 BATCH_PROMPT_VERSION = 'oa-batch-clustering-v1'
@@ -117,18 +117,10 @@ class TokenBudget:
         except Exception:
             raise ReviewError('AI_BATCH_TOKENIZER_INVALID','Cannot count the complete model input') from None
 
-    def measure(self, packet, instruction):
-        # Message framing/reasoning overhead is an explicit deployment budget,
-        # not an assertion that every compatible model has OpenAI's template.
-        return self.measure_serialized(canonical_json(packet), instruction)
-
     def measure_serialized(self, raw, instruction):
         if self.tokenizer is None:
             return len(instruction.encode('utf-8')) + len(raw)
         return self.tokens(instruction) + self.tokens(raw.decode('utf-8'))
-
-    def check(self, packet, instruction):
-        return self.check_serialized(canonical_json(packet), instruction)
 
     def check_serialized(self, raw, instruction):
         count = self.measure_serialized(raw, instruction)

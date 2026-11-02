@@ -20,7 +20,7 @@ class MockRunnerTests(unittest.TestCase):
         names = ['tests.test_common', 'tests.test_auth']
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            database = Mock(root=root, server_version_num=180000)
+            database = Mock(root=root)
             calls = []
             def execute(staged, environment, log, script, *args):
                 calls.append((script, args))
@@ -37,7 +37,6 @@ class MockRunnerTests(unittest.TestCase):
             self.assertEqual(1, create.call_count)
             database.stop.assert_called_once()
             self.assertEqual(1, sum(script == 'run_tests.py' for script, _ in calls))
-            self.assertEqual(names, json.loads((root/'summary.json').read_text())['include'])
 
     def test_additional_scope_is_bound_to_manifest_and_each_parallel_worker(self):
         names = ['tests.test_common']
@@ -138,7 +137,7 @@ class MockRunnerTests(unittest.TestCase):
     def test_failed_regression_stops_database_and_returns_failure(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            database = Mock(root=root, server_version_num=180000)
+            database = Mock(root=root)
             report = {"profile": "quick", "tests_run": 9, "failures": 5, "errors": 2,
                       "skipped": 0, "successful": False}
 
@@ -152,12 +151,9 @@ class MockRunnerTests(unittest.TestCase):
                     patch.object(runner, "stage_source"), patch.object(runner, "execute", side_effect=execute), \
                     redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 self.assertEqual(1, runner.main(["--jobs", "1"]))
-            summary = json.loads((root / "summary.json").read_text())
-            self.assertEqual("FAILED", summary["status"])
-            self.assertTrue(summary["db_stopped"])
             database.stop.assert_called_once()
 
-    def test_failed_start_still_stops_and_records_failure(self):
+    def test_failed_start_still_stops_and_returns_failure(self):
         with tempfile.TemporaryDirectory() as temp:
             database = Mock(root=Path(temp))
             database.start.side_effect = runner.MockError("synthetic startup failure")
@@ -167,9 +163,6 @@ class MockRunnerTests(unittest.TestCase):
                 self.assertEqual(1, runner.main([]))
             database.stop.assert_called_once()
             database.setup.assert_not_called()
-            summary = json.loads((Path(temp) / "summary.json").read_text())
-            self.assertEqual("FAILED", summary["status"])
-            self.assertTrue(summary["db_stopped"])
 
     def test_shell_database_and_ai_configuration_is_not_inherited(self):
         source = {"PATH": "/usr/bin", "LANG": "C.UTF-8", "SANITY_VWP_DSN": "private",

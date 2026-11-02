@@ -45,14 +45,10 @@ def sanitize_validation_failure(value):
 
 
 def raise_rationale(code, field, *, group_index=None, actual_count=None, actual_length=None):
-    """Raise the stable outer error while attaching a strictly bounded proof."""
     detail={'schema_version':VERSION,'code':code,'field':field}
     for key,value in (('group_index',group_index),('actual_count',actual_count),('actual_length',actual_length)):
         if value is not None:
             detail[key]=value
-    detail=sanitize_validation_failure(detail)
-    if detail is None:
-        raise ValueError('Invalid static rationale diagnostic')
     messages={'RATIONALE_EVIDENCE_TYPE':'Representative IDs must belong to this group',
               'RATIONALE_EVIDENCE_COUNT':'Representative IDs must belong to this group',
               'RATIONALE_EVIDENCE_ITEM_TYPE':'Representative IDs must belong to this group',

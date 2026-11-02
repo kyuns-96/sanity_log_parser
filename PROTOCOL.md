@@ -102,7 +102,6 @@ PoR은 블록의 버전 참조이고 ECO/특정 검사 실행을 포함하지 �
 DB에서 표현할 수 없는 NUL 등 정규화 필드는 조용히 삭제하지 않고 DB 오류로 중단한다.
 원본 snapshot과 디코딩 실패 표현의 실제 원본 바이트는 VWP 보존 정책에 따라 유지해야 한다.
 
-공통 `write_bundle/read_bundle`은 오프라인 형식 회귀 테스트용이다.
 앱 실행 경로는 `pack_json/unpack_json/unpack_bundle`과 DB 큐만 사용한다.
 명령 오류는 `code=...`와 종료 코드 2다. 불완전 분석/FAIL 결과도 유효 산출물이므로 종료 코드 0일 수 있다.
 

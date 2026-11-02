@@ -2,7 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 import json
 from unittest.mock import patch
 from uuid import uuid4
@@ -13,7 +13,7 @@ from cryptography.fernet import Fernet
 from common.sanity_common import ReviewError, canonical_json
 from common.sanity_db import Database, json_value
 from oa.sanity_access import access_lock
-from oa.sanity_ai_jobs import AIJobService, PREFIX, _now, run_once
+from oa.sanity_ai_jobs import AIJobService, PREFIX, run_once
 from oa.sanity_ai_model import OAAdvisor, OASettings
 from oa.sanity_ai_tokens import UserTokenStore
 from oa.sanity_workspace import WorkspaceStore, record_id
@@ -171,8 +171,8 @@ class AIJobDatabaseTests(PgTestCase):
         with self.service() as service:
             service._lock(another["id"])
             event = service._load(another["id"])
-            service._append(event, "RUNNING", {**event["data"], "deadline": (_now() - timedelta(seconds=1)).isoformat(),
-                             "started_at": (_now() - timedelta(seconds=60)).isoformat(),
+            service._append(event, "RUNNING", {**event["data"], "deadline": (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+                             "started_at": (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat(),
                              "call_token": str(uuid4()), "model_attempted": True})
         self.assertEqual("UNKNOWN", self.run_job()["status"])
         self.assertIsNone(self.run_job())

@@ -161,7 +161,7 @@ class RoleRunnerTests(unittest.TestCase):
         for role in ("oa", "vwp-bridge"):
             with self.subTest(role=role), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
-                database = Mock(root=root, server_version_num=180000)
+                database = Mock(root=root)
                 calls = []
 
                 def execute(staged, environment, log, script, *args):
@@ -179,9 +179,6 @@ class RoleRunnerTests(unittest.TestCase):
                     self.assertEqual(0, mock_runner.main(["--role", role, "--jobs", "1"]))
                 database.stop.assert_called_once()
                 self.assertEqual(["common.sanity_db", "common.sanity_db", "run_tests.py"], [script for script, _ in calls])
-                result = json.loads((root / "summary.json").read_text())
-                self.assertEqual(("PASSED", role, False, True),
-                                 (result["status"], result["role"], result["full_suite"], result["db_stopped"]))
 
     def test_parallel_role_is_forwarded_to_discovery_and_each_worker(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -218,7 +215,7 @@ class RoleRunnerTests(unittest.TestCase):
         for defect in ({"role": "vwp-bridge"}, {"database_tests": False}):
             with self.subTest(defect=defect), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
-                database = Mock(root=root, server_version_num=180000)
+                database = Mock(root=root)
 
                 def execute(staged, environment, log, script, *args):
                     if script == "run_tests.py":
@@ -230,9 +227,6 @@ class RoleRunnerTests(unittest.TestCase):
                         patch.object(mock_runner, "stage_source"), patch.object(mock_runner, "execute", side_effect=execute), \
                         redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                     self.assertEqual(1, mock_runner.main(["--role", "oa", "--jobs", "1"]))
-                summary = json.loads((root / "summary.json").read_text())
-                self.assertEqual("FAILED", summary["status"])
-                self.assertTrue(summary["db_stopped"])
                 database.stop.assert_called_once()
 
 

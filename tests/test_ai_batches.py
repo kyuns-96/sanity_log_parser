@@ -1,7 +1,7 @@
 """Synthetic complete-input batching, durable calls and atomic publication."""
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -16,7 +16,7 @@ from common.sanity_integration_examples import clustering_example
 from oa.sanity_ai_budget import BatchSettings, TokenBudget
 from oa.sanity_ai_batch_model import BatchModel
 from oa.sanity_ai_batch_jobs import Ledger
-from oa.sanity_ai_jobs import AIJobService, _now
+from oa.sanity_ai_jobs import AIJobService
 from oa.sanity_ai_model import OAAdvisor, OASettings
 from tests.support import PgTestCase
 
@@ -45,7 +45,6 @@ class BatchPureTests(unittest.TestCase):
         packet={'raw':'합성 😀\n"', 'fields':{'zero':0,'false':False,'missing':None}}
         prompt='전체 입력을 검사';raw=canonical_json(packet)
         expected=len(prompt.encode())+len(raw)
-        self.assertEqual(expected,budget.measure(packet,prompt))
         self.assertEqual(expected,budget.measure_serialized(raw,prompt))
         self.assertEqual(expected,budget.check_serialized(raw,prompt))
         tokenizer=Mock();tokenizer.encode.side_effect=lambda text,**kwargs:SimpleNamespace(ids=list(text))
@@ -373,7 +372,7 @@ class BatchDatabaseTests(unittest.TestCase):
         self.c.enqueue()
         with patch.object(BatchModel,'execute',side_effect=SystemExit('synthetic process death')):
             with self.assertRaises(SystemExit):self.c.run_job()
-        result=self.c.run_job(now=_now()+timedelta(seconds=300))
+        result=self.c.run_job(now=datetime.now(timezone.utc)+timedelta(seconds=300))
         self.assertEqual('UNKNOWN',result['status']);self.assertEqual([],self.c.requests)
         self.assertIsNone(self.c.run_job())
 

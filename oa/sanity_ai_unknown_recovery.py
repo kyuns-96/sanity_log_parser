@@ -2,7 +2,7 @@
 from datetime import timedelta
 import re
 
-from common.sanity_common import ReviewError, digest
+from common.sanity_common import ReviewError
 from common.sanity_db import lock_key, uuid_value
 from common.sanity_submission import check
 from oa.sanity_ai_retry import MAX_RESUMES
@@ -71,9 +71,8 @@ def marker(service, request_id):
     row=service.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key=%s",(key,)).fetchone()
     if not row:return None
     value=row['payload']
-    check(isinstance(value,dict) and set(value)=={'namespace','id','job_id','actor_id','event_sha256','step_sha256','sha256'}
+    check(isinstance(value,dict) and {'namespace','id','job_id','actor_id','event_sha256','step_sha256'} <= set(value)
           and value['namespace']==NAMESPACE and value['id']==request_id
-          and value['sha256']==digest({k:v for k,v in value.items() if k!='sha256'})
           and row['record_id']==record_id('WS_CONFIG',key) and row['state']=={} and row['version']==0
           and row['status']=='RECORDED' and row['created_at']==row['updated_at']
           and all(row.get(k) is None for k in _NULL_COLUMNS),'AI_JOB_CORRUPT')
@@ -168,6 +167,5 @@ def retry_unknown(service,user_id,job_id,request_id,expected_event_sha256,expect
     result=service._append(event,'RUNNING',data,now=now)
     value={'namespace':NAMESPACE,'id':request_id,'job_id':job_id,'actor_id':user_id,
            'event_sha256':expected_event_sha256,'step_sha256':expected_step_sha256}
-    value['sha256']=digest(value)
     service.ws.put('WS_CONFIG',PREFIX+request_id,value)
     return service.public(result)

@@ -139,8 +139,7 @@ class MockDatabase:
         connection = psycopg2.connect(**self.parameters("admin", "postgres"))
         connection.autocommit = True
         try:
-            self.server_version_num = connection.server_version
-            if self.server_version_num < 120001:
+            if connection.server_version < 120001:
                 raise MockError("PostgreSQL 12.1+ is required")
             with connection.cursor() as cursor:
                 for side in ("vwp", "oa"):
@@ -327,9 +326,7 @@ def main(argv=None):
         parser.error("--include cannot extend an owner's --role scope")
     args.include = list(dict.fromkeys(args.include))
     database = None
-    summary = {"status": "FAILED", "db_stopped": False, "profile": args.profile, "role": args.role,
-               "include": args.include,
-               "full_suite": args.profile == "full", "jobs": args.jobs, "durability": args.durability}
+    status, db_stopped = "FAILED", False
     try:
         import psycopg2
         database = MockDatabase(pg_binaries(args.pg_bin), durability=args.durability)
@@ -339,41 +336,36 @@ def main(argv=None):
         print("phase=initdb auth=SCRAM transport=UNIX_SOCKET", flush=True)
         database.start()
         database.setup(staged)
-        summary['server_version_num'] = database.server_version_num
         environment = database.test_environment()
         print("phase=schema_and_permissions_passed", flush=True)
         for side in ("vwp", "oa"):
             execute(staged, environment, database.root / f"check-{side}.log", "common.sanity_db", "check", "--side", side)
         print(f"phase=regression_tests profile={args.profile}", flush=True)
         if args.jobs == 1:
-            try:
-                execute(staged, environment, database.root / "tests.log", "run_tests.py", "--require-db",
-                        "--profile", args.profile, *(("--role", args.role) if args.role else ()),
-                        *(("--include", *args.include) if args.include else ()),
-                        "--report-json", database.root / "tests.json")
-            finally:
-                if (database.root / "tests.json").is_file():
-                    summary["tests"] = json.loads((database.root / "tests.json").read_text(encoding="utf-8"))
+            execute(staged, environment, database.root / "tests.log", "run_tests.py", "--require-db",
+                    "--profile", args.profile, *(("--role", args.role) if args.role else ()),
+                    *(("--include", *args.include) if args.include else ()),
+                    "--report-json", database.root / "tests.json")
+            report = json.loads((database.root / "tests.json").read_text(encoding="utf-8"))
         else:
-            summary["tests"] = parallel_regression(staged, environment, database, args.profile, args.jobs, role=args.role,
+            report = parallel_regression(staged, environment, database, args.profile, args.jobs, role=args.role,
                                                    **({'include':args.include} if args.include else {}))
-            if not summary["tests"]["successful"]:
+            if not report["successful"]:
                 raise MockError("Regression tests failed; see tests.json and tests-worker-*.log")
-        if summary["tests"].get("profile") != args.profile:
+        if report.get("profile") != args.profile:
             raise MockError("Test report profile does not match the requested scope")
-        if summary["tests"].get("role") != args.role:
+        if report.get("role") != args.role:
             raise MockError("Test report role does not match the requested scope")
-        if summary["tests"].get("include", []) != args.include:
+        if report.get("include", []) != args.include:
             raise MockError("Test report additional scope does not match the requested tests")
-        if args.role and summary["tests"].get("database_tests") is not True:
+        if args.role and report.get("database_tests") is not True:
             raise MockError("Role DB report must include database tests")
-        if summary["tests"]["skipped"]:
+        if report["skipped"]:
             raise MockError("Mock DB validation must not skip tests")
-        print(f"phase=tests_passed count={summary['tests']['tests_run']}", flush=True)
-        summary["status"] = "PASSED"
+        print(f"phase=tests_passed count={report['tests_run']}", flush=True)
+        status = "PASSED"
     except (Exception, KeyboardInterrupt) as exc:
         # Avoid driver error strings, exception repr/command lines and credentials.
-        summary["error_type"] = type(exc).__name__
         print(f"status=FAILED error_type={type(exc).__name__}; inspect retained phase logs", file=sys.stderr)
         if isinstance(exc, MockError):
             print(str(exc), file=sys.stderr)
@@ -381,15 +373,12 @@ def main(argv=None):
         if database is not None:
             try:
                 database.stop()
-                summary["db_stopped"] = True
-            except (Exception, KeyboardInterrupt) as exc:
-                summary.update(status="FAILED", stop_error_type=type(exc).__name__)
+                db_stopped = True
+            except (Exception, KeyboardInterrupt):
+                status = "FAILED"
                 print("Database shutdown failed; check retained runtime before cleanup", file=sys.stderr)
-            with (database.root / "summary.json").open("x", encoding="utf-8") as stream:
-                json.dump(summary, stream, ensure_ascii=False, indent=2)
-                stream.write("\n")
-            print(f"status={summary['status']} profile={args.profile} role={args.role or 'all'} jobs={args.jobs} db_stopped={summary['db_stopped']} report={database.root / 'summary.json'}", flush=True)
-    return 0 if summary["status"] == "PASSED" else 1
+            print(f"status={status} profile={args.profile} role={args.role or 'all'} jobs={args.jobs} db_stopped={db_stopped}", flush=True)
+    return 0 if status == "PASSED" else 1
 
 
 if __name__ == "__main__":

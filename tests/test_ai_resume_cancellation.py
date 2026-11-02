@@ -1,12 +1,12 @@
 """A resumed single call can be cancelled and resumed before dispatch."""
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 from unittest.mock import patch
 from uuid import uuid4
 
 import httpx
 
 from common.sanity_ai_execution import executing_on
-from oa.sanity_ai_jobs import _now
+
 from tests.support import PgTestCase
 
 
@@ -19,7 +19,7 @@ class ResumeCancellationTests(PgTestCase):
     def test_503_exhaustion_resume_cancel_and_resume_without_an_extra_call(self):
         job=self.w.request();self.w.prepare()
         self.c.callback=lambda request:httpx.Response(503)
-        start=_now()
+        start=datetime.now(timezone.utc)
         for attempt in range(6):
             at=start+timedelta(seconds=200*attempt)
             with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):

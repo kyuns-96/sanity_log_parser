@@ -21,14 +21,13 @@ def marker(db,kind,identity):
                    "ORDER BY workspace_key DESC LIMIT 1",(prefix+'%',)).fetchone()
     if row is None:return None
     value=row['payload']
-    check(isinstance(value,dict) and set(value)=={'namespace','kind','id','block_id','actor_id','at','revision','sha256'}
+    check(isinstance(value,dict) and {'namespace','kind','id','block_id','actor_id','at','revision'} <= set(value)
           and value['namespace']==NAMESPACE and value['kind']==kind and value['id']==identity
           and type(value['revision']) is int and value['revision']>=1
           and row['workspace_key']==prefix+f"{value['revision']:010d}"
           and row['record_id']==stable_uuid('workspace-v1','WS_CONFIG',row['workspace_key'])
           and row['state']=={} and row['version']==0 and row['status']=='RECORDED'
-          and row['created_at']==row['updated_at']
-          and value['sha256']==digest({k:v for k,v in value.items() if k!='sha256'}),'REMOVAL_CORRUPT')
+          and row['created_at']==row['updated_at'],'REMOVAL_CORRUPT')
     check(datetime.fromisoformat(value['at']).utcoffset() is not None,'REMOVAL_CORRUPT')
     return value
 
@@ -38,7 +37,6 @@ def mark(ws,kind,identity,block_id,actor_id):
     at=ws.db.execute('SELECT clock_timestamp() AS now').fetchone()['now'].isoformat()
     value={'namespace':NAMESPACE,'kind':kind,'id':identity,'block_id':block_id,'actor_id':actor_id,
            'at':at,'revision':old['revision']+1 if old else 1}
-    value['sha256']=digest(value)
     ws.put('WS_CONFIG',stem(kind,identity)+f"{value['revision']:010d}",value)
     return value
 

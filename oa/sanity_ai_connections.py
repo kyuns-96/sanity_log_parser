@@ -1,5 +1,4 @@
 """Administrator-owned inference connections; encrypted secrets and immutable revisions."""
-from copy import deepcopy
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -9,7 +8,7 @@ from common.sanity_config import load_environment
 from common.sanity_db import lock_key, uuid_value
 from common.sanity_privacy import SecretGuard
 from common.sanity_ai_reasoning import ReasoningSettings
-from common.sanity_ai_cache import CacheSettings
+from common.sanity_ai_cache import validate_wire_cache
 from oa.sanity_ai_budget import BatchSettings
 from oa.sanity_ai_model import OAAdvisor, OASettings
 from oa.sanity_ai_tokens import UserTokenStore
@@ -43,8 +42,9 @@ def validate_config(config):
         if "cache" in config:
             ordinary["cache"] = config["cache"]
         validate_config(ordinary)
-        return deepcopy(config)
+        return config
     check(isinstance(config, dict) and CONFIG_KEYS <= set(config) <= CONFIG_KEYS | {"reasoning", "cache"}, "AI_CONNECTION_CONFIG")
+    validate_wire_cache(config, code="AI_CACHE_CONFIG")
     check(isinstance(config["label"], str) and 1 <= len(config["label"]) <= 100
           and config["label"] == config["label"].strip() and config["label"].isprintable(), "AI_CONNECTION_CONFIG")
     check(type(config["enabled"]) is bool and config["auth_mode"] in
@@ -70,8 +70,8 @@ def validate_config(config):
         client_name=config["client_name"], client_version=config["client_version"],
         session_mode=config["session_mode"], session_id=config["session_id"], batch=settings,
         reasoning=ReasoningSettings.from_config(config["reasoning"]) if "reasoning" in config else None,
-        cache=CacheSettings.from_config(config["cache"]) if "cache" in config else None)
-    return deepcopy(config)
+        cache=True if "cache" in config else None)
+    return config
 
 
 class ConnectionStore:
@@ -167,7 +167,7 @@ class ConnectionStore:
 
     @staticmethod
     def admin_public(value):
-        return {"id":value["connection_id"], "revision":value["revision"], "config":deepcopy(value["config"]),
+        return {"id":value["connection_id"], "revision":value["revision"], "config":value["config"],
                 "client_key_registered":value["client_key_ciphertext"] is not None}
 
     def credential_scope(self, value):
@@ -248,7 +248,7 @@ class ConnectionStore:
                 json_mode=config["json_mode"], timeout=config["timeout"], max_input_bytes=config["max_input_bytes"],
                 max_output_bytes=config["max_output_bytes"], batch=BatchSettings(**config["batch"]),
                 reasoning=ReasoningSettings.from_config(config["reasoning"]) if "reasoning" in config else None,
-                cache=CacheSettings.from_config(config["cache"]) if "cache" in config else None,
+                cache=True if "cache" in config else None,
                 connection_id=value["connection_id"], connection_revision=value["revision"], connection_label=config["label"])
             advisor = VwpAdvisor(settings, profile)
             return advisor.for_model(model_id) if model_id is not None else advisor
@@ -260,7 +260,7 @@ class ConnectionStore:
             client_name=config["client_name"], client_version=config["client_version"],
             session_mode=config["session_mode"], session_id=config["session_id"], batch=BatchSettings(**config["batch"]),
             reasoning=ReasoningSettings.from_config(config["reasoning"]) if "reasoning" in config else None,
-            cache=CacheSettings.from_config(config["cache"]) if "cache" in config else None,
+            cache=True if "cache" in config else None,
             connection_id=value["connection_id"], connection_revision=value["revision"], connection_label=config["label"]),
             transport=transport)
         return advisor.for_model(model_id) if model_id is not None else advisor
@@ -332,7 +332,7 @@ class ConnectionStore:
         check(previous['revision'] == expected_revision, 'REVISION_CONFLICT')
         revision = expected_revision + 1
         value = {'namespace':NAMESPACE,'connection_id':connection_id,'revision':revision,'actor_id':actor.user_id,
-                 'config':{**deepcopy(previous['config']),'enabled':False},'client_key_ciphertext':None,'deleted':True}
+                 'config':{**previous['config'],'enabled':False},'client_key_ciphertext':None,'deleted':True}
         value['sha256'] = digest(value)
         WorkspaceStore(self.db).put('WS_CONFIG',PREFIX + connection_id + '.' + f'{revision:010d}',value)
         return {'id':connection_id,'revision':revision,'deleted':True}

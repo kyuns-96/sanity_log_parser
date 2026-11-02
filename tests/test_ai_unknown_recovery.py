@@ -1,6 +1,6 @@
 """Synthetic-only tests for acknowledged recovery of an UNKNOWN batch."""
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 import json
 from threading import Event
 import unittest
@@ -13,7 +13,7 @@ from common.sanity_ai_execution import executing_on
 from common.sanity_common import ReviewError, digest
 from common.sanity_db import json_value
 from oa.sanity_ai_budget import BatchSettings
-from oa.sanity_ai_jobs import _now
+
 from tests.support import PgTestCase
 
 
@@ -122,7 +122,6 @@ class UnknownRecoveryBatchTests(PgTestCase):
             "AND workspace_key LIKE %s ORDER BY workspace_key DESC LIMIT 1",('ai.live.'+job['id']+'.%',)).fetchone()
         self.assertEqual('UNKNOWN',snapshot['job']['status'])
         snapshot['job'].pop('unknown_recovery',None)
-        snapshot['sha256']=digest({k:v for k,v in snapshot.items() if k!='sha256'})
         self.c.admin_query("UPDATE {oa} SET payload=%s WHERE record_type='WS_CONFIG' AND workspace_key=%s",(json_value(snapshot),key))
         snapshot_count=self.c.admin_query("SELECT count(*) FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s",
                                           ('ai.live.'+job['id']+'.%',)).fetchone()[0]
@@ -235,7 +234,7 @@ class UnknownRecoveryBatchTests(PgTestCase):
         self.c.callback=block_first
         def worker():
             with executing_on('vwp'):return self.c.run_job()
-        at=_now()+timedelta(seconds=300)
+        at=datetime.now(timezone.utc)+timedelta(seconds=300)
         with ThreadPoolExecutor(max_workers=1) as executor:
             pending=executor.submit(worker)
             try:

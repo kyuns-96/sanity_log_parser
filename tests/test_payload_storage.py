@@ -9,7 +9,7 @@ from unittest.mock import patch
 from common.sanity_common import ReviewError, canonical_json, digest
 from common.sanity_db import Database, lock_key
 from common.sanity_payload_storage import (MARKER, PrivatePayloadStorage,
-    decode_payload, encode_evidence, encode_payload, restore_row)
+    _restore, encode_evidence, encode_payload, restore_row)
 from common.sanity_privacy import SecretGuard
 from common.sanity_raw_sources import RawSourceStore
 from common.sanity_submission_store import SubmissionStore
@@ -32,13 +32,13 @@ class PayloadCodecTests(unittest.TestCase):
         header, packed = encode_payload('EVIDENCE', value)
         self.assertIsNotNone(packed)
         self.assertLess(len(canonical_json(header))+len(packed), len(canonical_json(value)))
-        self.assertEqual(value, decode_payload('EVIDENCE', header, packed))
-        self.assertEqual(value, decode_payload('EVIDENCE', header, memoryview(packed)))
+        self.assertEqual(value, _restore('EVIDENCE', header, packed)[0])
+        self.assertEqual(value, _restore('EVIDENCE', header, memoryview(packed))[0])
 
     def test_small_payload_is_kept_plain(self):
         value = {'synthetic': 'small'}
         self.assertEqual((value, None), encode_payload('EVIDENCE', value))
-        self.assertEqual(value, decode_payload('EVIDENCE', value))
+        self.assertEqual(value, _restore('EVIDENCE', value)[0])
 
     def test_evidence_raw_bytes_are_retained_inside_the_checked_compressed_body(self):
         value = payload()
@@ -59,7 +59,7 @@ class PayloadCodecTests(unittest.TestCase):
         value['fields'] = {'random': random.Random(7).randbytes(400).hex()}
         header, packed = encode_payload('EVIDENCE', value)
         self.assertTrue(packed is None or len(canonical_json(header))+len(packed)+64 < len(canonical_json(value)))
-        self.assertEqual(value, decode_payload('EVIDENCE', header, packed))
+        self.assertEqual(value, _restore('EVIDENCE', header, packed)[0])
 
     def test_outbox_packet_and_collection_id_are_preserved(self):
         value = {'submission_id': str(uuid.uuid4()), 'position': 1, 'kind': 'SOURCE_PART',
@@ -68,7 +68,7 @@ class PayloadCodecTests(unittest.TestCase):
         header, packed = encode_payload('SOURCE_OUTBOX', value)
         self.assertIsNotNone(packed)
         self.assertEqual(value['packet']['collection_id'], header['packet']['collection_id'])
-        self.assertEqual(value, decode_payload('SOURCE_OUTBOX', header, packed))
+        self.assertEqual(value, _restore('SOURCE_OUTBOX', header, packed)[0])
 
     def test_corrupt_hash_gzip_and_indexed_header_fail_closed(self):
         header, packed = encode_payload('EVIDENCE', payload())
@@ -84,7 +84,7 @@ class PayloadCodecTests(unittest.TestCase):
         variants.append((wrong_gzip, truncated))
         for changed, blob in variants:
             with self.subTest(header=changed), self.assertRaises(ReviewError) as error:
-                decode_payload('EVIDENCE', changed, blob)
+                _restore('EVIDENCE', changed, blob)[0]
             self.assertEqual('STORED_PAYLOAD_CORRUPT', error.exception.code)
 
     def test_invalid_codec_size_and_extra_metadata_are_rejected(self):
@@ -93,18 +93,18 @@ class PayloadCodecTests(unittest.TestCase):
                        {'uncompressed_bytes': 64*1024*1024+1}, {'extra': 'unexpected'}):
             modified = copy.deepcopy(header); modified[MARKER].update(change)
             with self.subTest(change=change), self.assertRaises(ReviewError):
-                decode_payload('EVIDENCE', modified, packed)
+                _restore('EVIDENCE', modified, packed)[0]
 
     def test_compressed_expansion_is_bounded(self):
         header, packed = encode_payload('EVIDENCE', payload())
         with patch('common.sanity_payload_storage.MAX_BYTES', 128), self.assertRaises(ReviewError):
-            decode_payload('EVIDENCE', header, packed)
+            _restore('EVIDENCE', header, packed)[0]
 
     def test_missing_blob_and_disallowed_record_types_are_rejected(self):
         header, packed = encode_payload('EVIDENCE', payload())
         for kind, blob in (('EVIDENCE', None), ('RAW_CHUNK', packed)):
             with self.subTest(kind=kind), self.assertRaises(ReviewError):
-                decode_payload(kind, header, blob)
+                _restore(kind, header, blob)[0]
 
 
 class PayloadStorageDatabaseTests(PgTestCase):

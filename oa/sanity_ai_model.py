@@ -21,7 +21,6 @@ from uuid import uuid4
 import httpx
 
 from common.sanity_ai_contracts import review_evidence, validate_criteria, validate_review_v2
-from common.sanity_ai_cache import CacheSettings
 from common.sanity_ai_knowledge import shared_case
 from common.sanity_ai_reasoning import ReasoningSettings
 from common.sanity_clustering import check
@@ -204,10 +203,10 @@ class OASettings:
     connection_revision: int = 0
     connection_label: str = ""
     reasoning: ReasoningSettings | None = None
-    cache: CacheSettings | None = None
+    cache: bool | None = None
 
     def __post_init__(self):
-        check(self.cache is None or isinstance(self.cache, CacheSettings), "AI_CACHE_CONFIG")
+        check(self.cache is None or self.cache is True, "AI_CACHE_CONFIG")
         check(self.reasoning is None or isinstance(self.reasoning, ReasoningSettings), "AI_REASONING_CONFIG")
         if self.reasoning is not None:
             self.reasoning.validate_api(self.api)
@@ -407,7 +406,7 @@ class OAAdvisor:
         if settings.reasoning is not None:
             public["reasoning"] = settings.reasoning.public()
         if settings.cache is not None:
-            public["cache"] = settings.cache.public()
+            public["cache"] = {'no-cache':True}
         if settings.connection_id:
             public.update(connection_id=settings.connection_id, connection_revision=settings.connection_revision,
                           connection_label=settings.connection_label)
@@ -544,7 +543,7 @@ class OAAdvisor:
         if settings.reasoning is not None:
             body.update(settings.reasoning.body(settings.api))
         if settings.cache is not None:
-            body.update(settings.cache.body())
+            body['cache'] = {'no-cache':True}
         if budget is not None:
             input_tokens = budget.check_serialized(encoded, instruction)
             body[budget.settings.output_parameter] = budget.settings.output_tokens

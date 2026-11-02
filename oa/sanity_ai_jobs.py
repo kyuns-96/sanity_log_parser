@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import re
 import time
 from uuid import uuid4
@@ -47,10 +47,6 @@ _NULL_COLUMNS = ("project", "run_id", "bundle_id", "review_unit_id", "review_rev
     "workspace_block_ref", "workspace_version_ref", "workspace_review_report_ref", "workspace_review_version_ref",
     "workspace_review_event_ref", "workspace_pipeline_report_ref", "workspace_pipeline_version_ref",
     "workspace_pipeline_event_ref", "workspace_pipeline_cluster_ref")
-
-
-def _now():
-    return datetime.now(timezone.utc)
 
 
 def _db_now(db):

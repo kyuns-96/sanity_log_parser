@@ -16,7 +16,7 @@ from common.sanity_db import Database, Queue, json_value
 from oa.sanity_exchange import request_evidence, receive_evidence
 from vwp_bridge.sanity_exchange import respond_evidence
 from oa.sanity_oa_store import OAStore
-from devtools.worker_dispatch import work
+from vwp_bridge.worker import work
 from tests.support import PgTestCase, ROOT
 
 
@@ -285,7 +285,7 @@ class DatabaseTests(PgTestCase):
         requests = {self.request()[0], self.request()[0]}
         handled = set()
         for _ in requests:
-            result = work("vwp", once=True)
+            result = work(once=True)
             self.assertEqual("FULFILLED", result["result"])
             rid = result["request_id"]
             self.assertIn(rid, requests - handled)
@@ -296,7 +296,7 @@ class DatabaseTests(PgTestCase):
             self.assertEqual(response["correlation_id"], unpack_json(response)["request_id"])
             self.assertEqual("FULFILLED", receive_evidence(rid)["result"])
             self.assertEqual("ALREADY_RESPONDED", respond_evidence(rid)["status"])
-        self.assertEqual("NO_MESSAGE", work("vwp", once=True)["status"])
+        self.assertEqual("NO_MESSAGE", work(once=True)["status"])
         self.assertEqual(2, self.admin_query("SELECT count(*) FROM {vwp_to_oa} WHERE message_type='EVIDENCE_RESPONSE'").fetchone()[0])
 
     def test_default_evidence_polling_rejection_and_expiry_remain_correlated(self):
@@ -307,11 +307,11 @@ class DatabaseTests(PgTestCase):
         rid, req = self.request()
         self.admin_query("UPDATE {oa_to_vwp} SET expires_at=created_at+interval '1 microsecond' WHERE message_id=%s",
                          (req["message_id"],))
-        self.assertEqual("EXPIRED", work("vwp", once=True)["result"])
+        self.assertEqual("EXPIRED", work(once=True)["result"])
         self.assertEqual("EXPIRED", receive_evidence(rid)["result"])
         self.record_ids.append("r-missing")
         rid, _ = self.request()
-        self.assertEqual("REJECTED", work("vwp", once=True)["result"])
+        self.assertEqual("REJECTED", work(once=True)["result"])
         self.assertEqual("REJECTED", receive_evidence(rid)["result"])
 
     def test_default_worker_recovers_an_expired_evidence_lease(self):
@@ -321,7 +321,7 @@ class DatabaseTests(PgTestCase):
             Queue(db, "oa_to_vwp").claim(("EVIDENCE_REQUEST",), req["message_id"])
         self.admin_query("UPDATE {oa_to_vwp} SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE message_id=%s",
                          (req["message_id"],))
-        self.assertEqual("FULFILLED", work("vwp", once=True)["result"])
+        self.assertEqual("FULFILLED", work(once=True)["result"])
         self.assertEqual("FULFILLED", receive_evidence(rid)["result"])
         self.assertEqual(("RECEIVED", 2), self.admin_query("SELECT status,attempt_count FROM {oa_to_vwp} WHERE message_id=%s",
                                                         (req["message_id"],)).fetchone())
