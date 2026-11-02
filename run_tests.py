@@ -208,6 +208,7 @@ ROLE_TESTS = {
         "tests.test_ai_evidence_batches.EvidenceBatchPureTests",
         "tests.test_ai_input_projection.ProjectionModelTests",
         "tests.test_ai_parallel_batches.ParallelSettingsTests", "tests.test_retry_policy",
+        "tests.test_ai_rolling_batches.RollingMetricsTests",
     ),
     "oa": (
         "tests.test_auth", "oa.test_auth_config", "oa.test_sso",
@@ -230,6 +231,7 @@ ROLE_DB_TESTS = {
         "tests.test_ai_cache_transport.VwpCacheJobTests.test_vwp_job_sends_cache_and_persists_exact_wire_hash",
         "tests.test_ai_parallel_batches.ParallelVwpJobsTests.test_true_overlap_out_of_order_commit_and_merge_waits_for_all_siblings",
         "tests.test_ai_unknown_recovery.UnknownRecoveryBatchTests.test_acknowledged_retry_keeps_finished_child_and_is_idempotent",
+        "tests.test_ai_rolling_batches.RollingJobsTests.test_eight_slots_refill_while_the_first_seven_are_blocked_and_merge_waits",
     ),
     "oa": (
         "tests.test_ai_connections.ConnectionDatabaseTests.test_only_admin_can_create_and_revisions_are_checked",
