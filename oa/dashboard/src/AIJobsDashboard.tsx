@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Activity, ArrowUpRight, CheckCircle2, Clock3, RefreshCw, Server, ShieldAlert } from 'lucide-react'
 import { Button } from './studio/components/ui/button'
-import { aiExecutionLabel, aiJobActive, aiJobMessage, aiValidationMessage, WorkspaceError, workspaceRequest, workspaceTime } from './workspaceApi'
+import { aiExecutionLabel, aiJobActive, aiJobParallel, aiJobMessage, aiValidationMessage, WorkspaceError, workspaceRequest, workspaceTime } from './workspaceApi'
 import type { CodexJob } from './workspaceApi'
 import UnknownBatchRecovery from './UnknownBatchRecovery'
 import './ai-jobs.css'
@@ -87,7 +87,7 @@ export default function AIJobsDashboard({ projectId, compact = false, onAll, ref
     {!snapshot && !error ? <p className="ai-jobs-empty" role="status">AI 작업 현황을 불러오는 중…</p> : !snapshot ? null : !visible.length ? <div className="ai-jobs-empty"><Activity size={22} /><div><strong>아직 요청한 AI 작업이 없습니다.</strong><p>로그 분류나 그룹 판정을 실행하면 진행 상황이 여기에 표시됩니다.</p></div></div> : <div className="ai-jobs-grid">{visible.map(job => {
       const active = aiJobActive(job)
       const p = job.progress
-      const parallel = p?.execution === 'parallel-v1'
+      const parallel = aiJobParallel(job)
       const stopping = active && parallel && p?.cancel_requested === true
       const roundTotal = p?.round_total || 0
       const roundCompleted = p?.round_completed || 0
@@ -113,7 +113,7 @@ export default function AIJobsDashboard({ projectId, compact = false, onAll, ref
         {parallel && p?.inflight_calls != null && p.concurrency != null && <p className="ai-job-coverage">이 작업에서 동시 처리 {p.inflight_calls} / {p.concurrency}개{p.active_descriptors?.length ? ` · 진행 중 배치 ${p.active_descriptors.map(value => `${value.index + 1}`).join(', ')}` : ''}</p>}
         {!parallel && retryLimit != null && retries > 0 && <p className="ai-job-coverage">현재 요청 재시도 {retries} / {retryLimit}{nextRetry && <> · 다음 시도 {new Date(nextRetry).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</>}</p>}
         <dl className="ai-job-metrics"><div><dt><Clock3 size={12} />{active ? '경과 시간' : '총 소요 시간'}</dt><dd>{seconds(elapsed)}</dd></div><div><dt>로그 건당 평균</dt><dd>{measured != null ? seconds(measured) : '측정 중'}</dd></div><div><dt>이번 단계 예상 종료</dt><dd>{etaAt != null ? etaAt > clock + offset ? new Date(etaAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '예상보다 지연 중' : active && !stopping ? error || !snapshot?.worker.online ? '확인 불가' : nextRetry ? '재시도 대기 중' : parallel && job.status !== 'RUNNING' ? '—' : '측정치 수집 중' : '—'}</dd></div></dl>
-        <p className="ai-job-note">{stopping ? '취소 요청됨 · 진행 중 응답 확인 후 종료' : nextRetry ? aiJobMessage(job) : active && p ? parallel ? '평균은 최근 분류·판정의 실제 경과 시간 기준입니다. 예상은 이번 단계만 포함하며 이후 통합·검증이 남을 수 있습니다.' : '예상 시간은 이번 단계의 완료된 호출 기준입니다. 이후 통합·검증이 남을 수 있습니다.' : job.can_resume && job.resumable && ['FAILED', 'CANCELLED'].includes(job.status) ? (p ? '저장된 완료 배치를 유지하고 중단 지점부터 재개할 수 있습니다.' : '현재 입력으로 작업을 재개할 수 있습니다.') : aiJobMessage(job)}</p>
+        <p className="ai-job-note">{stopping ? '취소 요청됨 · 진행 중 응답 확인 후 종료' : nextRetry ? aiJobMessage(job) : active && p ? parallel ? p?.execution === 'parallel-v2' ? '완료된 자리에 다음 배치를 이어서 처리합니다. 예상은 현재 동시 처리와 남은 작업량을 반영하며, 이번 단계 이후 통합·검증이 남을 수 있습니다.' : '평균은 최근 분류·판정의 실제 경과 시간 기준입니다. 예상은 이번 단계만 포함하며 이후 통합·검증이 남을 수 있습니다.' : '예상 시간은 이번 단계의 완료된 호출 기준입니다. 이후 통합·검증이 남을 수 있습니다.' : job.can_resume && job.resumable && ['FAILED', 'CANCELLED'].includes(job.status) ? (p ? '저장된 완료 배치를 유지하고 중단 지점부터 재개할 수 있습니다.' : '현재 입력으로 작업을 재개할 수 있습니다.') : aiJobMessage(job)}</p>
         {aiValidationMessage(job) && <p className="ai-job-note">{aiValidationMessage(job)}</p>}
         {(job.error || p?.retry_error) && <code className="ai-job-error">{job.error || p?.retry_error}{p?.retry_http_status ? ` · HTTP ${p.retry_http_status}` : ''}</code>}
         <footer><span>등록 {workspaceTime(job.created_at)}</span><div>{(job.can_cancel || stopping) && <Button size="sm" variant="ghost" disabled={!!cancelling || !!resuming || stopping} onClick={() => void cancel(job)}>{stopping ? '취소 요청됨' : cancelling === job.id ? '취소 중…' : '작업 취소'}</Button>}{job.can_resume && job.resumable && ['FAILED', 'CANCELLED'].includes(job.status) && <Button size="sm" variant="ghost" disabled={!!resuming || !!cancelling} onClick={() => void resume(job)}>{resuming === job.id ? '재개 요청 중…' : '중단 지점부터 재개'}</Button>}<UnknownBatchRecovery job={job} disabled={!!cancelling || !!resuming} onAccessDenied={clearAccessSnapshot} onRefresh={() => setReload(v => v + 1)} /><Button size="sm" variant="outline" asChild><a href={`/?${params}`}>검토 열기<ArrowUpRight size={13} /></a></Button></div></footer>

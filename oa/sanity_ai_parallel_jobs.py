@@ -1,4 +1,4 @@
-"""Bounded parallel waves. Only HTTP runs in copied thread contexts.
+"""Durable parallel calls. Legacy waves and rolling windows share result storage.
 
 The coordinator commits each response immediately on a fresh connection. A
 wave never starts its successor until every reservation has a known outcome.
@@ -56,12 +56,15 @@ def _wall_metrics(event, state, wave):
     except (ReviewError,KeyError,TypeError,ValueError,OverflowError):
         return rate,None,None
     measured_at=timing['measured_at']
-    if (event['status']!='RUNNING' or state.get('cancel_requested')
+    if (event['status']!='RUNNING' or state.get('cancel_requested') or state.get('dispatch_error')
             or any(slot.get('status') in ('FAILED','UNKNOWN') or
                    slot.get('status')=='RETRY' and slot.get('retry_after') for slot in wave)):
         return rate,None,measured_at
     if completed >= total:
         return rate,None,measured_at
+    if event['data']['batch'].get('execution')=='parallel-v2':
+        from oa.sanity_ai_rolling_metrics import eta
+        return rate,eta(event,state,wave,timing,measured,samples,records),measured_at
     if state.get('phase') in ('CLASSIFY','REVIEW'):
         remaining=total_records-state['records']
         eta=elapsed/records*remaining if records > 0 and remaining > 0 else None
@@ -80,7 +83,7 @@ def public(service, event):
     active = [slot for slot in wave if slot['status'] == 'RESERVED']
     retry = [slot for slot in wave if slot['status'] == 'RETRY' and slot.get('retry_after')]
     wall_rate,wall_eta,wall_measured_at=_wall_metrics(event,state,wave)
-    value['progress'] = {'mode':'BATCH','execution':'parallel-v1',
+    value['progress'] = {'mode':'BATCH','execution':event['data']['batch']['execution'],
         'concurrency':event['data']['batch']['max_concurrency'],'inflight_calls':len(active),
         'active_descriptors':[{'index':s['index'],'phase':state.get('phase','CLASSIFY')} for s in active],
         'phase':state.get('phase','CLASSIFY'),'round':state.get('round',0),
@@ -169,6 +172,10 @@ def _settle(service, event, ledger):
         if failed.get('validation_failure') is not None:error.validation_failure=failed['validation_failure']
         return service._failed(event,error,
                                status='STALE' if code in STALE else 'FAILED',called=failed.get('model_called'))
+    if state.get('dispatch_error'):
+        code = state['dispatch_error']
+        return service._failed(event,ReviewError(code,'Parallel dispatch stopped'),
+                               status='STALE' if code in STALE else 'FAILED')
     return event
 
 

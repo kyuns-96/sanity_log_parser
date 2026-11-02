@@ -32,7 +32,7 @@ def _wave(state):
 
 def can_resume(event, state):
     wave = _wave(state)
-    return (not any(slot['status'] in ('RESERVED', 'UNKNOWN') for slot in wave)
+    return (not state.get('dispatch_error') and not any(slot['status'] in ('RESERVED', 'UNKNOWN') for slot in wave)
             and not any(slot['status'] == 'FAILED' and
                         (not valid_receipt(slot.get('receipt')) or
                          slot.get('error') not in (slot['receipt']['error'], 'AI_BATCH_LIMIT')) for slot in wave)
@@ -46,6 +46,8 @@ def _info(event, step, ref):
             or not isinstance(ref, dict)):
         return None
     state = step.get('state')
+    if isinstance(state,dict) and state.get('dispatch_error'):
+        return None
     wave = _wave(state)
     unknown = [slot for slot in wave if slot['status'] == 'UNKNOWN']
     if not unknown or any(slot['status'] == 'RESERVED' for slot in wave):
