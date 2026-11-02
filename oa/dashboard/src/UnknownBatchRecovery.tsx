@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Button } from './studio/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog'
-import { WorkspaceError, workspaceRequest } from './workspaceApi'
+import { aiJobParallel, WorkspaceError, workspaceRequest } from './workspaceApi'
 import type { CodexJob, UnknownRecovery } from './workspaceApi'
 import './unknown-batch-recovery.css'
 
@@ -18,7 +18,7 @@ const validRecovery = (ref: UnknownRecovery) => !!ref && hash(ref.event_sha256) 
 export function canRetryUnknown(job?: CodexJob | null): job is CodexJob {
   const ref = job?.unknown_recovery
   return !!job && job.status === 'UNKNOWN' && job.can_retry_unknown === true && job.progress?.mode === 'BATCH' && !!ref &&
-    validRecovery(ref) && (job.progress.execution !== 'parallel-v1' || Array.isArray(job.unknown_recoveries) && job.unknown_recoveries.length > 0 &&
+    validRecovery(ref) && (!aiJobParallel(job) || Array.isArray(job.unknown_recoveries) && job.unknown_recoveries.length > 0 &&
       job.unknown_recoveries.length <= 8 && job.unknown_recoveries.every(validRecovery) &&
       new Set(job.unknown_recoveries.map(value => `${value.phase}:${value.round}:${value.index}`)).size === job.unknown_recoveries.length)
 }
@@ -35,7 +35,7 @@ export default function UnknownBatchRecovery({ job, onRefresh, onAccessDenied, d
   const eligible = canRetryUnknown(job)
   const eventHash = ref?.event_sha256
   const stepHash = ref?.step_sha256
-  const parallel = job.progress?.execution === 'parallel-v1'
+  const parallel = aiJobParallel(job)
   const members = parallel ? JSON.stringify(job.unknown_recoveries || []) : ''
   useEffect(() => {
     const saved = requests.get(job.id)

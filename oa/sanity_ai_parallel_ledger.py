@@ -1,4 +1,4 @@
-"""Immutable bounded waves, independent call reservations and ordered results."""
+"""Immutable bounded call windows, independent reservations and ordered results."""
 import re
 
 from common.sanity_common import ReviewError, digest
@@ -8,11 +8,48 @@ from oa.sanity_ai_retry import valid_receipt
 
 
 def parallel(event):
-    return event['data'].get('batch', {}).get('execution') == 'parallel-v1'
+    return event['data'].get('batch', {}).get('execution') in ('parallel-v1','parallel-v2')
+
+
+def _window(state, width):
+    wave = state.get('wave', [])
+    check(type(state.get('index')) is int and type(state.get('next_index')) is int
+          and 0 <= state['index'] <= state['next_index'] <= state['round_total']
+          and isinstance(wave,list) and len(wave) <= width
+          and state['index'] + len(wave) == state['next_index']
+          and all(type(slot.get('index')) is int and 0 <= slot['index'] < state['next_index'] for slot in wave)
+          and len({slot['index'] for slot in wave}) == len(wave), 'AI_BATCH_CORRUPT')
+    if 'dispatch_error' in state:
+        from oa.sanity_ai_jobs import _error_code
+        code = state['dispatch_error']
+        check(isinstance(code,str) and _error_code(ReviewError(code,'')) == code, 'AI_BATCH_CORRUPT')
+
+
+def _window_transition(before, after):
+    if before is None or before['round'] != after['round']:
+        check(after['index'] == after['next_index'] == 0 and not after['wave'], 'AI_BATCH_CORRUPT')
+        if before is not None:
+            check(after['round']==before['round']+1
+                  and before['index'] + len(before['wave']) == before['round_total']
+                  and all(slot['status']=='DONE' for slot in before['wave']), 'AI_BATCH_CORRUPT')
+        else:
+            check(after['round']==0,'AI_BATCH_CORRUPT')
+        return
+    old = {slot['index']:slot for slot in before['wave']}
+    new = {slot['index']:slot for slot in after['wave']}
+    removed = old.keys() - new.keys()
+    added = new.keys() - old.keys()
+    check(after['next_index']-before['next_index'] == len(added)
+          and all(before['next_index'] <= index < after['next_index'] for index in added)
+          and all(old[index]['status']=='DONE' for index in removed)
+          and after['index'] == before['index'] + len(removed), 'AI_BATCH_CORRUPT')
 
 
 class ParallelLedger(Ledger):
     def step(self, previous, previous_ref, status, state, **extra):
+        if (self.parent['data']['batch']['execution']=='parallel-v2' and previous is not None
+                and previous['state']['round'] != state['round']):
+            state = {**state,'next_index':0,'wave':[]}
         if 'unknown_resolution' not in extra and 'resume' not in extra:
             return super().step(previous, previous_ref, status, state, **extra)
         # The parent transition is appended immediately afterward in this
@@ -42,6 +79,9 @@ class ParallelLedger(Ledger):
               and all(isinstance(slot, dict) and type(slot.get('index')) is int
                       and 0 <= slot['index'] < state['round_total'] for slot in wave)
               and len({slot['index'] for slot in wave}) == len(wave), 'AI_BATCH_CORRUPT')
+        rolling = self.parent['data']['batch']['execution']=='parallel-v2'
+        if rolling:
+            _window(state,self.parent['data']['batch']['max_concurrency'])
         for slot in wave:
             check(slot.get('status') in ('RESERVED','DONE','RETRY','FAILED','UNKNOWN'), 'AI_BATCH_CORRUPT')
             if 'reservation' not in slot:
@@ -65,6 +105,10 @@ class ParallelLedger(Ledger):
                   and isinstance(slot.get('deadline'),str), 'AI_BATCH_CORRUPT')
             from oa.sanity_ai_jobs import _timestamp
             _timestamp(slot['deadline'])
+            if rolling:
+                check(type(slot.get('work')) is int and 0 < slot['work'] <= 1000000
+                      and isinstance(slot.get('reserved_at'),str)
+                      and _timestamp(slot['reserved_at']) < _timestamp(slot['deadline']), 'AI_BATCH_CORRUPT')
             call, call_ref = self.get(reservation['key'], reservation)
             check(call.get('kind') == 'RESERVATION' and call['call_token'] == slot.get('call_token')
                   and call['round'] == state['round'] and call['index'] == slot['index']
@@ -73,6 +117,8 @@ class ParallelLedger(Ledger):
                   and call['prompt_version'] == slot.get('prompt_version')
                   and call['deadline'] == slot.get('deadline')
                   and call['attempt'] == slot.get('attempt'), 'AI_BATCH_CORRUPT')
+            if rolling:
+                check(call.get('reserved_at')==slot['reserved_at'] and call.get('work')==slot['work'], 'AI_BATCH_CORRUPT')
             if slot['status'] != 'RESERVED':
                 outcome, _ = self.get(call_ref['key'] + '.outcome')
                 check(outcome.get('kind') == 'OUTCOME' and outcome.get('reservation') == call_ref
@@ -139,10 +185,15 @@ class ParallelLedger(Ledger):
         sequence = 0
         approved = set()
         previous_counts = (0, 0, 0)
+        previous_state = None
+        rolling = self.parent['data']['batch']['execution']=='parallel-v2'
         for step, ref in self.rows('step.'):
             check(step['sequence'] == sequence + 1 and step['previous_sha256'] == previous
                   and step['status'] == 'READY', 'AI_BATCH_CORRUPT')
             state = step['state']
+            if rolling:
+                _window(state,self.parent['data']['batch']['max_concurrency'])
+                _window_transition(previous_state,state)
             counts = (state['calls'], state.get('failed_calls', 0), state.get('unknown_calls', 0))
             attempts(state)
             check(all(a >= b for a, b in zip(counts, previous_counts)), 'AI_BATCH_CORRUPT')
@@ -171,6 +222,7 @@ class ParallelLedger(Ledger):
             sequence += 1
             previous = ref['sha256']
             previous_counts = counts
+            previous_state = state
         check(previous is not None, 'AI_BATCH_CORRUPT')
         calls = {ref['key']:(body, ref) for body, ref in self.rows('call.')}
         success = failed = unknown = 0

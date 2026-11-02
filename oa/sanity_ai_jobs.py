@@ -31,6 +31,7 @@ from oa.sanity_workspace_clustering import WorkspaceClusteringStore
 from oa.sanity_workspace_group_review import WorkspaceGroupReviewStore
 
 NAMESPACE, PREFIX = "oa-ai-v1", "ai1.job."
+PARALLEL_EXECUTION = 'parallel-v2'
 ACTIVE = frozenset(("PENDING", "RUNNING", "RESULT_READY"))
 TERMINAL = frozenset(("COMPLETED", "FAILED", "STALE", "UNKNOWN", "CANCELLED"))
 TRANSITIONS = {None: {"PENDING"}, "PENDING": {"RUNNING", "FAILED", "STALE", "CANCELLED"},
@@ -195,7 +196,7 @@ def _validate_data(event):
               and (batch['version']==2 or command['group_id'] is None)
               and set(batch)-parallel_keys in ({'version'},{'version','total_records','leaf_count','plan','credential_revision'}), 'AI_JOB_CORRUPT')
         if parallel_keys:
-            check(batch['execution']=='parallel-v1' and type(batch.get('max_concurrency')) is int
+            check(batch['execution'] in ('parallel-v1','parallel-v2') and type(batch.get('max_concurrency')) is int
                   and 2<=batch['max_concurrency']<=8, 'AI_JOB_CORRUPT')
         if 'plan' in batch:
             check(type(batch['total_records'])is int and 1<=batch['total_records']<=1000000
@@ -548,7 +549,7 @@ class AIJobService:
             data['batch']={'version':2 if group_id is not None or available(context) else 1}
             width = model['batch'].get('max_concurrency',1)
             if width>1:
-                data['batch'].update(execution='parallel-v1',max_concurrency=width)
+                data['batch'].update(execution=PARALLEL_EXECUTION,max_concurrency=width)
         return self.public(self._append(None, "PENDING", data, now=now))
 
     def status(self, user_id, job_id):
@@ -587,7 +588,7 @@ class AIJobService:
         header(self,{**command,"user_id":user_id},write=True)
         if event["status"] in TERMINAL:
             return self.public(event)
-        if event['data'].get('batch',{}).get('execution')=='parallel-v1':
+        if event['data'].get('batch',{}).get('execution') in ('parallel-v1','parallel-v2'):
             from oa.sanity_ai_parallel_jobs import cancel
             return cancel(self,event,user_id)
         return self.public(self._append(event, "CANCELLED", {**event["data"], "cancelled_by": user_id}))
@@ -694,7 +695,7 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
             if candidate['status']=='RUNNING' and candidate['data'].get('fail_safe') and 'batch' in candidate['data']:
                 from oa.sanity_ai_batch_jobs import Ledger
                 try:
-                    if candidate['data']['batch'].get('execution')=='parallel-v1':
+                    if candidate['data']['batch'].get('execution') in ('parallel-v1','parallel-v2'):
                         from oa.sanity_ai_parallel_ledger import ParallelLedger
                         step,_=ParallelLedger(service,candidate).last()
                         slots=step['state'].get('wave',[]) if step else []
@@ -720,7 +721,10 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
         from oa.sanity_ai_submissions import prepare_one
         return prepare_one(db_factory,workspace_factory,advisor,criteria_provider)
     if batch_job is not None:
-        if event['data']['batch'].get('execution')=='parallel-v1':
+        if event['data']['batch'].get('execution')=='parallel-v2':
+            from oa.sanity_ai_rolling_jobs import run_step
+            return run_step(db_factory,workspace_factory,advisor,criteria_provider,batch_job,now=now)
+        if event['data']['batch'].get('execution') in ('parallel-v1','parallel-v2'):
             from oa.sanity_ai_parallel_jobs import run_step
             return run_step(db_factory,workspace_factory,advisor,criteria_provider,batch_job,now=now)
         from oa.sanity_ai_batch_jobs import run_step

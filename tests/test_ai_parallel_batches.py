@@ -72,7 +72,7 @@ class ParallelVwpJobsTests(PgTestCase):
         self.w=VwpWorkerTests();self.w.setUp();self.addCleanup(self.w.doCleanups)
         self.c=self.w.c;self.v=self.w.v;self.admin,self.schema=self.c.admin,self.c.schema
 
-    def create_job(self, *, width=2, records=2, max_calls=20000, merge_groups=20):
+    def create_job(self, *, width=2, records=2, max_calls=20000, merge_groups=20, execution='parallel-v1'):
         from tests.test_vwp_inference import configuration
         report=self.c.admin_query("SELECT payload FROM {oa} WHERE record_type='WS_REPORT' AND workspace_key='report'").fetchone()[0]
         if records>2:
@@ -85,7 +85,10 @@ class ParallelVwpJobsTests(PgTestCase):
             overhead_tokens=1024,max_records=1,output_parameter='max_tokens',max_concurrency=width,max_calls=max_calls,
             merge_groups=merge_groups)
         self.w.connection=self.v.create(configuration(batch=settings.public()))
-        job=self.w.request();prepared=self.w.prepare()
+        # Preserve the original wave contracts as compatibility tests. Rolling
+        # tests explicitly select the current production execution version.
+        with patch('oa.sanity_ai_jobs.PARALLEL_EXECUTION',execution):
+            job=self.w.request();prepared=self.w.prepare()
         self.assertEqual('PENDING',prepared['status'],prepared)
         return job
 
@@ -552,7 +555,7 @@ class ParallelPreservedTextTests(unittest.TestCase):
         fixture=EvidenceTextDatabaseTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
         fixture.advisor.settings=replace(fixture.advisor.settings,
             batch=replace(fixture.advisor.settings.batch,max_concurrency=2))
-        job=fixture.enqueue();self.assertEqual('TEXT',fixture.step()['progress']['phase'])
+        job=fixture.enqueue();self.assertEqual('TEXT_MERGE',fixture.step()['progress']['phase'])
         result=fixture.finish();self.assertEqual('COMPLETED',result['status'],result)
         with Database('oa') as db,db.transaction():
             store=WorkspaceClusteringStore(db,ws=fixture.workspace(db))
@@ -587,7 +590,7 @@ class ParallelPreservedTextTests(unittest.TestCase):
             service=AIJobService(db,fixture.workspace(db),fixture.advisor,fixture.criteria)
             for item in (job,review_job):
                 event=service._load(item['id']);ledger=ParallelLedger(service,event)
-                self.assertEqual('parallel-v1',event['data']['batch']['execution'])
+                self.assertEqual('parallel-v2',event['data']['batch']['execution'])
                 self.assertEqual('COMPLETED',event['status']);self.assertIsNotNone(ledger.audit())
                 final=ledger.get('final')[0]
                 _,context=service._context(event['data']['command'],write=False)

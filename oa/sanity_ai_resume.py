@@ -14,7 +14,7 @@ NAMESPACE = 'oa-ai-resume-v1'
 
 def validate_resume(service, previous, status, data):
     """Validate the terminal-to-active ledger transition without reading input."""
-    if previous['data'].get('batch', {}).get('execution') == 'parallel-v1':
+    if previous['data'].get('batch', {}).get('execution') in ('parallel-v1','parallel-v2'):
         from oa.sanity_ai_parallel_recovery import validate_resume as parallel_validate
         return parallel_validate(service, previous, status, data)
     batch = 'batch' in previous['data']
@@ -73,7 +73,7 @@ def resume(service, user_id, job_id, request_id):
     service.db.execute('SELECT pg_advisory_xact_lock(%s)',(lock_key(PREFIX+request_id),))
     job_lock(service,job_id)
     event=service._load(job_id)
-    if event['data'].get('batch', {}).get('execution') == 'parallel-v1':
+    if event['data'].get('batch', {}).get('execution') in ('parallel-v1','parallel-v2'):
         from oa.sanity_ai_parallel_recovery import resume as parallel_resume
         return parallel_resume(service,user_id,job_id,request_id)
     command=event['data']['command']

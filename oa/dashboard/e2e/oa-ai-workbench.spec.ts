@@ -1336,3 +1336,62 @@ test('parallel ETA is withheld when no measurement timestamp exists or a retry i
   await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
   await expect(eta).toHaveText('재시도 대기 중')
 })
+
+test('rolling jobs refresh their concurrency-aware ETA from completed-call measurements', async ({ page }) => {
+  await mockOA(page)
+  const baseJob = monitoredJob()
+  const measuredAt = new Date(Date.now() - 10000).toISOString()
+  const job = { ...baseJob, progress: { ...baseJob.progress, execution: 'parallel-v2', concurrency: 8, inflight_calls: 8,
+    wall_seconds_per_record: 1.25, wall_stage_eta_seconds: 300, wall_measured_at: measuredAt,
+    stage_eta_seconds: 999, retry_after: null as string | null } }
+  await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [job],
+    server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  const eta = dashboard.locator('.ai-job-metrics').getByText('이번 단계 예상 종료').locator('..').locator('dd')
+  const end = () => new Date(Date.parse(job.progress.wall_measured_at) + job.progress.wall_stage_eta_seconds * 1000)
+    .toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  await expect(eta).toHaveText(end())
+  await expect(dashboard).toContainText('동시 처리 8 / 8개')
+  await expect(dashboard).toContainText('완료된 자리에 다음 배치를 이어서 처리합니다.')
+  job.progress.wall_stage_eta_seconds = 180
+  job.progress.wall_measured_at = new Date(Date.parse(measuredAt) + 5000).toISOString()
+  await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+  await expect(eta).toHaveText(end())
+  job.progress.retry_after = '2099-01-01T00:00:00Z'
+  await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+  await expect(eta).toHaveText('재시도 대기 중')
+})
+
+test('rolling unknown recovery requires and confirms the complete uncertain batch list', async ({ page }) => {
+  await mockOA(page)
+  const baseJob = monitoredJob()
+  const primary = { event_sha256: 'a'.repeat(64), step_sha256: 'b'.repeat(64), call_token: 'synthetic-call-1',
+    phase: 'CLASSIFY', round: 0, index: 2, total: 5, input_bytes: 100 }
+  const members = [primary, { ...primary, call_token: 'synthetic-call-2', index: 4 }]
+  const job = { ...baseJob, status: 'UNKNOWN', can_cancel: false, can_retry_unknown: true,
+    unknown_recovery: primary, unknown_recoveries: [] as typeof members,
+    progress: { ...baseJob.progress, execution: 'parallel-v2' } }
+  const writes: Record<string, unknown>[] = []
+  await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [job],
+    server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.route('**/api/workbench/ai/jobs/*/retry-unknown', route => {
+    writes.push(route.request().postDataJSON())
+    job.status = 'RUNNING'; job.can_retry_unknown = false
+    return route.fulfill({ json: job })
+  })
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  await expect(dashboard.getByRole('button', { name: '결과 불명 배치 재시도' })).toHaveCount(0)
+  job.unknown_recoveries = members
+  await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+  await dashboard.getByRole('button', { name: '결과 불명 배치 재시도' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toContainText('배치 3 / 5')
+  await expect(dialog).toContainText('배치 5 / 5')
+  expect(writes).toHaveLength(0)
+  await dialog.getByRole('button', { name: '확인하고 미확인 2개 재시도' }).click()
+  await expect(dialog).toHaveCount(0)
+  expect(writes).toEqual([{ request_id: expect.any(String), expected_event_sha256: primary.event_sha256,
+    expected_step_sha256: primary.step_sha256, acknowledge_duplicate: true }])
+})
