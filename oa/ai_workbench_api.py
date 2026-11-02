@@ -55,6 +55,10 @@ class EvidenceChoice(BaseModel):
     request_id: UUID
 
 
+class CliSessionCreate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+
 class AIRetryUnknown(AIResume):
     expected_event_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
     expected_step_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
@@ -186,6 +190,23 @@ def create_workbench_router(authorized_actor):
     @router.get(report_path)
     def report(block_id: ID, version_id: ID, report_id: ID, scope=Depends(workspace)):
         return scope.ws.report(scope.user_id, block_id, version_id, report_id, hydrate_source=False)
+
+    @router.get(report_path+'/cli-sessions')
+    def cli_sessions(block_id: ID, version_id: ID, report_id: ID, scope=Depends(workspace)):
+        from oa.sanity_cli_review import CliReviews
+        return CliReviews(scope.ws).sessions(scope.user_id, block_id, version_id, report_id)
+
+    @router.post(report_path+'/cli-sessions', status_code=201)
+    def create_cli_session(block_id: ID, version_id: ID, report_id: ID, body: CliSessionCreate,
+                           scope=Depends(workspace)):
+        from oa.sanity_cli_review import CliReviews
+        return CliReviews(scope.ws).create(scope.user_id, block_id, version_id, report_id)
+
+    @router.post(report_path+'/cli-sessions/{session_id}/revoke')
+    def revoke_cli_session(block_id: ID, version_id: ID, report_id: ID, session_id: UUID,
+                           body: CliSessionCreate, scope=Depends(workspace)):
+        from oa.sanity_cli_review import CliReviews
+        return CliReviews(scope.ws).revoke(scope.user_id, block_id, version_id, report_id, str(session_id))
 
     @router.get('/blocks/{block_id}/versions/{version_id}/delete-preview')
     def version_delete_preview(block_id: ID, version_id: ID, scope=Depends(workspace)):

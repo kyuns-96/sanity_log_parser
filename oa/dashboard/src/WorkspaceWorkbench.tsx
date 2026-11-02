@@ -11,6 +11,7 @@ import AiModelSelect, { selectedAiModel, selectedAiConnection, aiConnectionNotic
 import UnknownBatchRecovery, { canRetryUnknown } from './UnknownBatchRecovery'
 import GroupRationale, { rationaleLabels } from './GroupRationale'
 import EvidenceSharing from './EvidenceSharing'
+import CliReviewAccess from './CliReviewAccess'
 import CaseSource from './CaseSource'
 import PreservedSources, { PreservedCitations } from './PreservedSources'
 import { NEW_LOG_GROUP, useLogDrag } from './useLogDrag'
@@ -368,6 +369,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
         <button type="button" aria-current={step === 2 ? 'step' : undefined} disabled={transitionBlocked} aria-describedby={transitionBlocked && step === 1 && !confirmed ? `${inputId}-step-hint` : undefined} onClick={beginJudgment}><b>2</b><span>그룹별 판정</span><small>{n(data.summary.reviewed)}/{n(data.summary.total)}</small></button>
       </nav>
       <div className="ws-workbench-stage-actions">
+        {production && data.can_edit && <CliReviewAccess key={base} base={base} onError={fail} />}
         {production && step === 1 && !data.current && data.can_edit && !historyEvent && <AiModelSelect ai={data.ai} connectionValue={connectionId} onConnectionChange={value => { setSelectedConnection(value); setSelectedModel('') }} value={modelId} onChange={setSelectedModel} disabled={!writable || !data.ready || aiSubmitting} label="분류 AI 모델" />}
         {step === 1 && confirmed && <Button disabled={transitionBlocked} onClick={beginJudgment}>{data.can_edit ? '그룹 판정 계속' : '판정 보기'}<ArrowRight size={16} /></Button>}
         {step === 1 && data.current && data.can_edit && !historyEvent && !confirmed && <Button aria-describedby={`${inputId}-confirm-hint`} disabled={confirmBlocked} onClick={() => mutate('/clustering?compact=true', { action: 'CONFIRM', reason, reusable, compatible_versions: reusable && compatible, criteria: reusable ? criteria : '' }, '전체 분류를 확정했습니다. 그룹별 사용자 판정을 저장하세요.')}>분류 확정 · 판정 시작<ArrowRight size={16} /></Button>}

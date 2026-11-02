@@ -1,0 +1,297 @@
+{
+  "format": 1,
+  "sources": {
+    "db/014_cli_reviews.sql": "3edaf641811994e089620b949e2a93fc3a55fb26aa5b014f0ebc2560ea71f38e"
+  },
+  "steps": [
+    {
+      "phase": "014",
+      "table": "sanity_oa_to_vwp",
+      "kind": "alter",
+      "add_columns": [],
+      "change_columns": [],
+      "drop_constraints": [
+        {
+          "name": "sanity_oa_message_kind_v3",
+          "type": "c",
+          "match": " ",
+          "columns": [
+            "message_type"
+          ],
+          "deferred": false,
+          "on_delete": " ",
+          "on_update": " ",
+          "ref_table": null,
+          "validated": true,
+          "deferrable": false,
+          "definition": "((message_type)::text = ANY ((ARRAY['PING'::character varying, 'EVIDENCE_REQUEST'::character varying, 'CLUSTER_REQUEST'::character varying, 'SOURCE_RECEIPT'::character varying])::text[]))",
+          "no_inherit": false,
+          "ref_schema": null,
+          "ref_columns": [],
+          "index_nulls_not_distinct": null
+        },
+        {
+          "name": "sanity_oa_message_scope_v3",
+          "type": "c",
+          "match": " ",
+          "columns": [
+            "message_type",
+            "bundle_id",
+            "expires_at",
+            "created_at",
+            "run_id"
+          ],
+          "deferred": false,
+          "on_delete": " ",
+          "on_update": " ",
+          "ref_table": null,
+          "validated": true,
+          "deferrable": false,
+          "definition": "((((message_type)::text <> 'SOURCE_RECEIPT'::text) AND ((((message_type)::text = 'PING'::text) AND (bundle_id IS NULL) AND (expires_at IS NULL)) OR (((message_type)::text = ANY (ARRAY[('EVIDENCE_REQUEST'::character varying)::text, ('CLUSTER_REQUEST'::character varying)::text])) AND (bundle_id IS NOT NULL) AND (expires_at IS NOT NULL) AND (expires_at > created_at)))) OR (((message_type)::text = 'SOURCE_RECEIPT'::text) AND ((run_id IS NULL) AND (bundle_id IS NULL) AND (expires_at IS NULL))))",
+          "no_inherit": false,
+          "ref_schema": null,
+          "ref_columns": [],
+          "index_nulls_not_distinct": null
+        },
+        {
+          "name": "sanity_oa_source_legacy_run_v3",
+          "type": "c",
+          "match": " ",
+          "columns": [
+            "message_type",
+            "run_id"
+          ],
+          "deferred": false,
+          "on_delete": " ",
+          "on_update": " ",
+          "ref_table": null,
+          "validated": true,
+          "deferrable": false,
+          "definition": "(((message_type)::text = 'SOURCE_RECEIPT'::text) OR (run_id IS NOT NULL))",
+          "no_inherit": false,
+          "ref_schema": null,
+          "ref_columns": [],
+          "index_nulls_not_distinct": null
+        }
+      ],
+      "add_constraints": [
+        {
+          "name": "sanity_oa_message_kind_v4",
+          "type": "c",
+          "match": " ",
+          "columns": [
+            "message_type"
+          ],
+          "deferred": false,
+          "on_delete": " ",
+          "on_update": " ",
+          "ref_table": null,
+          "validated": true,
+          "deferrable": false,
+          "definition": "((message_type)::text = ANY ((ARRAY['PING'::character varying, 'EVIDENCE_REQUEST'::character varying, 'CLUSTER_REQUEST'::character varying, 'SOURCE_RECEIPT'::character varying, 'CLI_REVIEW_RESPONSE'::character varying])::text[]))",
+          "no_inherit": false,
+          "ref_schema": null,
+          "ref_columns": [],
+          "index_nulls_not_distinct": null
+        },
+        {
+          "name": "sanity_oa_message_scope_v4",
+          "type": "c",
+          "match": " ",
+          "columns": [
+            "message_type",
+            "bundle_id",
+            "expires_at",
+            "created_at",
+            "run_id",
+            "project",
+            "payload",
+            "message_id"
+          ],
+          "deferred": false,
+          "on_delete": " ",
+          "on_update": " ",
+          "ref_table": null,
+          "validated": true,
+          "deferrable": false,
+          "definition": "((((message_type)::text <> 'CLI_REVIEW_RESPONSE'::text) AND ((((message_type)::text <> 'SOURCE_RECEIPT'::text) AND ((((message_type)::text = 'PING'::text) AND (bundle_id IS NULL) AND (expires_at IS NULL)) OR (((message_type)::text = ANY (ARRAY[('EVIDENCE_REQUEST'::character varying)::text, ('CLUSTER_REQUEST'::character varying)::text])) AND (bundle_id IS NOT NULL) AND (expires_at IS NOT NULL) AND (expires_at > created_at)))) OR (((message_type)::text = 'SOURCE_RECEIPT'::text) AND ((run_id IS NULL) AND (bundle_id IS NULL) AND (expires_at IS NULL))))) OR (((message_type)::text = 'CLI_REVIEW_RESPONSE'::text) AND COALESCE(((run_id IS NULL) AND (bundle_id IS NULL) AND (expires_at IS NOT NULL) AND ((project)::text = '__cli_review__'::text) AND ((payload ->> 'protocol'::text) = 'human-cli-review-v1'::text) AND ((message_id)::text = ('cli-response-'::text || (payload ->> 'request_id'::text))) AND (octet_length((payload)::text) <= 4194304)), false)))",
+          "no_inherit": false,
+          "ref_schema": null,
+          "ref_columns": [],
+          "index_nulls_not_distinct": null
+        },
+        {
+          "name": "sanity_oa_source_legacy_run_v4",
+          "type": "c",
+          "match": " ",
+          "columns": [
+            "message_type",
+            "run_id"
+          ],
+          "deferred": false,
+          "on_delete": " ",
+          "on_update": " ",
+          "ref_table": null,
+          "validated": true,
+          "deferrable": false,
+          "definition": "((((message_type)::text <> 'CLI_REVIEW_RESPONSE'::text) AND (((message_type)::text = 'SOURCE_RECEIPT'::text) OR (run_id IS NOT NULL))) OR (((message_type)::text = 'CLI_REVIEW_RESPONSE'::text) AND COALESCE((run_id IS NULL), false)))",
+          "no_inherit": false,
+          "ref_schema": null,
+          "ref_columns": [],
+          "index_nulls_not_distinct": null
+        }
+      ],
+      "check_sql": {
+        "sanity_oa_message_kind_v4": "message_type IN ('PING','EVIDENCE_REQUEST','CLUSTER_REQUEST','SOURCE_RECEIPT','CLI_REVIEW_RESPONSE')",
+        "sanity_oa_message_scope_v4": "(message_type<>'CLI_REVIEW_RESPONSE' AND (((((message_type)::text <> 'SOURCE_RECEIPT'::text) AND ((((message_type)::text = 'PING'::text) AND (bundle_id IS NULL) AND (expires_at IS NULL)) OR (((message_type)::text = ANY (ARRAY[('EVIDENCE_REQUEST'::character varying)::text, ('CLUSTER_REQUEST'::character varying)::text])) AND (bundle_id IS NOT NULL) AND (expires_at IS NOT NULL) AND (expires_at > created_at)))) OR (((message_type)::text = 'SOURCE_RECEIPT'::text) AND ((run_id IS NULL) AND (bundle_id IS NULL) AND (expires_at IS NULL)))))) OR (message_type='CLI_REVIEW_RESPONSE' AND COALESCE((run_id IS NULL AND bundle_id IS NULL AND expires_at IS NOT NULL AND project='__cli_review__'\n          AND payload->>'protocol'='human-cli-review-v1'\n          AND message_id='cli-response-'||(payload->>'request_id')\n          AND octet_length(payload::text)<=4194304),false))",
+        "sanity_oa_source_legacy_run_v4": "(message_type<>'CLI_REVIEW_RESPONSE' AND ((((message_type)::text = 'SOURCE_RECEIPT'::text) OR (run_id IS NOT NULL)))) OR (message_type='CLI_REVIEW_RESPONSE' AND COALESCE((run_id IS NULL),false))"
+      },
+      "generation_sql": {}
+    },
+    {
+      "phase": "014",
+      "table": "sanity_vwp_to_oa",
+      "kind": "alter",
+      "add_columns": [],
+      "change_columns": [],
+      "drop_constraints": [
+        {
+          "name": "sanity_vwp_message_kind_v3",
+          "type": "c",
+          "match": " ",
+          "columns": [
+            "message_type"
+          ],
+          "deferred": false,
+          "on_delete": " ",
+          "on_update": " ",
+          "ref_table": null,
+          "validated": true,
+          "deferrable": false,
+          "definition": "((message_type)::text = ANY ((ARRAY['PING'::character varying, 'ANALYSIS_BUNDLE'::character varying, 'EVIDENCE_RESPONSE'::character varying, 'CLUSTER_PART'::character varying, 'CLUSTER_RESULT'::character varying, 'SOURCE_MANIFEST'::character varying, 'SOURCE_PART'::character varying, 'SOURCE_COMMIT'::character varying])::text[]))",
+          "no_inherit": false,
+          "ref_schema": null,
+          "ref_columns": [],
+          "index_nulls_not_distinct": null
+        },
+        {
+          "name": "sanity_vwp_message_scope_v3",
+          "type": "c",
+          "match": " ",
+          "columns": [
+            "message_type",
+            "bundle_id",
+            "correlation_id",
+            "payload_gzip",
+            "payload",
+            "run_id"
+          ],
+          "deferred": false,
+          "on_delete": " ",
+          "on_update": " ",
+          "ref_table": null,
+          "validated": true,
+          "deferrable": false,
+          "definition": "((((message_type)::text <> ALL ((ARRAY['SOURCE_MANIFEST'::character varying, 'SOURCE_PART'::character varying, 'SOURCE_COMMIT'::character varying])::text[])) AND ((((message_type)::text = 'PING'::text) AND (bundle_id IS NULL) AND (correlation_id IS NULL) AND (payload_gzip IS NULL)) OR (((message_type)::text = 'ANALYSIS_BUNDLE'::text) AND (bundle_id IS NOT NULL) AND (correlation_id IS NULL) AND (payload_gzip IS NOT NULL)) OR (((message_type)::text = 'EVIDENCE_RESPONSE'::text) AND (bundle_id IS NOT NULL) AND (correlation_id IS NOT NULL) AND COALESCE(((payload ->> 'result'::text) = ANY (ARRAY['FULFILLED'::text, 'REJECTED'::text, 'EXPIRED'::text])), false) AND (((payload ->> 'result'::text) = 'FULFILLED'::text) = (payload_gzip IS NOT NULL))) OR (((message_type)::text = 'CLUSTER_PART'::text) AND (bundle_id IS NOT NULL) AND (correlation_id IS NOT NULL) AND (payload_gzip IS NOT NULL)) OR (((message_type)::text = 'CLUSTER_RESULT'::text) AND (bundle_id IS NOT NULL) AND (correlation_id IS NOT NULL) AND (payload_gzip IS NULL)))) OR (((message_type)::text = ANY ((ARRAY['SOURCE_MANIFEST'::character varying, 'SOURCE_PART'::character varying, 'SOURCE_COMMIT'::character varying])::text[])) AND ((run_id IS NULL) AND (bundle_id IS NULL) AND (correlation_id IS NOT NULL) AND (payload_gzip IS NOT NULL))))",
+          "no_inherit": false,
+          "ref_schema": null,
+          "ref_columns": [],
+          "index_nulls_not_distinct": null
+        },
+        {
+          "name": "sanity_vwp_source_legacy_run_v3",
+          "type": "c",
+          "match": " ",
+          "columns": [
+            "message_type",
+            "run_id"
+          ],
+          "deferred": false,
+          "on_delete": " ",
+          "on_update": " ",
+          "ref_table": null,
+          "validated": true,
+          "deferrable": false,
+          "definition": "(((message_type)::text = ANY ((ARRAY['SOURCE_MANIFEST'::character varying, 'SOURCE_PART'::character varying, 'SOURCE_COMMIT'::character varying])::text[])) OR (run_id IS NOT NULL))",
+          "no_inherit": false,
+          "ref_schema": null,
+          "ref_columns": [],
+          "index_nulls_not_distinct": null
+        }
+      ],
+      "add_constraints": [
+        {
+          "name": "sanity_vwp_message_kind_v4",
+          "type": "c",
+          "match": " ",
+          "columns": [
+            "message_type"
+          ],
+          "deferred": false,
+          "on_delete": " ",
+          "on_update": " ",
+          "ref_table": null,
+          "validated": true,
+          "deferrable": false,
+          "definition": "((message_type)::text = ANY ((ARRAY['PING'::character varying, 'ANALYSIS_BUNDLE'::character varying, 'EVIDENCE_RESPONSE'::character varying, 'CLUSTER_PART'::character varying, 'CLUSTER_RESULT'::character varying, 'SOURCE_MANIFEST'::character varying, 'SOURCE_PART'::character varying, 'SOURCE_COMMIT'::character varying, 'CLI_REVIEW_REQUEST'::character varying])::text[]))",
+          "no_inherit": false,
+          "ref_schema": null,
+          "ref_columns": [],
+          "index_nulls_not_distinct": null
+        },
+        {
+          "name": "sanity_vwp_message_scope_v4",
+          "type": "c",
+          "match": " ",
+          "columns": [
+            "message_type",
+            "bundle_id",
+            "correlation_id",
+            "payload_gzip",
+            "payload",
+            "run_id",
+            "project",
+            "message_id"
+          ],
+          "deferred": false,
+          "on_delete": " ",
+          "on_update": " ",
+          "ref_table": null,
+          "validated": true,
+          "deferrable": false,
+          "definition": "((((message_type)::text <> 'CLI_REVIEW_REQUEST'::text) AND ((((message_type)::text <> ALL (ARRAY[('SOURCE_MANIFEST'::character varying)::text, ('SOURCE_PART'::character varying)::text, ('SOURCE_COMMIT'::character varying)::text])) AND ((((message_type)::text = 'PING'::text) AND (bundle_id IS NULL) AND (correlation_id IS NULL) AND (payload_gzip IS NULL)) OR (((message_type)::text = 'ANALYSIS_BUNDLE'::text) AND (bundle_id IS NOT NULL) AND (correlation_id IS NULL) AND (payload_gzip IS NOT NULL)) OR (((message_type)::text = 'EVIDENCE_RESPONSE'::text) AND (bundle_id IS NOT NULL) AND (correlation_id IS NOT NULL) AND COALESCE(((payload ->> 'result'::text) = ANY (ARRAY['FULFILLED'::text, 'REJECTED'::text, 'EXPIRED'::text])), false) AND (((payload ->> 'result'::text) = 'FULFILLED'::text) = (payload_gzip IS NOT NULL))) OR (((message_type)::text = 'CLUSTER_PART'::text) AND (bundle_id IS NOT NULL) AND (correlation_id IS NOT NULL) AND (payload_gzip IS NOT NULL)) OR (((message_type)::text = 'CLUSTER_RESULT'::text) AND (bundle_id IS NOT NULL) AND (correlation_id IS NOT NULL) AND (payload_gzip IS NULL)))) OR (((message_type)::text = ANY (ARRAY[('SOURCE_MANIFEST'::character varying)::text, ('SOURCE_PART'::character varying)::text, ('SOURCE_COMMIT'::character varying)::text])) AND ((run_id IS NULL) AND (bundle_id IS NULL) AND (correlation_id IS NOT NULL) AND (payload_gzip IS NOT NULL))))) OR (((message_type)::text = 'CLI_REVIEW_REQUEST'::text) AND COALESCE(((run_id IS NULL) AND (bundle_id IS NULL) AND ((correlation_id)::text = (payload ->> 'session_id'::text)) AND (correlation_id IS NOT NULL) AND (payload_gzip IS NULL) AND ((project)::text = '__cli_review__'::text) AND ((payload ->> 'protocol'::text) = 'human-cli-review-v1'::text) AND ((message_id)::text = ('cli-request-'::text || (payload ->> 'request_id'::text))) AND (octet_length((payload)::text) <= 524288)), false)))",
+          "no_inherit": false,
+          "ref_schema": null,
+          "ref_columns": [],
+          "index_nulls_not_distinct": null
+        },
+        {
+          "name": "sanity_vwp_source_legacy_run_v4",
+          "type": "c",
+          "match": " ",
+          "columns": [
+            "message_type",
+            "run_id"
+          ],
+          "deferred": false,
+          "on_delete": " ",
+          "on_update": " ",
+          "ref_table": null,
+          "validated": true,
+          "deferrable": false,
+          "definition": "((((message_type)::text <> 'CLI_REVIEW_REQUEST'::text) AND (((message_type)::text = ANY (ARRAY[('SOURCE_MANIFEST'::character varying)::text, ('SOURCE_PART'::character varying)::text, ('SOURCE_COMMIT'::character varying)::text])) OR (run_id IS NOT NULL))) OR (((message_type)::text = 'CLI_REVIEW_REQUEST'::text) AND COALESCE((run_id IS NULL), false)))",
+          "no_inherit": false,
+          "ref_schema": null,
+          "ref_columns": [],
+          "index_nulls_not_distinct": null
+        }
+      ],
+      "check_sql": {
+        "sanity_vwp_message_kind_v4": "message_type IN ('PING','ANALYSIS_BUNDLE','EVIDENCE_RESPONSE','CLUSTER_PART','CLUSTER_RESULT',\n           'SOURCE_MANIFEST','SOURCE_PART','SOURCE_COMMIT','CLI_REVIEW_REQUEST')",
+        "sanity_vwp_message_scope_v4": "(message_type<>'CLI_REVIEW_REQUEST' AND (((((message_type)::text <> ALL ((ARRAY['SOURCE_MANIFEST'::character varying, 'SOURCE_PART'::character varying, 'SOURCE_COMMIT'::character varying])::text[])) AND ((((message_type)::text = 'PING'::text) AND (bundle_id IS NULL) AND (correlation_id IS NULL) AND (payload_gzip IS NULL)) OR (((message_type)::text = 'ANALYSIS_BUNDLE'::text) AND (bundle_id IS NOT NULL) AND (correlation_id IS NULL) AND (payload_gzip IS NOT NULL)) OR (((message_type)::text = 'EVIDENCE_RESPONSE'::text) AND (bundle_id IS NOT NULL) AND (correlation_id IS NOT NULL) AND COALESCE(((payload ->> 'result'::text) = ANY (ARRAY['FULFILLED'::text, 'REJECTED'::text, 'EXPIRED'::text])), false) AND (((payload ->> 'result'::text) = 'FULFILLED'::text) = (payload_gzip IS NOT NULL))) OR (((message_type)::text = 'CLUSTER_PART'::text) AND (bundle_id IS NOT NULL) AND (correlation_id IS NOT NULL) AND (payload_gzip IS NOT NULL)) OR (((message_type)::text = 'CLUSTER_RESULT'::text) AND (bundle_id IS NOT NULL) AND (correlation_id IS NOT NULL) AND (payload_gzip IS NULL)))) OR (((message_type)::text = ANY ((ARRAY['SOURCE_MANIFEST'::character varying, 'SOURCE_PART'::character varying, 'SOURCE_COMMIT'::character varying])::text[])) AND ((run_id IS NULL) AND (bundle_id IS NULL) AND (correlation_id IS NOT NULL) AND (payload_gzip IS NOT NULL)))))) OR (message_type='CLI_REVIEW_REQUEST' AND COALESCE((run_id IS NULL AND bundle_id IS NULL AND correlation_id=payload->>'session_id'\n          AND correlation_id IS NOT NULL AND payload_gzip IS NULL AND project='__cli_review__'\n          AND payload->>'protocol'='human-cli-review-v1'\n          AND message_id='cli-request-'||(payload->>'request_id')\n          AND octet_length(payload::text)<=524288),false))",
+        "sanity_vwp_source_legacy_run_v4": "(message_type<>'CLI_REVIEW_REQUEST' AND ((((message_type)::text = ANY ((ARRAY['SOURCE_MANIFEST'::character varying, 'SOURCE_PART'::character varying, 'SOURCE_COMMIT'::character varying])::text[])) OR (run_id IS NOT NULL)))) OR (message_type='CLI_REVIEW_REQUEST' AND COALESCE((run_id IS NULL),false))"
+      },
+      "generation_sql": {}
+    }
+  ]
+}

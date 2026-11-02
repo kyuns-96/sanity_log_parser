@@ -147,3 +147,15 @@ PG15의 NULLS NOT DISTINCT 플래그는 [PG12 catalog](https://www.postgresql.or
 ```
 
 원본 증분을 바꿔야 할 때의 `build_reference.py`/`plan.json` 갱신은 Codex 담당이다. 사내 AI가 계획 hash나 비교 조건을 바꿔 불일치를 통과시키지 않는다.
+
+## 선택형 014 — VWP 사람 검토 CLI
+
+[CLI 안내](../../vwp/CLI_REVIEW.md)의 `014_cli_reviews.sql`은 009 이후의 기존 계획에 두 큐 ALTER만 추가합니다. `prepare`의 기존 저장 옵션은 그대로 선택하고 `--cli-reviews`를 더합니다. 기본 55단계 뒤에는 56~57번, `--shared-source-packets`의 66단계 뒤에는 67~68번입니다. 010~013이 필수인 기능은 아니며 기존 단계·계획 파일은 변경하지 않습니다. 별도 `cli-review-extension.json`의 source hash와 기존 계획의 hash를 함께 검사합니다.
+
+```sh
+.venv/bin/python db/portal/runbook.py prepare --snapshot approved-snapshot.json --out cli-review-bundle --cli-reviews
+# 013까지 사용 중인 경우
+.venv/bin/python db/portal/runbook.py prepare --snapshot approved-snapshot.json --out cli-review-bundle --shared-source-packets --cli-reviews
+```
+
+실제 snapshot의 0행·쓰기 중지·현재 단계와 각 문장 전후 검증은 동일합니다. **PostgreSQL 18의 기존 카탈로그 fingerprint 불일치는 해결하지 않았습니다.** 실제 비교가 실패하면 실행을 중단하고 문의하며 검증 우회나 성공 표시를 하지 않습니다. 합성 환경에서 원본 SQL과 포털 실행 SQL의 실제 구조를 비교한 결과와, 기존 동결 기준 snapshot과의 호환 검증을 구분합니다. 운영 DB 적용·SSO/CLI 배포 완료를 뜻하지 않습니다.

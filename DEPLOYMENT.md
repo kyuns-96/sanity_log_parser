@@ -97,6 +97,8 @@ npm --prefix oa/dashboard run build
 .venv/bin/python -m oa.sso_app
 # 기존 분류 결과 수신 worker, 별도 프로세스
 .venv/bin/python -m oa.main work --interval 2
+# 선택형 014 적용 후, VWP 사람 검토 CLI의 OA DB 큐 처리
+.venv/bin/python -m oa.review_worker
 ```
 
 UI 소스와 빌드 출력은 `oa/dashboard/`, `oa/dashboard/dist/`다. 빌드 출력은 Git 제외 대상이므로 Git 소스 업데이트 후 승인된 빌드 환경에서 생성해야 한다. 회사 SDK가 미구현이면 인증이 실패하고, SSO 인증이 되어도 업무 권한이 연결되기 전에는 `AUTHORIZATION_NOT_IMPLEMENTED`가 유지된다. `/workspace` 합성 시험은 [별도 안내](oa/WORKSPACE.md)를 따른다.

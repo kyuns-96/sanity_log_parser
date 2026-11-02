@@ -1,0 +1,9 @@
+.ws-cli-access { max-width: min(38rem, calc(100vw - 2rem)); }
+.ws-cli-access p { font-size: .875rem; line-height: 1.6; }
+.ws-cli-created { display: grid; gap: .75rem; }
+.ws-cli-created label { display: grid; gap: .3rem; font-size: .875rem; }
+.ws-cli-created textarea { width: 100%; resize: none; padding: .6rem; border: 1px solid var(--border, #ddd); border-radius: .4rem; font-family: monospace; overflow-wrap: anywhere; }
+.ws-cli-sessions { max-height: 14rem; overflow: auto; }
+.ws-cli-sessions > div { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .6rem 0; }
+.ws-cli-sessions code { font-size: .7rem; overflow-wrap: anywhere; }
+.ws-cli-sessions small { display: block; color: var(--muted-foreground, #666); }

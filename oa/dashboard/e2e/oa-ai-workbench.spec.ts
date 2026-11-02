@@ -18,6 +18,67 @@ const emptyPage = { items: [], total: 0, offset: 0, limit: 25 }
 const connectionId = '10000000-0000-4000-8000-000000000010'
 const credentialPath = `/api/ai/connections/${connectionId}/credentials`
 
+test('VWP CLI connection key is issued explicitly, shown once and revocable after reopening', async ({ page }) => {
+  await mockOA(page, { initialRevision: 1 })
+  const id = '40000000-0000-4000-8000-000000000001'
+  const secret = 'synthetic-private-cli-key-never-in-url-or-command'
+  const expires = Math.floor(Date.now()/1000)+8*3600
+  let active = false
+  const calls: string[] = []
+  await page.route('**/cli-sessions**', async route => {
+    const req = route.request(), path = new URL(req.url()).pathname
+    calls.push(`${req.method()} ${path}`)
+    if (req.method() === 'POST') {
+      expect(req.headers()['x-sanity-request']).toBe('1')
+      expect(req.postDataJSON()).toEqual({})
+      if (path.endsWith('/revoke')) { active = false; return route.fulfill({ json: { id, revoked: true } }) }
+      active = true
+      return route.fulfill({ status: 201, json: { id, secret, expires_at: expires, created_at: at } })
+    }
+    return route.fulfill({ json: { items: active ? [{ id, expires_at: expires, created_at: at, revoked: false }] : [] } })
+  })
+  await page.goto(url)
+  await expect(page.getByRole('button', { name: 'VWP CLI 검토', exact: true })).toBeVisible()
+  expect(calls).toEqual([])
+  await page.getByRole('button', { name: 'VWP CLI 검토', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'VWP CLI에서 검토' })
+  await dialog.getByRole('button', { name: 'CLI 연결키 발급', exact: true }).click()
+  await expect(dialog.getByLabel('CLI 연결키', { exact: true })).toHaveValue(secret)
+  await expect(dialog.getByLabel('CLI 연결 명령', { exact: true })).toHaveValue(`sanity review connect ${id} --expires-at ${expires}`)
+  expect(page.url()).not.toContain(secret)
+  expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain(secret)
+  for (const width of [1280, 1440]) {
+    await page.setViewportSize({ width, height: 1000 })
+    const box = await dialog.boundingBox()
+    expect(box!.x).toBeGreaterThanOrEqual(0)
+    expect(box!.x+box!.width).toBeLessThanOrEqual(width)
+  }
+  await dialog.getByRole('button', { name: '닫기', exact: true }).click()
+  await page.getByRole('button', { name: 'VWP CLI 검토', exact: true }).click()
+  await expect(dialog.getByLabel('CLI 연결키', { exact: true })).toHaveCount(0)
+  await dialog.getByRole('button', { name: `CLI 연결 ${id} 회수`, exact: true }).click()
+  await expect(dialog.getByRole('button', { name: /CLI 연결 .* 회수/ })).toHaveCount(0)
+  expect(calls.filter(call => call.startsWith('POST')).length).toBe(2)
+})
+
+test('VWP CLI access is hidden for read-only TOP reviewers', async ({ page }) => {
+  const state = await mockOA(page, { initialRevision: 1, readOnly: true })
+  await page.goto(url)
+  await expect(page.getByRole('heading', { name: '로그 검토', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'VWP CLI 검토', exact: true })).toHaveCount(0)
+  expect(state.calls.some(call => call.includes('/cli-sessions'))).toBe(false)
+})
+
+test('VWP CLI schema failures keep the key hidden and explain the required deployment', async ({ page }) => {
+  await mockOA(page, { initialRevision: 1 })
+  await page.route('**/cli-sessions', route => route.fulfill({ status: 503, json: { code: 'CLI_REVIEW_SCHEMA_REQUIRED' } }))
+  await page.goto(url)
+  await page.getByRole('button', { name: 'VWP CLI 검토', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'VWP CLI에서 검토' })
+  await expect(dialog.getByRole('alert')).toContainText('014')
+  await expect(dialog.getByLabel('CLI 연결키', { exact: true })).toHaveCount(0)
+})
+
 const monitoredJob = () => ({ id: '30000000-0000-4000-8000-000000000001', status: 'RUNNING', error: null,
   model: 'vwp-fast', connection_label: 'VWP 분석 모델', created_at: new Date(Date.now() - 90000).toISOString(),
   observed_at: new Date().toISOString(), expected_revision: 0, input_case_count: 0, worker_site: 'vwp',

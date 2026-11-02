@@ -19,6 +19,7 @@ from common.sanity_submission_files import load_config, validate_submission
 from common.sanity_submission_https import API, bearer
 from common.sanity_submission_intake import (UnverifiedSubmitter, require_internal_peer,
     require_pending_plan, tokenless, unverified)
+from common.sanity_cli_review import API as REVIEW_API, ERRORS as REVIEW_ERRORS, MAX_REQUEST
 from vwp_bridge.submission_uploads import UploadStore
 
 
@@ -29,6 +30,9 @@ ERROR_STATUS = {'SUBMISSION_AUTH_REQUIRED':401,'FORBIDDEN':403,'NOT_FOUND':404,
     'SUBMISSION_HTTPS_REQUIRED':400,'INVALID_SUBMISSION_REQUEST':400,'SUBMISSION_TIMEOUT':408,
     'SUBMISSION_IDENTITY_MISMATCH':403,'RAW_SOURCE_SCHEMA_REQUIRED':503,'RAW_SOURCE_INCOMPLETE':409,
     'RAW_SOURCE_CORRUPT':422,'SUBMISSION_TEMP_LIMIT':503,'DATABASE_UNAVAILABLE':503}
+ERROR_STATUS.update({code: 422 for code in REVIEW_ERRORS})
+ERROR_STATUS.update({'NOT_FOUND': 404, 'FORBIDDEN': 403, 'CLI_REVIEW_EXPIRED': 401,
+                     'CLI_REVIEW_AUTH_REQUIRED': 401, 'CLI_REVIEW_SCHEMA_REQUIRED': 503})
 
 
 def create_app(config, authority):
@@ -134,6 +138,42 @@ def create_app(config, authority):
             raise
         else:
             await run_in_threadpool(manager.__exit__,None,None,None)
+
+    async def review_request(request):
+        # Review authorization is a separate OA-issued scoped capability, never
+        # the unverified submitter label or the submission token.
+        check(internal and config.get('storage') == 'postgresql', 'CLI_REVIEW_SCHEMA_REQUIRED')
+        await authenticate(request)
+
+    def relay(method, *args):
+        from common.sanity_db import Database
+        from vwp_bridge.review_relay import ReviewRelay
+        with Database('vwp') as db, db.transaction():
+            return getattr(ReviewRelay(db), method)(*args)
+
+    @app.post(REVIEW_API+'/{rid}')
+    async def review_enqueue(rid: str, request: Request):
+        from common.sanity_cli_review import identifier
+        identifier(rid)
+        await review_request(request)
+        length = body_size(request, 'application/json', MAX_REQUEST)
+        data = bytearray()
+        async for chunk in chunks(request):
+            check(len(data)+len(chunk) <= length, 'CLI_REVIEW_LIMIT')
+            data.extend(chunk)
+        check(len(data) == length, 'INVALID_REQUEST')
+        value = _decode_json(bytes(data))
+        check(isinstance(value, dict) and value.get('request_id') == rid, 'INVALID_REQUEST')
+        return await run_in_threadpool(relay, 'enqueue', value)
+
+    @app.get(REVIEW_API+'/{rid}')
+    async def review_poll(rid: str, request: Request):
+        from common.sanity_cli_review import identifier
+        identifier(rid)
+        await review_request(request)
+        proofs = request.headers.getlist('x-sanity-review-signature')
+        check(len(proofs) == 1 and len(proofs[0]) == 64, 'CLI_REVIEW_AUTH_REQUIRED')
+        return await run_in_threadpool(relay, 'poll', rid, proofs[0])
 
     @app.post(API+'/{sid}')
     async def initialize(sid: str, request: Request):

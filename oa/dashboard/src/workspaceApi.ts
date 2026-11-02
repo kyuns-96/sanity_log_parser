@@ -50,6 +50,8 @@ const messages: Record<string, string> = {
   RATIONALE_REQUIRED: '근거가 없는 그룹을 먼저 작성한 뒤 전체 분류를 확정해 주세요.',
   RATIONALE_STALE: '변경된 그룹의 근거를 재검토한 뒤 전체 분류를 확정해 주세요.',
   INVALID_REQUEST: '입력한 값과 변경 사유를 확인해 주세요.',
+  CLI_REVIEW_SCHEMA_REQUIRED: 'CLI 검토용 DB 확장 014가 필요합니다. 배포 담당자에게 확인해 주세요.',
+  CLI_REVIEW_SESSION_LIMIT: '이 보고서의 활성 CLI 연결은 최대 8개입니다. 사용하지 않는 연결을 회수해 주세요.',
   INVALID_CSRF: '로그인 상태를 새로고침한 뒤 다시 확인해 주세요.',
   TOO_MANY_ATTEMPTS: '로그인 시도가 많습니다. 잠시 후 다시 시도해 주세요.',
   DATABASE_UNAVAILABLE: '저장 서버에 연결하지 못했습니다. 잠시 후 다시 확인해 주세요.',

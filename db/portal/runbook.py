@@ -102,10 +102,14 @@ def read_json(path):
     return json.loads(path.read_text(encoding='utf-8'))
 
 
-def load_plan(*, raw_sources=False, payload_storage=False, evidence_pages=False, shared_packets=False):
+def load_plan(*, raw_sources=False, payload_storage=False, evidence_pages=False, shared_packets=False, cli_reviews=False):
     name = ('shared-plan.json' if shared_packets else ('pages-plan.json' if evidence_pages else
             ('payload-plan.json' if payload_storage else ('raw-plan.json' if raw_sources else 'plan.json'))))
     plan = read_json(PLAN.with_name(name))
+    if cli_reviews:
+        extension = read_json(PLAN.with_name('cli-review-extension.json'))
+        plan['sources'].update(extension['sources'])
+        plan['steps'].extend(extension['steps'])
     for name, expected in plan['sources'].items():
         if hashlib.sha256((ROOT / name).read_bytes()).hexdigest() != expected:
             raise PortalError('PORTAL_REFERENCE_STALE')
@@ -296,6 +300,13 @@ def verify(snapshot, bundle, step_number=None, when='after'):
         plan = load_plan(evidence_pages=True)
     if manifest.get('plan_sha256') != sha(canonical(plan)):
         plan = load_plan(shared_packets=True)
+    if manifest.get('plan_sha256') != sha(canonical(plan)):
+        for options in ({}, {'raw_sources': True}, {'payload_storage': True},
+                        {'evidence_pages': True}, {'shared_packets': True}):
+            candidate = load_plan(cli_reviews=True, **options)
+            if manifest.get('plan_sha256') == sha(canonical(candidate)):
+                plan = candidate
+                break
     expected_manifest, files = contents(read_json(bundle / 'start-snapshot.json'), plan)
     if manifest != expected_manifest or snapshot['schema'] != manifest['schema']:
         raise PortalError('PORTAL_BUNDLE_MISMATCH')
@@ -325,6 +336,7 @@ def main(argv=None):
     build.add_argument('--payload-storage',action='store_true',help='include 010 and opt-in 011 lossless private payload storage')
     build.add_argument('--evidence-pages',action='store_true',help='include 010/011 and opt-in 012 bounded source evidence pages')
     build.add_argument('--shared-source-packets',action='store_true',help='include 010..013, retaining one immutable source packet')
+    build.add_argument('--cli-reviews',action='store_true',help='append the two opt-in 014 CLI queue ALTER statements')
     check = commands.add_parser('verify')
     check.add_argument('--snapshot', type=Path, required=True)
     check.add_argument('--bundle', type=Path, required=True)
@@ -339,7 +351,8 @@ def main(argv=None):
         elif args.command == 'prepare':
             manifest = prepare(read_json(args.snapshot), args.out,
                                load_plan(raw_sources=args.raw_sources,payload_storage=args.payload_storage,
-                                         evidence_pages=args.evidence_pages, shared_packets=args.shared_source_packets))
+                                         evidence_pages=args.evidence_pages, shared_packets=args.shared_source_packets,
+                                         cli_reviews=args.cli_reviews))
             print(f'status=PREPARED checkpoint={manifest["start_checkpoint"]} remaining={len(manifest["steps"])} operational_ready=false')
         else:
             verify(read_json(args.snapshot), args.bundle, args.step, args.when)

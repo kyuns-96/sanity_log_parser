@@ -83,6 +83,17 @@ def check_sources(source, before, phase):
             old = next(c['definition'] for c in table_at(before, match[1])['constraints'] if c['name'] == match[2])
             expressions[match[3]] = (f'({match[4]} NOT IN ({match[5]}) AND ({old})) OR '
                                      f'({match[4]} IN ({match[5]}) AND ({match[6]}))')
+    if phase == '014':
+        pattern = r"\('public\.(\w+)',\s*'(\w+)',\s*'(\w+)',\s*\$k\$(.*?)\$k\$,\s*'(CLI_REVIEW_\w+)'\)"
+        for match in re.finditer(pattern, source, re.S):
+            expressions[match[3]] = f"message_type IN ({match[4]},'{match[5]}')"
+        pattern = (r"\('public\.(\w+)',\s*'(\w+)',\s*'(\w+)',\s*'(CLI_REVIEW_\w+)',\s*"
+                   r"(?:\$s\$(.*?)\$s\$|'([^']*)')\)")
+        for match in re.finditer(pattern, source, re.S):
+            old = next(c['definition'] for c in table_at(before, match[1])['constraints'] if c['name'] == match[2])
+            scope = match[5] if match[5] is not None else match[6]
+            expressions[match[3]] = (f"(message_type<>'{match[4]}' AND ({old})) OR "
+                                     f"(message_type='{match[4]}' AND COALESCE(({scope}),false))")
     return expressions
 
 
@@ -131,7 +142,7 @@ def derive_steps(before, after, phase):
 
 
 def capture(connection, schema='portal_reference', *, raw_sources=False, payload_storage=False, evidence_pages=False,
-            shared_packets=False):
+            shared_packets=False, cli_reviews=False):
     with connection.cursor() as cursor:
         cursor.execute('SELECT current_database()')
         if not cursor.fetchone()[0].startswith('sanity_test_'):
@@ -143,7 +154,8 @@ def capture(connection, schema='portal_reference', *, raw_sources=False, payload
     migrations = (MIGRATIONS + (('010_raw_sources.sql',) if raw_sources or payload_storage or evidence_pages or shared_packets else ())
                   + (('011_payload_storage.sql',) if payload_storage or evidence_pages or shared_packets else ())
                   + (('012_source_evidence_pages.sql',) if evidence_pages or shared_packets else ())
-                  + (('013_shared_source_packets.sql',) if shared_packets else ()))
+                  + (('013_shared_source_packets.sql',) if shared_packets else ())
+                  + (('014_cli_reviews.sql',) if cli_reviews else ()))
     for filename in migrations:
         source = (ROOT / 'db' / filename).read_text(encoding='utf-8')
         expressions = check_sources(source, state, filename[:3])
@@ -174,6 +186,7 @@ def main():
     parser.add_argument('--payload-storage',action='store_true',help='include 010 and opt-in 011 lossless payload storage')
     parser.add_argument('--evidence-pages',action='store_true',help='include 010/011/012 source evidence pages')
     parser.add_argument('--shared-source-packets',action='store_true',help='include 010..013 shared source packets')
+    parser.add_argument('--cli-reviews',action='store_true',help='include opt-in 014 human CLI review queues')
     args = parser.parse_args()
     import psycopg2
     from db.tests.run_mock import MockDatabase, pg_binaries
@@ -185,7 +198,8 @@ def main():
         connection.autocommit = True
         try:
             plan = capture(connection,raw_sources=args.raw_sources,payload_storage=args.payload_storage,
-                           evidence_pages=args.evidence_pages, shared_packets=args.shared_source_packets)
+                           evidence_pages=args.evidence_pages, shared_packets=args.shared_source_packets,
+                           cli_reviews=args.cli_reviews)
         finally:
             connection.close()
         with args.out.open('x', encoding='utf-8') as stream:

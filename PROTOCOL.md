@@ -1,5 +1,7 @@
 # 프로토타입 데이터 계약 — PostgreSQL
 
+2026-11-02 [VWP 사람 검토 CLI](vwp/CLI_REVIEW.md)는 독립 확장 `014_cli_reviews.sql`의 `CLI_REVIEW_REQUEST`/`CLI_REVIEW_RESPONSE`를 기존 양방향 큐에 추가합니다. `human-cli-review-v1`의 report 전용 만료 세션·HMAC 서명·요청 UUID와 현재 OWNER/원본/분류·판정 개정 검사를 사용하고, 기존 workspace 분류·판정 저장부에 위임합니다. 원천 VWP의 DB 계정 없음, bridge 사이 DB-only와 기존 메시지의 scope·신원 계약은 유지합니다. 제출용 토큰 없는 접수는 이 검토 권한의 근거가 아닙니다.
+
 제품의 최우선 목표와 모델 실행 방향은 [AI 판단 설계](AI_DECISION_DESIGN.md)를 따른다. **AI 최초 분류·그룹 판정 → 사람 수정·확정 근거 축적 → 관련 사례 검색·다음 AI 판단 활용**이 필수 흐름이며 이번 연동은 사내 OA OpenAI 호환 API를 우선한다. 이 파일은 현재 직렬화 계약을 설명한다. OA 공통 모델 호출·불변 job·현재 확정 사례 검색·직접 근거 판정 V2와 운영 SSO workbench를 제공한다. 실제 사내 API·판단 품질과 대량 모델 분할/통합은 별도 검증/구현 대상이다.
 
 현재 실행 계약은 같은 PostgreSQL DB의 4개 테이블이다. SQLite와 브리지 간 직접 통신/파일 복사는 사용하지 않는다.

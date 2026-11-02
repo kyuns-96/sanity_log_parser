@@ -211,6 +211,7 @@ def create_app(*, auth_mode: AuthMode | None = None,
                   503 if code in {"AI_NOT_CONFIGURED", "AI_CONFIG", "INVALID_AI_CRITERIA", "WORKSPACE_NOT_CONFIGURED",
                                   "AI_TOKEN_STORE_NOT_CONFIGURED", "AI_TOKEN_UNAVAILABLE", "AI_JOB_DELETE_NOT_CONFIGURED",
                                   "DATA_DELETE_NOT_CONFIGURED","AI_SCHEDULER_CONFIG","AI_SCHEDULER_CORRUPT","AI_EVIDENCE_CORRUPT"} else
+                  503 if code == "CLI_REVIEW_SCHEMA_REQUIRED" else
                   503 if code.startswith(("DATABASE_", "DBAAS_", "DASHBOARD_", "AUTH_", "AUTHORIZATION_")) else
                   409 if code in {"REVISION_CONFLICT", "REQUEST_CONFLICT", "REVIEW_BLOCKED", "FAIL_CANNOT_PASS",
                                  "STATE_CORRUPT", "STATE_CONFLICT", "EVIDENCE_NOT_RECEIVED", "LEASE_LOST",

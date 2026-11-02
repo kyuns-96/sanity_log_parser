@@ -168,3 +168,16 @@ TypeScript/Vite 빌드와 최종 TypeScript 검사가 통과했습니다. 합성
 TypeScript/Vite 빌드와 데스크톱 브라우저 **16건이 모두 통과**했습니다(150.244초). 신규 3건과 기존 분류 요약·확정/판정·예외·보류·조회 전용·근거 등록·토큰 교체·화면 배치를 포함했습니다. 기본 상세 숨김, 키보드/aria-expanded·controls, 전체 근거 보존과 수정/재조회, 제안 적용 시 편집창 표시, 조회만으로 저장 요청이 생기지 않는 동작을 확인했습니다. 1280/1440 너비에서 패널을 스크롤한 뒤 등록 스위치가 화면 안에 있고 다른 요소에 가리지 않으며 실제 클릭으로 해당 그룹의 등록만 변경되는지 확인했습니다.
 
 기본 quick은 독립 mock으로 한 번 실행했습니다. **453건 중 446 통과·기존 PG18 실패 5·Termux 오류 2·skip 0**, DB 준비/종료 포함 **44.307초**입니다. 신규 실패·작업자 오류·실행 ID 누락/중복은 없고 DB를 종료했습니다. 실제 파일 보안 2건의 사내 독립 Linux 검증은 대기 중이며 로컬 합성 metadata 확인과 구분합니다. 기존 PG18 호환·별도 HTTP/과거 근거 fixture 문제는 미해결로 유지합니다. regression/full·실회사 SSO·실제 모델 검증은 실행하지 않았습니다.
+## VWP 사람 검토 CLI — 2026-11-02
+
+`sanity review`의 report 전용 연결·페이지/전체 로그 본문·명시적 ID 편집·분류 근거/확정·그룹 판정·AI 참고 등록을 기존 운영 저장부와 연결했습니다. 사용과 배포는 [CLI 안내](vwp/CLI_REVIEW.md)를 따릅니다. 실제 회사 환경 적용과 합성 검증은 구분합니다.
+
+최종 검사는 `db/tests/run_mock.py --include tests.test_cli_review tests.test_cli_review_migration tests.test_repository_layout tests.test_portal_runbook tests.test_shared_source_migration.SharedPacketMigrationTests.test_all_66_statements_match_original_sql_and_preserve_all_table_oids`로 quick과 전용 검사를 한 번에 합쳤습니다. **선택/실행 495건, 486 통과·실패 7·오류 2·skip 0**, 독립 DB 준비·종료 포함 **56.900초**입니다. 실행 ID 중복/누락·작업자 오류는 없고 모든 mock DB를 종료했습니다. 최종 변경 Python과 실행 snapshot이 일치합니다. Termux 네이티브 Python 확장의 로딩에는 기존 공유 venv와 `LD_PRELOAD`의 `libpython3.14.so`를 사용했으며 운영 코드/테스트를 우회하지 않았습니다.
+
+**신규 CLI/014 검사 21건은 모두 통과**했습니다. 실제 TLS와 DB 큐를 통한 CLI 연결→조회→분류 확정→보류→연결 회수, 서명/서버 검토자·만료·권한 회수·원본 변경 차단, UUID 재개와 중복 저장 방지, 웹의 새 판정/분류와의 충돌, 근거 변경·분리/병합/이동/이름 수정, AI 참고 기본 미등록과 명시적 등록을 확인했습니다. 합성 **10,001건**의 처음/중간/마지막 페이지·검색·마지막 로그 이동 후 전체 partition을 확인했고, 긴 로그 전체 문자 복원과 응답 한도 초과 시 쓰기 rollback도 검증했습니다. 로컬 자격 파일은 활성 그룹 하나만 보존하고 안전한 파일/잠금·터미널 제어 문자·표준 라이브러리 실행을 확인했습니다.
+
+014 원본 SQL의 원자 실패와 기존 큐/제한 계정 보존, 55/59/60/62/66단계의 기존 앞부분 보존, 57/68문장 전체 실행 후 각 migration 단계의 실제 catalog가 원본 SQL과 일치하는 검사는 통과했습니다. **기존 동결 포털 snapshot의 PG18 호환 성공을 뜻하지 않습니다.** 기존 quick의 PG18 카탈로그 실패 5건과 추가 선택한 기존 55단계/66단계 전수 비교 2건이 실패 7건입니다. 기존 계획·기대값·검증 조건을 바꾸지 않았습니다.
+
+TypeScript/Vite 빌드와 합성 데스크톱 브라우저 **6건이 모두 통과**했습니다. 신규 3건은 명시적 키 발급·한 번만 표시·명령/URL/localStorage에 키 미포함·재열기/회수·TOP 숨김·014 미설치 안내와 1280/1440 배치를 확인합니다. 기존 근거 펼치기·명시적 판정 편집·등록 스위치 고정 3건도 포함했습니다. 빌드/브라우저 확인용 임시 node_modules 링크는 제거했습니다.
+
+오류 2건은 기존 Termux 실제 hardlink/root 소유 보안 검사이며 **사내 독립 Linux 실환경 검증 대기**를 유지합니다. `tests.test_submission_files`의 로컬 합성 metadata 검사 **10건 통과**와 구분합니다. 전체 quick 성공·실제 파일시스템 보안 완료·PG18 해결로 보고하지 않습니다. 회사 어댑터/실제 SSO·모델 품질·사내 CLI 실사용 검사는 0건이며, 운영 DB 014 적용과 작업자 배포는 미실시입니다. regression/full 전체·10만 건을 실행한 것으로 표시하지 않습니다.

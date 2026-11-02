@@ -1,4 +1,4 @@
-"""User submission commands. Standard library only; no DB login on VWP clients."""
+"""VWP submission and human review commands; no DB login on VWP clients."""
 from __future__ import annotations
 
 import argparse
@@ -179,9 +179,17 @@ def display_preview(value):
 
 
 def main(argv=None, *, provider=None, authority=None, state_root=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    route = argparse.ArgumentParser(add_help=False)
+    route.add_argument('--config')
+    global_args, rest = route.parse_known_args(argv)
+    if rest and rest[0] == 'review':
+        from vwp.review_cli import main as review_main
+        return review_main(rest[1:], config_path=global_args.config)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="/etc/sanity/vwp-submit.json")
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser('review', help='review and classify groups from the VWP terminal')
     submit = commands.add_parser("submit", help="confirm and enqueue completed VWP reports")
     for key in ("project", "block", "net-ver", "revision"):
         submit.add_argument("--" + key, required=True)
