@@ -10,6 +10,7 @@ from common.sanity_common import ReviewError, digest
 from oa.sanity_ai_batch_jobs import _finish_round, attempts
 from oa.sanity_ai_parallel_jobs import STALE, _execute, _expire, _prepare, _save, _settle
 from oa.sanity_ai_parallel_ledger import ParallelLedger
+from oa.sanity_ai_deletion import worker_load
 
 
 def _advance(db_factory, workspace_factory, advisor, criteria_provider, job_id,
@@ -18,7 +19,9 @@ def _advance(db_factory, workspace_factory, advisor, criteria_provider, job_id,
     dispatch = []
     with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
         service._lock(job_id)
-        event = service._load(job_id)
+        event = worker_load(service,job_id)
+        if event is None:
+            return None,dispatch,model,revision
         if event['status']=='RESULT_READY':
             return service.public(service._apply(event)),dispatch,model,revision
         if event['status'] not in ('PENDING','RUNNING'):

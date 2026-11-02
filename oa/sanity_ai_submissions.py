@@ -8,6 +8,7 @@ from common.sanity_common import ReviewError, digest, canonical_json
 from common.sanity_db import uuid_value, lock_key
 from common.sanity_vwp_ai import require
 from oa.sanity_workspace import record_id
+from oa.sanity_ai_deletion import ensure_not_deleted, worker_load
 
 PREFIX, NAMESPACE = "ai.intent.", "oa-ai-submission-v1"
 ACTIVE = {"QUEUED", "PREPARING"}
@@ -140,6 +141,7 @@ class Submissions:
             "created_at":data["created_at"],"finished_at":event["at"] if event["status"] in TERMINAL else None,
             "expected_revision":data["command"]["expected_revision"],"input_case_count":0,"event_id":None,
             "model_called":False,"model_attempted":False,"worker_site":"vwp",
+            "merge_iteration":0,"current_group_count":1 if data['command']['group_id'] is not None else None,
             **({"connection_id":data["command"]["connection_id"],"connection_label":data["connection_label"]}
                if "connection_id" in data["command"] else {})}
 
@@ -155,7 +157,7 @@ class Submissions:
                      "AND (payload->'data'->>'lease_until')::timestamptz<=clock_timestamp())) ORDER BY created_at,workspace_key LIMIT 1"
         else:query += "ORDER BY created_at DESC,workspace_key DESC LIMIT 1"
         row = self.db.execute(query,params).fetchone()
-        return self.load(row["payload"]["id"]) if row else None
+        return worker_load(self.service, row["payload"]["id"], self.load) if row else None
 
     def submit(self,user_id,block_id,version_id,report_id,*,expected_revision,request_id,
                group_id=None,expected_cluster_revision=None,model_id=None,connection_id=None):
@@ -173,6 +175,7 @@ class Submissions:
                     ("user_id","block_id","version_id","report_id")),"INVALID_REQUEST")
         header(self.service,command,write=True)
         job_lock(self.service,identity)
+        ensure_not_deleted(self.service, identity)
         previous = self.load(identity,required=False)
         if previous is not None:
             require(previous["data"]["command"] == command,"REQUEST_CONFLICT")
@@ -209,7 +212,8 @@ def prepare_one(db_factory,workspace_factory,advisor,criteria_provider=None):
     with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
         store = Submissions(service);event = store.latest(pending=True)
         if event is None:return None
-        service._lock(event["id"]);event = store.load(event["id"])
+        service._lock(event["id"]);event = worker_load(service, event["id"], store.load)
+        if event is None:return None
         if event["status"] not in ACTIVE:return None
         from oa.sanity_ai_jobs import _timestamp
         if event["status"] == "PREPARING" and _timestamp(event["data"]["lease_until"]) > _db_now(service.db):return None
@@ -219,7 +223,8 @@ def prepare_one(db_factory,workspace_factory,advisor,criteria_provider=None):
             "lease_until":(_db_now(service.db)+timedelta(seconds=300)).isoformat()})
     try:
         with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
-            service._lock(claimed["id"]);store=Submissions(service);event=store.load(claimed["id"])
+            service._lock(claimed["id"]);store=Submissions(service);event=worker_load(service, claimed["id"], store.load)
+            if event is None:return None
             if event["sequence"] != claimed["sequence"]:return None
             data=event["data"];command=data["command"]
             require(header(service,command,write=True)["snapshot"] == data["snapshot"],"AI_INPUT_STALE")
@@ -235,7 +240,8 @@ def prepare_one(db_factory,workspace_factory,advisor,criteria_provider=None):
         code="AI_RESOURCE_LIMIT" if isinstance(error,MemoryError) else _error_code(error)
         status="STALE" if code in {"AI_INPUT_STALE","AI_CONFIG_CHANGED","AI_CONNECTION_UNAVAILABLE","AI_CREDENTIAL_CHANGED","REVISION_CONFLICT","UNAUTHORIZED","FORBIDDEN","NOT_FOUND","RESOURCE_NOT_FOUND"} else "FAILED"
         with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
-            service._lock(claimed["id"]);store=Submissions(service);event=store.load(claimed["id"])
+            service._lock(claimed["id"]);store=Submissions(service);event=worker_load(service, claimed["id"], store.load)
+            if event is None:return None
             canonical=service._load(claimed["id"],required=False)
             if canonical:return service.public(canonical)
             if event["status"] != "PREPARING" or event["sequence"] != claimed["sequence"]:return store.public(event)

@@ -21,7 +21,7 @@ const credentialPath = `/api/ai/connections/${connectionId}/credentials`
 const monitoredJob = () => ({ id: '30000000-0000-4000-8000-000000000001', status: 'RUNNING', error: null,
   model: 'vwp-fast', connection_label: 'VWP 분석 모델', created_at: new Date(Date.now() - 90000).toISOString(),
   observed_at: new Date().toISOString(), expected_revision: 0, input_case_count: 0, worker_site: 'vwp',
-  can_cancel: true, phase: 'SERVER_RESPONDED', report: { project_id: 'p1', block_id: 'b1', version_id: 'v1', report_id: 'report-a', group_id: null, item_id: 'synthetic_check', family: 'GCA' },
+  can_cancel: true, can_delete: true, merge_iteration: 0, current_group_count: 8, phase: 'SERVER_RESPONDED', report: { project_id: 'p1', block_id: 'b1', version_id: 'v1', report_id: 'report-a', group_id: null, item_id: 'synthetic_check', family: 'GCA' },
   progress: { mode: 'BATCH', phase: 'CLASSIFY', completed_records: 40, total_records: 100, completed_calls: 2, round: 0,
     waiting: true, round_completed: 2, round_total: 5, seconds_per_record: 1.25, average_call_seconds: 25, stage_eta_seconds: 75 } })
 
@@ -33,7 +33,7 @@ test('desktop AI cards show measured stage progress, transport and stage ETA', a
   await expect(dashboard).toContainText('VWP 작업자 연결됨')
   await expect(dashboard).toContainText('서버 응답 수신 중')
   await expect(dashboard.getByRole('progressbar')).toHaveAttribute('value', '40')
-  await expect(dashboard).toContainText('1.3초')
+  await expect(dashboard).toContainText('25.0초')
   await expect(dashboard).toContainText('이번 단계 2 / 5')
   await expect(dashboard).not.toContainText('측정치 수집 중')
   await expect(dashboard.getByRole('link', { name: '검토 열기' })).toHaveAttribute('href', /review=report-a/)
@@ -52,7 +52,7 @@ test('parallel card shows in-flight calls without treating accumulated call time
   await expect(dashboard).toContainText('이 작업에서 동시 처리 2 / 2개')
   await expect(dashboard).toContainText('진행 중 배치 3, 4')
   await expect(dashboard).toContainText('측정치 수집 중')
-  await expect(dashboard).toContainText('측정 중')
+  await expect(dashboard.getByText('배치당 평균').locator('..').locator('dd')).toHaveText('25.0초')
   await expect(dashboard).not.toContainText('2분 3초')
   await expect(dashboard.getByRole('progressbar')).toHaveAttribute('value', '40')
 })
@@ -1287,7 +1287,7 @@ test('workbench shows safe failure detail and stage-specific progress', async ({
   expect(state.writes).toHaveLength(0)
 })
 
-test('parallel measured throughput and ETA use wall-time snapshot, not total call time or newer observation', async ({ page }) => {
+test('parallel batch mean uses call duration and ETA uses the fixed wall-time snapshot', async ({ page }) => {
   await mockOA(page)
   const baseJob = monitoredJob()
   const measuredAt = new Date(Date.now() - 30000).toISOString()
@@ -1298,14 +1298,14 @@ test('parallel measured throughput and ETA use wall-time snapshot, not total cal
   await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
   const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
   const metrics = dashboard.locator('.ai-job-metrics')
-  await expect(metrics.getByText('로그 건당 평균').locator('..').locator('dd')).toHaveText('1.3초')
+  await expect(metrics.getByText('배치당 평균').locator('..').locator('dd')).toHaveText('25.0초')
   await expect(metrics.getByText('이번 단계 예상 종료').locator('..').locator('dd')).toHaveText(expectedEnd)
-  await expect(dashboard).toContainText('평균은 최근 분류·판정의 실제 경과 시간 기준입니다.')
-  await expect(dashboard).toContainText('예상은 이번 단계만 포함')
+  await expect(dashboard).toContainText('평균은 완료된 배치의 응답 시간입니다.')
+  await expect(dashboard).toContainText('예상 종료는 이번 단계만 포함')
   await expect(dashboard).not.toContainText('2분 3초')
 })
 
-test('parallel merge may show prior record measurement and estimates only the current stage', async ({ page }) => {
+test('parallel merge shows batch mean and estimates only the current stage', async ({ page }) => {
   await mockOA(page)
   const baseJob = monitoredJob()
   const measuredAt = new Date(Date.now() - 10000).toISOString()
@@ -1316,10 +1316,10 @@ test('parallel merge may show prior record measurement and estimates only the cu
   await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
   const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
   const metrics = dashboard.locator('.ai-job-metrics')
-  await expect(metrics.getByText('로그 건당 평균').locator('..').locator('dd')).toHaveText('2.5초')
+  await expect(metrics.getByText('배치당 평균').locator('..').locator('dd')).toHaveText('25.0초')
   await expect(metrics.getByText('이번 단계 예상 종료').locator('..').locator('dd')).toHaveText(expectedEnd)
   await expect(dashboard).toContainText('그룹 통합')
-  await expect(dashboard).toContainText('평균은 최근 분류·판정의 실제 경과 시간 기준입니다.')
+  await expect(dashboard).toContainText('평균은 완료된 배치의 응답 시간입니다.')
 })
 
 test('parallel ETA is withheld when no measurement timestamp exists or a retry is pending', async ({ page }) => {
@@ -1394,4 +1394,126 @@ test('rolling unknown recovery requires and confirms the complete uncertain batc
   await expect(dialog).toHaveCount(0)
   expect(writes).toEqual([{ request_id: expect.any(String), expected_event_sha256: primary.event_sha256,
     expected_step_sha256: primary.step_sha256, acknowledge_duplicate: true }])
+})
+
+test('AI cards show batch latency and authoritative merge iteration and group counts', async ({ page }, info) => {
+  await mockOA(page)
+  const baseJob = monitoredJob()
+  const job = { ...baseJob, merge_iteration: 3, current_group_count: 12,
+    progress: { ...baseJob.progress, execution: 'parallel-v2', phase: 'MERGE', round: 9,
+      average_call_seconds: 8.5, wall_seconds_per_record: 0.01, seconds_per_record: 999 } }
+  await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const card = page.locator('.ai-job-card')
+  await expect(card.getByText('배치당 평균').locator('..').locator('dd')).toHaveText('8.5초')
+  await expect(card.getByText('병합 iteration').locator('..').locator('dd')).toHaveText('3회')
+  await expect(card.getByText('현재 그룹 수').locator('..').locator('dd')).toHaveText('12개')
+  await expect(card.getByText('로그 건당 평균')).toHaveCount(0)
+  expect(await card.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true)
+  await page.screenshot({ path: info.outputPath('updated-ai-card.png'), fullPage: true })
+  job.merge_iteration = 4; job.current_group_count = 0
+  await page.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+  await expect(card.getByText('병합 iteration').locator('..').locator('dd')).toHaveText('4회')
+  await expect(card.getByText('현재 그룹 수').locator('..').locator('dd')).toHaveText('0개')
+})
+
+test('AI card motion follows actual activity and respects reduced motion', async ({ page }) => {
+  await mockOA(page)
+  let status = 'RUNNING'; let online = true
+  await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [{ ...monitoredJob(), status }], server_time: new Date().toISOString(), worker: { site: 'vwp', online, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  const motion = dashboard.locator('.ai-job-progress-motion')
+  await expect(motion).toBeVisible()
+  expect(await motion.evaluate(el => getComputedStyle(el, '::after').animationName)).toBe('ai-job-progress-shimmer')
+  await expect(dashboard.getByRole('progressbar')).toHaveAttribute('value', '40')
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(motion).toBeHidden()
+  expect(await motion.evaluate(el => getComputedStyle(el, '::after').animationName)).toBe('none')
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  online = false
+  await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+  await expect(motion).toHaveCount(0)
+  online = true
+  for (const next of ['COMPLETED', 'FAILED', 'CANCELLED', 'UNKNOWN', 'STALE', 'PENDING']) {
+    status = next
+    await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+    await expect(dashboard.locator(`.ai-job-${next.toLowerCase()}`)).toHaveCount(1)
+    await expect(motion).toHaveCount(0)
+  }
+})
+
+test('AI card deletion confirms active cleanup and never restores a deleted card from stale polling', async ({ page }) => {
+  await mockOA(page)
+  const job = monitoredJob()
+  let deleted = false; let staleSent = false; let posts = 0
+  let finish!: () => void
+  const pending = new Promise<void>(resolve => { finish = resolve })
+  await page.route('**/api/workbench/ai/jobs**', async route => {
+    const request = route.request()
+    if (request.method() === 'POST') {
+      posts++
+      expect(new URL(request.url()).pathname).toBe(`/api/workbench/ai/jobs/${job.id}/delete`)
+      expect(request.headers()['x-sanity-request']).toBe('1')
+      expect(request.postDataJSON()).toEqual({})
+      await pending; deleted = true
+      return route.fulfill({ json: { id: job.id, deleted: true } })
+    }
+    const stale = deleted && !staleSent
+    if (stale) staleSent = true
+    return route.fulfill({ json: { items: !deleted || stale ? [job] : [], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } })
+  })
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  const trash = dashboard.getByRole('button', { name: 'synthetic_check 작업 삭제', exact: true })
+  await trash.click()
+  const dialog = page.getByRole('dialog', { name: 'AI 작업 삭제' })
+  await expect(dialog).toContainText('DB에서 삭제')
+  await expect(dialog).toContainText('삭제 후 도착한 응답은 반영하지 않습니다')
+  expect(posts).toBe(0)
+  await dialog.getByRole('button', { name: '돌아가기' }).click()
+  await expect(dialog).toHaveCount(0); expect(posts).toBe(0)
+  await trash.click()
+  await dialog.getByRole('button', { name: '작업과 기록 삭제' }).click()
+  await expect(dialog.getByRole('button', { name: '삭제 중…' })).toBeDisabled()
+  // The modal hides the background from role queries; the card must stay in the DOM.
+  await expect(page.locator('.ai-job-card')).toHaveCount(1)
+  finish()
+  await expect(dialog).toHaveCount(0)
+  await expect(dashboard.locator('.ai-job-card')).toHaveCount(0)
+  await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
+  await expect(dashboard.locator('.ai-job-card')).toHaveCount(0)
+  await page.reload()
+  await expect(dashboard).toContainText('아직 요청한 AI 작업이 없습니다')
+  expect(posts).toBe(1)
+})
+
+test('AI card deletion errors preserve the card and permission denial clears the snapshot', async ({ page }) => {
+  await mockOA(page)
+  let denied = false
+  const job = monitoredJob()
+  await page.route('**/api/workbench/ai/jobs**', route => route.request().method() === 'POST'
+    ? denied ? route.fulfill({ status: 403, json: { code: 'FORBIDDEN' } }) : route.abort('failed')
+    : route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
+  await dashboard.getByRole('button', { name: 'synthetic_check 작업 삭제', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'AI 작업 삭제' })
+  await dialog.getByRole('button', { name: '작업과 기록 삭제' }).click()
+  await expect(dialog.getByRole('alert')).toContainText('같은 작업')
+  await expect(page.locator('.ai-job-card')).toHaveCount(1)
+  denied = true
+  await dialog.getByRole('button', { name: '작업과 기록 삭제' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(dashboard.locator('.ai-job-card')).toHaveCount(0)
+})
+
+test('AI card deletion stays visibly disabled when cleanup permission is unavailable', async ({ page }) => {
+  await mockOA(page)
+  const job = { ...monitoredJob(), can_delete: false, delete_error: 'AI_JOB_DELETE_NOT_CONFIGURED' }
+  await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const button = page.getByRole('button', { name: 'synthetic_check 작업 삭제', exact: true })
+  await expect(button).toBeDisabled()
+  await expect(button).toHaveAttribute('title', /운영 설정/)
 })

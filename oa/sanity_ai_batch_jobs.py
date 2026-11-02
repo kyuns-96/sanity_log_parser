@@ -17,6 +17,7 @@ from common.sanity_submission import check
 from common.sanity_preserved_ai import available, model_metadata, receipt
 from oa.sanity_workspace import record_id
 from oa.sanity_ai_batch_model import BatchModel, VERSION
+from oa.sanity_ai_progress import display_metrics, group_count_after
 from oa.sanity_ai_retry import MAX_RETRIES,receipt as failure_receipt,valid_receipt,retry_at,resumable,validation_failure
 
 NAMESPACE = 'oa-ai-batch-v1'
@@ -215,6 +216,7 @@ def public(service,event):
     from oa.sanity_ai_unknown_recovery import recovery_info
     recovery=recovery_info(event,step,step_ref)
     if recovery is not None:value['unknown_recovery']=recovery
+    value.update(display_metrics(event,state,phase=value['progress']['phase']))
     proof=(step.get('failure',{}).get('receipt',{}) if step else {})
     diagnostic=step.get('failure',{}).get('validation_failure') if step else None
     if diagnostic is not None and (event['status']=='RUNNING' or
@@ -282,6 +284,7 @@ def _prepare(service,event,advisor,now):
         ledger=Ledger(service,event)
         state={'round':0,'index':0,'records':0,'calls':0,'nodes':0,'stable':0,'actual_model':None,
                'round_total':len(ranges),'round_seconds':0,'round_samples':0,'seconds':0,'record_seconds':0}
+        state['current_groups']=1 if getattr(model,'review',False) else None if text_plan else 0
         if event['data']['batch']['version']==2:
             state.update(phase='TEXT' if text_plan else 'REVIEW' if model.review else 'CLASSIFY',stage_round=0)
         ledger.step(None,None,'READY',state)
@@ -297,7 +300,8 @@ def _text_round(ledger,model,step,ref,nodes,node_refs):
         ledger.plans(number,descriptors,len(model.records))
         ledger.step(step,ref,'READY',{**state,'round':number,'index':0,'nodes':0,'stage_round':0,
             'round_total':len(descriptors),'round_seconds':0,'round_samples':0,
-            'phase':'REVIEW' if model.review else 'CLASSIFY','preserved_ref':node_refs[0]})
+            'phase':'REVIEW' if model.review else 'CLASSIFY','preserved_ref':node_refs[0],
+            'current_groups':1 if model.review else 0})
     else:
         check(state['stage_round']<model.settings.max_rounds,'AI_BATCH_LIMIT')
         groups=model.bounded_groups(nodes,text=True);by_id={r['id']:r for r in node_refs}
@@ -357,7 +361,8 @@ def _finish_round(service,event,ledger,model,step,ref):
     ledger.plans(round_number+1,descriptors,len(nodes))
     extra={'stage_round':stage_round+1,'phase':'REVIEW_MERGE' if review else 'MERGE'} if 'phase' in state else {}
     ledger.step(step,ref,'READY',{**state,'round':round_number+1,'index':0,'nodes':0,'stable':stable,
-                                'round_total':len(descriptors),'round_seconds':0,'round_samples':0,**extra})
+                                'round_total':len(descriptors),'round_seconds':0,'round_samples':0,
+                                'current_groups':1 if review else len(nodes),**extra})
     return event
 
 
@@ -382,9 +387,11 @@ def load_result(service,event,context,cases,criteria=None):
 
 def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now=None):
     from oa.sanity_ai_jobs import _transaction,_db_now,_timestamp,_error_code
+    from oa.sanity_ai_deletion import worker_load
     dispatch=None
     with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
-        service._lock(job_id);event=service._load(job_id)
+        service._lock(job_id);event=worker_load(service,job_id)
+        if event is None:return None
         if event['status']=='RESULT_READY': return public(service,service._apply(event))
         if event['status'] not in ('PENDING','RUNNING'): return public(service,event)
         try:
@@ -441,7 +448,9 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
         result=None;failure=error
     seconds=time.monotonic()-call_started
     with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
-        service._lock(job_id);current=service._load(job_id);ledger=Ledger(service,current)
+        service._lock(job_id);current=worker_load(service,job_id)
+        if current is None:return None
+        ledger=Ledger(service,current)
         if current['status']!='RUNNING': return public(service,current)
         if current['sequence']!=event['sequence']:return public(service,current)
         step,ref=ledger.last()
@@ -479,6 +488,7 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
             result_ref=ledger.put(f"result.{state['round']:03d}.{state['index']:06d}",result)
             records=state['records']+(descriptor['stop']-descriptor['start'] if descriptor['kind'] in ('LEAF','REVIEW_LEAF') else 0)
             ledger.step(step,ref,'READY',{**state,'index':state['index']+1,'calls':state['calls']+1,
+                        'current_groups':group_count_after(current,state,descriptor,len(result['nodes'])),
                         'records':records,'nodes':state['nodes']+len(result['nodes']),'actual_model':actual,
                         'seconds':state.get('seconds',0)+seconds,'round_seconds':state.get('round_seconds',0)+seconds,
                         'round_samples':state.get('round_samples',0)+1,

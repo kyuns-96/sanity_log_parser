@@ -15,6 +15,8 @@ from common.sanity_common import ReviewError, digest
 from common.sanity_submission import check
 from oa.sanity_ai_batch_jobs import _model, _record_plan, _bind_preserved, _finish_round, attempts
 from oa.sanity_ai_parallel_ledger import ParallelLedger
+from oa.sanity_ai_deletion import worker_load
+from oa.sanity_ai_progress import display_metrics, group_count_after
 from oa.sanity_ai_retry import MAX_RETRIES, receipt as failure_receipt, retry_at, validation_failure
 
 STALE = frozenset(('AI_INPUT_STALE','AI_CASES_STALE','AI_CRITERIA_STALE','REVISION_CONFLICT',
@@ -98,6 +100,7 @@ def public(service, event):
         'child_retries':max((slot.get('retries',0) for slot in wave),default=0),
         'retry_limit':MAX_RETRIES,'retry_after':min((slot['retry_after'] for slot in retry),default=None),
         'cancel_requested':state.get('cancel_requested',False)}
+    value.update(display_metrics(event,state,phase=value['progress']['phase']))
     value['resumable'] = bool(step and can_resume(event,state))
     failed_diagnostics=sorted((slot for slot in wave if slot['status'] in ('RETRY','FAILED') and slot.get('error')=='INVALID_RATIONALE'
                                and slot.get('validation_failure') is not None),key=lambda slot:slot['index'])
@@ -141,6 +144,7 @@ def _prepare(service, event, now):
             'stable':0,'actual_model':None,'round_total':len(descriptors),
             'round_seconds':0,'round_samples':0,'seconds':0,'record_seconds':0,
             'phase':'TEXT' if text else 'REVIEW' if getattr(model,'review',False) else 'CLASSIFY'}
+        state['current_groups']=1 if getattr(model,'review',False) else None if text else 0
         if batch['version'] == 2: state['stage_round'] = 0
         ledger.step(None,None,'READY',state)
     _bind_preserved(model,ledger,ledger.last()[0]['state'])
@@ -213,7 +217,8 @@ def _execute(model, descriptor, nodes, prepared):
 def _save(db_factory,workspace_factory,advisor,criteria_provider,job_id,slot,descriptor,revision,result,error,seconds,max_calls):
     from oa.sanity_ai_jobs import _transaction,_db_now,_timestamp,_error_code
     with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
-        service._lock(job_id); event = service._load(job_id)
+        service._lock(job_id); event = worker_load(service,job_id)
+        if event is None:return None
         if event['status']!='RUNNING': return service.public(event)
         ledger = ParallelLedger(service,event); step,ref = ledger.last(); state = step['state']
         current = next((s for s in state['wave'] if s['index']==slot['index']),None)
@@ -234,7 +239,8 @@ def _save(db_factory,workspace_factory,advisor,criteria_provider,job_id,slot,des
                 _outcome(ledger,slot,'SUCCESS',result=result_ref)
                 slot = {**slot,'status':'DONE','result':result_ref}
                 records = descriptor['stop']-descriptor['start'] if descriptor['kind'] in ('LEAF','REVIEW_LEAF') else 0
-                state = {**state,'calls':state['calls']+1,'records':state['records']+records,
+                state = {**state,'current_groups':group_count_after(event,state,descriptor,len(result['nodes'])),
+                    'calls':state['calls']+1,'records':state['records']+records,
                     'nodes':state['nodes']+len(result['nodes']),'actual_model':actual,
                     'seconds':state['seconds']+seconds,'round_seconds':state['round_seconds']+seconds,
                     'round_samples':state['round_samples']+1,'record_seconds':state['record_seconds']+(seconds if records else 0)}
@@ -288,7 +294,8 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
     from oa.sanity_ai_jobs import _transaction,_db_now,_timestamp
     dispatch = []
     with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
-        service._lock(job_id); event = service._load(job_id)
+        service._lock(job_id); event = worker_load(service,job_id)
+        if event is None:return None
         if event['status']=='RESULT_READY': return service.public(service._apply(event))
         if event['status'] not in ('PENDING','RUNNING'): return service.public(event)
         try:

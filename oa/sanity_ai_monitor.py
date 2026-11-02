@@ -15,6 +15,11 @@ PREFIX, NAMESPACE = "ai.live.", "ai-live-v1"
 
 def record(service, identity, command, target, public, *, phase=None, call_id=None):
     from oa.sanity_ai_jobs import _db_now
+    from oa.sanity_ai_deletion import marker
+    # Observers can already hold the job lock while HTTP is open. Taking the
+    # global review lock here would invert delete's review -> job lock order.
+    service.db.execute("SELECT pg_advisory_xact_lock(%s)",(lock_key("ai1.job."+identity),))
+    if marker(service,identity) is not None:return
     service.db.execute("SELECT pg_advisory_xact_lock(%s)",(lock_key(PREFIX+identity),))
     row=service.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s "
         "ORDER BY workspace_key DESC LIMIT 1",(PREFIX+identity+".%",)).fetchone()
@@ -85,6 +90,9 @@ class Monitor:
             return value
         identity=value.get('id',job.get('id'))
         event=self.service._load(identity,required=False)
+        if event is None:
+            from oa.sanity_ai_deletion import marker
+            if marker(self.service,identity) is not None:return None
         require(event is not None and event['job_id']==identity
                 and event['data']['command']['user_id']==value.get('actor_id')
                 and event['data']['target']==value.get('target'),'AI_MONITOR_CORRUPT')
@@ -144,14 +152,17 @@ class Monitor:
 
     def items(self,user_id,*,limit=12):
         from oa.sanity_ai_submissions import header
+        from oa.sanity_ai_deletion import available
         require(type(limit) is int and 1<=limit<=20,"INVALID_REQUEST")
         rows=self.db.execute("SELECT * FROM (SELECT DISTINCT ON (payload->>'id') * FROM {oa} "
             "WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s AND payload->>'actor_id'=%s "
             "ORDER BY payload->>'id',workspace_key DESC) latest ORDER BY created_at DESC LIMIT %s",
             (PREFIX+"%",user_id,limit)).fetchall()
         items=[]
+        deletion_available=available(self.service)
         for row in rows:
             value=self.display_unknown(validate(row))
+            if value is None:continue
             try:meta=header(self.service,{**value["command"],"user_id":user_id})
             except ReviewError as error:
                 if error.code in ("FORBIDDEN","UNAUTHORIZED","NOT_FOUND","RESOURCE_NOT_FOUND"):continue
@@ -161,6 +172,8 @@ class Monitor:
                 "report":{**value["command"],**{k:meta[k] for k in ("project_id","item_id","family")}},
                 "can_cancel":meta["can_review"] and job["status"] in ("PENDING","RUNNING","RESULT_READY")
                     and not job.get('progress',{}).get('cancel_requested',False),
+                "can_delete":bool(deletion_available and meta["can_review"]),
+                **({"delete_error":"AI_JOB_DELETE_NOT_CONFIGURED"} if not deletion_available else {}),
                 "can_resume":bool(meta["can_review"] and meta["ready"] and meta["group_ready"] and job.get("resumable"))})
         return {"items":items,"worker":worker_health(self.db),"server_time":self.db.execute(
             "SELECT clock_timestamp() AS now").fetchone()["now"].isoformat()}

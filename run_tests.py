@@ -42,6 +42,9 @@ QUICK_TESTS = (
     "tests.test_ai_connection_deletion.ConnectionDeletionApiTests",
     "tests.test_ai_reasoning.ReasoningSettingsTests", "tests.test_ai_reasoning.ReasoningWireTests",
     "tests.test_ai_cache_contract.CacheContractTests", "tests.test_ai_cache_transport.CacheTransportTests",
+    "tests.test_ai_progress_metrics",
+    "tests.test_ai_job_deletion.AIJobDeletionDatabaseTests.test_completed_job_removes_execution_rows_and_preserves_report_and_proposal",
+    "tests.test_ai_job_deletion.AIJobDeletionDatabaseTests.test_rolling_delete_after_refill_stops_more_work_and_late_observations",
     "tests.test_ai_task_models.TaskDefaultsApiTests",
     "tests.test_ai_routing.RoutingConfigurationTests", "tests.test_ai_routing.RoutingTransportTests",
     "tests.test_ai_workbench_api", "tests.test_ai_unknown_recovery.UnknownRecoveryApiTests",
@@ -85,6 +88,7 @@ QUICK_TESTS = (
 # Full still discovers every original test, including large datasets and all
 # portal migration replays. No test input, assertion or skip rule is changed.
 REGRESSION_TESTS = (
+    "tests.test_ai_job_deletion", "tests.test_ai_progress_metrics",
     "tests.test_ai_cache_contract", "tests.test_ai_cache_transport",
     "tests.test_vwp_inference", "tests.test_vwp_worker", "tests.test_vwp_personal_credentials",
     "tests.test_ai_unknown_recovery",
@@ -201,6 +205,7 @@ ROLE_TESTS = {
     ),
     "vwp-bridge": (
         "tests.test_parsers", "tests.test_collection_only", "tests.test_submission_https",
+        "tests.test_ai_progress_metrics",
         "tests.test_vwp_inference.VwpInferenceContractTests",
         "tests.test_vwp_personal_credentials.VwpPersonalProfileTests",
         "tests.test_ai_cache_transport.CacheTransportTests",
@@ -212,6 +217,7 @@ ROLE_TESTS = {
     ),
     "oa": (
         "tests.test_auth", "oa.test_auth_config", "oa.test_sso",
+        "tests.test_ai_progress_metrics",
         "tests.test_access_api.AccessApiBoundaryTests",
         "tests.test_ai_connections.ConnectionConfigurationTests",
         "tests.test_ai_connections.ConnectionApiTests",
@@ -225,6 +231,7 @@ ROLE_TESTS = {
 ROLE_DB_TESTS = {
     "vwp-bridge": (
         "vwp_bridge.test_corporate_parsers",
+        "tests.test_ai_job_deletion.AIJobDeletionDatabaseTests.test_rolling_delete_after_refill_stops_more_work_and_late_observations",
         "tests.test_vwp_worker.VwpWorkerTests.test_web_submission_and_polling_do_not_hydrate_logs_or_retrieve_cases",
         "tests.test_vwp_worker.VwpWorkerTests.test_existing_oa_model_runs_on_the_vwp_host_without_a_vwp_relay",
         "tests.test_vwp_worker.VwpWorkerTests.test_unknown_call_is_not_retried_and_progress_has_real_transport_stages",
@@ -234,6 +241,8 @@ ROLE_DB_TESTS = {
         "tests.test_ai_rolling_batches.RollingJobsTests.test_eight_slots_refill_while_the_first_seven_are_blocked_and_merge_waits",
     ),
     "oa": (
+        "tests.test_ai_job_deletion.AIJobDeletionDatabaseTests.test_completed_job_removes_execution_rows_and_preserves_report_and_proposal",
+        "tests.test_ai_job_deletion.AIJobDeletionDatabaseTests.test_rolling_delete_after_refill_stops_more_work_and_late_observations",
         "tests.test_ai_connections.ConnectionDatabaseTests.test_only_admin_can_create_and_revisions_are_checked",
         "tests.test_ai_connections.ConnectionDatabaseTests.test_shared_client_key_is_encrypted_and_never_in_admin_or_user_output",
         "tests.test_ai_connections.ConnectionDatabaseTests.test_user_and_connection_tokens_are_separate_and_plaintext_is_not_stored",

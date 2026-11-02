@@ -22,6 +22,22 @@ TARGET = ("synthetic.user", "synthetic.block", "synthetic.version", "synthetic.r
 
 
 class ProductionWorkbenchApiTests(unittest.TestCase):
+    def test_job_deletion_requires_server_actor_same_origin_and_closed_body(self):
+        identity=str(uuid4());url='/api/workbench/ai/jobs/'+identity+'/delete'
+        self.service.delete.return_value={'id':identity,'deleted':True}
+        for headers in ({},{'X-Sanity-Request':'1','Origin':'http://different.test'},
+                        {'X-Sanity-Request':'1','Sec-Fetch-Site':'cross-site'}):
+            self.assertEqual(403,self.client.post(url,headers=headers,json={}).status_code)
+        self.assertEqual(400,self.client.post(url,headers=HEADERS,json={'user_id':'someone-else'}).status_code)
+        self.service.delete.assert_not_called()
+        result=self.client.post(url,headers=HEADERS,json={})
+        self.assertEqual(200,result.status_code)
+        self.assertEqual({'id':identity,'deleted':True},result.json())
+        self.service.delete.assert_called_once_with(TARGET[0],identity)
+        self.assertEqual(400,self.client.post('/api/workbench/ai/jobs/not-a-uuid/delete',headers=HEADERS,json={}).status_code)
+        self.actor=SimpleNamespace(user_id=TARGET[0],auth_method='local_token',access=self.access)
+        self.assertEqual(403,self.client.post(url,headers=HEADERS,json={}).status_code)
+
     def setUp(self):
         self.db = object()
         self.access = SimpleNamespace(db=self.db)
