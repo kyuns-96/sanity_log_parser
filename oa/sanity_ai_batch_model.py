@@ -2,6 +2,7 @@
 from common.sanity_common import ReviewError, canonical_json, digest
 from common.sanity_clustering_advice import evidence, partition, validate_clustering_advice
 from common.sanity_ai_knowledge import shared_case
+from common.sanity_rule_groups import rule_code, group_code, model_context as rule_context
 from common.sanity_preserved_ai import split_reply, model_metadata
 from common.sanity_submission import check
 from common.sanity_ai_projection import policy_for, project_rows, instruction as projection_instruction, alias_rows, restore_clustering
@@ -46,6 +47,7 @@ class BatchModel:
             prompt = prompt.replace('batch.record_aliases가 원본 ID와의 대응입니다. 배치 밖 원본을 배정하지 마세요.',
                                     '제공된 짧은 ID는 이번 배치의 식별자입니다. 제공되지 않은 ID를 배정하지 마세요.')
         prompt, version = source_instruction(context, prompt, VERSION+'.'+stage.lower())
+        version += '.rule-code-v1'
         return projection_instruction(self.policy, prompt, version) if self.policy is not None else (prompt, version)
 
     def citation_context(self, context):
@@ -62,6 +64,8 @@ class BatchModel:
         # not another copy of the original records for the model to classify.
         report.pop('source_parts',None)
         context = {**context,'report':report, **({'ai_input_policy':self.policy} if self.policy is not None else {})}
+        original = self.records[details['start']:details['stop']] if stage == 'LEAF' else rows
+        context = rule_context(context, original)
         packet = {'context':context,'cases':[shared_case(c) for c in self.cases],
                   'identity_fields':self.fields,'batch':{'version':getattr(self,'version',VERSION),'stage':stage,
                   'source_record_count':len(self.records),'source_sha256':self.context['source_sha256'],**details}}
@@ -76,15 +80,22 @@ class BatchModel:
         rows = [{**r,'id':'r'+str(i)} for i,r in enumerate(self.records[start:stop])]
         return self.packet(rows,stage='LEAF',details={'start':start,'stop':stop,'record_aliases':aliases})
 
-    @staticmethod
-    def summary(node):
+    def summary(self, node):
+        code = group_code([self.records[i]['id'] for i in node['members']],
+                          {self.records[i]['id']: self.records[i] for i in node['members']}, self.context['report'])
         return {'id':node['id'],'raw':node['label'],'fields':{
+            'code':code,
             'reason':node['reason'],'record_count':len(node['members']),
             'evidence_indices':node['evidence'], 'reference_groups':node['references'],
             'conditions':node['conditions'], 'membership_sha256':digest(node['members'])}}
 
     def merge(self, nodes):
         return self.packet([self.summary(n) for n in nodes],stage='MERGE',details={'group_count':len(nodes)})
+
+    def rules_complete(self, nodes):
+        index = {row['id']:row for row in self.records}
+        codes = [group_code([self.records[i]['id'] for i in node['members']],index,self.context['report']) for node in nodes]
+        return len(codes) == len(set(codes))
 
     def fits(self, prepared):
         packet, instruction = prepared[:2]
@@ -103,7 +114,13 @@ class BatchModel:
         # is a planning estimate; incomplete/over-limit responses still fail.
         limit = min(self.settings.max_records,max(1,self.settings.output_tokens//192))
         while start < len(self.records):
-            lo, hi, count = 1, min(limit,len(self.records)-start), 0
+            end = min(start + limit, len(self.records))
+            if not getattr(self, 'review', False):
+                code = rule_code(self.records[start], self.context['report'])
+                end = start + 1
+                while end < min(start + limit, len(self.records)) and rule_code(self.records[end], self.context['report']) == code:
+                    end += 1
+            lo, hi, count = 1, end-start, 0
             # Most complete chunks fit their record/output limit. Avoid
             # serializing the same prefix at every binary-search midpoint.
             # After the first miss retain the original search for all later
@@ -127,21 +144,27 @@ class BatchModel:
         # Sorted semantic descriptors nominate candidates, never decide their
         # membership. Every node is compared once per round. No all-groups POST.
         fields=('label','reason') if round_number%2 else ('reason','label')
-        ordered = sorted(nodes,key=lambda n:(n[fields[0]].casefold(),n[fields[1]].casefold(),n['id']))
+        index = {row['id']:row for row in self.records}
+        codes = {node['id']:group_code([self.records[i]['id'] for i in node['members']], index, self.context['report']) for node in nodes}
+        ordered = sorted(nodes,key=lambda n:(codes[n['id']],n[fields[0]].casefold(),n[fields[1]].casefold(),n['id']))
         groups, current = [], []
         limit = min(self.settings.merge_groups,max(2,self.settings.output_tokens//192))
         # Compare former bucket boundaries in the next pass as well. Candidate
         # ordering is bounded and deterministic, never an equivalence rule.
         shift=min(len(ordered),limit//2) if round_number%2==0 else 0
-        ordered=ordered[shift:]+ordered[:shift]
+        # Rotate inside each rule only; code boundaries are never candidates.
+        if shift:
+            from itertools import groupby
+            buckets = [list(values) for _,values in groupby(ordered,key=lambda n:codes[n['id']])]
+            ordered = [node for bucket in buckets for node in bucket[shift%len(bucket):]+bucket[:shift%len(bucket)]]
         for node in ordered:
             candidate = current+[node]
-            if current and (len(candidate)>limit or not self.fits(self.merge(candidate))):
+            if current and (codes[current[0]['id']] != codes[node['id']] or len(candidate)>limit or not self.fits(self.merge(candidate))):
                 groups.append([n['id'] for n in current]); current=[]
             check(self.fits(self.merge([node])), 'AI_INPUT_LIMIT','Complete intermediate group exceeds the reduction budget')
             current.append(node)
         if current: groups.append([n['id'] for n in current])
-        check(any(len(g)>1 for g in groups) or len(nodes)==1,'AI_INPUT_LIMIT','No pair of groups fits the reduction budget')
+        check(any(len(g)>1 for g in groups) or len(set(codes.values()))==len(nodes),'AI_INPUT_LIMIT','No pair of groups fits the reduction budget')
         return groups
 
     def prepare(self, descriptor, nodes=None):
@@ -214,5 +237,5 @@ class BatchModel:
             if node['citation']: citations.append(node['citation'])
         value = {'groups':groups,'group_rationales':rationales,'reference_ids':sorted(refs),
                  'reason':'전체 로그의 배치별 AI 분류와 중간 그룹의 의미 비교를 통합한 제안입니다. 사람이 구성·조건·예외를 검토해 확정해야 합니다.'}
-        validate_clustering_advice(value,self.context,self.cases,require_rationales=True)
+        value = validate_clustering_advice(value,self.context,self.cases,require_rationales=True)
         return value,citations

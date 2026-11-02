@@ -59,7 +59,8 @@ class ClusteringAdvisor(ABC):
         """Return a V2 proposal without changing inputs or recording approval.
 
         No prior case is required. Assign every original record exactly once and
-        supply its group's rationale. The caller validates new company outputs
+        supply its group's rationale. Each group must contain one rule code;
+        label it as RULE_CODE · short description. The caller validates new company outputs
         with validate_clustering_advice(..., require_rationales=True). This hook
         does not connect a company SDK to the OA workspace or a VWP worker.
         """
@@ -76,7 +77,9 @@ def validate_clustering_advice(value, context, cases, *, require_rationales=Fals
     check(isinstance(refs, list) and all(isinstance(key, str) for key in refs)
           and len(set(refs)) == len(refs) and set(refs) <= {case["id"] for case in cases}, "INVALID_ADVICE")
     check(len(refs) <= 100, "CASE_LIMIT")
-    groups = partition(value["groups"], evidence(context))
+    records = evidence(context)
+    from common.sanity_rule_groups import enforce
+    groups = enforce(partition(value["groups"], records), records, context['report'])
     if "group_rationales" in value:
         rationale.validate_group_rationales(value["group_rationales"], groups, cases, refs, diagnostics=require_rationales)
     return {**value, "groups": groups}

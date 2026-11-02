@@ -5,6 +5,7 @@ import argparse
 import sys
 import time
 import threading
+from uuid import uuid4
 
 from common.sanity_common import ReviewError
 from common.sanity_config import load_environment
@@ -36,31 +37,37 @@ def main(argv=None):
 
         from common.sanity_ai_execution import executing_on
         from oa.sanity_ai_monitor import heartbeat
+        from oa.sanity_ai_scheduler import Scheduler,executing_job,work_loop
+        factory=lambda:Database('oa')
+        scheduler=Scheduler(factory,str(uuid4()),args.site)
         stop=threading.Event()
         def health_loop():
             with executing_on(args.site):
                 while not stop.wait(30):
-                    try:heartbeat()
+                    try:
+                        heartbeat();scheduler.renew()
                     except Exception:pass
         published = None
         with executing_on(args.site):
             heartbeat()
             if not args.once:threading.Thread(target=health_loop,daemon=True,name="ai-worker-heartbeat").start()
-            while True:
+            def tick():
+                nonlocal published
                 if args.site == "vwp" and (published is None or time.monotonic() - published >= 300):
                     from oa.sanity_vwp_inference import publish_catalog
                     publish_catalog()
                     published = time.monotonic()
-                result = run_once(lambda: Database("oa"), workspace, advisor)
+            def process(identity):
+                with executing_on(args.site),executing_job(identity,scheduler.owner):
+                    return run_once(factory,workspace,advisor,job_id=identity)
+            def report(result):
                 if result:
                     # IDs, input text, credentials and driver/model exceptions are
                     # not printed. Full provenance remains in the authorized DB.
                     print("status=" + result["status"] + (" code=" + result["error"] if result.get("error") else ""), flush=True)
-                if args.once:
-                    stop.set()
-                    return 0
-                if result is None or result["status"] == "RUNNING" and result.get('progress',{}).get('waiting',True):
-                    time.sleep(args.interval)
+            work_loop(scheduler,process,stop,args.interval,once=args.once,on_tick=tick,on_result=report,
+                      on_error=lambda code:print('code='+code,file=sys.stderr,flush=True))
+            return 0
     except ReviewError as error:
         print("code=" + error.code, file=sys.stderr)
         return 2

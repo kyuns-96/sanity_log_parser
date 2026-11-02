@@ -70,6 +70,18 @@ def delete(service, user_id, identity):
         check({**intent['data']['command'], 'model_id': intent['data']['model']}
               == {**command, 'model_id': event['data']['model']}, 'AI_JOB_CORRUPT')
     check(available(service), 'AI_JOB_DELETE_NOT_CONFIGURED')
+    return purge_locked(service,identity,user_id)
+
+
+def purge_locked(service,identity,user_id):
+    """Internal scope purge; caller has authorized the containing report."""
+    from oa.sanity_ai_submissions import job_lock
+    identity=str(uuid_value(identity,'job_id'))
+    job_lock(service,identity)
+    previous=marker(service,identity)
+    if previous:
+        check(previous['actor_id']==user_id,'AI_JOB_CORRUPT')
+        return {'id':identity,'deleted':True}
     value = {'namespace': NAMESPACE, 'id': identity, 'actor_id': user_id}
     value['sha256'] = digest(value)
     # The marker and all execution rows change atomically, including if DELETE

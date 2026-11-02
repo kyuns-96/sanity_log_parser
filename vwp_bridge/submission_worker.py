@@ -104,6 +104,15 @@ class SubmissionWorker:
                   and message['run_id'] is None and message['bundle_id'] is None,'INVALID_SOURCE_RECEIPT')
             with self.db.transaction():
                 row = self.store.get('SUBMISSION',sid,lock=True)
+                from common.sanity_removal import PRIVATE_REMOVED
+                if row and row['payload'].get('namespace')==PRIVATE_REMOVED:
+                    removed=row['payload']
+                    check(removed['content_sha256']==value['content_sha256']
+                          and removed['project_key']==message['project']
+                          and digest([removed['actor']['issuer'],removed['actor']['subject']])==value['actor_key'],
+                          'INVALID_SOURCE_RECEIPT')
+                    queue.finish(message)
+                    return True
                 check(row and row['payload']['content_sha256'] == value['content_sha256']
                       and row['state'].get('collection_id') == value['collection_id']
                       and row['payload']['plan']['collection']['project_key'] == message['project']
@@ -205,7 +214,7 @@ class SubmissionWorker:
                 return False
             if row['status'] in ('VWP_ACCEPTED','PARSING'):
                 with self.db.transaction():
-                    row = self.store.state(sid,'PARSING',{})
+                    row = self.store.state(sid,'PARSING',row['state'])
                 self.write_receipt(row)
                 build_transfer(self.db,self.store,incoming,manifest,output/'snapshot',confirmed=confirmed,registry=self.registry)
                 verify_snapshot(output/'snapshot')
@@ -215,7 +224,7 @@ class SubmissionWorker:
         except ReviewError as exc:
             permanent = {'SOURCE_IDENTITY_CONFLICT','SOURCE_ORDER_CONFLICT','RECORD_TRANSFER_LIMIT','SOURCE_MESSAGE_LIMIT',
                 'SOURCE_COVERAGE_MISMATCH','FILE_INTEGRITY','SOURCE_CHANGED','SOURCE_SCOPE_MISMATCH','SENSITIVE_CONTENT',
-                'PARSER_SCOPE_MISMATCH','SUBMISSION_CONTRACT_MISMATCH','INVALID_SUBMISSION'}
+                'PARSER_SCOPE_MISMATCH','SUBMISSION_CONTRACT_MISMATCH','INVALID_SUBMISSION','SOURCE_REMOVED'}
             if exc.code in permanent or exc.code.startswith('PARSER_'):
                 with self.db.transaction():
                     row = self.store.get('SUBMISSION',sid,lock=True)

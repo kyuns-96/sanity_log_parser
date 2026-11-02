@@ -14,7 +14,7 @@ import CaseSource from './CaseSource'
 import PreservedSources, { PreservedCitations } from './PreservedSources'
 import { NEW_LOG_GROUP, useLogDrag } from './useLogDrag'
 import type { LogMove } from './useLogDrag'
-import { aiJobActive, aiJobMessage, aiValidationMessage, aiExecutionLabel, workspaceApiBase, WorkspaceError, toolResultStatus, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
+import { reportDisplayName, aiJobActive, aiJobMessage, aiValidationMessage, aiExecutionLabel, workspaceApiBase, WorkspaceError, toolResultStatus, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
 import type { ClusterBrief, CodexJob, GroupBrief, GroupRecords, PageResult, PipelineTask, WorkbenchView, WorkspaceSession } from './workspaceApi'
 
 const n = (value: number) => value.toLocaleString('ko-KR')
@@ -357,7 +357,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
   return <section ref={panel} className={`ws-panel ws-workbench ws-studio-workbench${drag.drag ? ' ws-dragging-logs' : ''}`} data-step={step} aria-label="Sanity item 순차 검토">
     <div className="ws-workbench-topline">
     <header className="ws-workbench-header">
-      <div className="ws-workbench-title"><div><div className="ws-workbench-heading-line"><h1>로그 검토</h1><span className="ws-caption" title={`${data.report.family} · ${data.version.net_ver} · ${data.version.layout}`}>{data.report.family} · {data.version.net_ver} · {data.version.layout}</span></div><p title={data.report.id}>{data.report.id}</p></div></div>
+      <div className="ws-workbench-title"><div><div className="ws-workbench-heading-line"><h1>로그 검토</h1><span className="ws-caption" title={`${data.report.family} · ${data.version.net_ver} · ${data.version.layout}`}>{data.report.family} · {data.version.net_ver} · {data.version.layout}</span></div><p title={data.report.id}>{reportDisplayName(data.report)}</p></div></div>
       {demo ? <Button variant="ghost" className="ws-source-download" disabled={!data.record_count} onClick={downloadDemoSource}><Download size={16} />예시 원문 내려받기</Button> : data.report.source_storage === 'PARTS_V2' ? <span className="ws-muted">원본 파일은 VWP에 보관 · 추출 로그는 아래에서 조회</span> : <a className="ws-source-download" href={`${workspaceApiBase()}${base}/source`}><Download size={16} />원본 내려받기</a>}
     </header>
     <div className="ws-workbench-toolbar">
@@ -412,7 +412,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
         <div className="ws-context-version"><GitBranch size={15} /><div><strong>{data.version.net_ver}</strong><span>{data.version.layout} · {data.version.revision}</span><span>ECO {data.report.eco || '해당 없음'}</span></div></div>
         <div className="ws-context-por"><ShieldCheck size={15} /><div><span>현재 PoR</span><strong>{context?.porLabel || '미지정'}</strong></div></div>
         <div className="ws-context-heading"><FileText size={16} /><h2>검사 보고서</h2></div>
-        <div className="ws-context-file"><strong>{data.report.item_id || data.report.rule}</strong><span>{data.report.family}</span><code title={data.report.id}>{data.report.id}</code><Badge variant="outline" className={`ws-status ws-status-${data.report.check_status.toLowerCase()}`}>도구 결과 {labels[toolResultStatus(data.report)]}</Badge></div>
+        <div className="ws-context-file"><strong>{data.report.item_id || data.report.rule}</strong><span>{data.report.family}</span><span title={data.report.id}>{reportDisplayName(data.report)}</span><Badge variant="outline" className={`ws-status ws-status-${data.report.check_status.toLowerCase()}`}>도구 결과 {labels[toolResultStatus(data.report)]}</Badge></div>
         <dl className="ws-context-metrics"><div><dt>전체 로그</dt><dd>{n(data.record_count)}</dd></div><div><dt>분류 그룹</dt><dd>{n(data.summary.total)}</dd></div><div><dt>분류 개정</dt><dd>{data.revision}</dd></div></dl>
         <p className="ws-context-permission">{data.can_edit ? '블록 담당자 · 검토 가능' : '조회 전용'}</p>
         <Button variant="ghost" size="sm" onClick={onBack}><ArrowLeft size={14} />보고서 목록</Button>
@@ -464,7 +464,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
     {drag.drag && <div className={`ws-log-drag-preview${drag.drag.keyboard ? ' ws-log-keyboard-preview' : ''}`} style={drag.drag.keyboard ? undefined : { left: Math.max(8, Math.min(drag.drag.x+14, window.innerWidth-238)), top: Math.max(8, Math.min(drag.drag.y+14, window.innerHeight-80)) }} aria-hidden="true"><GripVertical size={17} /><div><strong>{n(drag.drag.ids.length)}건 이동</strong><span>{drag.drag.keyboard ? '↑ ↓ 그룹 선택 · Enter 이동 · Esc 취소' : drag.drag.target === NEW_LOG_GROUP ? '놓아서 새 그룹 만들기' : drag.drag.target && drag.drag.target !== drag.drag.sourceGroup ? '놓아서 이 그룹으로 이동' : '왼쪽 그룹에 놓으세요'}</span></div></div>}
     <Dialog open={!!editor} onOpenChange={open => { if (!open) closeEditor() }}>
       <DialogContent className="ws-group-dialog" onEscapeKeyDown={event => { if (busy) event.preventDefault() }} onInteractOutside={event => { if (busy) event.preventDefault() }}>
-        <DialogHeader><DialogTitle>{editor === 'rename' ? '그룹 이름 변경' : editor === 'merge' ? '선택 그룹 병합' : '새 그룹으로 분리'}</DialogTitle><DialogDescription>{editor === 'rename' ? '로그를 설명하는 그룹 이름을 입력하세요.' : editor === 'merge' ? `선택한 ${n(selectedGroups.size)}개 그룹의 전체 로그를 하나로 합칩니다.` : `선택한 ${n(splitMove?.ids.length || 0)}건을 새 그룹으로 옮깁니다.`}</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>{editor === 'rename' ? '그룹 이름 변경' : editor === 'merge' ? '선택 그룹 병합' : '새 그룹으로 분리'}</DialogTitle><DialogDescription>{editor === 'rename' ? '간단한 그룹 설명을 입력하세요. 저장 시 원본 rule code가 이름 맨 앞에 붙습니다.' : editor === 'merge' ? `선택한 ${n(selectedGroups.size)}개 그룹의 전체 로그를 하나로 합칩니다. 같은 rule code끼리만 병합할 수 있습니다.` : `선택한 ${n(splitMove?.ids.length || 0)}건을 새 그룹으로 옮깁니다. 서로 다른 rule code는 같은 그룹에 넣을 수 없습니다.`}</DialogDescription></DialogHeader>
         {editor !== 'merge' && <label>{editor === 'rename' ? '그룹 이름' : '새 그룹 이름'}<Input autoFocus aria-label={editor === 'rename' ? '선택 그룹 이름' : '분리할 새 그룹 이름'} maxLength={120} value={editor === 'rename' ? groupName : newName} disabled={busy} onChange={event => { if (editor === 'rename') { setNameEditing(true); setGroupName(event.target.value) } else setNewName(event.target.value) }} /></label>}
         <label>변경 사유 <span>(선택)</span><textarea aria-label="이번 변경 사유" value={editReason} maxLength={2000} disabled={busy} placeholder="입력하지 않으면 이동·이름 변경 내역이 기록됩니다." onChange={event => setEditReason(event.target.value)} /></label>
         {error && <p className="ws-error" role="alert">{error}</p>}

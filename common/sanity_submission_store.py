@@ -75,6 +75,8 @@ class SubmissionStore:
 
     def accept(self, submission, *, node_id):
         sid = submission['submission_id']
+        from common.sanity_removal import check_private_submission
+        check_private_submission(self.get('SUBMISSION',sid,lock=True))
         payload = {**submission, 'node_id': node_id}
         self.db.execute("INSERT INTO {vwp}(record_id,record_type,analysis_id,entity_key,payload,status) "
                         "VALUES (%s,'SUBMISSION',NULL,%s,%s,'VWP_ACCEPTED') ON CONFLICT DO NOTHING",

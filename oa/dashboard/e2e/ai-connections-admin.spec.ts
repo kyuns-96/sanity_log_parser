@@ -15,7 +15,8 @@ async function adminFixture(page: Page, initial: Entry[] = [], profiles = [profi
     credentialsReady: true, vwpReady: true, deleteFailure: '' as '' | 'conflict' | 'lost',
     deleted: new Map<string, number>(), deletePaths: [] as string[],
     holdGet: null as null | { started: () => void; release: Promise<void> },
-    writes: [] as Record<string, any>[], taskWrites: [] as Record<string, any>[],
+    writes: [] as Record<string, any>[], taskWrites: [] as Record<string, any>[], schedulerWrites: [] as Record<string, any>[],
+    scheduler: { revision: 0, limits: { max_concurrency: 8, max_jobs: 4 } },
     taskDefaults: { revision: 0, defaults: { CLUSTER: null, REVIEW: null } } as { revision: number; defaults: { CLUSTER: {connection_id: string; model_id: string} | null; REVIEW: {connection_id: string; model_id: string} | null } } }
   await page.route('**/api/**', async route => {
     const request = route.request(); const url = new URL(request.url()); const path = url.pathname
@@ -32,6 +33,16 @@ async function adminFixture(page: Page, initial: Entry[] = [], profiles = [profi
       state.taskWrites.push(body)
       state.taskDefaults = { revision: state.taskDefaults.revision + 1, defaults: body.defaults }
       return route.fulfill({ json: state.taskDefaults })
+    }
+    if (path === '/api/admin/ai/scheduler') {
+      if (request.method() === 'GET') return route.fulfill({ json: state.scheduler })
+      const body = request.postDataJSON()
+      expect(request.headers()['x-sanity-request']).toBe('1')
+      expect(body.expected_revision).toBe(state.scheduler.revision)
+      expect(Object.keys(body).sort()).toEqual(['expected_revision', 'limits'])
+      state.schedulerWrites.push(body)
+      state.scheduler = { revision: state.scheduler.revision + 1, limits: body.limits }
+      return route.fulfill({ json: state.scheduler })
     }
     if (path.startsWith('/api/admin/ai/connections')) {
       if (request.method() === 'GET') {
@@ -193,27 +204,30 @@ test('batch settings expose the effective output-bound cap before saving', async
   expect(state.writes).toHaveLength(0)
 })
 
-test('parallel call setting preserves an untouched legacy config and enforces its range', async ({ page }) => {
+test('global slots allow more than eight calls and connection editors use the shared budget', async ({ page }) => {
   const state = await adminFixture(page); const panel = await openPanel(page)
+  const slots = panel.getByRole('region', { name: '전역 AI 작업 슬롯' })
+  const limit = slots.getByLabel('전체 동시 호출 상한', { exact: true })
+  await expect(limit).toHaveValue('8')
+  await limit.fill('16')
+  await slots.getByLabel('동시 진행 작업 수').fill('3')
+  await slots.getByRole('button', { name: '전역 작업 슬롯 저장' }).click()
+  await expect.poll(() => state.schedulerWrites.length).toBe(1)
+  expect(state.schedulerWrites[0]).toEqual({ expected_revision: 0, limits: { max_concurrency: 16, max_jobs: 3 } })
+  await limit.fill('0')
+  await expect(slots.getByRole('button', { name: '전역 작업 슬롯 저장' })).toBeDisabled()
+  await limit.fill('9')
+  expect(await limit.evaluate((input: HTMLInputElement) => input.checkValidity())).toBe(true)
+  await slots.getByRole('button', { name: '전역 작업 슬롯 저장' }).click()
+  await expect.poll(() => state.schedulerWrites.length).toBe(2)
   await fillOa(panel)
   await panel.locator('summary').filter({ hasText: '처리 한도와 전체 로그 배치 설정' }).click()
   await panel.getByLabel('전체 로그·그룹 판정·보존 본문 배치 사용').check()
-  const limit = panel.getByLabel('작업당 동시 호출 수', { exact: true })
-  await expect(limit).toHaveValue('1')
-  await expect(panel).toContainText('다른 작업이나 이전 원격 호출은 포함하지 않습니다')
+  await expect(panel.getByLabel('작업당 동시 호출 수', { exact: true })).toHaveCount(0)
+  await expect(panel).toContainText('전역 AI 작업 슬롯에서 관리합니다')
   await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
   await expect(panel.getByRole('listitem').getByText('합성 OA 연결', { exact: true })).toBeVisible()
   expect(state.writes[0].config.batch).not.toHaveProperty('max_concurrency')
-  await panel.getByRole('listitem').filter({ hasText: '합성 OA 연결' }).getByRole('button', { name: '수정', exact: true }).click()
-  await panel.locator('summary').filter({ hasText: '처리 한도와 전체 로그 배치 설정' }).click()
-  await limit.fill('9')
-  expect(await limit.evaluate((input: HTMLInputElement) => input.checkValidity())).toBe(false)
-  await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
-  expect(state.writes).toHaveLength(1)
-  await limit.fill('2')
-  await panel.getByRole('button', { name: 'AI 연결 저장', exact: true }).click()
-  await expect.poll(() => state.writes.length).toBe(2)
-  expect(state.writes[1].config.batch.max_concurrency).toBe(2)
 })
 
 for (const site of ['OA', 'VWP'] as const) {

@@ -5,8 +5,8 @@
 | 담당 | 기본 명령 | 공개 검사 범위 | 자기 회사 테스트 위치 |
 |---|---|---|---|
 | VWP 원천 | `.venv/bin/python run_tests.py --role vwp` | 수집·plan/제출 snapshot·파일 보안·보존 파일·AI 필드 선언 | `vwp/integration/company_plan/` |
-| VWP-bridge / 중앙 AI worker | `.venv/bin/python run_tests.py --role vwp-bridge` | parser·수집 전용·제출 HTTPS·VWP 모델 전송·no-cache·배치/입력 필드·rolling ETA/그룹 집계·안전 재시도 | `vwp_bridge/integration/company_{parsers,submission,clustering,review}/` |
-| OA | `.venv/bin/python run_tests.py --role oa` | 인증/SSO·권한 경계·관리 연결/개인 키 API·기본 모델·reasoning/cache 설정·작업 삭제 API/지표 | `oa/integration/company_sso/` |
+| VWP-bridge / 중앙 AI worker | `.venv/bin/python run_tests.py --role vwp-bridge` | parser·수집 전용·제출 HTTPS/실행 ID·VWP 모델 전송·no-cache·code 경계·전역 슬롯·배치/입력 필드·rolling ETA·안전 재시도 | `vwp_bridge/integration/company_{parsers,submission,clustering,review}/` |
+| OA | `.venv/bin/python run_tests.py --role oa` | 인증/SSO·권한 경계·연결/개인 키 API·기본 모델·reasoning/cache·전역 슬롯/보고서 삭제 API·code 경계·작업 지표 | `oa/integration/company_sso/` |
 
 역할은 소스 폴더명이 아니라 담당 업무로 나눕니다. 중앙 AI worker가 사용하는 `oa/` 공통 코드도 VWP-bridge 역할 검사에 포함됩니다. 공유 계약의 작은 검사는 여러 역할에 포함될 수 있지만 다른 역할의 DB 흐름·포털·10만 건 검사는 기본 역할 명령에 들어가지 않습니다. 기존 테스트 본문·입력·기대값·skip 조건은 바꾸지 않습니다.
 
@@ -44,7 +44,7 @@ mock은 새 소켓 전용 PostgreSQL·작업자별 독립 DB를 만들고 종료
 .venv/bin/python db/tests/run_mock.py --profile full
 ```
 
-역할 없는 명령의 기존 quick·regression·full 선택 범위는 유지합니다. 역할 실행기 전용 검사와 이번 카드의 작은 지표 검사·삭제 DB 대표 2건을 quick에 추가했습니다. 알려진 PG18 실패·파일 보안 검사·대용량/포털 시나리오를 기존 통합 범위에서 제거하지 않습니다. 통합 DB·공통 변경 검토는 설계 Codex가 맡고, 사내 담당자는 자기 변경·역할 검사 결과와 필요한 후속 검증을 인계합니다.
+역할 없는 명령의 기존 quick·regression·full 범위와 알려진 실패는 유지합니다. 카드의 지표·삭제 검사에 이어 제출 실행 ID/code 경계/전역 슬롯/보고서 삭제의 작은 계약과 DB 대표 경로를 quick에 추가합니다. 신규 전체 모듈은 명시적 regression/full 또는 전용 실행에서 확인합니다. 알려진 PG18 실패·파일 보안 검사·대용량/포털 시나리오를 기존 범위에서 제거하지 않습니다. 통합 DB·공통 변경 검토는 설계 Codex가 맡고, 사내 담당자는 자기 변경·역할 검사 결과와 필요한 후속 검증을 인계합니다.
 
 ## 남은 실환경 확인과 보고
 
@@ -88,3 +88,18 @@ Termux/PostgreSQL 18.6에서 공개 합성 검사만 실행한 결과입니다. 
 TypeScript/Vite 프로덕션 빌드와 카드/병렬/rolling 화면 17종을 확인했습니다. 화면 검사는 첫 완료 실행에서 15건 통과 후, 확인창이 배경을 접근성 트리에서 숨기는 조건을 반영해 새 검사 2건의 DOM 선택자만 수정하고 두 건을 재실행해 통과했습니다. 기대값과 제품 동작은 유지했습니다. 배치 평균·병합/그룹 수·삭제 확인/오류/오래된 조회 결과·애니메이션/reduced-motion을 확인했고, 중단되어 결과 파일이 없는 앞선 브라우저 실행은 통과 건수에 포함하지 않았습니다.
 
 회사 검사는 0건이며 skip·작업자 오류·실행 ID 누락/중복은 없습니다. 모든 mock DB는 종료했습니다. 통합 quick의 7건은 기존 실패 집합과 동일합니다. 실제 회사 모델/사내 Linux 파일 보안 검증은 완료하지 않았으며, PG18 카탈로그 문제는 별도 미해결입니다. regression/full·10만 건 검사는 이번 카드 변경에서 재실행하지 않았습니다.
+
+## 제출 실행·전역 슬롯·rule code 경계 — 2026-11-02
+
+이번 변경은 동일 revision의 제출별 보고서, 양쪽 DB의 원본·확정 이력 물리 삭제, FIFO 다중 작업과 전역 호출 배분, 분류/판정 동시 실행, 반복 상한의 현재 분류 완료, code별 그룹 경계와 이름을 함께 확인했습니다. 새 전용 모듈은 `tests.test_submission_runs`, `tests.test_workspace_removal`, `tests.test_ai_scheduler`, `tests.test_ai_iteration_completion`, `tests.test_rule_groups`입니다.
+
+| 최종 확인 범위 | 실행 | 결과 | 시간 |
+|---|---:|---|---:|
+| 신규 계약 전체 + 사람 확정 피드백의 독립 PostgreSQL DB 검사 | 24 | 24 통과, skip 0 | DB 준비/종료 포함 40.504초 |
+| 모델·투영·code 경계·배치·SDK 계약 단위 검사 | 64 | 64 통과, skip 0 | 1.157초 |
+| 보존 본문/그룹 판정 배치 단위 재검사 | 12 | 12 통과, skip 0 | 0.798초 |
+| 제출 실행/시간 결합 단위 검사 | 3 | 3 통과, skip 0 | 0.001초 |
+| TypeScript/Vite + 데스크톱 브라우저 전용 | 26 | 빌드 성공, 화면 26 통과 | 브라우저 30.6초 |
+| 최종 통합 quick, 독립 mock 4개 worker | 434 | 427 통과·기존 실패 5·기존 오류 2·skip 0 | DB 준비/종료 포함 48.176초 |
+
+quick의 실패 이름은 이전과 같은 PG18 포털 카탈로그 비교 5건과 Termux의 실제 하드링크/root 소유 보안 2건입니다. 기존 두 보안 테스트·운영 파일 검사·SQL은 변경하지 않았고 로컬 합성 metadata 검증과 사내 Linux 실환경 확인 대기를 구분합니다. 전체 성공이나 사내 연동 완료로 보고하지 않습니다. 모든 mock DB를 종료했으며 regression/full·10만 건 검사와 실제 회사 모델 호출은 이번 검증에서 실행하지 않았습니다. 변경한 Python 파일 44개의 최종 quick 소스 snapshot 일치도 확인했습니다.

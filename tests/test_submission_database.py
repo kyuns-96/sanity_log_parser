@@ -398,7 +398,7 @@ class SubmissionDatabaseTests(PgTestCase):
         self.receive(order=parts[-1:])
         self.assertEqual(2,len(self.report_headers()))
 
-    def test_resubmission_deduplicates_shared_pre_and_preserves_a_human_decision(self):
+    def test_resubmission_has_distinct_reports_and_preserves_a_human_decision(self):
         first = self.submit(); self.bridge(); self.receive(); self.bridge()
         with Database('oa') as db,db.transaction():
             report = self.report_headers()[0]
@@ -408,14 +408,14 @@ class SubmissionDatabaseTests(PgTestCase):
                 compatible_versions=False,expected_revision=0,request_id=str(uuid.uuid4()))['event']
         second = self.submit(); self.bridge(); self.receive(); self.bridge()
         self.assertNotEqual(first['submission_id'],second['submission_id'])
-        self.assertEqual(2,len(self.report_headers()))
+        self.assertEqual(4,len(self.report_headers()))
         with Database('oa') as db,db.transaction(readonly=True):
             from oa.sanity_workspace_review import WorkspaceReviewStore
             current,_ = WorkspaceReviewStore(db).current(report['id'])
             self.assertEqual(event['id'],current['id'])
             self.assertEqual(2,db.execute("SELECT count(*) AS n FROM {oa} WHERE record_type='WS_SUBMISSION'").fetchone()['n'])
 
-    def test_new_eco_adds_to_existing_version_and_keeps_pre_as_one_original(self):
+    def test_new_eco_adds_to_existing_version_and_preserves_each_submitted_pre(self):
         self.submit(); self.bridge(); self.receive(); self.bridge()
         plan = self.f['prepared'].plan
         post = plan['inventory']['units'][1]
@@ -429,8 +429,8 @@ class SubmissionDatabaseTests(PgTestCase):
         plan['approval']['scope_sha256']=scope_digest(plan)
         self.submit(); self.bridge(); self.receive(); self.bridge()
         reports = self.report_headers()
-        self.assertEqual(3,len(reports))
-        self.assertEqual(1,len([r for r in reports if r['source']['layout']=='PRE']))
+        self.assertEqual(5,len(reports))
+        self.assertEqual(2,len([r for r in reports if r['source']['layout']=='PRE']))
         post = next(r for r in reports if r['source']['layout']=='POST')
         with Database('oa') as db,db.transaction(readonly=True):
             version = WorkspaceStore(db).version('user-04','project-1-cpu',post['version_id'])['payload']
@@ -450,14 +450,19 @@ class SubmissionDatabaseTests(PgTestCase):
             page = WorkspacePipelineStore(db).view_paged('user-04','project-1-cpu',report['version_id'],report['id'])
             self.assertFalse(page['ready'])
 
-    def test_repeated_execution_with_changed_bytes_is_rejected_without_overwriting(self):
+    def test_corrected_collection_at_the_same_revision_is_a_new_run_without_overwriting(self):
         self.submit(); self.bridge(); self.receive(); self.bridge()
+        previous=self.report_headers()
         original = self.f['prepared'].reports['reports/post/sample.rpt']
         original.write_text(original.read_text().replace('12,ns','13,ns'))
-        self.submit()
-        with self.assertRaises(ReviewError) as error:self.bridge()
-        self.assertEqual('SOURCE_IDENTITY_CONFLICT',error.exception.code)
-        self.assertEqual(2,len(self.report_headers()))
+        second=self.submit();self.bridge();self.receive();self.bridge()
+        current=self.report_headers()
+        self.assertEqual(4,len(current))
+        self.assertTrue(all(value in current for value in previous))
+        old=next(r for r in previous if r['source']['layout']=='POST')
+        new=next(r for r in current if r['source']['layout']=='POST' and r['submission_id']==second['submission_id'])
+        self.assertEqual(old['version_id'],new['version_id'])
+        self.assertNotEqual(old['id'],new['id']);self.assertNotEqual(old['raw_sha256'],new['raw_sha256'])
 
     def test_new_execution_with_identical_bytes_is_a_separate_run(self):
         self.submit(); self.bridge(); self.receive(); self.bridge()
@@ -465,7 +470,7 @@ class SubmissionDatabaseTests(PgTestCase):
         source.update(execution_ref='synthetic-post-run-2',execution_order=2)
         self.submit(); self.bridge(); self.receive(); self.bridge()
         reports = self.report_headers()
-        self.assertEqual(3,len(reports))
+        self.assertEqual(4,len(reports))
         posts = [r for r in reports if r['source']['layout']=='POST']
         self.assertEqual(posts[0]['raw_sha256'],posts[1]['raw_sha256'])
         self.assertNotEqual(posts[0]['execution_id'],posts[1]['execution_id'])

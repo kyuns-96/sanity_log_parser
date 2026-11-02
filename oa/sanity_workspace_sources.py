@@ -7,12 +7,13 @@ from oa.sanity_source_reader import SourceReader
 MAX_CONTEXT_BYTES = 256 * 1024 * 1024
 MAX_CONTEXT_RECORDS = 1000000
 
-# Source execution order is a verified source fact. Analysis creation order is
-# from the VWP DB, never the arrival time / hash / lexical ECO name on OA.
+# New submissions are distinct runs ordered by their VWP acceptance time.
+# Legacy reports retain their verified execution/analysis ordering.
 CURRENT_SOURCES_SQL = """(payload->>'source_storage' IS DISTINCT FROM 'PARTS_V2' OR record_id IN (
     SELECT DISTINCT ON (payload->>'source_unit_key') record_id FROM {oa}
     WHERE record_type='WS_REPORT' AND payload->>'source_storage'='PARTS_V2'
-    ORDER BY payload->>'source_unit_key',(payload->'source'->>'execution_order')::bigint DESC,
+    ORDER BY payload->>'source_unit_key',payload->>'submitted_at' DESC NULLS LAST,
+             (payload->'source'->>'execution_order')::bigint DESC,
              payload->>'analysis_created_at' DESC,created_at DESC,workspace_key))"""
 
 

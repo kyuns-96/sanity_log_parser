@@ -170,8 +170,11 @@ def source_unit(collection, unit):
     return "su-" + digest([source_version(collection, source), source["eco"], unit["item_id"], source["mode"]])
 
 
-def source_execution(collection, unit):
-    return "sx-" + digest([source_unit(collection, unit), unit["source"]["execution_ref"]])
+def source_execution(collection, unit, submission_id=None):
+    identity = [source_unit(collection, unit), unit["source"]["execution_ref"]]
+    if submission_id is not None:
+        identity.append(submission_uuid(submission_id))
+    return "sx-" + digest(identity)
 
 
 def scope_digest(plan):
@@ -283,8 +286,15 @@ def packet_base(submission, collection_id):
 
 
 def validate_packet(packet):
-    check(isinstance(packet, dict) and set(packet) == {
+    check(isinstance(packet, dict) and set(packet)-{'submitted_at'} == {
         "schema_version", "protocol", "submission_id", "content_sha256", "collection_id", "actor", "scope", "body"})
+    if 'submitted_at' in packet:
+        from datetime import timezone
+        try:
+            at=datetime.fromisoformat(packet['submitted_at'])
+            check(at.utcoffset() is not None and at.astimezone(timezone.utc).isoformat(timespec='microseconds')==packet['submitted_at'])
+        except (TypeError,ValueError):
+            raise ReviewError('INVALID_SUBMISSION','Invalid submission timestamp') from None
     check(type(packet["schema_version"]) is int and packet["schema_version"] == 2 and packet["protocol"] == PROTOCOL)
     submission_uuid(packet["submission_id"])
     check(isinstance(packet["content_sha256"], str) and HEX.fullmatch(packet["content_sha256"]))
@@ -293,6 +303,15 @@ def validate_packet(packet):
     validate_collection(packet['scope'])
     check(isinstance(packet["body"], dict) and len(canonical_json(packet)) <= PART_BYTES, "SOURCE_MESSAGE_LIMIT")
     return packet
+
+
+def validate_run_binding(report, packet):
+    check(isinstance(report, dict), 'INVALID_SOURCE_MANIFEST')
+    keys = {'submission_id','submitted_at'}
+    present = keys & set(report)
+    expected = keys if 'submitted_at' in packet else set()
+    check(present == expected and (not present or all(report[key] == packet[key] for key in keys)),
+          'SOURCE_SCOPE_MISMATCH')
 
 
 def message_id(kind, packet):

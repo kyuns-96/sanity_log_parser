@@ -94,7 +94,7 @@ class EvidenceBatchModel(BatchModel):
                                     '제공된 짧은 ID는 이번 배치의 식별자입니다. 제공되지 않은 ID를 배정하지 마세요.')
         if available(self.context): prompt += ANALYSIS_PROMPT
         elif context['report'].get('preserved_sources'): prompt += _PRESERVED_PROMPT
-        version = VERSION+'.'+stage.lower()
+        version = VERSION+'.'+stage.lower()+'.rule-code-v1'
         return projection_instruction(self.policy, prompt, version) if self.policy is not None else (prompt, version)
 
     def citation_context(self, context):

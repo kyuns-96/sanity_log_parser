@@ -27,10 +27,14 @@ def batch_settings(**values):
 
 def response(packet):
     rows=packet['context']['report']['records']
-    ids=[r['id'] for r in rows]
-    return {'groups':[{'id':'g','label':'합성 분류','record_ids':ids}], 'reason':'합성 전체 분류', 'reference_ids':[],
-            'group_rationales':[{'group_id':'g','reason':'같은 조건이며 반례가 확인되지 않았습니다.',
-                                 'evidence_ids':[ids[0]],'reference_groups':[]}]}
+    from common.sanity_rule_groups import rule_code
+    by_code={}
+    for row in rows:by_code.setdefault(rule_code(row,packet['context']['report']),[]).append(row['id'])
+    groups=[{'id':'g' if len(by_code)==1 else 'g'+str(i),'label':'합성 분류','record_ids':ids}
+            for i,ids in enumerate(by_code.values())]
+    return {'groups':groups, 'reason':'합성 전체 분류', 'reference_ids':[],
+            'group_rationales':[{'group_id':g['id'],'reason':'같은 규칙과 조건이며 반례가 확인되지 않았습니다.',
+                                 'evidence_ids':[g['record_ids'][0]],'reference_groups':[]} for g in groups]}
 
 
 class BatchPureTests(unittest.TestCase):
@@ -124,7 +128,8 @@ class BatchPureTests(unittest.TestCase):
         self.assertEqual([r['id'] for r in model.records],original)
         reduced=model.execute({'kind':'MERGE','nodes':[n['id'] for n in nodes]},nodes=nodes)['nodes']
         advice,_=model.advice(reduced)
-        self.assertEqual(set(original),set(advice['groups'][0]['record_ids']))
+        self.assertEqual(set(original),{key for g in advice['groups'] for key in g['record_ids']})
+        self.assertEqual(2,len(advice['groups']))
 
     def test_token_and_gateway_byte_limits_preflight_every_record(self):
         model=self.model(max_records=1)
@@ -193,7 +198,7 @@ class BatchPureTests(unittest.TestCase):
             p=json.loads(json.loads(request.content)['messages'][1]['content'])
             self.assertEqual(model.context['preserved_evidence'],p['context']['preserved_evidence'])
             reply=response(p)
-            reply['preserved_citations']=[{'target_id':'g','evidence_ids':[segments[0]['id']],'reason':'본문의 현재 조건을 비교'}]
+            reply['preserved_citations']=[{'target_id':g['id'],'evidence_ids':[segments[0]['id']],'reason':'본문의 현재 조건을 비교'} for g in reply['groups']]
             return httpx.Response(200,json={'model':'synthetic-model','choices':[{'finish_reason':'stop','message':{'role':'assistant','content':json.dumps(reply)}}]})
         model.advisor.transport=httpx.MockTransport(respond);nodes=[]
         for desc in model.leaf_plan():nodes.extend(model.execute({'kind':'LEAF',**desc})['nodes'])

@@ -43,6 +43,16 @@ QUICK_TESTS = (
     "tests.test_ai_reasoning.ReasoningSettingsTests", "tests.test_ai_reasoning.ReasoningWireTests",
     "tests.test_ai_cache_contract.CacheContractTests", "tests.test_ai_cache_transport.CacheTransportTests",
     "tests.test_ai_progress_metrics",
+    "tests.test_rule_groups.RuleGroupTests",
+    "tests.test_submission_runs",
+    "tests.test_ai_scheduler.SchedulerContractTests", "tests.test_ai_scheduler.SchedulerApiTests",
+    "tests.test_workspace_removal.RemovalApiTests",
+    "tests.test_rule_groups.RuleGroupDatabaseTests.test_rolling_worker_keeps_all_codes_separate_through_publication",
+    "tests.test_ai_scheduler.SchedulerDatabaseTests.test_judgment_model_finishes_while_classification_model_is_blocked",
+    "tests.test_ai_scheduler.SchedulerDatabaseTests.test_rolling_jobs_share_slots_and_a_fast_job_finishes_before_a_slow_job",
+    "tests.test_ai_iteration_completion",
+    "tests.test_workspace_removal.WorkspaceRemovalTests.test_report_deletes_private_original_and_confirmed_history_but_keeps_other_report",
+    "tests.test_submission_database.SubmissionDatabaseTests.test_resubmission_has_distinct_reports_and_preserves_a_human_decision",
     "tests.test_ai_job_deletion.AIJobDeletionDatabaseTests.test_completed_job_removes_execution_rows_and_preserves_report_and_proposal",
     "tests.test_ai_job_deletion.AIJobDeletionDatabaseTests.test_rolling_delete_after_refill_stops_more_work_and_late_observations",
     "tests.test_ai_task_models.TaskDefaultsApiTests",
@@ -88,6 +98,8 @@ QUICK_TESTS = (
 # Full still discovers every original test, including large datasets and all
 # portal migration replays. No test input, assertion or skip rule is changed.
 REGRESSION_TESTS = (
+    "tests.test_submission_runs",
+    "tests.test_rule_groups", "tests.test_ai_scheduler", "tests.test_workspace_removal", "tests.test_ai_iteration_completion",
     "tests.test_ai_job_deletion", "tests.test_ai_progress_metrics",
     "tests.test_ai_cache_contract", "tests.test_ai_cache_transport",
     "tests.test_vwp_inference", "tests.test_vwp_worker", "tests.test_vwp_personal_credentials",
@@ -205,6 +217,8 @@ ROLE_TESTS = {
     ),
     "vwp-bridge": (
         "tests.test_parsers", "tests.test_collection_only", "tests.test_submission_https",
+        "tests.test_submission_runs",
+        "tests.test_rule_groups.RuleGroupTests", "tests.test_ai_scheduler.SchedulerContractTests",
         "tests.test_ai_progress_metrics",
         "tests.test_vwp_inference.VwpInferenceContractTests",
         "tests.test_vwp_personal_credentials.VwpPersonalProfileTests",
@@ -217,6 +231,8 @@ ROLE_TESTS = {
     ),
     "oa": (
         "tests.test_auth", "oa.test_auth_config", "oa.test_sso",
+        "tests.test_submission_runs",
+        "tests.test_rule_groups.RuleGroupTests", "tests.test_ai_scheduler.SchedulerApiTests", "tests.test_workspace_removal.RemovalApiTests",
         "tests.test_ai_progress_metrics",
         "tests.test_access_api.AccessApiBoundaryTests",
         "tests.test_ai_connections.ConnectionConfigurationTests",
@@ -230,6 +246,9 @@ ROLE_TESTS = {
 }
 ROLE_DB_TESTS = {
     "vwp-bridge": (
+        "tests.test_ai_scheduler.SchedulerDatabaseTests.test_rolling_jobs_share_slots_and_a_fast_job_finishes_before_a_slow_job",
+        "tests.test_rule_groups.RuleGroupDatabaseTests.test_rolling_worker_keeps_all_codes_separate_through_publication",
+        "tests.test_ai_iteration_completion",
         "vwp_bridge.test_corporate_parsers",
         "tests.test_ai_job_deletion.AIJobDeletionDatabaseTests.test_rolling_delete_after_refill_stops_more_work_and_late_observations",
         "tests.test_vwp_worker.VwpWorkerTests.test_web_submission_and_polling_do_not_hydrate_logs_or_retrieve_cases",
@@ -241,6 +260,8 @@ ROLE_DB_TESTS = {
         "tests.test_ai_rolling_batches.RollingJobsTests.test_eight_slots_refill_while_the_first_seven_are_blocked_and_merge_waits",
     ),
     "oa": (
+        "tests.test_workspace_removal.WorkspaceRemovalTests.test_report_deletes_private_original_and_confirmed_history_but_keeps_other_report",
+        "tests.test_submission_database.SubmissionDatabaseTests.test_resubmission_has_distinct_reports_and_preserves_a_human_decision",
         "tests.test_ai_job_deletion.AIJobDeletionDatabaseTests.test_completed_job_removes_execution_rows_and_preserves_report_and_proposal",
         "tests.test_ai_job_deletion.AIJobDeletionDatabaseTests.test_rolling_delete_after_refill_stops_more_work_and_late_observations",
         "tests.test_ai_connections.ConnectionDatabaseTests.test_only_admin_can_create_and_revisions_are_checked",

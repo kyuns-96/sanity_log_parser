@@ -25,6 +25,14 @@ def record(service, identity, command, target, public, *, phase=None, call_id=No
         "ORDER BY workspace_key DESC LIMIT 1",(PREFIX+identity+".%",)).fetchone()
     previous=validate(row) if row else None
     at = _db_now(service.db)
+    if len(canonical_json(public))>12000:
+        # Large configured windows must not turn observability into a failed
+        # model result. UNKNOWN detail is reconstructed from its durable ledger.
+        public={k:v for k,v in public.items() if k not in ('unknown_recoveries',)}
+        progress=public.get('progress')
+        if progress and 'active_descriptors' in progress:
+            public={**public,'progress':{**progress,'active_descriptors':progress['active_descriptors'][:32],
+                'active_descriptors_truncated':len(progress['active_descriptors'])>32}}
     value = {"namespace":NAMESPACE, "id":identity, "actor_id":command["user_id"], "target":target,
         "sequence":previous["sequence"]+1 if previous else 1,"previous_sha256":previous["sha256"] if previous else None,
         "command":{k:command[k] for k in ("block_id","version_id","report_id","group_id")},

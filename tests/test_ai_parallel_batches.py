@@ -27,7 +27,8 @@ class ParallelSettingsTests(unittest.TestCase):
         self.assertNotIn('max_concurrency',BatchSettings(max_concurrency=1).public())
         self.assertEqual(2,BatchSettings(max_concurrency=2).public()['max_concurrency'])
         self.assertEqual(8,BatchSettings(max_concurrency=8).public()['max_concurrency'])
-        for value in (0,9,-1,True,1.5,'2',None):
+        self.assertEqual(64,BatchSettings(max_concurrency=64).public()['max_concurrency'])
+        for value in (0,1000001,-1,True,1.5,'2',None):
             with self.subTest(value=value),self.assertRaises(ReviewError):BatchSettings(max_concurrency=value)
 
 

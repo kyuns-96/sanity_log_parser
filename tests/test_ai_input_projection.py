@@ -99,11 +99,8 @@ class ProjectionModelTests(unittest.TestCase):
         captured=[]
         def respond(request):
             wire=json.loads(request.content);packet=json.loads(wire['messages'][1]['content']);captured.append((wire,packet))
-            ids=[row['id'] for row in packet['context']['report']['records']]
-            answer={'groups':[{'id':'g','label':'합성 그룹','record_ids':ids}],
-                'reason':'합성 조건을 분류했습니다.','reference_ids':[],
-                'group_rationales':[{'group_id':'g','reason':'제공된 조건을 대조했습니다.',
-                                     'evidence_ids':ids,'reference_groups':[]}]}
+            from tests.test_ai_batches import response
+            answer=response(packet)
             return httpx.Response(200,json=chat(answer))
         adapter=OAAdvisor(environment(),transport=httpx.MockTransport(respond))
         return adapter.cluster(context,[],['object','check_point','mode']),captured[0]
@@ -115,7 +112,9 @@ class ProjectionModelTests(unittest.TestCase):
         self.assertEqual(len(before['report']['records']),len(rows))
         self.assertEqual({'code','optional','falsey','numeric','details'},set(rows[0]['fields']))
         self.assertEqual({'id','fields'},set(rows[0]))
-        self.assertEqual({row['id'] for row in before['report']['records']},set(result['advice']['groups'][0]['record_ids']))
+        self.assertEqual({row['id'] for row in before['report']['records']},
+                         {key for g in result['advice']['groups'] for key in g['record_ids']})
+        self.assertEqual(2,len(result['advice']['groups']))
         self.assertEqual(context,before)
         encoded=json.dumps(packet,ensure_ascii=False)
         for secret in ('SYNTHETIC_RAW_PRIVATE_','SYNTHETIC_EXCLUDED_','SYNTHETIC_TOP_LEVEL_DETAILS',

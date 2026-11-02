@@ -145,7 +145,10 @@ _CLUSTER_PROMPT = _COMMON_PROMPT + """
 identity_fields는 검토할 동일성 속성의 안내이며 필드 일치만으로 의미 분류를 대체하지 마세요.
 출력의 정확한 키는 groups, reason, reference_ids, group_rationales입니다.
 groups는 {id,label,record_ids} 객체의 배열입니다. id는 영숫자로 시작하는 1~100자의 영숫자/밑줄/점/하이픈 문자열입니다.
-label은 한국어 이름 1~120자, record_ids는 이 그룹에 배정한 현재 원본 ID의 비어 있지 않은 배열입니다.
+분류의 첫 계층은 반드시 rule code입니다. fields.code 또는 report.rule_codes의 서로 다른 code를 한 그룹으로 묶지 마세요.
+label은 반드시 `RULE_CODE · 간단한 한국어 그룹 설명` 형식의 1~120자입니다. code는 원본 그대로 앞에 붙이세요.
+rule_codes는 입력 필드 선택과 별개로 제공되는 분류 경계입니다. 같은 code 안에서 의미·조건에 따라 세부 그룹을 만드세요.
+record_ids는 이 그룹에 배정한 현재 원본 ID의 비어 있지 않은 배열입니다.
 reason은 전체 분류 방향을 설명하는 한국어 1~2000자입니다. reference_ids는 사용한 과거 사례 ID 배열이며 최대 100개입니다.
 group_rationales는 모든 그룹마다 정확히 하나씩 {group_id,reason,evidence_ids,reference_groups}를 포함합니다.
 그룹 reason은 한국어 1~2000자로 공통 패턴·다른 그룹과 구분한 이유·예외/미확인 사항을 설명하세요.
@@ -471,13 +474,16 @@ class OAAdvisor:
                 rows, aliases = alias_rows(project_rows(records, policy))
                 model_context = {**model_context, 'ai_input_policy': policy,
                     'report': {**model_context['report'], 'records': rows}}
+            from common.sanity_rule_groups import model_context as rule_context
+            model_context = rule_context(model_context, records)
             packet = {"context": model_context, "cases": [shared_case(case) for case in cases], "identity_fields": identity_fields}
             instruction, version = source_instruction(context, _CLUSTER_PROMPT, CLUSTER_PROMPT_VERSION)
+            version += '.rule-code-v1'
             if policy is not None: instruction, version = projection_instruction(policy, instruction, version)
             value, metadata = self._call(packet, instruction, version, attempt)
             from common.sanity_preserved_ai import split_reply, model_metadata
             value, citations = split_reply(value, context)
-            advice = validate_clustering_advice(value, model_context if policy is not None else context, cases, require_rationales=True)
+            advice = validate_clustering_advice(value, model_context, cases, require_rationales=True)
             if policy is not None:
                 advice = validate_clustering_advice(restore_clustering(advice, aliases), context, cases, require_rationales=True)
                 metadata.update(source_policy_pin(context))

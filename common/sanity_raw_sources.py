@@ -87,6 +87,9 @@ class RawSourceStore:
 
     def load(self, sid, actor=None):
         sid = submission_uuid(sid)
+        from common.sanity_removal import check_private_submission
+        check_private_submission(self.db.execute("SELECT payload FROM {vwp} WHERE record_type='SUBMISSION' "
+            "AND entity_key=%s",(sid,)).fetchone())
         row = self.get('RAW_SUBMISSION','raws.'+sid)
         check(row,'NOT_FOUND')
         payload = row['payload']
@@ -102,6 +105,9 @@ class RawSourceStore:
 
     def initialize(self, sid, actor, value):
         sid = submission_uuid(sid)
+        from common.sanity_removal import check_private_submission
+        check_private_submission(self.db.execute("SELECT payload FROM {vwp} WHERE record_type='SUBMISSION' "
+            "AND entity_key=%s",(sid,)).fetchone())
         check(isinstance(value,dict) and set(value) == {'submission','manifest'})
         validate_submission(value['submission'],value['manifest'])
         check(value['submission']['submission_id'] == sid and value['submission']['actor'] == actor.actor,'FORBIDDEN')

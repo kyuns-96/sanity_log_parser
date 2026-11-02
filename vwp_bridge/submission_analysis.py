@@ -125,14 +125,18 @@ class SourceEvidence(PgEvidence):
 
 
 def analyze_source(db, store, collection, original, file, snapshot_root, *, confirmed, registry, record_execution=True,
-                   preserved_sources=None):
-    uid, execution = source_unit(collection,original), source_execution(collection,original)
+                   preserved_sources=None, submission_id=None, submitted_at=None):
+    uid, execution = source_unit(collection,original), source_execution(collection,original,submission_id)
     raw_sha = file['sha256'] if file else None
     if file and record_execution:
         with db.transaction():
             db.execute('SELECT pg_advisory_xact_lock(%s)',(lock_key(execution),))
-            store.immutable('SOURCE_RUN',execution,{'execution_id':execution,'unit_key':uid,
-                'source':original['source'],'raw_sha256':raw_sha})
+            # A source fact stays immutable within its submitted run. A later
+            # submission can contain corrected collection bytes at the same revision.
+            unit_run = 'su-'+digest([uid,submission_id]) if submission_id else uid
+            store.immutable('SOURCE_RUN',execution,{'execution_id':execution,'unit_key':unit_run,
+                'source':original['source'],'raw_sha256':raw_sha,
+                **({'source_unit_key':uid,'submission_id':submission_id} if submission_id else {})})
     source = original['source']
     run = {'run_id':execution,'project':collection['project_key'],'design':collection['block_key'],
            'stage':collection['stage'],'tool':source['tool'],'tool_version':source['tool_version']}
@@ -168,7 +172,8 @@ def analyze_source(db, store, collection, original, file, snapshot_root, *, conf
                 'analysis_id':str(ev.analysis_id),'parser_contract':contract or [],
                 'analysis_created_at':created.astimezone(timezone.utc).isoformat(timespec='microseconds'),
                 'raw_line_count':lines,
-                'raw_sha256':raw_sha,'result':result}
+                'raw_sha256':raw_sha,'result':result,
+                **({'submission_id':submission_id,'submitted_at':submitted_at} if submission_id else {})}
     finally:
         db.conn.execute('SELECT pg_advisory_unlock(%s)',(lock_key(ev.analysis_id),))
 
@@ -250,6 +255,21 @@ def record_parts(records, report_id):
 
 def build_transfer(db, store, submission, manifest, root, *, confirmed, registry):
     collection, reports, position = submission['plan']['collection'], [], 1
+    # Pin the execution identity before creating any parts. In-flight legacy
+    # outboxes keep their old identities; every new submission gets its own run.
+    with db.transaction():
+        accepted = store.get('SUBMISSION',submission['submission_id'],lock=True)
+        check(accepted is not None,'NOT_FOUND')
+        run_mode = accepted['state'].get('analysis_run_mode')
+        if run_mode is None:
+            old = db.execute("SELECT 1 FROM {vwp} WHERE record_type='SOURCE_OUTBOX' "
+                "AND payload->>'submission_id'=%s LIMIT 1",(submission['submission_id'],)).fetchone()
+            run_mode = 'legacy' if old else 'submission-v1'
+            store.state(submission['submission_id'],accepted['status'],
+                        {**accepted['state'],'analysis_run_mode':run_mode})
+        check(run_mode in ('legacy','submission-v1'),'SUBMISSION_CONTRACT_MISMATCH')
+        run_id = submission['submission_id'] if run_mode=='submission-v1' else None
+        submitted_at = accepted['created_at'].astimezone(timezone.utc).isoformat(timespec='microseconds')
     preserved = manifest.get('preserved_files', [])
     if submission['plan']['schema_version'] >= 3:
         validate_metadata(submission['plan'], preserved)
@@ -274,6 +294,7 @@ def build_transfer(db, store, submission, manifest, root, *, confirmed, registry
         (submission['submission_id'],collection_id)).fetchone()
     check(not conflict,'SUBMISSION_CONTRACT_MISMATCH')
     base = packet_base(submission,collection_id)
+    if run_id:base['submitted_at']=submitted_at
     if submission['plan']['schema_version'] == 4:
         check(sum(p['size_bytes'] for p in preserved if p['content'] is not None) <= 2 * MAX_FILE_BYTES,
               'PRESERVED_TEXT_LIMIT')
@@ -299,7 +320,7 @@ def build_transfer(db, store, submission, manifest, root, *, confirmed, registry
         context = for_unit(submission['plan'], unit, preserved)
         value = analyze_source(db,store,collection,unit,files.get(unit['report']),root,confirmed=confirmed,
                                registry=registry,record_execution=not unverified(submission['actor']),
-                               preserved_sources=context)
+                               preserved_sources=context,submission_id=run_id,submitted_at=submitted_at)
         if context:
             value['preserved_sources'] = context
         rid = 'sr-'+digest([value['execution_id'],value['raw_sha256'],value['analysis_id']])
@@ -329,5 +350,5 @@ def build_transfer(db, store, submission, manifest, root, *, confirmed, registry
         store.put_outbox(submission['submission_id'],0,'SOURCE_MANIFEST',plan_packet)
         store.put_outbox(submission['submission_id'],position,'SOURCE_COMMIT',commit)
         store.state(submission['submission_id'],'DB_QUEUED',{'collection_id':collection_id,'next_publish':0,
-                    'message_count':position+1,'blockers':blockers})
+                    'message_count':position+1,'blockers':blockers,'analysis_run_mode':run_mode})
     return collection_id

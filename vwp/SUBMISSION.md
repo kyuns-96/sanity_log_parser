@@ -12,6 +12,8 @@
 
 ## 1. 사용자의 호출
 
+2026-11-02: 동일 revision의 새 `submit`은 **동일 버전의 새 보고서 실행**이다. 기존 UUID의 `retry`만 같은 실행을 재사용한다. 화면은 제출 일시가 포함된 이름과 최신/이력을 제공한다. [실행 ID·최신·물리 삭제 계약](../oa/WORKSPACE_RUNS.md)을 따른다. 이전의 제출 간 report 중복 제거 설명은 새 제출 모드에서는 대체되며 기존 outbox의 재개 계약은 보존한다.
+
 배포 담당자가 Git release의 `.venv`와 `bin/sanity`를 배치하고 `/opt/sanity/current/bin`을 사용자의 PATH에 등록한다. 진입점은 실제 release 경로를 한 번 고정하고 그 release의 `.venv/bin/python`이 있으면 사용한다. 원본 report를 읽을 수 있는 VWP 터미널의 어느 작업 폴더에서든 실행한다.
 
 ```bash

@@ -58,8 +58,8 @@ def clustering_example(*, with_history=False):
     context = _context("current")
     ids = [record["id"] for record in context["report"]["records"]]
     reply = {"groups": [
-        {"id": "clock", "label": "클록 정의 누락", "record_ids": ids[:2]},
-        {"id": "width", "label": "데이터 폭 불일치", "record_ids": ids[2:]},
+        {"id": "clock", "label": "SYNTHETIC-CLOCK · 클록 정의 누락", "record_ids": ids[:2]},
+        {"id": "width", "label": "SYNTHETIC-WIDTH · 데이터 폭 불일치", "record_ids": ids[2:]},
     ], "reason": "합성 로그 전체를 메시지 패턴에 따라 두 그룹으로 분류했습니다.", "reference_ids": [],
         "group_rationales": [
             {"group_id": "clock", "reason": "클록 정의 누락 패턴입니다. 폭 불일치와 구분하며 동일 원인은 미확인입니다.",

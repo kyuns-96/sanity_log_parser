@@ -1341,7 +1341,7 @@ test('rolling jobs refresh their concurrency-aware ETA from completed-call measu
   await mockOA(page)
   const baseJob = monitoredJob()
   const measuredAt = new Date(Date.now() - 10000).toISOString()
-  const job = { ...baseJob, progress: { ...baseJob.progress, execution: 'parallel-v2', concurrency: 8, inflight_calls: 8,
+  const job = { ...baseJob, progress: { ...baseJob.progress, execution: 'parallel-v2', concurrency: 8, allocated_concurrency: 2, inflight_calls: 2,
     wall_seconds_per_record: 1.25, wall_stage_eta_seconds: 300, wall_measured_at: measuredAt,
     stage_eta_seconds: 999, retry_after: null as string | null } }
   await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [job],
@@ -1352,7 +1352,7 @@ test('rolling jobs refresh their concurrency-aware ETA from completed-call measu
   const end = () => new Date(Date.parse(job.progress.wall_measured_at) + job.progress.wall_stage_eta_seconds * 1000)
     .toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   await expect(eta).toHaveText(end())
-  await expect(dashboard).toContainText('동시 처리 8 / 8개')
+  await expect(dashboard).toContainText('동시 처리 2 / 2개 · 작업 상한 8개')
   await expect(dashboard).toContainText('완료된 자리에 다음 배치를 이어서 처리합니다.')
   job.progress.wall_stage_eta_seconds = 180
   job.progress.wall_measured_at = new Date(Date.parse(measuredAt) + 5000).toISOString()
@@ -1516,4 +1516,110 @@ test('AI card deletion stays visibly disabled when cleanup permission is unavail
   const button = page.getByRole('button', { name: 'synthetic_check 작업 삭제', exact: true })
   await expect(button).toBeDisabled()
   await expect(button).toHaveAttribute('title', /운영 설정/)
+})
+
+test('submitted reports show readable submission times and distinguish current runs from history', async ({ page }) => {
+  await mockOA(page)
+  const current = { ...report, submitted_at: '2026-11-02T03:15:16.000000+00:00', is_current: true }
+  const previous = { ...current, id: 'previous-report', submitted_at: '2026-11-01T03:15:16.000000+00:00', is_current: false }
+  const requests: string[] = []
+  await page.route(/\/api\/workbench\/blocks\/b1\/versions\/v1\/reports\?/, route => {
+    const query = new URL(route.request().url()).searchParams
+    requests.push(query.toString())
+    const rows = query.get('include_history') === 'true' ? [current, previous] : [current]
+    return route.fulfill({ json: { items: rows, total: rows.length, offset: 0, limit: 25, counts: { FAIL: rows.length },
+      groups: [{ item_id: report.item_id, total: rows.length, families: ['GCA'], counts: { FAIL: rows.length }, parse_counts: { COMPLETE: rows.length } }], version } })
+  })
+  await page.goto(url.replace('&review=report-a', ''))
+  const rows = page.locator('.ws-report-table tbody tr')
+  await expect(rows).toHaveCount(1)
+  await expect(rows.first().locator('td').first().locator('strong')).toContainText('2026.')
+  await expect(rows.first().locator('td').first().locator('strong')).toContainText('제출')
+  await expect(rows.first().locator('td').first().locator('strong')).toHaveAttribute('title', report.id)
+  await page.getByRole('button', { name: '제출 이력 포함', exact: true }).click()
+  await expect(rows).toHaveCount(2)
+  await expect(rows.first()).toContainText('최신 제출')
+  await expect(rows.nth(1)).toContainText('이전 제출')
+  expect(requests.some(value => value.includes('include_history=true'))).toBe(true)
+  await page.getByRole('button', { name: '최신 제출만 보기', exact: true }).click()
+  await expect(rows).toHaveCount(1)
+})
+
+test('physical report deletion confirms originals and judgments and retries the same lost request', async ({ page }) => {
+  await mockOA(page)
+  const writes: Record<string, unknown>[] = []
+  let deleted = false
+  await page.route(`**${base}/delete-preview`, route => route.fulfill({ json: { kind: 'REPORT', id: report.id,
+    report_count: 1, record_count: 99, review_count: 3, can_delete: true, blockers: [], snapshot_sha256: 'a'.repeat(64) } }))
+  await page.route(`**${base}/delete`, route => {
+    writes.push(route.request().postDataJSON())
+    expect(route.request().headers()['x-sanity-request']).toBe('1')
+    deleted = true
+    return writes.length === 1 ? route.abort('failed') : route.fulfill({ json: { deleted: true, id: report.id } })
+  })
+  await page.route(/\/api\/workbench\/blocks\/b1\/versions\/v1\/reports\?/, route => route.fulfill({ json: {
+    items: deleted ? [] : [report], total: deleted ? 0 : 1, offset: 0, limit: 25, counts: deleted ? {} : { FAIL: 1 },
+    groups: deleted ? [] : [{ item_id: report.item_id, total: 1, families: ['GCA'], counts: { FAIL: 1 }, parse_counts: { COMPLETE: 1 } }], version } }))
+  await page.goto(url.replace('&review=report-a', ''))
+  const trash = page.getByRole('button', { name: 'synthetic_check 보고서 삭제', exact: true })
+  await trash.click()
+  const dialog = page.getByRole('dialog', { name: '보고서를 삭제할까요?' })
+  await expect(dialog).toContainText('사람의 확정 이력')
+  await expect(dialog).toContainText('99건')
+  expect(writes).toHaveLength(0)
+  await dialog.getByRole('button', { name: '돌아가기' }).click()
+  await expect(dialog).toHaveCount(0)
+  await trash.click()
+  await dialog.getByRole('button', { name: '원본과 이력 영구 삭제' }).click()
+  await expect(dialog.getByRole('alert')).toContainText('같은 요청')
+  await expect(page.locator('.ws-report-table tbody tr')).toHaveCount(1)
+  await dialog.getByRole('button', { name: '원본과 이력 영구 삭제' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(page.locator('.ws-report-table tbody tr')).toHaveCount(0)
+  expect(writes).toHaveLength(2)
+  expect(writes[1]).toEqual(writes[0])
+  expect(Object.keys(writes[0]).sort()).toEqual(['request_id', 'snapshot_sha256'])
+})
+
+test('physical version deletion respects blockers and refreshes the version list after confirmation', async ({ page }) => {
+  await mockOA(page)
+  let blocked = true; let deleted = false; let writes = 0
+  const versionBase = '/api/workbench/blocks/b1/versions/v1'
+  await page.route(`**${versionBase}/delete-preview`, route => route.fulfill({ json: { kind: 'VERSION', id: version.id,
+    report_count: 1, record_count: 2, review_count: 0, can_delete: !blocked,
+    blockers: blocked ? ['POR_VERSION_IN_USE'] : [], snapshot_sha256: 'b'.repeat(64) } }))
+  await page.route(`**${versionBase}/delete`, route => {
+    writes++; deleted = true
+    expect(route.request().postDataJSON()).toEqual({ request_id: expect.any(String), snapshot_sha256: 'b'.repeat(64) })
+    return route.fulfill({ json: { deleted: true, id: version.id } })
+  })
+  await page.route('**/api/workbench/blocks/b1/versions', route => route.fulfill({ json: { items: deleted ? [] : [version],
+    can_assign_por: true, por: { revision: 0, version: null, assigned_by: null, assigned_at: null } } }))
+  await page.goto(url.replace('&review=report-a', ''))
+  await page.getByRole('button', { name: /버전 삭제$/ }).click()
+  const dialog = page.getByRole('dialog', { name: '버전을 삭제할까요?' })
+  await expect(dialog).toContainText('현재 PoR 버전')
+  await expect(dialog.getByRole('button', { name: '원본과 이력 영구 삭제' })).toBeDisabled()
+  expect(writes).toBe(0)
+  await dialog.getByRole('button', { name: '돌아가기' }).click()
+  blocked = false
+  await page.getByRole('button', { name: /버전 삭제$/ }).click()
+  await dialog.getByRole('button', { name: '원본과 이력 영구 삭제' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: '수신된 버전이 아직 없습니다.' })).toBeVisible()
+  expect(writes).toBe(1)
+})
+
+test('iteration-capped AI cards show successful completion and the saved group count', async ({ page }) => {
+  await mockOA(page)
+  const job = { ...monitoredJob(), status: 'COMPLETED', can_cancel: false,
+    completion_reason: 'MAX_ITERATIONS', merge_iteration: 8, current_group_count: 17 }
+  await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
+  await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
+  const card = page.locator('.ai-job-completed')
+  await expect(card).toContainText('통합 반복 상한에 도달해 현재 그룹 구성으로 완료')
+  await expect(card.getByText('병합 iteration').locator('..').locator('dd')).toHaveText('8회')
+  await expect(card.getByText('현재 그룹 수').locator('..').locator('dd')).toHaveText('17개')
+  await expect(card.getByRole('progressbar')).toHaveAttribute('value', '100')
+  await expect(card.locator('.ai-job-progress-motion')).toHaveCount(0)
 })

@@ -154,7 +154,7 @@ class Submissions:
             query += "AND payload->'data'->>'target'=%s ";params.append(target)
         if pending:
             query += "AND (payload->>'status'='QUEUED' OR (payload->>'status'='PREPARING' " \
-                     "AND (payload->'data'->>'lease_until')::timestamptz<=clock_timestamp())) ORDER BY created_at,workspace_key LIMIT 1"
+                     "AND (payload->'data'->>'lease_until')::timestamptz<=clock_timestamp())) ORDER BY (payload->'data'->>'created_at')::timestamptz,workspace_key LIMIT 1"
         else:query += "ORDER BY created_at DESC,workspace_key DESC LIMIT 1"
         row = self.db.execute(query,params).fetchone()
         return worker_load(self.service, row["payload"]["id"], self.load) if row else None
@@ -206,11 +206,12 @@ class Submissions:
         return self.public(self.append(None,"QUEUED",data))
 
 
-def prepare_one(db_factory,workspace_factory,advisor,criteria_provider=None):
+def prepare_one(db_factory,workspace_factory,advisor,criteria_provider=None,*,identity=None):
     if worker_site() != "vwp":return None
     from oa.sanity_ai_jobs import _transaction,_db_now,_error_code
     with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
-        store = Submissions(service);event = store.latest(pending=True)
+        store = Submissions(service)
+        event = store.load(identity,required=False) if identity is not None else store.latest(pending=True)
         if event is None:return None
         service._lock(event["id"]);event = worker_load(service, event["id"], store.load)
         if event is None:return None

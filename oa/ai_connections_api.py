@@ -28,12 +28,28 @@ class TaskDefaultsCommand(BaseModel):
     defaults: dict[str, Any]
 
 
+class SchedulerCommand(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    expected_revision: int = Field(ge=0, lt=9999999999, strict=True)
+    limits: dict[str, Any]
+
+
 def create_ai_connections_router(authorized_actor):
     router = APIRouter()
 
     def owner(actor=Depends(authorized_actor)):
         check(actor.auth_method == "sso" and getattr(actor, "access", None) is not None, "FORBIDDEN")
         return actor
+
+    @router.get('/api/admin/ai/scheduler')
+    def scheduler(actor=Depends(owner)):
+        from oa.sanity_ai_scheduler import Settings
+        return Settings(actor.access.db).read(actor)
+
+    @router.post('/api/admin/ai/scheduler')
+    def save_scheduler(body: SchedulerCommand, actor=Depends(owner)):
+        from oa.sanity_ai_scheduler import Settings
+        return Settings(actor.access.db).save(actor,body.limits,body.expected_revision)
 
     @router.get("/api/admin/ai/task-defaults")
     def task_defaults(actor=Depends(owner)):

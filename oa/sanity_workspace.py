@@ -210,12 +210,12 @@ class WorkspaceStore:
                 "can_assign_por": self.can_write(user_id, block)}
 
     def reports(self, user_id, block_id, version_id, *, eco=None, item_id=None, family=None, status=None, search="", offset=0, limit=25, include_history=False):
+        from oa.sanity_workspace_sources import CURRENT_SOURCES_SQL
         version = self.version(user_id, block_id, version_id)
         if eco not in version["payload"]["ecos"]:
             raise ReviewError("INVALID_ECO", "Select an ECO from this version")
         predicates, parameters = ["record_type='WS_REPORT'", "workspace_version_ref=%s", "payload->>'eco' IS NOT DISTINCT FROM %s"], [version["record_id"], eco]
         if not include_history:
-            from oa.sanity_workspace_sources import CURRENT_SOURCES_SQL
             predicates.append(CURRENT_SOURCES_SQL)
         base = " AND ".join(predicates)
         counts = self.db.execute("SELECT payload->>'check_status' AS status,count(*) AS count FROM {oa} WHERE " + base +
@@ -244,13 +244,16 @@ class WorkspaceStore:
             parameters.extend((search, search))
         where = " AND ".join(predicates)
         total = self.db.execute("SELECT count(*) AS n FROM {oa} WHERE " + where, parameters).fetchone()["n"]
-        rows = self.db.execute("SELECT payload - 'raw_report' - 'records' AS item FROM {oa} WHERE " + where +
-                               " ORDER BY workspace_key LIMIT %s OFFSET %s", (*parameters, limit, offset)).fetchall()
+        rows = self.db.execute("SELECT payload - 'raw_report' - 'records' AS item," +
+                               CURRENT_SOURCES_SQL + " AS is_current FROM {oa} WHERE " + where +
+                               " ORDER BY COALESCE(payload->>'submitted_at',payload->>'analysis_created_at') DESC NULLS LAST,"
+                               "workspace_key LIMIT %s OFFSET %s", (*parameters, limit, offset)).fetchall()
         from oa.sanity_workspace_review import review_summaries
         from oa.sanity_workspace_clustering import pipeline_summaries
         reviews = review_summaries(self.db, [row["item"]["id"] for row in rows])
         pipelines = pipeline_summaries(self.db, [row["item"]["id"] for row in rows], compact=True, ws=self, user_id=user_id)
         for row in rows:
+            row['item']['is_current'] = row['is_current']
             if row['item'].get('source_storage') == 'PARTS_V2':
                 from oa.sanity_workspace_sources import delivery_status
                 row['item'].update(delivery_status(self.db,row['item']))

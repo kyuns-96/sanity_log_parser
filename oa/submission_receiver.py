@@ -140,7 +140,8 @@ class SourceReceiver:
     def header(self, output, unit, value):
         c, s, result = output['plan']['collection'], unit['source'], value['result']
         check(value['version_id']==source_version(c,s) and value['unit_key']==source_unit(c,unit)
-              and value['execution_id']==source_execution(c,unit) and value['source']==s,'SOURCE_SCOPE_MISMATCH')
+              and value['execution_id']==source_execution(c,unit,value.get('submission_id'))
+              and value['source']==s,'SOURCE_SCOPE_MISMATCH')
         for field in ('item_id','family','parser','rule_version'):
             check(value[field]==unit[field],'SOURCE_SCOPE_MISMATCH')
         check(str(uuid.UUID(value['analysis_id']))==value['analysis_id'],'INVALID_SOURCE_MANIFEST')
@@ -224,6 +225,13 @@ class SourceReceiver:
         units = output['plan']['inventory']['units']
         check(isinstance(output['reports'],list) and len(output['reports'])==len(units),'SOURCE_COVERAGE_MISMATCH')
         for unit,value in zip(units,output['reports']):
+            from common.sanity_submission import validate_run_binding
+            validate_run_binding(value,packet)
+            run_keys = {'submission_id','submitted_at'} & set(value)
+            if run_keys:
+                submitted = datetime.fromisoformat(value['submitted_at'])
+                check(submitted.utcoffset() is not None and submitted.astimezone(timezone.utc).isoformat(
+                    timespec='microseconds')==value['submitted_at'],'INVALID_SOURCE_MANIFEST')
             sources = for_unit(output['plan'], unit, output.get('preserved_files', []))
             check(canonical_json(value.get('preserved_sources', [])) == canonical_json(sources)
                   and (bool(sources) or 'preserved_sources' not in value), 'PRESERVED_SOURCE_MISMATCH')
@@ -296,12 +304,13 @@ class SourceReceiver:
             check(index==result['record_count'] and record_bytes==value['record_bytes'] and line_count<=value['raw_line_count']
                   and all(counts[k]==n for k,n in result['status_counts'].items()),'SOURCE_COVERAGE_MISMATCH')
             existing = self.db.execute("SELECT payload->>'raw_sha256' AS raw,payload->>'execution_id' AS execution_id,"
+                "payload->>'submission_id' AS submission_id,"
                 "(payload->'source'->>'execution_order')::bigint AS ordinal FROM {oa} WHERE record_type='WS_REPORT' "
                 "AND payload->>'source_unit_key'=%s",(value['unit_key'],)).fetchall()
             for old in existing:
                 if old['execution_id']==value['execution_id']:
                     check(not old['raw'] or not value['raw_sha256'] or old['raw']==value['raw_sha256'],'SOURCE_IDENTITY_CONFLICT')
-                else:
+                elif 'submission_id' not in value and not old['submission_id']:
                     check(old['ordinal']!=value['source']['execution_order'],'SOURCE_ORDER_CONFLICT')
             blockers.update(result['blockers'])
             if result['parse_status'] not in ('COMPLETE','NOT_APPLICABLE'):
@@ -374,6 +383,7 @@ class SourceReceiver:
             'analysis_created_at':value['analysis_created_at'],
             'source_bytes':value['record_bytes'],'raw_line_count':value['raw_line_count']}
         payload.update({key:result[key] for key in AI_INPUT_KEYS if key in result})
+        payload.update({key:value[key] for key in ('submission_id','submitted_at') if key in value})
         if result.get('evaluation_mode')=='none':
             payload.update(evaluation_mode='none',not_evaluated_count=result['not_evaluated_count'])
         if value.get('preserved_sources'):
@@ -414,6 +424,8 @@ class SourceReceiver:
             with self.transaction():
                 self.db.execute('SELECT pg_advisory_xact_lock(%s)',(lock_key('oa-submission-'+packet['submission_id']),))
                 self.authorize(packet)
+                from common.sanity_removal import check_packet
+                check_packet(self.db,packet)
                 row = self.submission(packet)
                 if row['state']['delivery_state'] in ('OA_STORED','REJECTED'):
                     queue.finish(message)

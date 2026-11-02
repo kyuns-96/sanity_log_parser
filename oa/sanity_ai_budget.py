@@ -40,7 +40,7 @@ class BatchSettings:
         for name, low, high in (('context_tokens',0,10000000),('input_tokens',1,1000000),
                 ('output_tokens',1,1000000),('overhead_tokens',1,1000000),('max_records',1,1000),
                 ('merge_groups',2,100),('max_calls',1,100000),('max_rounds',1,32),
-                ('deadline_seconds',60,604800),('max_concurrency',1,8)):
+                ('deadline_seconds',60,604800),('max_concurrency',1,1000000)):
             value = getattr(self,name)
             check(type(value) is int and low <= value <= high, 'AI_BATCH_CONFIG')
         if self.enabled:

@@ -319,7 +319,7 @@ class OAFeedbackCycleTests(PgTestCase):
             self.assertFalse(first["confirmed"])
             self.assertEqual("OA_OPENAI_COMPATIBLE", first["advisor"])
             self.assertEqual(digest(self.bodies[0]), first["model_metadata"]["input_sha256"])
-            self.assertEqual("oa-semantic-clustering-v3", first["model_metadata"]["prompt_version"])
+            self.assertEqual("oa-semantic-clustering-v3.rule-code-v1", first["model_metadata"]["prompt_version"])
             groups = [{"id": "human-derived", "label": "파생 클록 예외", "record_ids": ["A1", "A2"]},
                       {"id": "human-missing", "label": "실제 클록 누락", "record_ids": ["A3"]}]
             edited = clusters.change(OWNER.user_id, BLOCK, VERSION, "report-A", action="EDIT",

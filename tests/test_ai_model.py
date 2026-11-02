@@ -208,12 +208,12 @@ class OAModelTests(unittest.TestCase):
         result = self.invoke(self.adapter(handler, SANITY_OA_AI_JSON_MODE="true"))
         self.assertEqual(1, len(captured))
         self.assertEqual(before, self.packet)
-        self.assertEqual("클록 정의 누락", result["advice"]["groups"][0]["label"])
+        self.assertEqual("SYNTHETIC-CLOCK · 클록 정의 누락", result["advice"]["groups"][0]["label"])
         meta = result["metadata"]
         self.assertTrue(meta["model_called"])
         self.assertEqual(digest(json.loads(captured[0].content)), meta["input_sha256"])
         self.assertEqual({"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}, meta["usage"])
-        self.assertEqual("oa-semantic-clustering-v3", meta["prompt_version"])
+        self.assertEqual("oa-semantic-clustering-v3.rule-code-v1", meta["prompt_version"])
         self.assertNotIn("model.invalid", json.dumps(meta))
 
     def test_first_review_sends_only_complete_selected_group_and_approved_criteria(self):

@@ -77,6 +77,7 @@ def _public(event):
     connection = ({"connection_id":data["command"]["connection_id"], "connection_label":data["connection_label"]}
                   if "connection_id" in data["command"] else {})
     return {"id": event["job_id"], "status": event["status"], "error": data.get("error"), **connection, **display_metrics(event),
+            **({'completion_reason':data['completion_reason']} if 'completion_reason' in data else {}),
             "model": data["model"], "created_at": data["created_at"], "finished_at": data.get("finished_at"),
             "expected_revision": data["command"]["expected_revision"],
             "input_case_count": len(data["pins"]["cases"]), "event_id": data.get("event_id"),
@@ -119,8 +120,9 @@ def _validate_data(event):
     required = {"command", "target", "pins", "retrieval", "model", "created_at", "model_called"}
     optional = {"model_attempted", "call_token", "started_at", "deadline", "result", "error", "finished_at", "event_id", "cancelled_by", "batch", "result_ref", "connection_label",
                 "worker_site","total_records","call_seconds","fail_safe","retry_count","retry_after","retry_failure",
-                "resume_count","resume_request_id","resumed_by","resume_checkpoint","credential_pin","unknown_reason","validation_failure"}
+                "resume_count","resume_request_id","resumed_by","resume_checkpoint","credential_pin","unknown_reason","validation_failure","completion_reason"}
     check(isinstance(data, dict) and required <= set(data) <= required | optional, "AI_JOB_CORRUPT")
+    if 'completion_reason' in data:check(data['completion_reason']=='MAX_ITERATIONS','AI_JOB_CORRUPT')
     command, pins = data["command"], data["pins"]
     command_keys = {"user_id", "block_id", "version_id", "report_id", "expected_revision",
                     "request_id", "group_id", "expected_cluster_revision"}
@@ -199,7 +201,7 @@ def _validate_data(event):
               and set(batch)-parallel_keys in ({'version'},{'version','total_records','leaf_count','plan','credential_revision'}), 'AI_JOB_CORRUPT')
         if parallel_keys:
             check(batch['execution'] in ('parallel-v1','parallel-v2') and type(batch.get('max_concurrency')) is int
-                  and 2<=batch['max_concurrency']<=8, 'AI_JOB_CORRUPT')
+                  and 2<=batch['max_concurrency']<=1000000, 'AI_JOB_CORRUPT')
         if 'plan' in batch:
             check(type(batch['total_records'])is int and 1<=batch['total_records']<=1000000
                   and type(batch['leaf_count'])is int and 1<=batch['leaf_count']<=100000
@@ -418,7 +420,7 @@ class AIJobService:
             query += "AND COALESCE(payload->'data'->>'worker_site',%s)=%s " \
                 "AND (NOT (payload->'data' ? 'retry_after') OR (payload->'data'->>'retry_after')::timestamptz<=COALESCE(%s::timestamptz,clock_timestamp())) " \
                 "AND (payload->>'status' IN ('PENDING','RESULT_READY') OR (payload->>'status'='RUNNING' " \
-                "AND (payload->'data' ? 'batch' OR (payload->'data'->>'deadline')::timestamptz<=COALESCE(%s::timestamptz,clock_timestamp())))) ORDER BY created_at,workspace_key LIMIT 1"
+                "AND (payload->'data' ? 'batch' OR (payload->'data'->>'deadline')::timestamptz<=COALESCE(%s::timestamptz,clock_timestamp())))) ORDER BY (payload->'data'->>'created_at')::timestamptz,workspace_key LIMIT 1"
             params.extend((worker_site(),worker_site(),now,now))
         else:
             query += "ORDER BY created_at DESC,workspace_key DESC LIMIT 1"
@@ -555,6 +557,10 @@ class AIJobService:
             from common.sanity_preserved_ai import available
             data['batch']={'version':2 if group_id is not None or available(context) else 1}
             width = model['batch'].get('max_concurrency',1)
+            from oa.sanity_ai_scheduler import Settings
+            scheduler=Settings(self.db).current()
+            if scheduler['revision']:
+                width=scheduler['limits']['max_concurrency']
             if width>1:
                 data['batch'].update(execution=PARALLEL_EXECUTION,max_concurrency=width)
         return self.public(self._append(None, "PENDING", data, now=now))
@@ -682,7 +688,7 @@ def _transaction(db_factory, workspace_factory, advisor, criteria_provider):
             yield AIJobService(db, workspace_factory(db), advisor=advisor, criteria_provider=criteria_provider)
 
 
-def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, now=None):
+def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, now=None, job_id=None):
     """Process at most one queued job; never keep a connection across HTTP.
 
     ``db_factory`` must yield a fresh OA Database; ``workspace_factory`` must
@@ -697,7 +703,8 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
         excluded=[]
         event=None
         while len(excluded)<1000:
-            candidate=service._latest(work=True, now=now, exclude=excluded)
+            candidate=(service._load(job_id,required=False) if job_id is not None else
+                       service._latest(work=True, now=now, exclude=excluded))
             if candidate is None:break
             if candidate['status']=='RUNNING' and candidate['data'].get('fail_safe') and 'batch' in candidate['data']:
                 from oa.sanity_ai_batch_jobs import Ledger
@@ -719,6 +726,7 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
                             _timestamp(step['state']['retry_after']) > (now or _db_now(service.db)))
                 except ReviewError:waiting=False
                 if waiting:
+                    if job_id is not None:return service.public(candidate)
                     excluded.append(candidate['job_id'])
                     continue
             event=candidate
@@ -726,7 +734,7 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
         batch_job = event['job_id'] if event and 'batch' in event['data'] else None
     if event is None:
         from oa.sanity_ai_submissions import prepare_one
-        return prepare_one(db_factory,workspace_factory,advisor,criteria_provider)
+        return prepare_one(db_factory,workspace_factory,advisor,criteria_provider,identity=job_id)
     if batch_job is not None:
         if event['data']['batch'].get('execution')=='parallel-v2':
             from oa.sanity_ai_rolling_jobs import run_step
@@ -764,6 +772,8 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
             return _public(service._failed(event, error, now=now))
         started = now or _db_now(service.db)
         deadline = started + timedelta(seconds=dispatch_advisor.settings.timeout + 60)
+        from oa.sanity_ai_scheduler import reserve
+        if not reserve(service,event['job_id'],call_id,deadline.isoformat()):return _public(event)
         running={k:v for k,v in event["data"].items() if k not in ("error","retry_after","retry_failure","validation_failure")}
         event = service._append(event, "RUNNING", {**running, "call_token": call_id,
                    "model_attempted": True, "model_called": None,
@@ -794,6 +804,8 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
     call_seconds=time.monotonic()-call_started
     with _transaction(db_factory, workspace_factory, advisor, criteria_provider) as service:
         service._lock(event["job_id"])
+        from oa.sanity_ai_scheduler import release
+        release(service,event['job_id'],event['data']['call_token'])
         current = worker_load(service, event["job_id"])
         if current is None:
             return None

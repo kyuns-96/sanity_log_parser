@@ -87,6 +87,7 @@ def public(service, event):
     wall_rate,wall_eta,wall_measured_at=_wall_metrics(event,state,wave)
     value['progress'] = {'mode':'BATCH','execution':event['data']['batch']['execution'],
         'concurrency':event['data']['batch']['max_concurrency'],'inflight_calls':len(active),
+        **({'allocated_concurrency':state['allocated_concurrency']} if 'allocated_concurrency' in state else {}),
         'active_descriptors':[{'index':s['index'],'phase':state.get('phase','CLASSIFY')} for s in active],
         'phase':state.get('phase','CLASSIFY'),'round':state.get('round',0),
         'completed_records':state.get('records',0),'total_records':event['data']['batch'].get('total_records',0),
@@ -217,7 +218,10 @@ def _execute(model, descriptor, nodes, prepared):
 def _save(db_factory,workspace_factory,advisor,criteria_provider,job_id,slot,descriptor,revision,result,error,seconds,max_calls):
     from oa.sanity_ai_jobs import _transaction,_db_now,_timestamp,_error_code
     with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
-        service._lock(job_id); event = worker_load(service,job_id)
+        service._lock(job_id)
+        from oa.sanity_ai_scheduler import release
+        release(service,job_id,slot['call_token'])
+        event = worker_load(service,job_id)
         if event is None:return None
         if event['status']!='RUNNING': return service.public(event)
         ledger = ParallelLedger(service,event); step,ref = ledger.last(); state = step['state']
@@ -351,6 +355,8 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
                             'call_token':token,'descriptor_sha256':digest(descriptor),'input_sha256':hashlib.sha256(raw).hexdigest(),
                             'input_bytes':len(raw),'prompt_version':prepared[0][2],
                             'deadline':(current+timedelta(seconds=child.advisor.settings.timeout+60)).isoformat()}
+                        from oa.sanity_ai_scheduler import reserve
+                        if not reserve(service,job_id,token,call['deadline']):break
                         reservation = ledger.put(f"call.{state['round']:03d}.{old['index']:06d}.{attempt:03d}",call)
                         clean = {k:v for k,v in old.items() if k not in ('receipt','error','result','model_called','unknown_reason','validation_failure')}
                         new = {**clean,**{k:call[k] for k in ('attempt','call_token','input_sha256','input_bytes','prompt_version','deadline')},

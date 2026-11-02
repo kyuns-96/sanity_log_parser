@@ -323,7 +323,9 @@ def _finish_round(service,event,ledger,model,step,ref):
     stage_round=state.get('stage_round',round_number)
     stable=state['stable']+1 if stage_round>0 and len(nodes)==manifest['input_nodes'] else 0
     review=getattr(model,'review',False)
-    if len(nodes)==1 or (not review and stable>=2):
+    converged=len(nodes)==1 or (not review and (stable>=2 or model.rules_complete(nodes)))
+    capped=not review and stage_round>=model.settings.max_rounds
+    if converged or capped:
         check(state['records']==len(model.records),'INVALID_PARTITION')
         advice,citations=model.advice(nodes)  # Existing full-original partition and rationales.
         chain=ledger.audit()
@@ -332,6 +334,8 @@ def _finish_round(service,event,ledger,model,step,ref):
             'input_hash_kind':'BATCH_MANIFEST','output_sha256':digest(advice),'batch_receipt':{
                 'version':1,'root':chain,'calls':state['calls'],'records':state['records'],
                 'plan':event['data']['batch']['plan']}}
+        if capped and not converged:metadata['completion_reason']='MAX_ITERATIONS'
+        if not review:metadata['prompt_version'] += '.rule-code-v1'
         from common.sanity_ai_projection import policy_for, source_policy_pin
         if policy_for(model.context):
             metadata['prompt_version'] += '.fields-v1'
@@ -352,7 +356,8 @@ def _finish_round(service,event,ledger,model,step,ref):
         # Recover by immutable node references, not a second full ID assignment
         # snapshot; apply_ai owns the sole published clustering event.
         final=ledger.put('final',{'nodes':node_refs,'metadata':metadata})
-        event=service._append(event,'RESULT_READY',{**event['data'],'result_ref':final,'model_called':True,'model_attempted':True})
+        event=service._append(event,'RESULT_READY',{**event['data'],'result_ref':final,'model_called':True,'model_attempted':True,
+            **({'completion_reason':'MAX_ITERATIONS'} if capped and not converged else {})})
         return event
     check(stage_round<model.settings.max_rounds,'AI_BATCH_LIMIT','Reduction has not stabilized within its call budget')
     groups=model.merge_plan(nodes,stage_round+1)
@@ -428,10 +433,13 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
             prepared_call=model.prepare(descriptor,nodes)
             request_bytes=prepared_call[1][0]
             state={**state,'retry_after':None}
-            reserved,reserved_ref=ledger.step(step,ref,'RESERVED',state,descriptor_sha256=digest(descriptor),
-                input_sha256=hashlib.sha256(request_bytes).hexdigest(),input_bytes=len(request_bytes),
-                prompt_version=prepared_call[0][2],
-                call_token=str(uuid4()),deadline=(current+timedelta(seconds=model.advisor.settings.timeout+60)).isoformat())
+            from oa.sanity_ai_scheduler import reserve
+            token=str(uuid4());deadline=(current+timedelta(seconds=model.advisor.settings.timeout+60)).isoformat()
+            with service.db.transaction():
+                if not reserve(service,event['job_id'],token,deadline):return public(service,event)
+                reserved,reserved_ref=ledger.step(step,ref,'RESERVED',state,descriptor_sha256=digest(descriptor),
+                    input_sha256=hashlib.sha256(request_bytes).hexdigest(),input_bytes=len(request_bytes),
+                    prompt_version=prepared_call[0][2],call_token=token,deadline=deadline)
             model.advisor=service._bind_advisor(model.advisor,event,reserved['call_token'])
             from oa.sanity_ai_monitor import observer
             model.advisor=model.advisor.with_observer(observer(db_factory,workspace_factory,advisor,criteria_provider,event,reserved['call_token']))
@@ -448,7 +456,10 @@ def run_step(db_factory,workspace_factory,advisor,criteria_provider,job_id,*,now
         result=None;failure=error
     seconds=time.monotonic()-call_started
     with _transaction(db_factory,workspace_factory,advisor,criteria_provider) as service:
-        service._lock(job_id);current=worker_load(service,job_id)
+        service._lock(job_id)
+        from oa.sanity_ai_scheduler import release
+        release(service,job_id,reserved['call_token'])
+        current=worker_load(service,job_id)
         if current is None:return None
         ledger=Ledger(service,current)
         if current['status']!='RUNNING': return public(service,current)

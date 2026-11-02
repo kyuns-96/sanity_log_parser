@@ -68,6 +68,11 @@ def _advance(db_factory, workspace_factory, advisor, criteria_provider, job_id,
                 return service.public(event),dispatch,model,revision
             with service.db.transaction():
                 width = event['data']['batch']['max_concurrency']
+                from oa.sanity_ai_scheduler import allocation,reserve
+                share=allocation(service,job_id)
+                if share is not None:
+                    width=min(width,share)
+                    state={**state,'allocated_concurrency':width}
                 while True:
                     old = next((slot for slot in state['wave'] if slot['status']=='RETRY'),None)
                     if old is None:
@@ -111,6 +116,7 @@ def _advance(db_factory, workspace_factory, advisor, criteria_provider, job_id,
                             'input_sha256':hashlib.sha256(raw).hexdigest(),'input_bytes':len(raw),
                             'prompt_version':prepared[0][2],'reserved_at':current.isoformat(),'work':work,
                             'deadline':(current+timedelta(seconds=child.advisor.settings.timeout+60)).isoformat()}
+                        if not reserve(service,job_id,token,call['deadline']):break
                         reservation = ledger.put(f"call.{state['round']:03d}.{old['index']:06d}.{call['attempt']:03d}",call)
                         clean = {k:v for k,v in old.items() if k not in
                                  ('receipt','error','result','model_called','unknown_reason','validation_failure')}

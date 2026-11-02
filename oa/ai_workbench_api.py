@@ -41,6 +41,12 @@ class AIDeleteJob(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
 
+class RemoveWorkspaceData(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    request_id: UUID
+    snapshot_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+
+
 class AIRetryUnknown(AIResume):
     expected_event_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
     expected_step_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
@@ -172,6 +178,26 @@ def create_workbench_router(authorized_actor):
     @router.get(report_path)
     def report(block_id: ID, version_id: ID, report_id: ID, scope=Depends(workspace)):
         return scope.ws.report(scope.user_id, block_id, version_id, report_id, hydrate_source=False)
+
+    @router.get('/blocks/{block_id}/versions/{version_id}/delete-preview')
+    def version_delete_preview(block_id: ID, version_id: ID, scope=Depends(workspace)):
+        from oa.sanity_workspace_removal import Removal
+        return Removal(scope.ws).preview(scope.user_id,block_id,version_id)
+
+    @router.post('/blocks/{block_id}/versions/{version_id}/delete')
+    def delete_version(block_id: ID, version_id: ID, body: RemoveWorkspaceData, scope=Depends(workspace)):
+        from oa.sanity_workspace_removal import Removal
+        return Removal(scope.ws).delete(scope.user_id,block_id,version_id,**body.model_dump())
+
+    @router.get(report_path+'/delete-preview')
+    def report_delete_preview(block_id: ID, version_id: ID, report_id: ID, scope=Depends(workspace)):
+        from oa.sanity_workspace_removal import Removal
+        return Removal(scope.ws).preview(scope.user_id,block_id,version_id,report_id)
+
+    @router.post(report_path+'/delete')
+    def delete_report(block_id: ID, version_id: ID, report_id: ID, body: RemoveWorkspaceData, scope=Depends(workspace)):
+        from oa.sanity_workspace_removal import Removal
+        return Removal(scope.ws).delete(scope.user_id,block_id,version_id,report_id=report_id,**body.model_dump())
 
     @router.get(report_path + "/source")
     def source(block_id: ID, version_id: ID, report_id: ID, scope=Depends(workspace)):

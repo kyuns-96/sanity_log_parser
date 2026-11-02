@@ -12,6 +12,7 @@ from common.sanity_clustering_advice import ClusteringAdvisor, MAX_RECORDS, MAX_
 from common.sanity_common import digest
 from common.sanity_submission import source_digest
 from common.sanity_db import json_value, lock_key, uuid_value
+from common.sanity_rule_groups import enforce as enforce_rule_groups, rule_code
 from oa.sanity_workspace import WorkspaceStore, record_id, utcnow
 from oa.sanity_workspace_review import WorkspaceReviewStore, validate_ai_receipt
 import common.sanity_workspace_rationale as rationale
@@ -104,7 +105,7 @@ class ConfirmedPartitionAdvisor(ClusteringAdvisor):
                 key = ["CONFLICT", record["id"]]; conflicts += 1
             else:
                 key = ["EXACT_FIELDS", value] if value else ["MISSING_IDENTITY", record["id"]]
-            gid = "wg-" + digest([context["scope"], key])[:40]
+            gid = "wg-" + digest([context["scope"], rule_code(record, context['report']), key])[:40]
             grouped[gid].append(record["id"])
         groups = [{"id": key, "label": f"그룹 {index + 1}", "record_ids": values}
                   for index, (key, values) in enumerate(sorted(grouped.items()))]
@@ -409,7 +410,7 @@ class WorkspaceClusteringStore:
                 if operation is not None:
                     from oa.sanity_workspace_pipeline import apply_operation
                     groups = apply_operation(old["groups"], operation)
-        groups = partition(groups, evidence(context))
+        groups = enforce_rule_groups(partition(groups, evidence(context)), evidence(context), context['report'])
         if action == "EDIT" and operation is not None and groups == old["groups"]:
             return old
         confirmed = action == "CONFIRM"

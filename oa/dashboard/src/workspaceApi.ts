@@ -8,7 +8,7 @@ export type WorkspaceProject = { id: string; name: string; description: string; 
 export type WorkspaceOverview = { user: WorkspaceUser; projects: WorkspaceProject[]; data_origin: string }
 export type WorkspaceVersions = { items: WorkspaceVersion[]; por: WorkspacePor; can_assign_por: boolean }
 export type WorkspaceRecord = { evaluation_status?: 'NOT_PERFORMED'; id: string; fields: Record<string, unknown>; check_status: string; raw: string; raw_display_truncated?: boolean; line_start: number; line_end: number; reasons?: string[] }
-export type WorkspaceReport = { preserved_sources?: PreservedSource[]; evaluation_mode?: 'none'; not_evaluated_count?: number; id: string; item_id?: string; project_id: string; block_id: string; version_id: string; eco: string | null; family: string; rule: string; check_status: string; parse_status: string; parser: string; raw_report?: string | null; record_count: number; records?: WorkspaceRecord[]; blockers: string[]; analysis_ready: boolean; source_storage?: 'PARTS_V2'; delivery_ready?: boolean; delivery_blockers?: string[]; human_review?: { conclusion: string; actor: WorkspaceUser; at: string; revision: number; reusable: boolean } | null; group_review_summary?: PipelineSummary | null }
+export type WorkspaceReport = { submission_id?: string; submitted_at?: string; analysis_created_at?: string; is_current?: boolean; preserved_sources?: PreservedSource[]; evaluation_mode?: 'none'; not_evaluated_count?: number; id: string; item_id?: string; project_id: string; block_id: string; version_id: string; eco: string | null; family: string; rule: string; check_status: string; parse_status: string; parser: string; raw_report?: string | null; record_count: number; records?: WorkspaceRecord[]; blockers: string[]; analysis_ready: boolean; source_storage?: 'PARTS_V2'; delivery_ready?: boolean; delivery_blockers?: string[]; human_review?: { conclusion: string; actor: WorkspaceUser; at: string; revision: number; reusable: boolean } | null; group_review_summary?: PipelineSummary | null }
 export type WorkspaceItemGroup = { item_id: string; total: number; counts: Record<string, number>; parse_counts: Record<string, number>; families: string[] }
 export type WorkspaceReports = { items: WorkspaceReport[]; total: number; offset: number; limit: number; counts: Record<string, number>; groups: WorkspaceItemGroup[]; version: WorkspaceVersion }
 export type WorkspaceEvent = { id: string; previous_version_id: string | null; version: WorkspaceVersion; actor: WorkspaceUser; reason: string; at: string; revision: number }
@@ -31,7 +31,7 @@ export type ClusterBrief = Omit<ClusterEvent, 'groups'> & { group_count: number;
 export type PipelineTask = { id: string; status: 'PENDING' | 'RUNNING' | 'FAILED' | 'STALE' | 'CANCELLED' | 'COMPLETED'; record_count: number; processed: number; next_chunk: number; error: string | null; chunks: { index: number; start: number; stop: number; record_count: number; input_sha256: string; status: string }[] }
 export type UnknownRecovery = { event_sha256: string; step_sha256: string; call_token: string; phase: string; round: number; index: number; total: number; input_bytes?: number }
 export type AIValidationFailure = { schema_version: 1; code: string; field: string; group_index?: number; actual_count?: number; actual_length?: number }
-export type CodexJob = { can_delete?: boolean; delete_error?: string; merge_iteration?: number | null; current_group_count?: number | null; validation_failure?: AIValidationFailure | null; can_retry_unknown?: boolean; unknown_recovery?: UnknownRecovery; unknown_recoveries?: UnknownRecovery[]; unknown_recovery_error?: string; unknown_reason?: string; worker_site?: 'oa' | 'vwp'; preparation_phase?: string; total_records?: number; call_seconds?: number; retry_count?: number; retry_limit?: number; retry_after?: string | null; resume_count?: number; resumable?: boolean; started_at?: string; connection_id?: string; connection_label?: string; id: string; status: 'PENDING' | 'RUNNING' | 'RESULT_READY' | 'COMPLETED' | 'FAILED' | 'STALE' | 'UNKNOWN' | 'CANCELLED' | 'SAVE_FAILED'; error: string | null; model: string; created_at: string; finished_at?: string; expected_revision: number; input_case_count: number; event_id?: string; progress?: { mode: 'BATCH'; execution?: 'parallel-v1' | 'parallel-v2'; cancel_requested?: boolean; concurrency?: number; inflight_calls?: number; active_descriptors?: { index: number; phase?: string }[]; wall_seconds_per_record?: number | null; wall_stage_eta_seconds?: number | null; wall_measured_at?: string | null; phase: 'TEXT' | 'TEXT_MERGE' | 'CLASSIFY' | 'MERGE' | 'REVIEW' | 'REVIEW_MERGE'; completed_records: number; total_records: number; completed_calls: number; round: number; waiting: boolean; round_completed?: number; round_total?: number; average_call_seconds?: number | null; seconds_per_record?: number | null; stage_eta_seconds?: number | null; retry_count?: number; child_retries?: number; retry_limit?: number; retry_error?: string | null; retry_http_status?: number | null; retry_after?: string | null } }
+export type CodexJob = { completion_reason?: 'MAX_ITERATIONS'; can_delete?: boolean; delete_error?: string; merge_iteration?: number | null; current_group_count?: number | null; validation_failure?: AIValidationFailure | null; can_retry_unknown?: boolean; unknown_recovery?: UnknownRecovery; unknown_recoveries?: UnknownRecovery[]; unknown_recovery_error?: string; unknown_reason?: string; worker_site?: 'oa' | 'vwp'; preparation_phase?: string; total_records?: number; call_seconds?: number; retry_count?: number; retry_limit?: number; retry_after?: string | null; resume_count?: number; resumable?: boolean; started_at?: string; connection_id?: string; connection_label?: string; id: string; status: 'PENDING' | 'RUNNING' | 'RESULT_READY' | 'COMPLETED' | 'FAILED' | 'STALE' | 'UNKNOWN' | 'CANCELLED' | 'SAVE_FAILED'; error: string | null; model: string; created_at: string; finished_at?: string; expected_revision: number; input_case_count: number; event_id?: string; progress?: { mode: 'BATCH'; execution?: 'parallel-v1' | 'parallel-v2'; cancel_requested?: boolean; concurrency?: number; inflight_calls?: number; allocated_concurrency?: number; active_descriptors?: { index: number; phase?: string }[]; wall_seconds_per_record?: number | null; wall_stage_eta_seconds?: number | null; wall_measured_at?: string | null; phase: 'TEXT' | 'TEXT_MERGE' | 'CLASSIFY' | 'MERGE' | 'REVIEW' | 'REVIEW_MERGE'; completed_records: number; total_records: number; completed_calls: number; round: number; waiting: boolean; round_completed?: number; round_total?: number; average_call_seconds?: number | null; seconds_per_record?: number | null; stage_eta_seconds?: number | null; retry_count?: number; child_retries?: number; retry_limit?: number; retry_error?: string | null; retry_http_status?: number | null; retry_after?: string | null } }
 export type AIConnectionChoice = { id: string; label: string; execution_site?: 'vwp'; model: string; models: string[]; available: boolean; enabled: boolean; credential_required?: boolean; credential_ready?: boolean; credential_error?: string | null }
 export type CodexCapability = { connection_id?: string; connection_label?: string; execution_site?: 'vwp'; connections?: AIConnectionChoice[]; task_default?: { connection_id: string; model_id: string; applied: boolean; reason?: 'AI_CONNECTION_UNAVAILABLE' | 'AI_MODEL_NOT_ALLOWED' }; available: boolean; supported: boolean; enabled: boolean; model: string; models?: string[]; remaining: number | null; job: CodexJob | null; provider?: string; synthetic_only?: boolean; credential_required?: boolean; credential_ready?: boolean; credential_error?: string | null }
 export type WorkbenchView = { report: WorkspaceReport; version: WorkspaceVersion; current: ClusterBrief | null; revision: number; ready: boolean; can_edit: boolean; stale: boolean; task: PipelineTask | null; ai?: CodexCapability; record_count: number; raw_line_count: number; source_sha256: string; case_count: number; reusable_count: number; removed_count: number; corporate_ai_connected: boolean; summary: { confirmed: boolean; total: number; reviewed: number; pending: number; complete: boolean; rationale_counts: Record<RationaleStatus, number>; counts: Record<string, number> } }
@@ -90,6 +90,12 @@ const messages: Record<string, string> = {
   INVALID_ADVICE: 'AI 제안의 직접 근거 또는 참고 사례를 검증하지 못해 적용하지 않았습니다.',
   AI_JOB_ACTIVE: 'AI 작업이 진행 중입니다. 현재 상태를 확인해 주세요.',
   AI_JOB_DELETED: '삭제된 AI 작업입니다. 새 작업으로 요청해 주세요.',
+  REMOVAL_CHANGED: '삭제 대상이 변경됐습니다. 삭제 범위를 다시 확인해 주세요.',
+  DATA_DELETE_NOT_CONFIGURED: '원본과 이력 삭제를 위한 운영 DB 설정이 필요합니다.',
+  SOURCE_REMOVED: '삭제한 제출입니다. 새 제출로 등록해 주세요.',
+  SUBMISSION_BUSY: '원본을 전송하거나 처리 중입니다. 완료 후 다시 시도해 주세요.',
+  POR_VERSION_IN_USE: '현재 PoR을 다른 버전으로 바꾼 뒤 삭제해 주세요.',
+  VERSION_REFERENCED: '다른 버전의 기준으로 사용 중입니다. 연결된 버전을 먼저 정리해 주세요.',
   AI_JOB_DELETE_NOT_CONFIGURED: '작업 기록 삭제를 사용할 수 없습니다. 운영 담당자에게 설정을 확인해 주세요.',
   AI_BUSY: '다른 AI 분류 요청이 진행 중입니다. 완료 후 다시 요청해 주세요.',
   AI_MOCK_LIMIT: '이 합성 report의 AI 테스트 호출 한도에 도달했습니다.',
@@ -99,6 +105,9 @@ const messages: Record<string, string> = {
   CLUSTER_NOT_READY: '먼저 clustering 초안을 만들고 그룹 구성을 확인해 주세요.',
   CLUSTER_BLOCKED: '확정할 검사 근거가 미수신 또는 미완료입니다.',
   INVALID_PARTITION: '모든 원본 로그를 빠짐없이 한 그룹에만 배정해 주세요.',
+  RULE_CODE_CONFLICT: '서로 다른 rule code의 로그는 한 그룹으로 묶거나 이동할 수 없습니다.',
+  RULE_CODE_REQUIRED: '로그의 rule code가 없어 그룹을 저장할 수 없습니다. 파서의 code 매핑을 확인해 주세요.',
+  RULE_CODE_INVALID: '원본 rule code의 형식과 길이를 확인해 주세요.',
   CLUSTER_LIMIT: '보고서 전체가 처리 한도를 넘었습니다. 일부만 처리해 완료로 표시하지 않습니다.',
   CLUSTER_TASK_ACTIVE: '분류 작업이 진행 중이거나 확인이 필요합니다. 1단계에서 이어서 처리하거나 취소해 주세요.',
   REPORT_LIMIT: '보고서 전체가 서버의 바이트 예산을 넘었습니다. 일부만 처리하지 않았습니다. 처리 예산을 확인해 주세요.',
@@ -176,6 +185,7 @@ const unknownRecoveryErrors: Record<string, string> = {
 }
 export const aiJobParallel = (job?: CodexJob | null) => job?.progress?.execution === 'parallel-v1' || job?.progress?.execution === 'parallel-v2'
 export const aiJobMessage = (job: CodexJob) => {
+  if (job.status === 'COMPLETED' && job.completion_reason === 'MAX_ITERATIONS') return '통합 반복 상한에 도달해 현재 그룹 구성으로 완료했습니다. 그룹을 검토해 확정해 주세요.'
   if (job.status === 'PENDING' && job.preparation_phase === 'PREPARING') return 'VWP 작업자가 전체 로그와 참고 사례를 준비하고 있습니다.'
   if (aiJobActive(job) && (job.retry_after || job.progress?.retry_after)) return aiJobParallel(job) ? '일부 배치의 재시도가 예정되어 있습니다. 완료된 배치는 유지합니다.' : job.progress ? 'AI 요청을 다시 처리하기 전 잠시 대기 중입니다. 완료된 배치는 유지합니다.' : 'AI 요청을 다시 처리하기 전 잠시 대기 중입니다.'
   if (job.status === 'PENDING') return 'AI 작업을 등록했습니다. 처리 시작을 기다리고 있습니다.'
@@ -234,4 +244,12 @@ export const workspaceTime = (value: string | null) => value ? new Date(value).t
 export function toolResultStatus(value: { check_status: string; evaluation_mode?: string; evaluation_status?: string }): string {
   return value.check_status === 'UNKNOWN' && (value.evaluation_mode === 'none' || value.evaluation_status === 'NOT_PERFORMED')
     ? 'NOT_PERFORMED' : value.check_status
+}
+
+export function reportDisplayName(report: WorkspaceReport) {
+  if (report.source_storage !== 'PARTS_V2') return report.id
+  const raw = report.submitted_at || report.analysis_created_at
+  const at = raw ? new Date(raw) : null
+  const label = report.item_id || report.rule || report.family
+  return at && Number.isFinite(at.getTime()) ? `${label} · ${at.toLocaleString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })} 제출` : label
 }

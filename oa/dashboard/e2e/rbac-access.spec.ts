@@ -32,6 +32,7 @@ async function accessServer(page: Page, admin = false, empty = false) {
     if (path === '/api/access/catalog') return route.fulfill({ json: state.catalog })
     if (path === '/api/access/me') return route.fulfill({ json: { user_id: 'synthetic-user', is_admin: state.admin, revision: state.revision, grants: state.grants, requests: state.requests } })
     if (path === '/api/admin/ai/task-defaults') return route.fulfill({ json: { revision: 0, defaults: { CLUSTER: null, REVIEW: null } } })
+    if (path === '/api/admin/ai/scheduler') return route.fulfill({ json: { revision: 0, limits: { max_concurrency: 8, max_jobs: 4 } } })
     if (path === '/api/admin/access') return state.adminForbidden
       ? route.fulfill({ status: 403, json: { code: 'FORBIDDEN' } })
       : route.fulfill({ json: { revision: state.revision, requests: state.requests, grants: state.grants, users: [{ user_id: 'synthetic-user', display_name: '합성 사용자' }] } })

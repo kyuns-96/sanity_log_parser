@@ -11,6 +11,7 @@ import type { AccessApi } from './accessApi'
 import AIProcessingLimits from './AIProcessingLimits'
 import VwpAIConnectionForm from './VwpAIConnectionForm'
 import AITaskDefaults from './AITaskDefaults'
+import AISchedulerSettings from './AISchedulerSettings'
 import { isVwpConnection } from './aiConnectionTypes'
 import type { OAConnectionConfig as Config, OAConnectionEntry as Entry, ManagedConnection, VwpConnectionEntry, VwpProfile } from './aiConnectionTypes'
 import './ai-connections.css'
@@ -135,6 +136,7 @@ export default function AIConnectionsAdmin({ api }: { api: AccessApi }) {
     {!loading && loaded && !vwpReady && !editing && <p className="ai-availability-note">VWP 실행 프로필이 준비되지 않았습니다. 운영 담당자에게 확인해 주세요.</p>}
     {loading ? <p role="status" className="ai-connection-loading">AI 연결을 불러오고 있습니다.</p> : !editing && loaded ? <>
       <AITaskDefaults api={api} connections={items} />
+      <AISchedulerSettings api={api} />
       {!!items.length && <><div className="ai-catalog-summary"><span>전체 <strong>{items.length}</strong></span><span>사용 중 <strong>{items.filter(entry => entry.config.enabled).length}</strong></span><span>OA <strong>{items.length - vwpCount}</strong></span><span>VWP <strong>{vwpCount}</strong></span></div><div className="ai-list-heading" aria-hidden="true"><span>연결</span><span>기본 모델</span><span>상태</span><span>관리</span></div></>}
       <ul className="am-list ai-connection-list">{items.map(entry => <li className="ai-connection-row" key={entry.id} data-enabled={entry.config.enabled}><div><div className="ai-connection-title"><Badge variant="outline" className="ai-provider-badge">{isVwpConnection(entry) ? 'VWP' : 'OA'}</Badge><strong>{entry.config.label}</strong></div><span>{isVwpConnection(entry) ? '사용자별 개인 인증값' : modes[entry.config.auth_mode]}</span></div><div className="ai-connection-model"><code title={entry.config.model}>{entry.config.model}</code><span>허용 모델 {entry.config.models.length}개</span></div><div className="ai-connection-row-status"><Badge variant="outline" className="ai-connection-status">{entry.config.enabled ? '사용 중' : '사용 중지'}</Badge></div><div className="am-row-actions"><Button variant="outline" disabled={busy} onClick={() => edit(entry)}>수정</Button><Button variant="outline" disabled={busy || !entry.config.enabled && (!ready || isVwpConnection(entry) && (!vwpReady || !vwpProfiles.some(profile => profile.id === entry.config.profile_id)))} onClick={() => void toggle(entry)}>{entry.config.enabled ? '사용 중지' : '사용 허용'}</Button><Button variant="outline" className="ai-connection-delete" disabled={busy} onClick={() => { setDeleteError(''); setDeleting(entry) }}>삭제</Button></div></li>)}</ul>
       {!items.length && <div className="am-empty"><Settings2 size={26} /><h3>등록된 AI 연결이 없습니다</h3><p>AI 연결을 추가하고 인증 방식과 기본 모델을 설정해 주세요.</p></div>}
