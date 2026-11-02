@@ -3,6 +3,7 @@ import { useEffect, useId, useState } from 'react'
 import { Check, FileText, GitBranch, History, Pencil } from 'lucide-react'
 import { Button } from './studio/components/ui/button'
 import { Badge } from './studio/components/ui/badge'
+import { Input } from './studio/components/ui/input'
 import { Textarea } from './studio/components/ui/textarea'
 import { workspaceRequest as request, workspaceTime as time } from './workspaceApi'
 import type { RationaleContent, RationaleDetail, WorkspaceReport, WorkspaceVersion } from './workspaceApi'
@@ -18,13 +19,13 @@ export default function GroupRationale({ base, groupId, report, version, revisio
   const [data, setData] = useState<RationaleDetail | null>(null)
   const [editing, setEditing] = useState(false)
   const [reason, setReason] = useState('')
+  const [summary, setSummary] = useState('')
   const [evidence, setEvidence] = useState<string[]>([])
   const [references, setReferences] = useState<RationaleContent['reference_groups']>([])
   const [change, setChange] = useState('')
   const [historyOffset, setHistoryOffset] = useState(0)
   const [showHistory, setShowHistory] = useState(false)
   const [moreSamples, setMoreSamples] = useState(false)
-  const [moreReason, setMoreReason] = useState(false)
   useEffect(() => {
     const controller = new AbortController()
     const params = new URLSearchParams({ expected_revision: String(revision), offset: String(historyOffset), limit: '5' })
@@ -38,20 +39,23 @@ export default function GroupRationale({ base, groupId, report, version, revisio
   if (!data) return <section className="ws-rationale ws-studio-rationale" aria-label="그룹별 분류 근거" aria-busy="true"><div className="ws-studio-panel-heading"><h3>분류 근거</h3></div><p className="ws-muted" role="status">그룹 근거를 불러오는 중…</p></section>
   const row = data.rationale
   const fullReason = row?.content.reason || ''
-  const reasonCharacters = Array.from(fullReason)
-  const omitted = moreReason ? 0 : Math.max(0, reasonCharacters.length - 240)
+  const normalized = fullReason.replace(/\s+/gu, ' ').trim()
+  const firstSentence = normalized.match(/^.*?[.!?](?=\s|$)/u)?.[0] || normalized
+  const excerpt = Array.from(firstSentence)
+  const shortSummary = row?.content.summary?.trim() || `${excerpt.slice(0, 120).join('')}${excerpt.length > 120 ? '…' : ''}`
   function edit() {
+    setSummary(row?.content.summary || '')
     setReason(row?.content.reason || ''); setEvidence(row?.content.evidence_ids || [])
     setReferences(row?.content.reference_groups || []); setChange(''); setEditing(true)
   }
   async function save(reviewed: boolean) {
-    const saved = await onSave({ action: 'SAVE', content: { reason, evidence_ids: evidence, reference_groups: references }, reason: change, reviewed })
+    const saved = await onSave({ action: 'SAVE', content: { reason, ...(summary.trim() ? { summary: summary.trim() } : {}), evidence_ids: evidence, reference_groups: references }, reason: change, reviewed })
     if (saved) setEditing(false)
   }
   return <section className="ws-rationale ws-studio-rationale" aria-label="그룹별 분류 근거" data-rationale-state={data.status}>
     <div className="ws-rationale-heading ws-studio-panel-heading"><div><span className="ws-studio-eyebrow">CLASSIFICATION</span><h3><GitBranch size={17} />분류 근거</h3></div><Badge variant="outline" className={`ws-rationale-state ws-rationale-${data.status.toLowerCase()}`}>{rationaleLabels[data.status]}</Badge></div>
     {!editing ? <>
-      {row ? <><p className="ws-rationale-text">{omitted ? `${reasonCharacters.slice(0, 240).join('')}…` : fullReason}</p>{reasonCharacters.length > 240 && <button className="ws-text-action" type="button" aria-expanded={moreReason} onClick={() => setMoreReason(!moreReason)}>{omitted ? `근거 전문 보기 · ${omitted}자 생략` : '근거 접기'}</button>}<div className="ws-rationale-meta ws-studio-meta-row"><span>{sources[row.source] || row.source}</span>{row.reviewed_by && <span><Check size={12} />{row.reviewed_by.name} 확인</span>}</div></>
+      {row ? <><div className="ws-rationale-summary" aria-label="분류 근거 요약"><span>{row.content.summary ? '핵심 요약' : '기존 근거 발췌'}</span><p>{shortSummary}</p></div><details className="ws-rationale-full"><summary>상세 분류 근거 보기</summary><p className="ws-rationale-text">{fullReason}</p></details><div className="ws-rationale-meta ws-studio-meta-row"><span>{sources[row.source] || row.source}</span>{row.reviewed_by && <span><Check size={12} />{row.reviewed_by.name} 확인</span>}</div></>
         : <div className="ws-studio-empty"><GitBranch size={22} /><p>아직 분류 근거가 없습니다.</p><small>공통 패턴과 구분 기준을 작성하고 대표 로그를 지정하세요.</small></div>}
       {data.status === 'STALE' && <p className="ws-rationale-warning">그룹 구성 또는 이름이 변경되었습니다. 현재 분류 근거를 재검토하세요.</p>}
       {row && data.samples.length !== row.content.evidence_ids.length && <p className="ws-rationale-warning">대표 로그가 다른 그룹으로 이동했습니다. 분류 근거와 대표 로그를 갱신하세요.</p>}
@@ -60,6 +64,7 @@ export default function GroupRationale({ base, groupId, report, version, revisio
         {data.samples.length > 3 && <Button variant="ghost" size="sm" type="button" onClick={() => setMoreSamples(!moreSamples)}>{moreSamples ? '대표 로그 접기' : `대표 로그 ${data.samples.length}건 모두 보기`}</Button>}
       </details>}
     </> : <div className="ws-rationale-editor ws-studio-rationale-editor">
+      <label htmlFor={`${id}-summary`}>한 줄 요약 (선택)<Input aria-label="한 줄 요약" id={`${id}-summary`} value={summary} maxLength={120} disabled={busy} onChange={e => setSummary(e.target.value)} placeholder="공통 패턴과 구분 기준을 짧게 적어 주세요." /><small className="ws-muted">{Array.from(summary).length} / 120자 · 상세 근거는 아래에 보존합니다.</small></label>
       <label htmlFor={`${id}-reason`}>분류 기준<Textarea aria-label="분류 기준" id={`${id}-reason`} value={reason} maxLength={2000} disabled={busy} onChange={e => setReason(e.target.value)} placeholder="공통 패턴, 다른 그룹과의 구분 기준 및 예외를 작성하세요." /></label>
       <div><span className="ws-caption">대표 로그 {evidence.length} / 20건</span><p className="ws-muted">로그 목록에서 선택한 항목을 대표 근거로 지정할 수 있습니다.</p><Button variant="outline" size="sm" disabled={busy || !selected.size || selected.size > 20} onClick={() => setEvidence([...selected])}>선택한 로그를 대표 근거로 지정</Button><div className="ws-rationale-evidence">{evidence.map(key => <Button key={key} variant="secondary" size="sm" type="button" disabled={busy} onClick={() => setEvidence(evidence.filter(value => value !== key))} aria-label={`대표 로그 ${key} 제거`}>{key}<span aria-hidden="true">×</span></Button>)}</div></div>
       {!!references.length && <div><p className="ws-muted">참고한 과거 그룹 {references.length}건. 만료된 사례를 더 이상 적용하지 않으면 연결을 해제하고 수정 사유를 남기세요.</p><Button variant="outline" size="sm" disabled={busy} onClick={() => setReferences([])}>과거 참고 사례 연결 해제</Button></div>}

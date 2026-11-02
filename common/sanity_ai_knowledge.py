@@ -66,7 +66,7 @@ def _rationale(value):
             result[key] = None
     content = value.get("content")
     if isinstance(content, dict):
-        result["content"] = _strings(content, ("reason",))
+        result["content"] = _strings(content, ("reason", "summary"))
         if isinstance(content.get("reference_groups"), list):
             result["content"]["reference_groups"] = _reference_groups(content["reference_groups"])
     return result

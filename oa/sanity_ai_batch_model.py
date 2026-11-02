@@ -85,6 +85,7 @@ class BatchModel:
                           {self.records[i]['id']: self.records[i] for i in node['members']}, self.context['report'])
         return {'id':node['id'],'raw':node['label'],'fields':{
             'code':code,
+            **({'summary':node['summary']} if 'summary' in node else {}),
             'reason':node['reason'],'record_count':len(node['members']),
             'evidence_indices':node['evidence'], 'reference_groups':node['references'],
             'conditions':node['conditions'], 'membership_sha256':digest(node['members'])}}
@@ -218,6 +219,7 @@ class BatchModel:
                 key = 'bg-'+digest([self.context['source_sha256'],members])[:48]
                 cite = cites.get(group['id'])
                 results.append({'id':key,'label':group['label'],'members':members,'reason':rationale['reason'],
+                    **({'summary':rationale['summary'].strip()} if 'summary' in rationale else {}),
                     'evidence':selected,'references':rationale['reference_groups'],'conditions':conditions,
                     'citation':{**cite,'target_id':key} if cite else None})
             return {'nodes':results,'metadata':metadata,'reason':advice['reason']}
@@ -232,6 +234,7 @@ class BatchModel:
             check(all(type(i)is int and 0<=i<len(self.records) for i in node['members']),'AI_BATCH_CORRUPT')
             groups.append({'id':node['id'],'label':node['label'],'record_ids':[self.records[i]['id'] for i in node['members']]})
             rationales.append({'group_id':node['id'],'reason':node['reason'],
+                **({'summary':node['summary']} if 'summary' in node else {}),
                 'evidence_ids':[self.records[i]['id'] for i in node['evidence']], 'reference_groups':node['references']})
             refs.update(r['case_id'] for r in node['references'])
             if node['citation']: citations.append(node['citation'])

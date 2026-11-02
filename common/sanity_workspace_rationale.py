@@ -97,11 +97,17 @@ def _rationale_check(ok, code, field, *, diagnostics=False, group_index=None,
 def validate_content(value, group, cases, *, diagnostics=False, group_index=None):
     def require(ok, code, field, **details):
         _rationale_check(ok, code, field, diagnostics=diagnostics, group_index=group_index, **details)
-    require(isinstance(value, dict) and set(value) == CONTENT_KEYS, 'RATIONALE_ENTRY_SHAPE', 'group_rationales')
+    require(isinstance(value, dict) and set(value) in (CONTENT_KEYS, CONTENT_KEYS | {'summary'}),
+            'RATIONALE_ENTRY_SHAPE', 'group_rationales')
     reason, ids, refs = value["reason"], value["evidence_ids"], value["reference_groups"]
     reason_length = min(len(reason.strip()),1000000) if isinstance(reason,str) else None
     require(isinstance(reason, str) and 1 <= len(reason.strip()) <= 2000,
             'RATIONALE_REASON', 'reason', actual_length=reason_length)
+    if 'summary' in value:
+        summary = value['summary']
+        summary_length = min(len(summary.strip()),1000000) if isinstance(summary,str) else None
+        require(isinstance(summary,str) and 1 <= len(summary.strip()) <= 120,
+                'RATIONALE_SUMMARY', 'summary', actual_length=summary_length)
     members = set(group["record_ids"])
     evidence_message = 'Representative IDs must belong to this group'
     require(isinstance(ids,list), 'RATIONALE_EVIDENCE_TYPE', 'evidence_ids', message=evidence_message)
@@ -128,7 +134,8 @@ def validate_content(value, group, cases, *, diagnostics=False, group_index=None
                 'RATIONALE_REFERENCE_GROUP_UNKNOWN','reference_groups',message=reference_message)
         require(pair not in seen,'RATIONALE_REFERENCE_DUPLICATE','reference_groups',message=reference_message)
         seen.add(pair)
-    return {"reason": reason.strip(), "evidence_ids": list(ids),
+    return {"reason": reason.strip(), **({'summary':' '.join(value['summary'].split())} if 'summary' in value else {}),
+            "evidence_ids": list(ids),
             "reference_groups": [{**ref, "reason": ref["reason"].strip()} for ref in refs]}
 
 
@@ -138,12 +145,13 @@ def validate_group_rationales(values, groups, cases, reference_ids, *, diagnosti
     index, result = {group["id"]: group for group in groups}, {}
     used = set()
     for group_index,value in enumerate(values):
-        _rationale_check(isinstance(value,dict) and set(value)==CONTENT_KEYS | {"group_id"},
+        _rationale_check(isinstance(value,dict) and set(value) in
+                         (CONTENT_KEYS | {'group_id'}, CONTENT_KEYS | {'group_id','summary'}),
                          'RATIONALE_ENTRY_SHAPE','group_rationales',diagnostics=diagnostics,group_index=group_index)
         key = value["group_id"]
         _rationale_check(isinstance(key,str) and key in index and key not in result,
                          'RATIONALE_GROUP_ID','group_id',diagnostics=diagnostics,group_index=group_index)
-        content = validate_content({k: value[k] for k in CONTENT_KEYS}, index[key], cases,
+        content = validate_content({k: v for k,v in value.items() if k != 'group_id'}, index[key], cases,
                                    diagnostics=diagnostics,group_index=group_index)
         used.update(ref["case_id"] for ref in content["reference_groups"])
         result[key] = content
@@ -185,8 +193,10 @@ def complete(event):
 
 def brief(event, group, valid_case_ids=None):
     row = event.get("rationales", {}).get(group["id"], {})
-    reason = row.get("content", {}).get("reason", "")
+    content = row.get('content', {})
+    reason = content.get("reason", "")
     return {"status": state(event, group, valid_case_ids), "reason": reason[:160],
+            **({'summary':content['summary']} if 'summary' in content else {}),
             "reason_truncated": len(reason) > 160, "reason_omitted_chars": max(0, len(reason)-160), "source": row.get("source"),
             "evidence_count": len(row.get("content", {}).get("evidence_ids", []))}
 

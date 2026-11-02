@@ -150,7 +150,9 @@ label은 반드시 `RULE_CODE · 간단한 한국어 그룹 설명` 형식의 1~
 rule_codes는 입력 필드 선택과 별개로 제공되는 분류 경계입니다. 같은 code 안에서 의미·조건에 따라 세부 그룹을 만드세요.
 record_ids는 이 그룹에 배정한 현재 원본 ID의 비어 있지 않은 배열입니다.
 reason은 전체 분류 방향을 설명하는 한국어 1~2000자입니다. reference_ids는 사용한 과거 사례 ID 배열이며 최대 100개입니다.
-group_rationales는 모든 그룹마다 정확히 하나씩 {group_id,reason,evidence_ids,reference_groups}를 포함합니다.
+group_rationales는 모든 그룹마다 정확히 하나씩 {group_id,summary,reason,evidence_ids,reference_groups}를 포함합니다.
+summary는 핵심 공통 패턴·구분 기준을 설명하는 짧은 한국어 한 문장입니다. 가급적 60자 안팎, 최대 120자로 쓰고 미확인·예외를 확정 사실로 바꾸지 마세요.
+summary는 화면용 요약입니다. 상세 근거 reason과 원본 인용은 생략하거나 요약으로 대체하지 마세요.
 그룹 reason은 한국어 1~2000자로 공통 패턴·다른 그룹과 구분한 이유·예외/미확인 사항을 설명하세요.
 evidence_ids는 해당 그룹의 현재 원본 ID 1~20개입니다. 대표 인용 개수이며 모든 구성원에 대한 검토를 생략하라는 뜻은 아닙니다.
 reference_groups는 최대 20개의 {case_id,group_id,reason}이며 실제 제공된 과거 그룹과 적용/차이 이유(한국어 1~500자)를 적으세요.

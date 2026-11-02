@@ -139,6 +139,7 @@ class RationaleReference(BaseModel):
 class RationaleContent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     reason: Annotated[str, Field(min_length=1, max_length=2000)]
+    summary: Annotated[str, Field(min_length=1, max_length=120)] | None = None
     evidence_ids: Annotated[list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]], Field(min_length=1, max_length=20)]
     reference_groups: Annotated[list[RationaleReference], Field(max_length=20)] = Field(default_factory=list)
 
@@ -395,7 +396,7 @@ def create_app(*, origins, static_dir=None, codex_mock_enabled=False, codex_advi
                             body: RationaleChange, actor=Depends(authenticated)):
         operation = {"kind": body.action, "group_id": group_id}
         if body.action == "SAVE":
-            operation.update(content=body.content.model_dump(mode="json") if body.content else None, reviewed=body.reviewed)
+            operation.update(content=body.content.model_dump(mode="json", exclude_none=True) if body.content else None, reviewed=body.reviewed)
         else:
             check(body.content is None and not body.reviewed, "INVALID_REQUEST")
         with workspace_transaction() as db:

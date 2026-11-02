@@ -142,3 +142,13 @@ quick 실패 집합은 이전과 동일합니다. PG18 포털 카탈로그 호�
 이번 실행은 `db/tests/run_mock.py --include tests.test_test_runner tests.test_mock_runner tests.test_role_runner` 한 번입니다. 이미 quick에 있는 모듈을 추가해도 검사 ID가 중복되지 않았고, 새 선택/전파/누락 거부/역할 혼합 거부를 포함한 실행기 검사 **39건이 통과**했습니다. 합산 451건의 실제 실행 ID와 timing을 대조했으며 누락·중복·작업자 오류·skip은 0입니다. 444건 통과·기존 PG18 실패 5·Termux 오류 2이며 실패 이름은 직전과 같습니다. 모든 mock DB를 종료했고 변경 Python 5개가 실행 snapshot과 일치합니다.
 
 Termux/PostgreSQL 18.6의 DB 준비·종료 포함 시간은 직전 **56.998초 → 49.388초**입니다. 무거운 2건을 별도 범위로 옮기고 실행기 6건을 추가한 비교이며 같은 전체 회귀의 속도 향상으로 해석하지 않습니다. 더 큰 절감은 전용 회귀를 직렬로 먼저 실행한 뒤 quick에서 반복하던 흐름을 한 번의 병렬 실행으로 합치는 데서 얻습니다. 이번 실행으로 regression/full·회사 어댑터·실제 모델 품질을 검증했다고 표시하지 않습니다. 실제 파일 보안 2건의 사내 독립 Linux 검증 대기, PG18 호환 문제와 기존 HTTP fixture 실패는 계속 별도입니다.
+
+## 분류 근거의 짧은 요약 — 2026-11-02
+
+선택형 `summary` 1~120자를 저장하고 단일/배치 분류·병합·확정 지식에서 상세 근거와 함께 보존합니다. 기존 기록은 summary 키/저장 hash를 추가하지 않고, 화면에서 기존 문장 발췌를 표시합니다. 상세 설명은 펼쳐서 읽고 요약만 수정·비울 수 있습니다. 합성 전송 수를 대조해 별도 요약 호출이 생기지 않음을 확인했습니다.
+
+최종 검사는 `db/tests/run_mock.py --include tests.test_rationale_summary tests.test_workspace_rationale`로 전용 검사와 quick을 합쳐 실행했습니다. **요약 전용 6건은 모두 통과**했고 전체 464건은 456 통과·실패 6·오류 2·skip 0, DB 준비/종료 포함 115.179초입니다. 작업자 오류·실행 ID 누락/중복은 없고 모든 mock DB를 종료했습니다. 변경 Python 9개와 최종 실행 snapshot이 일치합니다. TypeScript/Vite 빌드와 데스크톱 화면 8건도 통과했습니다. 요약 우선 표시·상세 전문·수정/재조회·기존 발췌·조회 전용·등록 스위치·1280/1440 배치를 확인했습니다.
+
+실패 중 7건은 기존 PG18 포털 카탈로그 5건과 Termux 실제 파일 보안 2건입니다. 추가 선택한 기존 `tests.test_workspace_rationale.RationaleTests.test_legacy_receipts_keep_their_frozen_prompt_but_new_model_calls_require_v2`는 rule code 접두어가 없는 기대 label과 현재 검증 label의 차이로 실패하며, 변경 전 `083d1f9` 원본에서도 동일 실패를 재현했습니다. 해당 테스트·기대값을 변경하거나 성공으로 처리하지 않았습니다.
+
+실회사 모델·회사 어댑터 검사는 0건입니다. 실제 파일 보안 2건의 사내 독립 Linux 검증 대기와 로컬 합성 metadata 확인은 구분하며 PG18·기존 HTTP fixture 문제도 유지합니다. regression/full·10만 건과 실제 모델 요약 품질 검증을 완료했다고 표시하지 않습니다.

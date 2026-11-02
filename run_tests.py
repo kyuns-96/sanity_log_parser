@@ -46,6 +46,8 @@ QUICK_TESTS = (
     "tests.test_rule_groups.RuleGroupTests",
     "tests.test_submission_runs",
     "tests.test_ai_parallel_width.ParallelWidthTests",
+    "tests.test_rationale_summary.RationaleSummaryTests.test_legacy_content_does_not_gain_a_stored_summary",
+    "tests.test_rationale_summary.RationaleSummaryTests.test_single_and_batch_summaries_use_the_existing_calls_and_keep_complete_reasons",
     "tests.test_ai_evidence_choices.EvidenceChoiceTests", "tests.test_ai_evidence_choices.EvidenceChoiceApiTests",
     "tests.test_ai_evidence_choices.EvidenceChoiceDatabaseTests.test_existing_confirmed_classification_and_judgment_are_not_auto_registered",
     "tests.test_ai_evidence_choices.EvidenceChoiceDatabaseTests.test_only_chosen_group_is_sent_and_stages_have_independent_switches",
@@ -102,6 +104,7 @@ QUICK_TESTS = (
 # Full still discovers every original test, including large datasets and all
 # portal migration replays. No test input, assertion or skip rule is changed.
 REGRESSION_TESTS = (
+    "tests.test_rationale_summary",
     # Keep expensive complete flows explicit; add only the affected one to a
     # daily run with --include instead of repeating quick and a separate DB.
     "tests.test_ai_parallel_width.ParallelWidthDatabaseTests.test_global_32_jobs_16_displays_live_calls_and_drains_after_budget_reduction",
@@ -227,6 +230,7 @@ ROLE_TESTS = {
     ),
     "vwp-bridge": (
         "tests.test_parsers", "tests.test_collection_only", "tests.test_submission_https",
+        "tests.test_rationale_summary.RationaleSummaryTests.test_single_and_batch_summaries_use_the_existing_calls_and_keep_complete_reasons",
         "tests.test_ai_parallel_width.ParallelWidthTests",
         "tests.test_ai_evidence_choices.EvidenceChoiceTests",
         "tests.test_submission_runs",
@@ -243,6 +247,7 @@ ROLE_TESTS = {
     ),
     "oa": (
         "tests.test_auth", "oa.test_auth_config", "oa.test_sso",
+        "tests.test_rationale_summary.RationaleSummaryTests.test_legacy_content_does_not_gain_a_stored_summary",
         "tests.test_ai_parallel_width.ParallelWidthTests",
         "tests.test_ai_evidence_choices.EvidenceChoiceTests", "tests.test_ai_evidence_choices.EvidenceChoiceApiTests",
         "tests.test_submission_runs",

@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { writeFile } from 'node:fs/promises'
 import type { Page } from '@playwright/test'
 import type { PreservedSource } from '../src/PreservedSources'
-import type { ClusterModelMetadata, CodexJob, ReportReview, ReviewCase, ReviewProposal } from '../src/workspaceApi'
+import type { ClusterModelMetadata, CodexJob, RationaleContent, ReportReview, ReviewCase, ReviewProposal } from '../src/workspaceApi'
 import { makeWorkspaceDemo } from '../src/workspaceDemo'
 
 // All identities, reports and model replies here are synthetic network fixtures.
@@ -226,7 +226,7 @@ test('AI card cancellation uses the same-origin endpoint and waits for server st
 
 type MockOptions = { holdJob?: boolean; connections?: { id: string; label: string; model: string; models: string[]; available: boolean; enabled: boolean; credential_required?: boolean; credential_ready?: boolean }[]; reviewModel?: string; models?: string[]; modelMetadata?: Partial<ClusterModelMetadata>; preserved?: PreservedSource[]; collectionOnly?: boolean; configured?: boolean; personalToken?: boolean; initialJob?: CodexJob; fail?: string; auth?: number; readOnly?: boolean; recordCount?: number; initialRevision?: number; confirmed?: boolean; omitFirstReasons?: boolean; longFields?: boolean; currentCase?: ReviewCase; cases?: ReviewCase[]; proposal?: ReviewProposal; currentStale?: boolean }
 
-async function mockOA(page: Page, options: MockOptions = {}) {
+async function mockOA(page: Page, options: MockOptions & { rationale?: RationaleContent } = {}) {
   const actor = options.readOnly ? { ...user, role: 'TOP' } : user
   const sourceRecords = makeRecords(options.recordCount || 2).map((value, index) => {
     const { reasons, ...record } = value
@@ -237,6 +237,9 @@ async function mockOA(page: Page, options: MockOptions = {}) {
   const state = { revision: options.initialRevision || 0, confirmed: options.confirmed || false, reviewRevision: 0, clusterJob: options.initialJob || null as CodexJob | null, reviewJob: null as CodexJob | null, clusterReads: 0, reviewReads: 0, current: null as ReviewCase | null, proposal: null as ReviewProposal | null, writes: [] as { path: string; body: Record<string, unknown>; marker: string | undefined }[], unexpected: [] as string[], calls: [] as string[], recordRequests: [] as { offset: number; limit: number; search: string; group: string | null; revision: string | null }[], recordPause: null as { offset: number; promise: Promise<void> } | null, recordFailure: null as { offset: number; remaining: number } | null }
   const reviewHistory = options.currentCase ? [options.currentCase] : []
   const evidenceChoices = { CLUSTER: { enabled: false, revision: 0 }, REVIEW: { enabled: false, revision: 0 } }
+  let rationaleContent: RationaleContent = options.rationale || { reason: '같은 조건의 확인 대상입니다.', evidence_ids: ['log-1'], reference_groups: [] }
+  let rationaleReviewed = false
+  let rationaleSource = 'AI'
   let credentialReady = false
   let credentialRevision = 0
   state.current = options.currentCase || null
@@ -244,8 +247,8 @@ async function mockOA(page: Page, options: MockOptions = {}) {
   state.proposal = options.proposal || null
   const connections = () => options.configured === false ? [] : options.connections ? options.connections.map(value => options.personalToken ? { ...value, available: credentialReady, credential_required: true, credential_ready: credentialReady, credential_error: credentialReady ? null : 'AI_USER_TOKEN_REQUIRED' } : value) : [{ id: connectionId, label: '합성 AI 연결', model: model.model, models: options.models || [model.model], enabled: true, available: !options.personalToken || credentialReady, credential_required: true, credential_ready: !options.personalToken || credentialReady }]
   const capability = (job: CodexJob | null, review = false) => { const choices = connections().map(value => review && options.reviewModel ? { ...value, model: options.reviewModel } : value); return { available: options.configured !== false && (!options.personalToken || credentialReady), supported: true, enabled: options.configured !== false, remaining: null, provider: 'OA_OPENAI_COMPATIBLE', synthetic_only: false, job, connections: choices, connection_id: choices[0]?.id || '', model: choices[0]?.model || '', models: choices[0]?.models || [], ...(options.personalToken ? { credential_required: true, credential_ready: credentialReady, credential_error: credentialReady ? null : 'AI_USER_TOKEN_REQUIRED' } : {}) } }
-  const cluster = () => state.revision ? { id: `cluster-${state.revision}`, report_id: report.id, revision: state.revision, action: state.confirmed ? 'CONFIRM' : 'PROPOSE', confirmed: state.confirmed, reusable: false, compatible_versions: false, criteria: '', reason: '전체 로그의 검토 의도에 따라 묶었습니다.', identity_fields: ['mode'], group_count: 1, record_count: sourceRecords.length, at, actor, references: [], advisor: 'OA_OPENAI_COMPATIBLE', model_called: true, model_metadata: { ...model, model: state.clusterJob?.model || model.model, ...options.modelMetadata }, rationale_counts: { MISSING: 0, DRAFT: Number(!state.confirmed), CONFIRMED: Number(state.confirmed), STALE: 0 } } : null
-  const group = () => ({ id: 'g1', label: '확인이 필요한 합성 대상', record_count: sourceRecords.length, check_status: options.collectionOnly ? 'UNKNOWN' : 'FAIL', status: state.current?.conclusion || 'PENDING', revision: state.reviewRevision, example: {}, rationale: { status: state.confirmed ? 'CONFIRMED' : 'DRAFT', reason: '같은 조건의 확인 대상입니다.', reason_truncated: false, reason_omitted_chars: 0, source: 'AI', evidence_count: 1 } })
+  const cluster = () => state.revision ? { id: `cluster-${state.revision}`, report_id: report.id, revision: state.revision, action: state.confirmed ? 'CONFIRM' : 'PROPOSE', confirmed: state.confirmed, reusable: false, compatible_versions: false, criteria: '', reason: '전체 로그의 검토 의도에 따라 묶었습니다.', identity_fields: ['mode'], group_count: 1, record_count: sourceRecords.length, at, actor, references: [], advisor: 'OA_OPENAI_COMPATIBLE', model_called: true, model_metadata: { ...model, model: state.clusterJob?.model || model.model, ...options.modelMetadata }, rationale_counts: { MISSING: 0, DRAFT: Number(!(state.confirmed || rationaleReviewed)), CONFIRMED: Number(state.confirmed || rationaleReviewed), STALE: 0 } } : null
+  const group = () => ({ id: 'g1', label: '확인이 필요한 합성 대상', record_count: sourceRecords.length, check_status: options.collectionOnly ? 'UNKNOWN' : 'FAIL', status: state.current?.conclusion || 'PENDING', revision: state.reviewRevision, example: {}, rationale: { status: state.confirmed || rationaleReviewed ? 'CONFIRMED' : 'DRAFT', reason: rationaleContent.reason, reason_truncated: false, reason_omitted_chars: 0, source: rationaleSource, evidence_count: 1 } })
   const finish = (job: CodexJob) => {
     job.status = options.fail ? 'FAILED' : 'COMPLETED'; job.error = options.fail || null
     if (!options.fail) state.revision = 1
@@ -299,7 +302,15 @@ async function mockOA(page: Page, options: MockOptions = {}) {
       }
       return route.fulfill({ json: { items: filtered.slice(offset, offset + limit), total: filtered.length, offset, limit, cluster_revision: state.revision, group: group() } })
     }
-    if (path === base+'/groups/g1/rationale') return route.fulfill({ json: { group_id: 'g1', cluster_revision: state.revision, event_id: cluster()!.id, status: group().rationale.status, rationale: { content: { reason: group().rationale.reason, evidence_ids: ['log-1'], reference_groups: [] }, source: 'AI', status: group().rationale.status, binding: {}, reviewed_by: null, reviewed_at: null, change_reason: '', previous_event_id: null }, samples: [sourceRecords[0]], references: [], history: emptyPage } })
+    if (path === base+'/groups/g1/rationale') {
+      if (body) {
+        if (body.action === 'SAVE') { rationaleContent = body.content as RationaleContent; rationaleSource = 'HUMAN' }
+        rationaleReviewed = body.action === 'ACCEPT' || body.reviewed === true
+        state.revision++; state.confirmed = false
+        return route.fulfill({ json: cluster() })
+      }
+      return route.fulfill({ json: { group_id: 'g1', cluster_revision: state.revision, event_id: cluster()!.id, status: group().rationale.status, rationale: { content: rationaleContent, source: rationaleSource, status: group().rationale.status, binding: {}, reviewed_by: null, reviewed_at: null, change_reason: '', previous_event_id: null }, samples: [sourceRecords[0]], references: [], history: emptyPage } })
+    }
     if (path === base+'/groups/g1/evidence/CLUSTER' || path === base+'/groups/g1/evidence/REVIEW') {
       const stage = path.endsWith('CLUSTER') ? 'CLUSTER' : 'REVIEW'
       const choice = evidenceChoices[stage]
@@ -1702,4 +1713,53 @@ test('AI evidence switches stay read only for TOP and deferred judgments cannot 
   await expect(page.getByRole('switch', { name: '판정 근거 AI 등록', exact: true })).toBeDisabled()
   await expect(page.getByRole('region', { name: '판정 근거 AI 등록', exact: true })).toContainText('PASS/FAIL 판정과 근거를 저장')
   expect(second.writes).toHaveLength(0)
+})
+
+test('rationale summary shows a short sentence first and expands the complete explanation', async ({ page }, info) => {
+  const reason = '같은 클록 정의 누락을 묶었습니다. ' + '공통 원인은 확인되지 않았으며 각 경로의 예외와 구분 조건을 별도로 확인해야 합니다. '.repeat(15) + '마지막 상세 조건도 보존합니다.'
+  await mockOA(page, { initialRevision: 1, rationale: { summary: '클록 정의 누락 · 원인과 예외 미확인', reason, evidence_ids: ['log-1'], reference_groups: [] } })
+  await page.goto(url)
+  const panel = page.getByRole('region', { name: '그룹별 분류 근거', exact: true })
+  await expect(panel.getByLabel('분류 근거 요약', { exact: true })).toContainText('클록 정의 누락 · 원인과 예외 미확인')
+  await expect(panel).toContainText('핵심 요약')
+  await expect(panel.locator('.ws-rationale-full')).not.toHaveAttribute('open')
+  await expect(panel.locator('.ws-rationale-full .ws-rationale-text')).not.toBeVisible()
+  await panel.getByText('상세 분류 근거 보기', { exact: true }).click()
+  await expect(panel.locator('.ws-rationale-full .ws-rationale-text')).toBeVisible()
+  await expect(panel.locator('.ws-rationale-full .ws-rationale-text')).toHaveText(reason)
+  await panel.getByText('상세 분류 근거 보기', { exact: true }).click()
+  await page.screenshot({ path: info.outputPath('classification-short-summary.png'), fullPage: true })
+})
+
+test('rationale summary can be edited without rewriting the detailed reason and survives reload', async ({ page }) => {
+  const reason = '상세 분류 근거와 예외 조건은 그대로 유지합니다.'
+  const state = await mockOA(page, { initialRevision: 1, rationale: { summary: '이전 요약', reason, evidence_ids: ['log-1'], reference_groups: [] } })
+  await page.goto(url)
+  const panel = page.getByRole('region', { name: '그룹별 분류 근거', exact: true })
+  await panel.getByRole('button', { name: '근거 수정', exact: true }).click()
+  await expect(panel.getByRole('textbox', { name: '한 줄 요약', exact: true })).toHaveAttribute('maxlength', '120')
+  await panel.getByRole('textbox', { name: '한 줄 요약', exact: true }).fill('같은 설정 누락 · 예외는 추가 확인')
+  await expect(panel.getByRole('textbox', { name: '분류 기준', exact: true })).toHaveValue(reason)
+  await panel.getByRole('textbox', { name: '작성·수정 사유', exact: true }).fill('읽기 쉬운 요약으로 수정했습니다.')
+  await panel.getByRole('button', { name: '근거 저장·확인', exact: true }).click()
+  await expect(panel.getByLabel('분류 근거 요약', { exact: true })).toContainText('같은 설정 누락 · 예외는 추가 확인')
+  const writes = state.writes.filter(write => write.path.endsWith('/rationale'))
+  expect(writes).toHaveLength(1)
+  expect(writes[0].marker).toBe('1')
+  expect(writes[0].body.content).toEqual({ summary: '같은 설정 누락 · 예외는 추가 확인', reason, evidence_ids: ['log-1'], reference_groups: [] })
+  await page.reload()
+  await expect(panel.getByLabel('분류 근거 요약', { exact: true })).toContainText('같은 설정 누락 · 예외는 추가 확인')
+})
+
+test('rationale summary labels legacy excerpts and read only users can still expand details', async ({ page }) => {
+  const reason = '공통 패턴과 원인은 미확인이라는 기존 근거의 문장입니다. ' + '상세 구분 조건을 빠짐없이 보존합니다. '.repeat(20)
+  const state = await mockOA(page, { initialRevision: 1, readOnly: true, rationale: { reason, evidence_ids: ['log-1'], reference_groups: [] } })
+  await page.goto(url)
+  const panel = page.getByRole('region', { name: '그룹별 분류 근거', exact: true })
+  await expect(panel.getByLabel('분류 근거 요약', { exact: true })).toContainText('기존 근거 발췌')
+  await expect(panel.getByLabel('분류 근거 요약', { exact: true })).toContainText('공통 패턴과 원인은 미확인이라는 기존 근거의 문장입니다.')
+  await expect(panel.getByRole('button', { name: '근거 수정', exact: true })).toHaveCount(0)
+  await panel.getByText('상세 분류 근거 보기', { exact: true }).click()
+  await expect(panel.locator('.ws-rationale-full .ws-rationale-text')).toHaveText(reason)
+  expect(state.writes).toHaveLength(0)
 })

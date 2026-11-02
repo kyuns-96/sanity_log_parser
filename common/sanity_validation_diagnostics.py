@@ -9,6 +9,7 @@ CODE_FIELDS = {
     'RATIONALE_ENTRY_SHAPE':'group_rationales',
     'RATIONALE_GROUP_ID':'group_id',
     'RATIONALE_REASON':'reason',
+    'RATIONALE_SUMMARY':'summary',
     'RATIONALE_EVIDENCE_TYPE':'evidence_ids',
     'RATIONALE_EVIDENCE_COUNT':'evidence_ids',
     'RATIONALE_EVIDENCE_ITEM_TYPE':'evidence_ids',

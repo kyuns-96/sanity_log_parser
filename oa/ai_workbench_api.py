@@ -321,7 +321,7 @@ def create_workbench_router(authorized_actor):
                             body: RationaleChange, scope=Depends(workspace)):
         operation = {"kind": body.action, "group_id": group_id}
         if body.action == "SAVE":
-            operation.update(content=body.content.model_dump(mode="json") if body.content else None, reviewed=body.reviewed)
+            operation.update(content=body.content.model_dump(mode="json", exclude_none=True) if body.content else None, reviewed=body.reviewed)
         else:
             check(body.content is None and not body.reviewed, "INVALID_REQUEST")
         return event_brief(WorkspaceClusteringStore(scope.db, ws=scope.ws).change(
