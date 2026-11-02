@@ -162,6 +162,8 @@
 .ws-record-original-meta dd { margin: 0; color: var(--text-secondary); font: 10px/1.8 var(--font-mono); overflow-wrap: anywhere; }
 .ws-record-original-meta p, .ws-record-truncation { font-size: 11px; line-height: 1.8; color: var(--warning); }
 .ws-studio-workbench .ws-studio-decision { padding: 0; border: 0; background: var(--surface); overflow-wrap: anywhere; }
+.ws-studio-workbench .ws-evidence-choice-pin { position: sticky; top: 0; z-index: 5; display: flow-root; padding: 12px 14px; background: var(--surface); border-bottom: 1px solid var(--line-soft); }
+.ws-studio-workbench .ws-evidence-choice-pin > .ws-evidence-choice { margin: 0; }
 .ws-studio-workbench .ws-studio-decision > .ws-rationale, .ws-studio-workbench .ws-studio-decision > .ws-judgment-workspace { padding: 0 17px 16px; }
 .ws-studio-workbench .ws-studio-panel-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 13px 0 14px; margin: 0; min-height: 67px; border-bottom: 1px solid var(--line-soft); }
 .ws-studio-panel-heading > div { min-width: 0; }

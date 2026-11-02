@@ -1,4 +1,5 @@
 import CaseSource from './CaseSource'
+import RationaleDisclosure from './RationaleDisclosure'
 import { useEffect, useId, useState } from 'react'
 import { Check, FileText, GitBranch, History, Pencil } from 'lucide-react'
 import { Button } from './studio/components/ui/button'
@@ -38,11 +39,6 @@ export default function GroupRationale({ base, groupId, report, version, revisio
 
   if (!data) return <section className="ws-rationale ws-studio-rationale" aria-label="그룹별 분류 근거" aria-busy="true"><div className="ws-studio-panel-heading"><h3>분류 근거</h3></div><p className="ws-muted" role="status">그룹 근거를 불러오는 중…</p></section>
   const row = data.rationale
-  const fullReason = row?.content.reason || ''
-  const normalized = fullReason.replace(/\s+/gu, ' ').trim()
-  const firstSentence = normalized.match(/^.*?[.!?](?=\s|$)/u)?.[0] || normalized
-  const excerpt = Array.from(firstSentence)
-  const shortSummary = row?.content.summary?.trim() || `${excerpt.slice(0, 120).join('')}${excerpt.length > 120 ? '…' : ''}`
   function edit() {
     setSummary(row?.content.summary || '')
     setReason(row?.content.reason || ''); setEvidence(row?.content.evidence_ids || [])
@@ -55,7 +51,7 @@ export default function GroupRationale({ base, groupId, report, version, revisio
   return <section className="ws-rationale ws-studio-rationale" aria-label="그룹별 분류 근거" data-rationale-state={data.status}>
     <div className="ws-rationale-heading ws-studio-panel-heading"><div><span className="ws-studio-eyebrow">CLASSIFICATION</span><h3><GitBranch size={17} />분류 근거</h3></div><Badge variant="outline" className={`ws-rationale-state ws-rationale-${data.status.toLowerCase()}`}>{rationaleLabels[data.status]}</Badge></div>
     {!editing ? <>
-      {row ? <><div className="ws-rationale-summary" aria-label="분류 근거 요약"><span>{row.content.summary ? '핵심 요약' : '기존 근거 발췌'}</span><p>{shortSummary}</p></div><details className="ws-rationale-full"><summary>상세 분류 근거 보기</summary><p className="ws-rationale-text">{fullReason}</p></details><div className="ws-rationale-meta ws-studio-meta-row"><span>{sources[row.source] || row.source}</span>{row.reviewed_by && <span><Check size={12} />{row.reviewed_by.name} 확인</span>}</div></>
+      {row ? <><RationaleDisclosure label="분류 근거" reason={row.content.reason} summary={row.content.summary} /><div className="ws-rationale-meta ws-studio-meta-row"><span>{sources[row.source] || row.source}</span>{row.reviewed_by && <span><Check size={12} />{row.reviewed_by.name} 확인</span>}</div></>
         : <div className="ws-studio-empty"><GitBranch size={22} /><p>아직 분류 근거가 없습니다.</p><small>공통 패턴과 구분 기준을 작성하고 대표 로그를 지정하세요.</small></div>}
       {data.status === 'STALE' && <p className="ws-rationale-warning">그룹 구성 또는 이름이 변경되었습니다. 현재 분류 근거를 재검토하세요.</p>}
       {row && data.samples.length !== row.content.evidence_ids.length && <p className="ws-rationale-warning">대표 로그가 다른 그룹으로 이동했습니다. 분류 근거와 대표 로그를 갱신하세요.</p>}

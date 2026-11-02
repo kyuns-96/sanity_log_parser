@@ -1,0 +1,8 @@
+.ws-rationale-readout { min-width: 0; margin-bottom: 12px; }
+.ws-rationale-readout .ws-rationale-summary { margin-bottom: 9px; }
+.ws-rationale-readout .ws-rationale-toggle { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 34px; height: auto; padding-block: 8px; white-space: normal; text-align: left; }
+.ws-rationale-toggle svg { flex-shrink: 0; }
+.ws-rationale-readout .ws-rationale-full { padding: 12px 0 0; margin: 0; }
+.ws-rationale-readout .ws-rationale-full[hidden], .ws-judgment-reason-editor[hidden] { display: none; }
+.ws-rationale-readout .ws-rationale-text { margin-bottom: 0; }
+.ws-judgment-reason-toggle { margin-block: 12px 6px; max-width: 100%; }

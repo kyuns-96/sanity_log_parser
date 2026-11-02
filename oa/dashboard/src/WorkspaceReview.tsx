@@ -9,6 +9,7 @@ import CaseSource from './CaseSource'
 import AiModelSelect, { selectedAiModel, selectedAiConnection, aiConnectionNotice, needsPersonalCredential, taskDefaultNotice } from './AiModelSelect'
 import UnknownBatchRecovery, { canRetryUnknown } from './UnknownBatchRecovery'
 import EvidenceSharing from './EvidenceSharing'
+import RationaleDisclosure from './RationaleDisclosure'
 import { PreservedCitations } from './PreservedSources'
 import { aiJobActive, aiJobMessage, aiExecutionLabel, WorkspaceError, toolResultStatus, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
 import type { CodexJob, Judgment, ReportReview, ReviewCase, WorkspaceReport, WorkspaceSession, WorkspaceVersion } from './workspaceApi'
@@ -32,6 +33,7 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
   const [notice, setNotice] = useState('')
   const [conclusion, setConclusion] = useState<Judgment>('DEFER')
   const [reason, setReason] = useState('')
+  const [reasonEditing, setReasonEditing] = useState(false)
   const [exceptionEnabled, setExceptionEnabled] = useState(false)
   const [exceptionRule, setExceptionRule] = useState('')
   const [exceptionReason, setExceptionReason] = useState('')
@@ -68,6 +70,7 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
     }
     setConclusion(current?.conclusion || initialConclusion)
     setReason(current?.reason || '')
+    setReasonEditing(false)
     setExceptionEnabled(!!current?.exception && current.conclusion !== 'DEFER')
     setExceptionRule(current?.exception?.rule || value.facts.rule || '')
     setExceptionReason(current?.exception?.reason || '')
@@ -168,6 +171,7 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
     {error && <p className="ws-error" role="alert">{error}</p>}
     {notice && <p className="ws-notice" role="status"><Check size={15} />{notice}</p>}
     <div className="ws-judgment-summary ws-studio-meta-row"><div><span>도구 판정</span><Badge variant="outline" className={`ws-status ws-status-${report.check_status.toLowerCase()}`}>{labels[toolResultStatus(report)]}</Badge></div><div><span>사용자 판정</span><Badge variant="secondary">{data.current_stale ? `재검토 · 이전 ${labels[data.current!.conclusion]}` : data.current ? labels[data.current.conclusion] : '미판정'}</Badge></div></div>
+    {data.current && <RationaleDisclosure key={`current-reason:${data.current.id}:${!!data.current_stale}`} label={data.current_stale ? '이전 판정 근거' : '판정 근거'} reason={data.current.reason} />}
     {!data.current_stale && data.current?.exception && <div className="ws-review-current-exception" aria-label="현재 확정된 규칙 예외"><ExceptionEvidence value={data.current.exception} /></div>}
     {production && group && data.current && <EvidenceSharing key={`evidence:${data.current.id}:${group.cluster_revision}`} base={base} stage="REVIEW" disabled={!!busy || aiRunning} onError={fail} />}
     <section className="ws-review-advice ws-studio-ai-card" aria-label="AI review와 누적 기준 제안">
@@ -184,14 +188,14 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
       {proposal ? <div className="ws-review-proposal ws-studio-ai-result">
         <PreservedCitations files={report.preserved_sources} citations={proposal.model_metadata?.preserved_citations} sources={proposal.model_metadata?.preserved_citation_sources} target="review" />
         <div className="ws-studio-ai-verdict"><Badge variant="outline" className={`ws-status ws-status-${proposal.conclusion.toLowerCase()}`}>제안 {labels[proposal.conclusion]}</Badge><span>{proposal.model_called ? `AI 모델 · ${proposal.model_metadata ? aiExecutionLabel(proposal.model_metadata) : proposal.advisor}` : '확정 기준 참고 엔진'} · {time(proposal.at)}</span></div>
-        <p className="ws-studio-proposal-reason">{proposal.reason}</p>
+        <RationaleDisclosure key={`proposal-reason:${proposal.id}`} label="AI 판정 근거" reason={proposal.reason} />
         {data.current?.proposal_id === proposal.id ? <p className="ws-muted">이 제안에 대한 사용자 판정을 {labels[data.current.conclusion]}로 저장했습니다. 수정 내역은 아래 이력에서 확인할 수 있습니다.</p> : proposal.stale && <p className="ws-error">판정 또는 참고 기준이 변경되었습니다. 제안을 다시 받아 주세요.</p>}
         <div className="ws-studio-ai-references">
           {!!proposal.evidence_ids?.length && <details><summary>이번 로그의 직접 근거 {proposal.evidence_ids.length}건</summary><ul>{proposal.evidence_ids.map(id => <li key={id}><code>{id}</code></li>)}</ul></details>}
           {!!proposal.criterion_ids?.length && <details><summary>적용한 점검 기준 {proposal.criterion_ids.length}건</summary><ul>{proposal.criterion_ids.map(id => <li key={id}><code>{id}</code></li>)}</ul></details>}
           {proposal.references.length > 0 && <details><summary>{production ? 'AI가 인용한 공유 확정 사례' : '참고한 확정 기준'} {proposal.references.length}건</summary>{production && <p className="ws-muted">과거 확정 근거를 참고하며 원문은 기존 조회 권한을 따릅니다.</p>}{proposal.references.map(reference => <CaseEvidence key={reference.id} value={reference} report={report} version={version} />)}</details>}
         </div>
-        <div className="ws-studio-ai-apply"><small>사용자 판정 저장 시 확정됩니다.</small>{data.can_review && <Button variant="outline" size="sm" disabled={!!busy || !!proposal.stale || aiRunning} onClick={() => { edit(); setConclusion(proposal.conclusion); setReason(proposal.reason); setProposalId(proposal.id); if (proposal.conclusion === 'DEFER') setExceptionEnabled(false) }}><Check size={14} />제안 적용</Button>}</div>
+        <div className="ws-studio-ai-apply"><small>사용자 판정 저장 시 확정됩니다.</small>{data.can_review && <Button variant="outline" size="sm" disabled={!!busy || !!proposal.stale || aiRunning} onClick={() => { edit(); setConclusion(proposal.conclusion); setReason(proposal.reason); setReasonEditing(true); setProposalId(proposal.id); if (proposal.conclusion === 'DEFER') setExceptionEnabled(false) }}><Check size={14} />제안 적용</Button>}</div>
       </div> : <p className="ws-studio-empty-note">{demo ? '원문을 확인하고 최종 판정과 근거를 작성하세요.' : 'AI 판정을 받거나 직접 사용자 판정을 기록하세요.'}</p>}
     </section>
     {data.can_review ? <form className="ws-human-review ws-studio-human-form" onSubmit={save} aria-label="사용자 판정 기록">
@@ -202,7 +206,8 @@ export default function WorkspaceReview({ report, session, onSaved, onExpired, g
           {(['PASS', 'FAIL', 'DEFER'] as Judgment[]).map(value => <label key={value} htmlFor={`${inputId}-${value}`} className="ws-studio-decision-choice" data-state={conclusion === value ? 'checked' : 'unchecked'} data-verdict={value.toLowerCase()}><RadioGroupItem id={`${inputId}-${value}`} value={value} disabled={!data.ready && value !== 'DEFER'} /><span>{labels[value]}</span></label>)}
         </RadioGroup>
       </fieldset>
-      <div className="ws-review-field"><div className="ws-studio-field-label"><span className="ws-studio-field-title"><label htmlFor={`${inputId}-reason`}>판정 근거</label><span className="ws-studio-field-required" aria-hidden="true">*</span></span><span>{reason.length.toLocaleString()} / 2,000</span></div><Textarea id={`${inputId}-reason`} value={reason} maxLength={2000} required disabled={!!busy} onChange={event => { edit(); setReason(event.target.value) }} placeholder="판정에 적용한 조건, 확인 내용 및 예외를 입력하세요." /></div>
+      {data.current && !data.current_stale && <Button type="button" variant="ghost" size="sm" aria-expanded={reasonEditing} aria-controls={`${inputId}-reason-editor`} disabled={!!busy} onClick={() => setReasonEditing(value => !value)}>{reasonEditing ? '판정 근거 편집 접기' : '판정 근거 수정'}</Button>}
+      <div id={`${inputId}-reason-editor`} className="ws-judgment-reason-editor" hidden={!!data.current && !data.current_stale && !reasonEditing}><div className="ws-review-field"><div className="ws-studio-field-label"><span className="ws-studio-field-title"><label htmlFor={`${inputId}-reason`}>판정 근거</label><span className="ws-studio-field-required" aria-hidden="true">*</span></span><span>{reason.length.toLocaleString()} / 2,000</span></div><Textarea id={`${inputId}-reason`} value={reason} maxLength={2000} required disabled={!!busy} onChange={event => { edit(); setReason(event.target.value) }} placeholder="판정에 적용한 조건, 확인 내용 및 예외를 입력하세요." /></div></div>
       <p className="ws-studio-memory-note">{production ? '판정 저장 후 AI 등록을 켠 근거만 다음 AI의 참고 사례로 사용합니다.' : '원본 도구 결과와 별도로 검토 결과와 근거를 기록합니다.'}</p>
       <section className="ws-review-exception-settings" aria-label="규칙 예외 기록">
         <label className="ws-review-checkbox"><input type="checkbox" checked={exceptionEnabled} disabled={!!busy || conclusion === 'DEFER' || !data.ready} onChange={event => { edit(); setExceptionEnabled(event.target.checked) }} />이번 판정을 규칙 예외로 기록</label>

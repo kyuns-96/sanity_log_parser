@@ -443,7 +443,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
         </> : <p className="ws-muted">왼쪽에서 검토할 그룹을 선택하세요.</p>}
       </section>
       <aside className="ws-group-inspector ws-studio-decision" aria-label={step === 1 ? '분류 근거 검토' : '그룹 판정'}>
-        {production && groupId && !historyEvent && <EvidenceSharing key={`evidence:${groupId}:${data.revision}`} base={`${base}/groups/${groupId}`} stage="CLUSTER" disabled={busy || dirtyName || dirtyRationale || aiRunning} onError={fail} />}
+        {production && groupId && !historyEvent && <div className="ws-evidence-choice-pin"><EvidenceSharing key={`evidence:${groupId}:${data.revision}`} base={`${base}/groups/${groupId}`} stage="CLUSTER" disabled={busy || dirtyName || dirtyRationale || aiRunning} onError={fail} /></div>}
         {groupId && (step === 1 ? rationale : <>
           {confirmed && (groupNavigating || !chosen ? <p role="status" className="ws-loading-status"><LoaderCircle size={16} className="spin" aria-hidden="true" />선택 그룹을 조회 중입니다.</p> : <><WorkspaceReview key={`${groupId}:${data.revision}`} compact report={reviewReport} version={data.version} session={session} group={{ id: groupId, cluster_revision: data.revision }} onExpired={onExpired} onSaved={() => load().catch(fail)} /><div className="ws-workbench-next"><Button variant="outline" disabled={data.summary.complete} onClick={nextGroup}>다음 미검토 그룹<ArrowRight size={14} /></Button></div></>)}
           <details className="ws-judgment-evidence"><summary>분류 근거</summary>{rationale}</details>
