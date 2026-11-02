@@ -4,7 +4,7 @@ import { Button } from './studio/components/ui/button'
 import { Badge } from './studio/components/ui/badge'
 import { WorkspaceBrand } from './components/WorkspaceBrand'
 import { ColorModeControl } from './components/ColorModeControl'
-import { Input } from './studio/components/ui/input'
+import { Input } from './components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './components/ui/dialog'
 import './reportsPreview.css'
 

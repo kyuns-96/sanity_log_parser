@@ -27,7 +27,7 @@ if (members.some(record => record.check_status === 'FAIL')) {
 
 빈 그룹은 UNKNOWN, FAIL이 하나라도 있으면 FAIL, 비어 있지 않고 전부 PASS이면 PASS다. 그 밖의 혼합·미확인 결과는 UNKNOWN으로 유지한다.
 
-이 원칙은 `WorkspacePipeline`, `WorkspaceReview`, 기존 검토 대장과 합성 데이터 생성에도 적용한다. 검사 예외가 필요하면 담당자의 승인 절차를 따르며 이 문서가 예외나 보호 파일 수정 권한을 부여하지 않는다.
+이 원칙은 `WorkspaceWorkbench`, `WorkspaceReview`, 기존 검토 대장과 합성 데이터 생성에도 적용한다. 검사 예외가 필요하면 담당자의 승인 절차를 따르며 이 문서가 예외나 보호 파일 수정 권한을 부여하지 않는다.
 
 ## 수정 후 확인
 

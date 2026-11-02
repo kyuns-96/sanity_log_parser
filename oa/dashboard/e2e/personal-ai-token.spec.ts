@@ -119,7 +119,6 @@ test('replacement and removal use current revisions without returning saved toke
 test('near-expiry and expired tokens give explicit renewal guidance', async ({ page }) => {
   await setup(page, { registered: true, expired: true })
   await expect(page.getByRole('alert')).toContainText('인증값이 만료됐습니다')
-  await page.screenshot({ path: test.info().outputPath('personal-token-desktop.png') })
 })
 
 test('thirty-day expiry warning is shown for a registered personal token', async ({ page }) => {
@@ -153,7 +152,6 @@ test('personal token dialog fits a small mobile screen', async ({ page }) => {
   await expect(page.getByRole('button', { name: '인증값 저장', exact: true })).toBeVisible()
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)
   expect(overflow).toBe(false)
-  await page.screenshot({ path: test.info().outputPath('personal-token-mobile.png') })
 })
 
 test('issuance link opens the configured page in a new tab without sending the entered token', async ({ page }) => {
@@ -177,7 +175,6 @@ test('issuance link opens the configured page in a new tab without sending the e
   await expect(page.getByLabel(tokenInput, { exact: true })).toHaveValue(token)
   expect(state.writes).toEqual([])
   await popup.close()
-  await page.screenshot({ path: test.info().outputPath('personal-token-issue-link.png') })
 })
 
 for (const url of [undefined, 'javascript:alert(1)', 'http://identity.example.test/tokens', '/tokens', 'https://user:password@identity.example.test/tokens']) {

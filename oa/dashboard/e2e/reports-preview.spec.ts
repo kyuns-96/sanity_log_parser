@@ -22,7 +22,6 @@ test('parsed library presents the requested sample size without live API or auth
   expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 })
   expect(apiCalls).toEqual([])
   expect(errors).toEqual([])
-  await page.screenshot({ path: 'artifacts/reports-library-desktop.png', fullPage: true, animations: 'disabled' })
 })
 
 test('virtual owners see their assigned blocks across projects and each TOP sees three blocks', async ({ page }) => {
@@ -121,10 +120,8 @@ test('390px mobile layout supports scoped filtering and the full report dialog w
   await page.getByRole('button', { name: 'sample-0008 보고서 보기' }).click()
   await expect(page.getByRole('dialog')).toContainText('Cygnus / GPU')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-  await page.screenshot({ path: 'artifacts/reports-library-mobile-dialog.png', animations: 'disabled' })
   await page.getByRole('button', { name: '닫기', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
-  await page.screenshot({ path: 'artifacts/reports-library-mobile.png', fullPage: true, animations: 'disabled' })
 })
 
 test('preview requires explicit demo mode and a missing dataset remains an error', async ({ page }) => {

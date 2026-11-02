@@ -54,7 +54,6 @@ test('classification proposal remains separate from apply, confirmation and sani
   await expect(page.getByText('개별 판정 FAIL', { exact: true })).toBeVisible()
   await page.setViewportSize({ width: 390, height: 844 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
-  await page.screenshot({ path: 'artifacts/clustering-mobile.png', fullPage: true, animations: 'disabled' })
 })
 
 test('classification is explicitly unavailable in synthetic demo', async ({ page }) => {
@@ -135,7 +134,6 @@ test('all units, review FAIL guard, revision and history', async ({ page }) => {
   await expect(page.getByText('numeric_csv_v1', { exact: true })).toBeVisible()
   await expect(page.getByText('측정값', { exact: false }).first()).toBeVisible()
   await page.evaluate(() => window.scrollTo(0, 0))
-  await page.screenshot({ path: 'artifacts/desktop.png', fullPage: true, animations: 'disabled' })
   await page.getByRole('button', { name: '검토 의견 기록', exact: true }).click()
   await expect(page.getByRole('radio', { name: /PASS/ })).toBeDisabled()
   await page.getByLabel('판단 사유').fill('개별 측정값과 기준 초과를 확인했습니다.')
@@ -233,7 +231,6 @@ test('mobile layout has no viewport overflow, menu and dialog work', async ({ pa
   await demo(page)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
   await page.evaluate(() => window.scrollTo(0, 0))
-  await page.screenshot({ path: 'artifacts/mobile.png', fullPage: true, animations: 'disabled' })
   await page.getByRole('button', { name: '메뉴 열기' }).click()
   await page.getByRole('button', { name: '활동 이력', exact: true }).click()
   await expect(page.getByRole('heading', { name: '검토 변경 이력' })).toBeVisible()

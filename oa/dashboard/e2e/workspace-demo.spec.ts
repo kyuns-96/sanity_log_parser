@@ -34,7 +34,6 @@ test('both explicit demo URLs open the current workspace without API, cookies or
   }
   expect(calls).toEqual([])
   expect(errors).toEqual([])
-  await page.screenshot({ path: 'artifacts/workspace-demo-desktop.png', fullPage: true, animations: 'disabled' })
 })
 
 test('server errors remain errors until the user explicitly opens the workspace demo', async ({ page }) => {
@@ -104,7 +103,6 @@ test('the current workbench completes classification and human judgments without
   await expect(page.locator('.ws-workbench-group-list > div')).toHaveCount(3)
   await expect(page.getByRole('complementary', { name: '분류 근거 검토' })).toContainText('AI 호출 없음')
   await page.evaluate(() => window.scrollTo(0, 0))
-  await page.screenshot({ path: 'artifacts/workspace-demo-review-desktop.png', fullPage: true, animations: 'disabled' })
   const download = page.waitForEvent('download')
   await page.getByRole('button', { name: '예시 원문 내려받기', exact: true }).click()
   expect((await download).suggestedFilename()).toMatch(/gca-001\.rpt$/)
@@ -124,7 +122,6 @@ test('the current workbench completes classification and human judgments without
   await page.getByRole('button', { name: '판정 저장', exact: true }).click()
   await expect(page.locator('.ws-review-complete')).toContainText('3개 그룹의 판정을 완료')
   await page.evaluate(() => window.scrollTo(0, 0))
-  await page.screenshot({ path: 'artifacts/workspace-demo-judgment-desktop.png', fullPage: true, animations: 'disabled' })
   await page.getByRole('button', { name: '검사 대장으로 돌아가기', exact: true }).click()
   const row = page.locator('.ws-report-table tbody tr').filter({ hasText: 'demo-atlas-cpu-net2-post-gca-001' })
   await expect(row).toContainText('3 / 3 확정')
@@ -161,7 +158,6 @@ test('tablet and phone layouts keep the new demo usable, including keyboard draw
     await page.goto(demoUrl)
     await expect(page.getByRole('heading', { name: 'Atlas 프로젝트', exact: true })).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-    await page.screenshot({ path: `artifacts/workspace-demo-${width}.png`, fullPage: true, animations: 'disabled' })
   }
   const trigger = page.getByRole('button', { name: '메뉴 열기', exact: true })
   await trigger.click()
@@ -183,7 +179,6 @@ test('tablet and phone layouts keep the new demo usable, including keyboard draw
   await expect(page.getByRole('button', { name: '근거 채택', exact: true })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.evaluate(() => window.scrollTo(0, 0))
-  await page.screenshot({ path: 'artifacts/workspace-demo-review-mobile.png', fullPage: true, animations: 'disabled' })
 })
 
 test('memory adapter enforces account scope, revision conflicts, idempotency and complete log partitions', async () => {

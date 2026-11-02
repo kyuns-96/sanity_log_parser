@@ -3,7 +3,7 @@ import { Check, ChevronLeft, ChevronRight, Code2, Copy, GripVertical, LoaderCirc
 import { Badge } from '../studio/components/ui/badge'
 import { Button } from '../studio/components/ui/button'
 import { Checkbox } from '../studio/components/ui/checkbox'
-import { Input } from '../studio/components/ui/input'
+import { Input } from '../components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../studio/components/ui/table'
 import type { LogMove, useLogDrag } from '../useLogDrag'
 import { toolResultStatus, workspaceLabels as labels, workspaceRequest as request } from '../workspaceApi'

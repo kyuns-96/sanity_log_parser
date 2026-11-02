@@ -1,6 +1,5 @@
 import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { writeFileSync } from 'node:fs'
 
 async function login(page: Page, user = 'user04') {
   await page.goto('/workspace')
@@ -24,7 +23,6 @@ test('real API scopes projects and reports and the shared Studio theme is loaded
   expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 })
   const cookies = await page.context().cookies()
   expect(cookies.find(cookie => cookie.name === 'sanity_workspace_session')).toMatchObject({ httpOnly: true, sameSite: 'Strict' })
-  await page.screenshot({ path: 'artifacts/workspace-overview.png', fullPage: true, animations: 'disabled' })
   await page.getByRole('button', { name: 'CPU 버전과 검사 보기' }).click()
   await page.getByLabel('조회 버전').selectOption('project-1-cpu-post-1')
   await expect(page.getByLabel('조회 버전')).toHaveValue('project-1-cpu-post-1')
@@ -74,7 +72,6 @@ test('sanity item selection separates tools, paginates inside the item and survi
   await expect(page.locator('.ws-report-table tbody tr')).toHaveCount(25)
   expect(await page.locator('.ws-report-table tbody tr').evaluateAll(rows => rows.every(row => row.getAttribute('data-item-id') === 'spyglass_lint'))).toBe(true)
   expect(await page.getByRole('region', { name: '블록의 현재 PoR' }).innerText()).toBe(porBefore)
-  await page.screenshot({ path: 'artifacts/workspace-items-desktop.png', fullPage: true, animations: 'disabled' })
 })
 
 test('PoR changes persist after refresh and a separately authenticated TOP reads the same version', async ({ page, browser }) => {
@@ -99,7 +96,6 @@ test('PoR changes persist after refresh and a separately authenticated TOP reads
   await expect(page.getByRole('button', { name: '현재 PoR', exact: true })).toBeDisabled()
   await page.getByRole('button', { name: 'PoR 변경 이력', exact: true }).click()
   await expect(page.locator('.ws-history')).toContainText(reason)
-  await page.screenshot({ path: 'artifacts/workspace-history.png', fullPage: true, animations: 'disabled' })
   const context = await browser.newContext()
   const top = await context.newPage()
   await login(top, 'user01')
@@ -162,7 +158,6 @@ test('mobile navigation, report dialog and missing report download remain usable
   await expect(page.getByRole('dialog', { name: '워크스페이스 메뉴' })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.getByRole('button', { name: '메뉴 열기' })).toBeFocused()
-  await page.screenshot({ path: 'artifacts/workspace-mobile.png', fullPage: true, animations: 'disabled' })
 })
 
 test('logging out removes data and an old session cannot return through reload', async ({ page }) => {
@@ -173,7 +168,6 @@ test('logging out removes data and an old session cannot return through reload',
   expect((await page.request.get('/workspace/api/overview')).status()).toBe(401)
   await page.reload()
   await expect(page.getByRole('button', { name: '로그인', exact: true })).toBeVisible()
-  await page.screenshot({ path: 'artifacts/workspace-login.png', fullPage: true, animations: 'disabled' })
 })
 
 async function openReviewSettings(scope: Page | ReturnType<Page['locator']>) {
@@ -210,7 +204,6 @@ test('a human can pass a tool FAIL, persist the reason and let a TOP read the in
   await page.getByRole('button', { name: '판정 저장', exact: true }).click()
   await expect(page.getByRole('status')).toContainText('사용자 판정과 근거를 저장했습니다.')
   await expect(page.locator('.ws-judgment-summary > div').nth(1)).toContainText('PASS')
-  await page.screenshot({ path: 'artifacts/workspace-human-review-desktop.png', animations: 'disabled' })
   await page.getByRole('button', { name: '닫기', exact: true }).click()
   const row = page.locator('.ws-report-table tbody tr').filter({ hasText: 'sample-0028' })
   await page.getByRole('button', { name: '상세 열 보기', exact: true }).click()
@@ -256,7 +249,6 @@ test('the next report reuses confirmed criteria, shows provenance and records a 
   await openReviewHistory(page)
   await expect(page.getByRole('region', { name: '사용자 판정 이력' })).toContainText('제안 PASS → 사용자 FAIL · 사용자 수정')
   await expect(page.locator('.ws-review-proposal')).toContainText('이 제안에 대한 사용자 판정을 FAIL로 저장했습니다.')
-  await page.screenshot({ path: 'artifacts/workspace-review-proposal.png', animations: 'disabled' })
 })
 
 test('mobile review scrolls to save and incomplete evidence can only be deferred', async ({ page }) => {
@@ -276,7 +268,6 @@ test('mobile review scrolls to save and incomplete evidence can only be deferred
   const box = await page.getByRole('dialog').boundingBox()
   expect(box!.y).toBeGreaterThanOrEqual(0)
   expect(box!.y + box!.height).toBeLessThanOrEqual(844)
-  await page.screenshot({ path: 'artifacts/workspace-human-review-mobile.png', animations: 'disabled' })
   await page.getByRole('button', { name: '닫기', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
 })
@@ -384,7 +375,6 @@ test.describe.serial('two-stage group review with separate multi-record QA fixtu
     await review.getByRole('button', { name: '판정 저장', exact: true }).click()
     await expect(review.getByRole('status')).toContainText('사용자 판정과 근거를 저장했습니다.')
     await expect(pipeline.locator('.ws-review-progress > span').nth(1)).toContainText('1 / 2')
-    await page.screenshot({ path: 'artifacts/workspace-pipeline-group-pass.png', animations: 'disabled' })
     await page.getByRole('button', { name: '검사 대장으로 돌아가기', exact: true }).click()
     await page.getByLabel('검사 검색').fill('qa-cluster-source')
     await expect(page.locator('.ws-report-table tbody tr').first().locator('td').first()).toContainText('qa-cluster-source')
@@ -437,7 +427,6 @@ test.describe.serial('two-stage group review with separate multi-record QA fixtu
     await review.getByRole('button', { name: '판정 저장', exact: true }).click()
     await review.locator('.ws-review-records > summary').click()
     await expect(review.getByRole('region', { name: '사용자 판정 이력' })).toContainText('제안 PASS → 사용자 FAIL · 사용자 수정')
-    await page.screenshot({ path: 'artifacts/workspace-pipeline-reused-proposal.png', animations: 'disabled' })
   })
 
   test('reclustering invalidates group judgments and dependent references while preserving history on mobile', async ({ page }) => {
@@ -460,7 +449,6 @@ test.describe.serial('two-stage group review with separate multi-record QA fixtu
     await page.setViewportSize({ width: 390, height: 844 })
     await review.locator('.ws-judgment-summary').scrollIntoViewIfNeeded()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-    await page.screenshot({ path: 'artifacts/workspace-pipeline-stale-mobile.png', animations: 'disabled' })
   })
 })
 
@@ -480,7 +468,6 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
       await work.getByRole('button', { name: '분류 작업 취소', exact: true }).click()
       await expect(work.getByRole('button', { name: '분류 작업 취소', exact: true })).toHaveCount(0)
     }
-    const began = Date.now()
     await makeWorkbenchGroups(work)
     await expect(work.locator('.ws-notice')).toContainText('분류 초안을 저장', { timeout: 120000 })
     await expect(work.locator('.ws-workbench-group-list button')).toHaveCount(25)
@@ -491,8 +478,6 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
     expect(view.record_count).toBe(10000); expect(view.summary.total).toBe(100)
     expect(view.task.chunks).toHaveLength(20)
     expect((await metadata.body()).length).toBeLessThan(40000)
-    const metrics = { status: 'PASSED', records: 10000, groups: 100, chunks: 20, classification_seconds: (Date.now()-began)/1000,
-      initial_metadata_bytes: (await metadata.body()).length, rendered_groups: 25, rendered_records: 50 }
     await openWorkbenchMemo(work)
     await work.getByLabel('전체 분류 메모 (선택)', { exact: true }).fill('10,000건의 전체 배정을 확인하고 페이지 간 선택을 검토합니다.')
     await work.getByRole('checkbox', { name: '현재 페이지 로그 50건 이하 선택', exact: true }).check()
@@ -524,7 +509,6 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
     await work.getByRole('checkbox', { name: '다음 보고서에서 이 분류 기준을 참고하도록 설정', exact: true }).check()
     await work.getByLabel('재사용할 분류 기준', { exact: true }).fill('확인한 객체와 모드가 같은 반복 로그를 같은 그룹으로 분류합니다.')
     await work.locator('.ws-workbench-columns').scrollIntoViewIfNeeded()
-    await page.screenshot({ path: 'artifacts/workspace-large-edit-desktop.png', animations: 'disabled' })
     await work.getByRole('button', { name: '분류 확정 · 판정 시작', exact: true }).click()
     await expect(work.getByRole('region', { name: '2단계 확정 그룹별 판정', exact: true })).toBeVisible()
     await expect(work.locator('.ws-judgment-summary > div').first()).toContainText('FAIL')
@@ -541,7 +525,6 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
     await expect(work.locator('.ws-review-progress > span').nth(1)).toContainText('1 / 100')
     expect((await (await page.request.get(prefix + '/workbench')).json()).summary.pending).toBe(99)
     await work.locator('.ws-judgment-summary').scrollIntoViewIfNeeded()
-    await page.screenshot({ path: 'artifacts/workspace-large-judgment-desktop.png', animations: 'disabled' })
     expect(await (await page.request.get(prefix)).json()).toEqual(original)
     expect((await (await page.request.get('/workspace/api/blocks/project-3-gpu/versions')).json()).por).toEqual(porBefore)
     await page.reload()
@@ -551,7 +534,6 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
     await expect(work.locator('.ws-judgment-summary > div').nth(1)).toContainText('PASS')
     await work.getByRole('button', { name: '다음 미검토 그룹', exact: true }).click()
     await expect(work.locator('.ws-judgment-summary > div').nth(1)).toContainText('아직 없어요')
-    writeFileSync('artifacts/workspace-large-browser-metrics.json', JSON.stringify(metrics, null, 2)+'\n')
     const context = await browser.newContext()
     try {
       const top = await context.newPage(); await gpuWorkspace(top, 'user03')
@@ -600,7 +582,6 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
     expect(await work.locator('.ws-paged-record').count()).toBeLessThanOrEqual(50)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await work.locator('.ws-judgment-summary').scrollIntoViewIfNeeded()
-    await page.screenshot({ path: 'artifacts/workspace-large-mobile.png', animations: 'disabled' })
     await work.locator('.ws-pipeline-steps button').first().click()
     await work.getByRole('button', { name: '이름 변경', exact: true }).click()
     const name = page.getByLabel('선택 그룹 이름', { exact: true })
@@ -623,10 +604,8 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
     await gpuWorkspace(page)
     const report = 'large-gca-100000'
     const prefix = pipelineBase + report
-    const beganLoad = Date.now()
     const beforeResponse = await page.request.get(prefix + '/workbench')
     const before = await beforeResponse.json()
-    const metadataSeconds = (Date.now()-beganLoad)/1000
     const por = (await (await page.request.get('/workspace/api/blocks/project-3-gpu/versions')).json()).por
     await page.getByRole('button', { name: `${report} 검토 시작`, exact: true }).click()
     const work = page.getByRole('region', { name: 'Sanity item 순차 검토', exact: true })
@@ -635,11 +614,9 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
     if (!canResume && await work.getByRole('button', { name: '분류 작업 취소', exact: true }).isVisible()) {
       await work.getByRole('button', { name: '분류 작업 취소', exact: true }).click()
     }
-    const began = Date.now()
     if (canResume) await work.getByRole('button', { name: '저장한 위치에서 이어서 처리', exact: true }).click()
     else await makeWorkbenchGroups(work)
     await expect(work.locator('.ws-notice')).toContainText('분류 초안을 저장', { timeout: 180000 })
-    const classificationSeconds = (Date.now()-began)/1000
     await expect(work.locator('.ws-workbench-group-list button')).toHaveCount(25, { timeout: 30000 })
     await expect(work.locator('.ws-paged-record')).toHaveCount(50, { timeout: 30000 })
     await expect(work.getByRole('button', { name: /그룹별 판정/ })).toBeDisabled()
@@ -666,7 +643,6 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
     await work.getByRole('button', { name: /그룹별 판정/ }).click()
     await expect(work.locator('.ws-review-progress > span').nth(1)).toContainText('1 / 100', { timeout: 30000 })
     await work.locator('.ws-judgment-summary').scrollIntoViewIfNeeded()
-    await page.screenshot({ path: 'artifacts/workspace-100000-desktop.png', animations: 'disabled' })
     await page.reload()
     await work.getByRole('button', { name: /그룹별 판정/ }).click()
     await expect(work.locator('.ws-review-progress > span').nth(1)).toContainText('1 / 100', { timeout: 30000 })
@@ -680,12 +656,7 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     expect(await work.locator('.ws-paged-record').count()).toBeLessThanOrEqual(50)
     await work.locator('.ws-judgment-summary').scrollIntoViewIfNeeded()
-    await page.screenshot({ path: 'artifacts/workspace-100000-mobile.png', animations: 'disabled' })
     expect(errors).toEqual([])
-    writeFileSync('artifacts/workspace-100000-browser-metrics.json', JSON.stringify({ status: 'PASSED', records: 100000,
-      groups: view.summary.total, chunks: view.task.chunks.length, chunk_size: view.task.chunk_size,
-      classification_seconds: classificationSeconds, resumed_from_records: canResume ? before.task.processed : 0, metadata_seconds: metadataSeconds,
-      metadata_bytes: (await response.body()).length, rendered_groups: 25, rendered_records: 50,
-      source_and_por_unchanged: true, actual_company_ai_connected: false }, null, 2)+'\n')
+
   })
 })

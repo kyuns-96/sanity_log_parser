@@ -14,7 +14,7 @@ async function verticalShift(button: Locator) {
   })
 }
 
-test('workbench actions respond to hover and press while table controls stay anchored', async ({ page }, testInfo) => {
+test('workbench actions respond to hover and press while table controls stay anchored', async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 })
   const primary = await openWorkbench(page)
   await primary.hover()
@@ -74,7 +74,6 @@ test('workbench actions respond to hover and press while table controls stay anc
   expect(await disabled.evaluate(element => getComputedStyle(element).boxShadow)).toBe(disabledShadow)
   await outline.hover()
   await expect.poll(() => verticalShift(outline)).toBe(-1)
-  await page.screenshot({ path: testInfo.outputPath('workbench-button-hover.png') })
 })
 
 test('reduced motion keeps action buttons still with visible keyboard focus', async ({ page }) => {
@@ -112,6 +111,5 @@ test('touch devices do not retain a raised hover state', async ({ browser }, tes
   const refresh = page.getByRole('button', { name: '최신 구성 다시 조회', exact: true })
   await refresh.hover()
   expect(await verticalShift(refresh)).toBe(0)
-  await page.screenshot({ path: testInfo.outputPath('touch-actions.png'), fullPage: true })
   await context.close()
 })

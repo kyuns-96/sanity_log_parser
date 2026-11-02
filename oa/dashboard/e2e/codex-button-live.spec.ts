@@ -1,5 +1,4 @@
 import { test, expect } from '@playwright/test'
-import { writeFileSync } from 'node:fs'
 
 const base = '/workspace/api/blocks/project-1-cpu/versions/project-1-cpu-post-1/reports/codex-mock-feedback'
 const route = '/workspace?project=project-1&block=project-1-cpu&version=project-1-cpu-post-1&tab=reports&eco=chip_finish&item=gca_constraints&review=codex-mock-feedback'
@@ -59,16 +58,9 @@ test('AI button calls the real model once and restores the saved request after p
   expect(replayed.ai.remaining).toBe(original.ai.remaining-1)
   await page.getByText('현재 분류의 기준과 출처', { exact: true }).click()
   await expect(page.locator('.ws-cluster-references')).toContainText('초기 분류 모델: gpt-6-luna')
-  await page.screenshot({ path: 'artifacts/codex-button-desktop.png', fullPage: true, animations: 'disabled' })
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(button).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth+1)).toBe(true)
-  await page.screenshot({ path: 'artifacts/codex-button-mobile.png', fullPage: true, animations: 'disabled' })
   expect(errors).toEqual([])
-  writeFileSync('artifacts/codex-button-live-result.json', JSON.stringify({
-    status: 'PASSED', real_model_called: true, model_calls: 1, reload_restored_request: true,
-    repeated_uuid_no_new_call: true, source_and_por_unchanged: true, model: after.current.model_metadata,
-    report_id: after.report.id, revision: after.revision, groups: after.summary.total,
-    case_references: after.current.references.length,
-  }, null, 2))
+
 })

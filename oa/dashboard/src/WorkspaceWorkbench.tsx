@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, Check, ChevronLeft, ChevronRight, Download, File
 import { Button } from './studio/components/ui/button'
 import { Badge } from './studio/components/ui/badge'
 import { Checkbox } from './studio/components/ui/checkbox'
-import { Input } from './studio/components/ui/input'
+import { Input } from './components/ui/input'
 import Records from './live-workbench/Records'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog'
 import WorkspaceReview from './WorkspaceReview'

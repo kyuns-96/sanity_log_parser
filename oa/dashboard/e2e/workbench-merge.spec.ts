@@ -112,7 +112,7 @@ test('judgment stage offers merge and returns to classification while preserving
   expect(historical.current_stale).toBe(true)
 })
 
-test('group selections persist across pages and searches and the destination remains visible after merging', async ({ page }, info) => {
+test('group selections persist across pages and searches and the destination remains visible after merging', async ({ page }) => {
   const f = await mockMerge(page, { pageSize: 2 })
   await page.getByRole('button', { name: '그룹 병합', exact: true }).click()
   await page.getByRole('button', { name: '다음 그룹 페이지', exact: true }).click()
@@ -123,7 +123,6 @@ test('group selections persist across pages and searches and the destination rem
   await page.getByRole('button', { name: '선택한 2개 그룹 병합', exact: true }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('병합 후 유지할 그룹').selectOption(f.groups[2].id)
-  await page.screenshot({ path: info.outputPath('merge-confirmation.png'), fullPage: true })
   await dialog.getByRole('button', { name: '그룹 병합', exact: true }).click()
   await expect(page.locator('.ws-selected-group-header')).toContainText(f.groups[2].label)
   await expect(page.getByLabel('그룹 검색', { exact: true })).toHaveValue('')
