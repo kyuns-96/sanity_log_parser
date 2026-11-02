@@ -13,7 +13,8 @@ async function accessServer(page: Page, admin = false, empty = false) {
       projects: [{ id: 'project-alpha', name: 'Alpha 프로젝트', description: '합성 프로젝트' }],
       blocks: [{ id: 'block-cpu', project_id: 'project-alpha', name: 'CPU 블록' }],
     }) as AccessCatalog,
-    grants: [] as AccessGrant[], requests: [] as AccessRequest[], calls: [] as string[],
+    users: [{ user_id: 'synthetic-user', display_name: '합성 사용자' }],
+    grants: [] as AccessGrant[], requests: [] as AccessRequest[], calls: [] as string[], revokeFailure: '',
     writes: [] as { path: string; body: Record<string, unknown>; marker?: string; authorization?: string }[],
   }
   await page.route('**/api/**', async route => {
@@ -35,7 +36,7 @@ async function accessServer(page: Page, admin = false, empty = false) {
     if (path === '/api/admin/ai/scheduler') return route.fulfill({ json: { revision: 0, limits: { max_concurrency: 8, max_jobs: 4 } } })
     if (path === '/api/admin/access') return state.adminForbidden
       ? route.fulfill({ status: 403, json: { code: 'FORBIDDEN' } })
-      : route.fulfill({ json: { revision: state.revision, requests: state.requests, grants: state.grants, users: [{ user_id: 'synthetic-user', display_name: '합성 사용자' }] } })
+      : route.fulfill({ json: { revision: state.revision, requests: state.requests, grants: state.grants, users: state.users } })
     if (body && path === '/api/admin/projects') {
       state.catalog.projects.push({ id: String(body.project_id), name: String(body.name), description: String(body.description) })
       state.revision++
@@ -66,6 +67,7 @@ async function accessServer(page: Page, admin = false, empty = false) {
     }
     if (body && path.endsWith('/revoke')) {
       expect(body.expected_revision).toBe(state.revision)
+      if (state.revokeFailure) return route.fulfill({ status: 409, json: { code: state.revokeFailure } })
       state.grants = state.grants.filter(grant => grant.grant_id !== path.split('/')[4])
       state.readable = !!state.grants.length
       state.revision++
@@ -190,6 +192,180 @@ test('administrator creates project and block, approves own request, and revokes
   expect(state.calls.some(call => call.includes('/api/bundles'))).toBeFalsy()
   await page.reload()
   await expect(page.getByRole('heading', { name: '프로젝트·권한 관리', exact: true })).toBeVisible()
+})
+
+test('user grants distinguish same-name accounts, search stable IDs, and retain the selected user while searching', async ({ page }) => {
+  const state = await accessServer(page, true)
+  state.users = [
+    { user_id: 'synthetic-person-a', display_name: '합성 동명이인' },
+    { user_id: 'synthetic-person-b', display_name: '합성 동명이인' },
+  ]
+  state.catalog.projects.push({ id: 'project-beta', name: 'Beta 프로젝트', description: '합성 프로젝트' })
+  state.catalog.blocks.push({ id: 'block-io', project_id: 'project-beta', name: 'IO 블록' })
+  state.grants = [
+    { grant_id: 'grant-a', user_id: 'synthetic-person-a', role: 'TOP', project_id: 'project-alpha', block_id: null },
+    { grant_id: 'grant-b', user_id: 'synthetic-person-b', role: 'OWNER', project_id: 'project-beta', block_id: 'block-io' },
+    // A formerly active account can retain grants even when absent from the active SSO directory.
+    { grant_id: 'grant-former', user_id: 'synthetic-former-account', role: 'TOP', project_id: 'project-alpha', block_id: null },
+  ]
+  await page.goto('/?page=admin')
+  const panel = page.getByRole('region', { name: '사용자별 권한 관리', exact: true })
+  const rows = panel.getByRole('listitem').filter({ has: page.getByRole('button', { name: '권한 회수', exact: true }) })
+  await panel.getByRole('button', { name: /synthetic-person-b/ }).click()
+  await expect(panel.getByRole('heading', { name: '합성 동명이인', exact: true })).toBeVisible()
+  await expect(rows).toHaveCount(1)
+  await expect(rows).toContainText('Beta 프로젝트 / IO 블록')
+  await expect(panel.getByRole('button', { name: /synthetic-person-b/ })).toHaveAttribute('aria-pressed', 'true')
+  await panel.getByLabel('사용자 검색', { exact: true }).fill('합성 동명이인')
+  await expect(panel.locator('button[aria-pressed]')).toHaveCount(2)
+  await panel.getByLabel('사용자 검색', { exact: true }).fill('synthetic-person-a')
+  await expect(panel.getByRole('button', { name: /synthetic-person-a/ })).toBeVisible()
+  await expect(panel.getByRole('button', { name: /synthetic-person-b/ })).toHaveCount(0)
+  await expect(rows).toContainText('Beta 프로젝트 / IO 블록')
+  await panel.getByRole('button', { name: /synthetic-person-a/ }).click()
+  await expect(rows).toContainText('Alpha 프로젝트')
+  await expect(rows).not.toContainText('Beta 프로젝트')
+  await panel.getByLabel('사용자 검색', { exact: true }).fill('synthetic-former-account')
+  await panel.getByRole('button', { name: /synthetic-former-account/ }).click()
+  await expect(panel.getByRole('heading', { name: 'synthetic-former-account', exact: true })).toBeVisible()
+  await panel.getByLabel('사용자 검색', { exact: true }).fill('해당 계정 없음')
+  await expect(panel.locator('button[aria-pressed]')).toHaveCount(0)
+  await expect(rows).toHaveCount(1)
+  await panel.getByLabel('사용자 검색', { exact: true }).fill('')
+  await panel.getByRole('button', { name: /synthetic-person-b/ }).click()
+  for (const width of [1440, 1280]) {
+    await page.setViewportSize({ width, height: 1000 })
+    await panel.screenshot({ path: `artifacts/oa-batch-followup/user-grants/user-grants-${width}.png`, animations: 'disabled' })
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
+  }
+  expect(state.writes).toEqual([])
+})
+
+test('user grants paginate people and permissions and reset permission filters when changing the selected user', async ({ page }) => {
+  const state = await accessServer(page, true)
+  state.users = Array.from({ length: 13 }, (_, index) => ({ user_id: `synthetic-person-${String(index).padStart(2, '0')}`, display_name: `합성 사용자 ${String(index).padStart(2, '0')}` }))
+  state.catalog.projects.push({ id: 'project-beta', name: 'Beta 프로젝트', description: '합성 프로젝트' })
+  state.catalog.blocks = Array.from({ length: 12 }, (_, index) => ({ id: `block-${index}`, project_id: 'project-alpha', name: `합성 블록 ${String(index).padStart(2, '0')}` }))
+  state.catalog.blocks.push({ id: 'block-beta', project_id: 'project-beta', name: 'Beta 블록' })
+  state.grants = state.catalog.blocks.filter(block => block.project_id === 'project-alpha').map(block => ({ grant_id: `grant-${block.id}`, user_id: state.users[0].user_id, role: 'OWNER', project_id: block.project_id, block_id: block.id }))
+  state.grants.push(
+    { grant_id: 'grant-primary-alpha-top', user_id: state.users[0].user_id, role: 'TOP', project_id: 'project-alpha', block_id: null },
+    { grant_id: 'grant-primary-beta-top', user_id: state.users[0].user_id, role: 'TOP', project_id: 'project-beta', block_id: null },
+    { grant_id: 'grant-primary-beta-owner', user_id: state.users[0].user_id, role: 'OWNER', project_id: 'project-beta', block_id: 'block-beta' },
+    ...state.users.slice(1).map(user => ({ grant_id: `grant-${user.user_id}`, user_id: user.user_id, role: 'TOP' as const, project_id: 'project-alpha', block_id: null })),
+  )
+  await page.goto('/?page=admin')
+  const panel = page.getByRole('region', { name: '사용자별 권한 관리', exact: true })
+  const rows = panel.getByRole('listitem').filter({ has: page.getByRole('button', { name: '권한 회수', exact: true }) })
+  await expect(panel.locator('button[aria-pressed]')).toHaveCount(10)
+  await panel.getByRole('button', { name: '다음 사용자', exact: true }).click()
+  await expect(panel.locator('button[aria-pressed]')).toHaveCount(3)
+  await expect(panel.getByRole('button', { name: '다음 사용자', exact: true })).toBeDisabled()
+  await panel.getByRole('button', { name: '이전 사용자', exact: true }).click()
+  await panel.getByRole('button', { name: /synthetic-person-00/ }).click()
+  await expect(rows).toHaveCount(10)
+  await panel.getByRole('button', { name: '다음 권한', exact: true }).click()
+  await expect(rows).toHaveCount(5)
+  const allGrants = [...state.grants]
+  state.grants = [...allGrants.filter(grant => grant.user_id !== state.users[0].user_id), ...allGrants.filter(grant => grant.user_id === state.users[0].user_id).slice(0, 2)]
+  state.revision++
+  await page.getByRole('button', { name: '관리 상태 새로고침', exact: true }).click()
+  await expect(page.getByRole('button', { name: '관리 상태 새로고침', exact: true })).toBeEnabled()
+  await expect(rows).toHaveCount(2)
+  await expect(panel.getByRole('button', { name: '이전 권한', exact: true })).toBeDisabled()
+  await expect(panel.getByRole('button', { name: '다음 권한', exact: true })).toBeDisabled()
+  state.grants = allGrants
+  state.revision++
+  await page.getByRole('button', { name: '관리 상태 새로고침', exact: true }).click()
+  await expect(page.getByRole('button', { name: '관리 상태 새로고침', exact: true })).toBeEnabled()
+  await panel.getByRole('combobox', { name: '권한 역할', exact: true }).selectOption('OWNER')
+  await panel.getByRole('combobox', { name: '권한 프로젝트', exact: true }).selectOption('project-alpha')
+  await expect(rows).toHaveCount(10)
+  await panel.getByRole('button', { name: '다음 권한', exact: true }).click()
+  await expect(rows).toHaveCount(2)
+  await panel.getByLabel('권한 검색', { exact: true }).fill('합성 블록 11')
+  await expect(rows).toHaveCount(1)
+  await expect(rows).toContainText('합성 블록 11')
+  await expect(panel.getByRole('button', { name: '이전 권한', exact: true })).toBeDisabled()
+  await expect(panel.getByRole('button', { name: '다음 권한', exact: true })).toBeDisabled()
+  await panel.getByLabel('권한 검색', { exact: true }).fill('')
+  await panel.getByRole('combobox', { name: '권한 역할', exact: true }).selectOption('TOP')
+  await panel.getByRole('combobox', { name: '권한 프로젝트', exact: true }).selectOption('project-beta')
+  await expect(rows).toHaveCount(1)
+  await expect(rows).toContainText('Beta 프로젝트')
+  await panel.getByRole('button', { name: /synthetic-person-01/ }).click()
+  await expect(panel.getByRole('combobox', { name: '권한 역할', exact: true })).toHaveValue('')
+  await expect(panel.getByRole('combobox', { name: '권한 프로젝트', exact: true })).toHaveValue('')
+  await expect(panel.getByLabel('권한 검색', { exact: true })).toHaveValue('')
+  await expect(rows).toHaveCount(1)
+  await expect(rows).toContainText('Alpha 프로젝트')
+})
+
+test('user grants revoke only the selected account and keep its empty selection across refresh', async ({ page }) => {
+  const state = await accessServer(page, true)
+  state.revision = 7
+  state.users = [
+    { user_id: 'synthetic-person-a', display_name: '합성 담당자 A' },
+    { user_id: 'synthetic-person-b', display_name: '합성 담당자 B' },
+  ]
+  state.grants = state.users.map(user => ({ grant_id: `grant-${user.user_id}`, user_id: user.user_id, role: 'TOP', project_id: 'project-alpha', block_id: null }))
+  await page.goto('/?page=admin')
+  const panel = page.getByRole('region', { name: '사용자별 권한 관리', exact: true })
+  await panel.getByRole('button', { name: /synthetic-person-b/ }).click()
+  await panel.getByRole('button', { name: '권한 회수', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '권한 회수', exact: true })
+  await expect(dialog).toContainText('합성 담당자 B')
+  await expect(dialog).toContainText('synthetic-person-b')
+  await dialog.getByLabel('처리 사유', { exact: true }).fill('합성 담당자 B의 담당 해제')
+  await dialog.getByRole('button', { name: '회수 확정', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(panel.getByRole('heading', { name: '합성 담당자 B', exact: true })).toBeVisible()
+  await expect(panel.getByRole('button', { name: '권한 회수', exact: true })).toHaveCount(0)
+  await expect(panel.getByRole('button', { name: /synthetic-person-a/ })).toHaveAttribute('aria-pressed', 'false')
+  expect(state.grants.map(grant => grant.user_id)).toEqual(['synthetic-person-a'])
+  expect(state.writes).toHaveLength(1)
+  expect(state.writes[0]).toMatchObject({ path: '/api/admin/grants/grant-synthetic-person-b/revoke', marker: '1', authorization: undefined, body: { expected_revision: 7, reason: '합성 담당자 B의 담당 해제' } })
+  expect(state.writes[0].body.command_id).toMatch(/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i)
+  await page.getByRole('button', { name: '관리 상태 새로고침', exact: true }).click()
+  await expect(page.getByRole('button', { name: '관리 상태 새로고침', exact: true })).toBeEnabled()
+  await expect(panel.getByRole('heading', { name: '합성 담당자 B', exact: true })).toBeVisible()
+  await expect(panel.getByRole('button', { name: '권한 회수', exact: true })).toHaveCount(0)
+  state.grants.push({ grant_id: 'grant-b-again', user_id: 'synthetic-person-b', role: 'OWNER', project_id: 'project-alpha', block_id: 'block-cpu' })
+  state.revision++
+  await page.getByRole('button', { name: '관리 상태 새로고침', exact: true }).click()
+  await expect(panel.getByRole('button', { name: '권한 회수', exact: true })).toHaveCount(1)
+  await expect(panel.getByRole('heading', { name: '합성 담당자 B', exact: true })).toBeVisible()
+})
+
+test('user grants retain a failed revoke and require confirmation after refreshed permissions', async ({ page }) => {
+  const state = await accessServer(page, true)
+  state.grants = [{ grant_id: 'grant-conflict', user_id: 'synthetic-user', role: 'OWNER', project_id: 'project-alpha', block_id: 'block-cpu' }]
+  state.revokeFailure = 'REVISION_CONFLICT'
+  await page.goto('/?page=admin')
+  const panel = page.getByRole('region', { name: '사용자별 권한 관리', exact: true })
+  await panel.getByRole('button', { name: '권한 회수', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '권한 회수', exact: true })
+  await dialog.getByLabel('처리 사유', { exact: true }).fill('합성 담당 해제')
+  await dialog.getByRole('button', { name: '회수 확정', exact: true }).click()
+  await expect(dialog.getByRole('alert')).toBeVisible()
+  expect(state.writes).toHaveLength(1)
+  expect(state.grants).toHaveLength(1)
+  await dialog.getByRole('button', { name: '취소', exact: true }).click()
+  await expect(panel.getByRole('button', { name: '권한 회수', exact: true })).toHaveCount(1)
+  state.revokeFailure = ''
+  state.revision++
+  await page.getByRole('button', { name: '관리 상태 새로고침', exact: true }).click()
+  await expect(page.getByRole('button', { name: '관리 상태 새로고침', exact: true })).toBeEnabled()
+  expect(state.writes).toHaveLength(1)
+  await panel.getByRole('button', { name: '권한 회수', exact: true }).click()
+  await dialog.getByLabel('처리 사유', { exact: true }).fill('최신 범위 재확인 후 담당 해제')
+  await dialog.getByRole('button', { name: '회수 확정', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(panel.getByRole('button', { name: '권한 회수', exact: true })).toHaveCount(0)
+  expect(state.grants).toEqual([])
+  expect(state.writes).toHaveLength(2)
+  expect(state.writes[1].body.expected_revision).toBe(1)
+  expect(state.writes[1].body.command_id).not.toBe(state.writes[0].body.command_id)
 })
 
 test('an OWNER elsewhere cannot edit a TOP-only bundle or receive the global inbox', async ({ page }) => {
