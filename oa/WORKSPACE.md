@@ -362,17 +362,16 @@ task는 요청 UUID/command·고정 원본/기준 해시·기대 분류 개정·
 ```bash
 .venv/bin/python tools/seed_large_workspace.py
 .venv/bin/python tools/seed_large_workspace.py --count 100000 --family GCA
-# 별도 QA에는 기존 CPU 검증 자료와 섞지 않고 Cygnus GPU에 추가한다.
-.venv/bin/python tools/seed_large_workspace.py --config /tmp/sanity-workspace-e2e/runtime.json --block project-3-gpu
+# 브라우저 QA에는 Cygnus GPU의 GCA 1만 건만 준비한다.
+.venv/bin/python tools/seed_large_workspace.py --config /tmp/sanity-workspace-e2e/runtime.json --block project-3-gpu --count 10000 --family GCA
 ```
 
 2026-10-15 합성 검증: PostgreSQL 회귀 305개, 기존 브라우저 37개와 workspace 17개를 통과했다.
 GCA·VC LP·SpyGlass 각각 단일 report에서 100,000개 record의 파싱/원문 위치를 확인했다.
 GCA의 100,000건/100,000개 고유 그룹은 전체 분류 118.851초, 원본 JSON 60,845,516 bytes,
 metadata 직렬화 6,831 bytes였다. 해당 시점의 회귀 runner 누적 최대 RSS는 699,168KiB이며 순수 분류만의 메모리 측정값은 아니다.
-브라우저의 100,000건/100그룹은 5,000건에서 API·DB를 재시작한 뒤 남은 95,000건의 분류를 89.520초에 마쳤고,
-metadata 응답 6,704 bytes, 그룹 25개·원문 50건 렌더와 마지막 원문 검색·사람 판정·모바일을 확인했다.
 이 측정은 다른 검증도 실행한 4GB 개발 환경의 참고 엔진 결과이며 실제 회사 AI의 품질/처리량이나 운영 지연 목표가 아니다.
+브라우저 회귀에는 GCA 1만 건을 사용한다. 10만 건 전체 모델 입력·최종 partition 검사는 백엔드 `full`에 유지한다.
 공유 자료는 기존 1,000개를 보존하고 도구별 10,000건 report 3개와 GCA 100,000건 report 1개를 추가한다. 전체 샘플 분포의 평균을 10,000건으로 맞춘 데이터셋은 아니다.
 
 ## 사용자 판정과 사례 재사용

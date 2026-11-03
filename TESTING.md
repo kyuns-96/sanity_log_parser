@@ -1,6 +1,6 @@
 # 테스트 실행
 
-저장소의 검사는 백엔드 67개, 브라우저 20개, 컨테이너 11개, 독립 DB 검사 2개로 총 100개다. 같은 테스트 ID를 다른 역할·프로필에서 다시 선택해도 별도 검사로 세지 않는다. 백엔드 `full`만 실행하면 67개이며 브라우저·컨테이너까지 실행한 결과로 표시하지 않는다.
+저장소의 검사는 백엔드 67개, 브라우저 19개, 컨테이너 11개, 독립 DB 검사 2개로 총 99개다. 같은 테스트 ID를 다른 역할·프로필에서 다시 선택해도 별도 검사로 세지 않는다. 백엔드 `full`만 실행하면 67개이며 브라우저·컨테이너까지 실행한 결과로 표시하지 않는다.
 
 ## 담당자별 실행
 
@@ -53,11 +53,11 @@ OA DB 검사는 실제 권한·AI/사람 확정·근거 등록·암호화된 개
 cd oa/dashboard
 npm run build
 npm run test:e2e       # 격리된 API mock 12개
-npm run test:workspace # 실제 합성 API/PG12 workspace 8002에서 6개
+npm run test:workspace # 실제 합성 API/PG12 workspace 8002에서 5개
 npm run test:drag      # 실제 합성 API/PG12 workspace 8003에서 2개
 ```
 
-실제 DB 검사는 별도 workspace를 준비한 뒤 실행한다. [workspace 준비](oa/WORKSPACE.md)를 따르며 `tools/seed_pipeline_qa.py`, `tools/seed_large_workspace.py --block project-3-gpu --family GCA`의 1만/10만 건, `tools/seed_drag_qa.py`의 두 보고서를 사용한다. workspace의 같은 serial 그룹 안에서는 사람 확정→다음 보고서 재사용→재분류에 따른 무효화를 순서대로 검증한다. 실제 모델은 호출하지 않는다.
+실제 DB 검사는 별도 workspace를 준비한 뒤 실행한다. [workspace 준비](oa/WORKSPACE.md)를 따르며 `tools/seed_pipeline_qa.py`, `tools/seed_large_workspace.py --block project-3-gpu --family GCA`의 1만 건, `tools/seed_drag_qa.py`의 두 보고서를 사용한다. workspace의 같은 serial 그룹 안에서는 사람 확정→다음 보고서 재사용→재분류에 따른 무효화를 순서대로 검증한다. 실제 모델은 호출하지 않는다.
 
 컨테이너 진입점은 실제 nginx의 Host/Origin/전달 헤더 경계와 자식 프로세스 오류·정상 종료·강제 종료를 11개로 확인한다.
 
