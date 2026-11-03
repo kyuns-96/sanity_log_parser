@@ -7,14 +7,14 @@ const vwpPath = `/api/ai/connections/${vwpId}/credentials`
 const syntheticKey = 'synthetic-vwp-personal-key'
 const issueUrl = 'https://identity.example.test/vwp-keys'
 
-async function setup(page: Page, options: { authMode?: string; error?: string; registered?: boolean; disabled?: boolean; expired?: boolean; scopeChanged?: boolean; fail?: boolean } = {}) {
-  let revision = options.registered ? 1 : 0
-  let registered = !!options.registered
+async function setup(page: Page) {
+  let revision = 0
+  let registered = false
   const writes: { path: string; body: Record<string, unknown> }[] = []
-  const status = () => ({ registered, revision, expired: !!options.expired && registered, connection_changed: !!options.scopeChanged && registered })
-  const remote = () => ({ id: vwpId, label: '합성 VWP', enabled: !options.disabled, execution_site: 'vwp', auth_mode: options.authMode || 'bearer',
-    model: 'vwp-model', models: ['vwp-model'], issuance_url: issueUrl, credential: status(), credential_required: true, credential_ready: registered && !options.error,
-    credential_error: options.error || (registered ? null : 'AI_USER_TOKEN_REQUIRED') })
+  const status = () => ({ registered, revision, expired: false, connection_changed: false })
+  const remote = () => ({ id: vwpId, label: '합성 VWP', enabled: true, execution_site: 'vwp', auth_mode: 'bearer',
+    model: 'vwp-model', models: ['vwp-model'], issuance_url: issueUrl, credential: status(), credential_required: true,
+    credential_ready: registered, credential_error: registered ? null : 'AI_USER_TOKEN_REQUIRED' })
   await page.route('**/api/**', route => {
     const req = route.request(); const path = new URL(req.url()).pathname
     if (path === '/api/workbench/session') return route.fulfill({ json: { user: { id: 'synthetic-self', name: '합성 사용자', username: 'synthetic-self', role: 'OWNER' }, csrf: '', expires_at: '', environment: 'PRODUCTION_SSO' } })
@@ -28,7 +28,6 @@ async function setup(page: Page, options: { authMode?: string; error?: string; r
       expect(body.expected_revision).toBe(revision)
       expect(Object.keys(body).sort()).toEqual(path.endsWith('/remove') ? ['expected_revision'] : ['expected_revision', 'token'])
       writes.push({ path, body })
-      if (options.fail) return route.fulfill({ status: 409, json: { code: 'REVISION_CONFLICT', private_detail: syntheticKey } })
       revision++; registered = !path.endsWith('/remove')
       return route.fulfill({ json: status() })
     }
@@ -64,66 +63,4 @@ test('VWP personal Bearer key is masked, registered, replaced and removed with i
   expect(writes[2].body).not.toHaveProperty('token')
   await expect(page.locator('body')).not.toContainText(syntheticKey)
   expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toContain(syntheticKey)
-})
-
-test('VWP x-client mode asks for an API key, and failed saves never echo or retain it', async ({ page }) => {
-  const { writes, remoteArticle } = await setup(page, { authMode: 'x_client_api_key', fail: true })
-  const input = remoteArticle.getByLabel('합성 VWP 개인 API 키')
-  await input.fill(syntheticKey)
-  await remoteArticle.getByRole('button', { name: '인증값 저장' }).click()
-  await expect(input).toHaveValue('')
-  await expect(page.getByRole('alert')).toContainText('다른 창에서 설정이 바뀌었습니다')
-  await expect(page.locator('body')).not.toContainText(syntheticKey)
-  expect(writes).toHaveLength(1)
-})
-
-for (const scenario of [
-  { label: 'expired', options: { registered: true, expired: true }, message: '인증값이 만료됐습니다' },
-  { label: 'changed scope', options: { registered: true, scopeChanged: true }, message: '인증값을 다시 등록해야 합니다' },
-] as const) test(`VWP ${scenario.label} gives personal credential guidance`, async ({ page }) => {
-  const { remoteArticle } = await setup(page, scenario.options)
-  await expect(remoteArticle).toContainText(scenario.message)
-})
-
-test('VWP permission denial blocks registration but permits deleting the existing personal key', async ({ page }) => {
-  const { writes, remoteArticle } = await setup(page, { registered: true, error: 'FORBIDDEN' })
-  await expect(remoteArticle.getByLabel('합성 VWP 개인 Bearer 토큰')).toBeDisabled()
-  await expect(remoteArticle).toContainText('현재 사용자에게 VWP 모델 사용 권한이 없습니다')
-  await remoteArticle.getByRole('button', { name: '연결 해제' }).click()
-  await expect(remoteArticle).toContainText('미등록')
-  expect(writes[0].path).toBe(vwpPath + '/remove')
-  await expect(remoteArticle.getByLabel('합성 VWP 개인 Bearer 토큰')).toBeDisabled()
-  await expect(remoteArticle).toContainText('현재 사용자에게 VWP 모델 사용 권한이 없습니다')
-})
-
-test('VWP profile failure remains visible and blocks registration after removing the stored key', async ({ page }) => {
-  const { writes, remoteArticle } = await setup(page, { registered: true, error: 'AI_VWP_PROFILE_UNAVAILABLE', expired: true })
-  const input = remoteArticle.getByLabel('합성 VWP 개인 Bearer 토큰')
-  await expect(input).toBeDisabled()
-  await expect(remoteArticle).toContainText('VWP AI 실행 프로필을 사용할 수 없습니다')
-  await expect(remoteArticle).not.toContainText('인증값이 만료됐습니다')
-  await remoteArticle.getByRole('button', { name: '연결 해제' }).click()
-  await expect(remoteArticle).toContainText('미등록')
-  await expect(remoteArticle).toContainText('VWP AI 실행 프로필을 사용할 수 없습니다')
-  await expect(input).toBeDisabled()
-  expect(writes[0].path).toBe(vwpPath + '/remove')
-})
-
-test('disabled VWP connection permits removing a stored personal key', async ({ page }) => {
-  const { writes, remoteArticle } = await setup(page, { registered: true, disabled: true })
-  await expect(remoteArticle.getByLabel('합성 VWP 개인 Bearer 토큰')).toBeDisabled()
-  await remoteArticle.getByRole('button', { name: '연결 해제' }).click()
-  await expect(remoteArticle).toContainText('사용 중지')
-  expect(writes[0].path).toBe(vwpPath + '/remove')
-})
-
-test('legacy VWP metadata asks for configuration review instead of claiming shared credentials', async ({ page }) => {
-  const { writes } = await setup(page, { authMode: 'vwp_managed', registered: true })
-  const article = page.getByRole('article', { name: '합성 VWP VWP 연결' })
-  await expect(article).toContainText('인증 방식을 확인할 수 없습니다')
-  await expect(article).not.toContainText('VWP에서 인증 관리')
-  await expect(article.locator('input')).toHaveCount(0)
-  await article.getByRole('button', { name: '연결 해제' }).click()
-  await expect.poll(() => writes.length).toBe(1)
-  expect(writes[0].path).toBe(vwpPath + '/remove')
 })

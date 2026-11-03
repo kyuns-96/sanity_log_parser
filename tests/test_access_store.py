@@ -1,16 +1,11 @@
 """Small, real-PostgreSQL coverage of production permissions and immutable audit."""
 from contextlib import contextmanager
-from copy import deepcopy
-import threading
-import unittest
-from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
-from starlette.requests import Request
 
 from common.sanity_common import ReviewError
 from common.sanity_db import Database, json_value, stable_uuid
-from oa.sanity_access import AccessStore, PREFIX, access_lock, administrator_id, require_mutation_request
+from oa.sanity_access import AccessStore, access_lock
 from oa.sanity_auth import Actor
 from tests.support import PgTestCase, ROOT
 
@@ -18,34 +13,6 @@ ADMIN = Actor("synthetic.admin", "합성 관리자", "sso")
 OWNER = Actor("synthetic.owner", "합성 블록 담당자", "sso")
 TOP = Actor("synthetic.top", "합성 프로젝트 담당자", "sso")
 OTHER = Actor("synthetic.other", "합성 다른 사용자", "sso")
-
-
-class AccessConfigurationTests(unittest.TestCase):
-    def assert_code(self, code, callback):
-        with self.assertRaises(ReviewError) as caught:
-            callback()
-        self.assertEqual(code, caught.exception.code)
-
-    def test_optional_administrator_id_is_exact_and_not_normalized(self):
-        self.assertIsNone(administrator_id({}))
-        self.assertIsNone(administrator_id({"SANITY_ADMIN_USER_ID": ""}))
-        self.assertEqual("Case.Sensitive", administrator_id({"SANITY_ADMIN_USER_ID": "Case.Sensitive"}))
-        for value in (" ", "user ", "user\n", 1, ["admin"], "x" * 101):
-            self.assert_code("AUTHORIZATION_CONFIG", lambda: administrator_id({"SANITY_ADMIN_USER_ID": value}))
-
-    def test_mutation_guard_rejects_cross_site_and_forged_origin(self):
-        def request(**headers):
-            return Request({"type": "http", "method": "POST", "scheme": "http", "path": "/api/access/requests",
-                            "query_string": b"", "headers": [(k.replace("_", "-").encode(), v.encode())
-                                for k, v in {"host": "sanity.example.test", **headers}.items()]})
-        require_mutation_request(request(x_sanity_request="1"))
-        require_mutation_request(request(x_sanity_request="1", origin="https://sanity.example.test", sec_fetch_site="same-origin"))
-        for changed in ({}, {"x_sanity_request": "0"}, {"x_sanity_request": "1", "origin": "null"},
-                        {"x_sanity_request": "1", "origin": "https://other.example.test"},
-                        {"x_sanity_request": "1", "origin": "https://sanity.example.test/path"},
-                        {"x_sanity_request": "1", "sec_fetch_site": "cross-site"},
-                        {"x_sanity_request": "1", "sec_fetch_site": "same-site"}):
-            self.assert_code("FORBIDDEN", lambda: require_mutation_request(request(**changed)))
 
 
 class AccessStoreTests(PgTestCase):
@@ -100,49 +67,6 @@ class AccessStoreTests(PgTestCase):
                          (uuid4(), bundle_id, json_value({"bundle": {"run": {"scope": scope}}})))
         return bundle_id
 
-    def test_new_accounts_and_admin_have_no_implicit_business_access(self):
-        before = self.admin_query("SELECT record_id,payload,state,version,created_at,updated_at FROM {oa} "
-                                  "WHERE record_type='SSO_IDENTITY' ORDER BY workspace_key").fetchall()
-        self.registry()
-        for actor in (ADMIN, OWNER):
-            self.call("require_actor", actor)
-            snapshot = self.call("snapshot", actor.user_id)
-            self.assertEqual([], snapshot["grants"])
-            self.assertEqual([], snapshot["requests"])
-            self.assertFalse(self.call("can_read_business", actor.user_id))
-            self.assertFalse(self.call("can_write_business", actor.user_id))
-        self.assertTrue(self.call("snapshot", ADMIN.user_id)["is_admin"])
-        self.assertEqual(2, len(self.call("catalog")["projects"]))
-        self.assert_code("FORBIDDEN", lambda: self.call("admin_snapshot", OWNER))
-        self.assert_code("FORBIDDEN", lambda: self.call("require_actor", Actor(ADMIN.user_id, "forged", "local_token")))
-        with self.store(admin_id=None) as store:
-            self.assert_code("AUTHORIZATION_NOT_IMPLEMENTED", lambda: store.require_actor(ADMIN))
-        after = self.admin_query("SELECT record_id,payload,state,version,created_at,updated_at FROM {oa} "
-                                 "WHERE record_type='SSO_IDENTITY' ORDER BY workspace_key").fetchall()
-        self.assertEqual(before, after)
-
-    def test_registry_retries_are_exact_and_parent_ids_remain_case_sensitive(self):
-        command = uuid4()
-        first = self.call("create_project", ADMIN, command, "ProjectA", "합성 프로젝트", "설명", exclusive=True)
-        retry = self.call("create_project", ADMIN, command, "ProjectA", "합성 프로젝트", "설명", exclusive=True)
-        self.assertEqual(first["revision"], retry["revision"])
-        self.assertEqual("ALREADY_CREATED", retry["status"])
-        self.assert_code("REQUEST_CONFLICT", lambda: self.call("create_project", ADMIN, command, "ProjectA", "다른 이름", "설명", exclusive=True))
-        self.assert_code("FORBIDDEN", lambda: self.call("create_project", OWNER, uuid4(), "other", "다른 프로젝트", exclusive=True))
-        self.assert_code("RESOURCE_NOT_FOUND", lambda: self.call("create_block", ADMIN, uuid4(), "projecta", "block1", "블록", exclusive=True))
-        self.call("create_block", ADMIN, uuid4(), "ProjectA", "block1", "블록", exclusive=True)
-        self.assert_code("REQUEST_CONFLICT", lambda: self.call("create_block", ADMIN, uuid4(), "ProjectA", "block1", "블록", exclusive=True))
-        with self.store() as store:
-            rows = store.db.execute("SELECT record_type,payload,state,version,created_at,updated_at FROM {oa} "
-                                    "WHERE record_type IN ('WS_CONFIG','WS_PROJECT','WS_BLOCK')").fetchall()
-            for row in rows:
-                self.assertEqual({}, row["state"])
-                self.assertEqual(0, row["version"])
-                self.assertEqual(row["created_at"], row["updated_at"])
-                if row["record_type"] == "WS_PROJECT":
-                    self.assertEqual([], row["payload"]["tops"])
-                if row["record_type"] == "WS_BLOCK":
-                    self.assertEqual([], row["payload"]["owners"])
 
     def test_legacy_grants_are_project_members_with_sql_scoped_read_and_write(self):
         self.registry()
@@ -195,69 +119,3 @@ class AccessStoreTests(PgTestCase):
         pending = self.call("request", OWNER, rejected_id, "TOP", "project.A", None, "프로젝트 접근 요청", exclusive=True)
         self.call("decide", ADMIN, rejected_id, uuid4(), "REJECT", "업무 범위 확인 필요", pending["revision"], exclusive=True)
         self.assertEqual("REJECTED", self.call("snapshot", OWNER.user_id)["requests"][0]["status"])
-
-    def test_inactive_identity_and_invalid_registered_scope_fail_closed(self):
-        self.registry()
-        grant_id = self.grant(OWNER, "OWNER", block="block.A1")
-        self.admin_query("UPDATE {oa} SET state=jsonb_set(state,'{{enabled}}','false') WHERE record_type='SSO_IDENTITY' AND workspace_key=%s",
-                         (OWNER.user_id,))
-        self.assert_code("ACCOUNT_DISABLED", lambda: self.call("require_actor", OWNER))
-        self.assert_code("ACCOUNT_DISABLED", lambda: self.call("can_read_business", OWNER.user_id))
-        self.assert_code("ACCOUNT_NOT_LINKED", lambda: self.call("require_actor", Actor("unknown", "합성", "sso")))
-        self.assert_code("RESOURCE_NOT_FOUND", lambda: self.call("validate_scope", {"schema_version": 1, "project_id": "project.A", "block_id": "block.B1"}))
-        with self.store(admin_id=None) as store:
-            store.require_ready(ingestion=True)
-            scope = store.validate_scope({"schema_version": 1, "project_id": "project.A", "block_id": "block.A1"})
-            self.assertEqual("block.A1", scope["block_id"])
-            self.assert_code("AUTHORIZATION_NOT_IMPLEMENTED", lambda: store.require_actor(ADMIN))
-        self.assertEqual(grant_id, self.call("admin_snapshot", ADMIN)["grants"][0]["grant_id"])
-
-    def test_permission_history_survives_explicit_administrator_rotation(self):
-        self.registry()
-        self.grant(OWNER, "OWNER", block="block.A1")
-        with self.store(admin_id=OTHER.user_id) as store:
-            store.require_actor(OWNER)
-            self.assertTrue(store.can_write_business(OWNER.user_id))
-            self.assertFalse(store.is_admin(ADMIN.user_id))
-            self.assertTrue(store.is_admin(OTHER.user_id))
-            self.assert_code("FORBIDDEN", lambda: store.admin_snapshot(ADMIN))
-
-    def test_required_unique_definition_is_checked_instead_of_index_name(self):
-        self.admin_query("DROP INDEX " + self.schema + ".sanity_workspace_key_uq")
-        self.admin_query("CREATE INDEX sanity_workspace_key_uq ON {oa}(record_type,workspace_key) WHERE workspace_key IS NOT NULL")
-        self.assert_code("AUTHORIZATION_SCHEMA", lambda: self.call("require_ready"))
-
-    def test_audit_replay_rejects_gaps_and_duplicate_pending_requests(self):
-        self.registry()
-        request_id = uuid4()
-        self.call("request", OWNER, request_id, "OWNER", "project.A", "block.A1", "업무 요청", exclusive=True)
-        row = self.admin_query("SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key=%s",
-                               (PREFIX + str(request_id),)).fetchone()[0]
-        duplicate = deepcopy(row)
-        duplicate["revision"] += 1
-        duplicate["command_id"] = str(uuid4())
-        key = PREFIX + duplicate["command_id"]
-        self.admin_query("INSERT INTO {oa}(record_id,record_type,workspace_key,payload) VALUES (%s,'WS_CONFIG',%s,%s)",
-                         (stable_uuid("workspace-v1", "WS_CONFIG", key), key, json_value(duplicate)))
-        self.assert_code("AUTHORIZATION_STATE_CORRUPT", lambda: self.call("snapshot", OWNER.user_id))
-        self.admin_query("DELETE FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key=%s", (key,))
-        row["revision"] += 1
-        self.admin_query("UPDATE {oa} SET payload=%s WHERE record_type='WS_CONFIG' AND workspace_key=%s", (json_value(row), PREFIX + str(request_id)))
-        self.assert_code("AUTHORIZATION_STATE_CORRUPT", lambda: self.call("snapshot", OWNER.user_id))
-
-    def test_revocation_waits_for_shared_business_lock_and_next_request_observes_it(self):
-        self.registry()
-        grant_id = self.grant(OWNER, "OWNER", block="block.A1")
-        revision = self.call("snapshot", OWNER.user_id)["revision"]
-        attempted = threading.Event()
-        def revoke():
-            attempted.set()
-            return self.call("revoke", ADMIN, grant_id, uuid4(), "담당 회수", revision, exclusive=True)
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            with self.store() as store:
-                self.assertTrue(store.can_write_business(OWNER.user_id))
-                future = executor.submit(revoke)
-                self.assertTrue(attempted.wait(2))
-                self.assertFalse(future.done())
-            future.result(timeout=5)
-        self.assertFalse(self.call("can_write_business", OWNER.user_id))

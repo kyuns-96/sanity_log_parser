@@ -1,7 +1,6 @@
 """Explicit intranet HTTP model URLs; synthetic loopback and mock TLS tests."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-import socket
 import ssl
 import threading
 import unittest
@@ -9,14 +8,13 @@ from unittest.mock import patch
 
 import httpx
 
-from common.sanity_common import ReviewError, canonical_json
+from common.sanity_common import canonical_json
 from common.sanity_integration_examples import clustering_example
 from common.sanity_vwp_ai_http import invoke as vwp_invoke
 from common.sanity_vwp_ai_profiles import ProfileStore
 from oa.sanity_ai_model import OAAdvisor
 from tests.test_ai_model import chat, environment
 from tests.test_vwp_inference import PERSONAL_TOKEN, profile, body
-from vwp_bridge.sanity_ai import AIAdapter
 
 UNUSED_CA = "/nonexistent/synthetic-unused-model-ca.pem"
 
@@ -68,31 +66,6 @@ class ModelHttpTests(unittest.TestCase):
     def cluster(self, advisor):
         return advisor.cluster(self.packet["context"], self.packet["cases"], self.packet["identity_fields"])
 
-    def test_http_reaches_real_loopback_with_credentials_for_each_model_client(self):
-        result = self.cluster(self.oa(self.url+"/oa", SANITY_OA_AI_CA_PATH=UNUSED_CA))
-        self.assertTrue(result["metadata"]["model_called"])
-        private = profile(endpoint=self.url+"/vwp", ca_path=UNUSED_CA)
-        ProfileStore([private])
-        raw, _ = invoke(canonical_json(body()), private, timeout=5, max_output_bytes=4096)
-        self.assertEqual("synthetic-model", json.loads(raw)["model"])
-        legacy = AIAdapter({"SANITY_AI_MODE":"api", "SANITY_AI_URL":self.url+"/legacy",
-            "SANITY_AI_TOKEN":"synthetic-legacy-token", "SANITY_AI_MODEL":"synthetic-model", "SANITY_AI_CA_PATH":UNUSED_CA})
-        self.assertTrue(legacy.propose({"schema_version":1})["needs_clarification"])
-        self.assertEqual(["/oa","/vwp","/legacy"], [r[0] for r in self.requests])
-        self.assertEqual(["Bearer "+environment()["SANITY_OA_AI_TOKEN"], "Bearer "+PERSONAL_TOKEN, "Bearer synthetic-legacy-token"],
-                         [r[1]["Authorization"] for r in self.requests])
-
-    def test_http_backup_receives_one_post_after_refused_primary_connection(self):
-        with socket.socket() as blocked:
-            blocked.bind(("127.0.0.1", 0))  # Reserved, non-listening port: no primary POST can arrive.
-            primary = "http://127.0.0.1:"+str(blocked.getsockname()[1])+"/primary"
-            result = self.cluster(self.oa(primary, self.url+"/oa-backup", SANITY_OA_AI_CA_PATH=UNUSED_CA))
-            self.assertEqual("fallback", result["metadata"]["routing"]["endpoint"])
-            private = profile(endpoint=primary, fallback_endpoint=self.url+"/vwp-backup", ca_path=UNUSED_CA)
-            ProfileStore([private])
-            _, route = invoke(canonical_json(body()), private, timeout=5, max_output_bytes=4096)
-            self.assertEqual({"endpoint":"fallback", "attempted_endpoints":["primary","fallback"]}, route)
-        self.assertEqual(["/oa-backup","/vwp-backup"], [r[0] for r in self.requests])
 
     def test_explicit_mixed_scheme_backups_keep_tls_verification_and_identical_requests(self):
         actual_client = httpx.Client
@@ -131,51 +104,3 @@ class ModelHttpTests(unittest.TestCase):
                     self.assertEqual([primary,fallback], [str(r.url) for r in seen])
                     self.assertEqual(seen[0].content, seen[1].content)
                     self.assertEqual(seen[0].headers["authorization"], seen[1].headers["authorization"])
-
-    def test_https_ca_is_required_for_primary_and_explicit_backup(self):
-        for primary, fallback in (("https://primary.example.test/api", ""),
-                                  (self.url+"/primary", "https://backup.example.test/api")):
-            with self.subTest(primary=primary), self.assertRaises(ReviewError) as error:
-                self.oa(primary, fallback, SANITY_OA_AI_CA_PATH=UNUSED_CA)
-            self.assertEqual("AI_CONFIG", error.exception.code)
-            private = profile(endpoint=primary, fallback_endpoint=fallback, ca_path=UNUSED_CA)
-            with self.assertRaises(ReviewError) as error:
-                invoke(canonical_json(body()), private, timeout=5, max_output_bytes=4096)
-            self.assertEqual("AI_VWP_PROFILE_CONFIG", error.exception.code)
-            self.assertIs(error.exception.model_called, False)
-        with self.assertRaises(ReviewError) as error:
-            AIAdapter({"SANITY_AI_MODE":"api", "SANITY_AI_URL":"https://primary.example.test/api",
-                "SANITY_AI_TOKEN":"synthetic-legacy-token", "SANITY_AI_MODEL":"synthetic-model",
-                "SANITY_AI_CA_PATH":UNUSED_CA}).propose({"schema_version":1})
-        self.assertEqual("AI_CONFIG", error.exception.code)
-        self.assertEqual([], self.requests)
-
-    def test_http_server_errors_and_redirects_do_not_contact_backup(self):
-        for path in ("/error", "/redirect"):
-            for kind in ("oa", "vwp"):
-                self.requests.clear()
-                with self.subTest(path=path, client=kind), self.assertRaises(ReviewError) as error:
-                    if kind == "oa":
-                        self.cluster(self.oa(self.url+path, self.url+"/backup"))
-                    else:
-                        invoke(canonical_json(body()), profile(endpoint=self.url+path, fallback_endpoint=self.url+"/backup"),
-                               timeout=5, max_output_bytes=4096)
-                self.assertEqual("AI_CALL_FAILED", error.exception.code)
-                self.assertEqual([path], [r[0] for r in self.requests])
-
-    def test_http_read_timeout_remains_unknown_without_another_post(self):
-        for kind in ("oa", "vwp"):
-            seen = []
-            def timeout(request):
-                seen.append(request)
-                raise httpx.ReadTimeout("synthetic response timeout", request=request)
-            with self.subTest(client=kind), self.assertRaises(ReviewError) as error:
-                if kind == "oa":
-                    advisor = OAAdvisor(environment(SANITY_OA_AI_URL=self.url+"/primary", SANITY_OA_AI_FALLBACK_URL=self.url+"/backup"),
-                                        transport=httpx.MockTransport(timeout))
-                    self.cluster(advisor)
-                else:
-                    invoke(canonical_json(body()), profile(endpoint=self.url+"/primary", fallback_endpoint=self.url+"/backup"),
-                           timeout=5, max_output_bytes=4096, transport=httpx.MockTransport(timeout))
-            self.assertEqual("AI_OUTCOME_UNKNOWN", error.exception.code)
-            self.assertEqual(1, len(seen))

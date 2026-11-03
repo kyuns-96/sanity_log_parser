@@ -76,7 +76,7 @@ def pg_binaries(explicit):
         else:
             raise MockError("Install PostgreSQL 12.1+ or pass --pg-bin /path/to/postgresql/bin")
     if not all((directory / name).is_file() and os.access(directory / name, os.X_OK)
-               for name in ("initdb", "pg_ctl", "postgres")):
+               for name in ("initdb", "pg_ctl", "postgres", "psql")):
         raise MockError("PostgreSQL server binaries are missing; check --pg-bin")
     return directory
 
@@ -171,9 +171,16 @@ class MockDatabase:
         try:
             invalid = psycopg2.connect(**{**self.parameters("vwp"), "password": "deliberately-incorrect"})
         except psycopg2.OperationalError:
-            return
-        invalid.close()
-        raise MockError("Fixture accepted an invalid password")
+            pass
+        else:
+            invalid.close()
+            raise MockError("Fixture accepted an invalid password")
+        parameters = self.parameters("admin")
+        environment = {**self.env, "SANITY_PSQL": str(self.binaries / "psql"),
+                       **{"PG" + key: str(parameters[value]) for key, value in (
+                           ("HOST", "host"), ("PORT", "port"), ("USER", "user"),
+                           ("PASSWORD", "password"), ("DATABASE", "dbname"))}}
+        execute(staged, environment, self.root / "concurrency.log", "db/tests/check_concurrency.py")
 
     def worker_environment(self, index):
         import psycopg2

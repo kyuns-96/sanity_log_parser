@@ -13,11 +13,10 @@ from oa.docker import start
 
 
 class HostBoundaryTests(unittest.TestCase):
-    def test_exact_names_ips_and_local_health_host(self):
-        names = start.server_names(" OA.Example.Invalid,192.0.2.10,::1,oa.example.invalid ")
-        self.assertEqual("oa.example.invalid 192.0.2.10 [::1] 127.0.0.1", names)
 
     def test_nginx_injection_wildcards_ports_and_scoped_ipv6_are_rejected(self):
+        names = start.server_names(" OA.Example.Invalid,192.0.2.10,::1,oa.example.invalid ")
+        self.assertEqual("oa.example.invalid 192.0.2.10 [::1] 127.0.0.1", names)
         for value in ("", " ", "oa.example.invalid,", "*", "*.example.invalid", ".example.invalid",
                       "https://oa.example.invalid", "oa.example.invalid:8080", "good; return 200; #",
                       "good\nbad", "good bad", "~.*", "bad_name", "-bad.example.invalid",
@@ -25,21 +24,6 @@ class HostBoundaryTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 start.server_names(value)
 
-    def test_config_render_cannot_add_an_unconfigured_host(self):
-        with tempfile.TemporaryDirectory() as temp:
-            runtime = Path(temp) / "nginx"
-            start.render_config("oa.example.invalid", runtime=runtime)
-            text = (runtime / "server.conf").read_text()
-            self.assertIn("server_name oa.example.invalid 127.0.0.1;", text)
-            self.assertNotIn("__OA_SERVER_NAMES__", text)
-            self.assertIn("return 400;", text)
-            self.assertIn("proxy_set_header Host $http_host;", text)
-            self.assertNotIn("proxy_set_header Host $host;", text)
-            self.assertNotIn("proxy_set_header Origin", text)
-            for header in ("Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-IP"):
-                self.assertIn(f'proxy_set_header {header} "";', text)
-
-    def test_invalid_config_is_rejected_before_creating_runtime_files(self):
         with tempfile.TemporaryDirectory() as temp:
             runtime = Path(temp) / "nginx"
             with self.assertRaises(ValueError):

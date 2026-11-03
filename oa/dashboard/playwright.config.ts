@@ -9,7 +9,7 @@ if (!Number.isInteger(workers) || workers < 1 || workers > 16) throw new Error('
 
 export default defineConfig({
   testDir: './e2e', fullyParallel: true, workers,
-  testIgnore: ['**/workspace-live.spec.ts', '**/codex-*.spec.ts', '**/workbench-drag.spec.ts', '**/workbench-rationale.spec.ts', '**/workbench-guidance.spec.ts'],
+  testIgnore: ['**/workspace-live.spec.ts', '**/workbench-drag.spec.ts'],
   reporter: [['list'], ['html', { open: 'never' }]],
   use: { baseURL, viewport: { width: 1440, height: 1100 }, trace: 'retain-on-failure', screenshot: 'only-on-failure' },
   webServer: { command: `npm run dev -- --port ${port}`, url: baseURL, reuseExistingServer: !process.env.SANITY_DASHBOARD_TEST_PORT },

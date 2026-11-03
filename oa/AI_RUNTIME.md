@@ -428,7 +428,7 @@ root 소유 설정 준비 2건이다. 두 보안 항목은 사내 독립 Linux �
 일상 `quick`에는 최초 직접 근거 판정·A→B 순환의 대표 시험과 모델 선택·연결 전환의 합성 회귀를 포함한다. 전체 100,000건 회귀를 매번 실행하지 않는다. HTTP/기준 파일/순수 계약만 확인할 때는 다음 전용 명령을 사용할 수 있다.
 
 ```bash
-.venv/bin/python -m unittest tests.test_ai_connections.ConnectionConfigurationTests tests.test_ai_connections.ConnectionApiTests tests.test_ai_routing.RoutingConfigurationTests tests.test_ai_routing.RoutingTransportTests tests.test_ai_gateway tests.test_ai_model tests.test_ai_criteria tests.test_ai_workbench_api tests.test_ai_credentials.CredentialConfigurationTests tests.test_ai_credentials.CredentialApiTests -v
+.venv/bin/python run_tests.py --role oa
 ```
 
 일상 검증은 변경 전용 시험과 `quick`을 사용하고 실제 실행 수·skip을 보고한다. 선택형 분류·확정 그룹 판정·보존 본문 분할의 범위와 한도는 [배치 계약](BATCHED_CLUSTERING.md)으로 구분한다. 분류·대용량 계약 변경은 full과 10만 건 검증도 수행한다. 오류·보호 파일 변경 필요는 [비식별 문의 절차](../INTERNAL_AI_GUIDE.md#6-디버깅이-필요하면-codex에게-문의)로 전달한다. 실제 URL·토큰·report·기준 원문·사람 계정은 외부 자료에 포함하지 않는다.

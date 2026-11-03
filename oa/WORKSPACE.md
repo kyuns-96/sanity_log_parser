@@ -264,10 +264,10 @@ control/feedback은 같은 내용과 경로를 사용하며 report/record ID만 
 ```bash
 .venv/bin/python tools/seed_codex_mock.py --config artifacts/workspace-runtime.json --result-dir artifacts/<실험>
 cd oa/dashboard
-npx playwright test --config playwright.codex.config.ts
+npm run test:workspace
 ```
 
-브라우저 검증은 이관된 별도 8003 합성 workspace가 필요하며 모델을 호출하지 않는다. 화면에 모델과 참고 사례를 표시하고,
+저장된 모델 출력은 이관된 별도 8003 합성 workspace에서 직접 확인한다. 자동 브라우저 회귀는 실제 모델을 호출하지 않으며 별도 8002 합성 workspace를 사용한다. 화면에 모델과 참고 사례를 표시하고,
 실제 모델 초안의 확정 영역에서는 선택형 재사용 체크 대신 확정 시 사례로 저장됨을 안내한다.
 일반 화면의 참고 초안/판정 제안은 기존 엔진이다. 기존 제안 API의 HTTP mode로 `MOCK_CODEX`를 입력할 수 없고 사내 `CORPORATE`는 계속 503이다.
 이번 실험은 **8/12/12건·분류 3회**다. 연결 확인 1회를 별도로 실행했으며 10만 건 전체 모델 호출·2단계 모델 판정·사내 SDK 연결은 검증하지 않았다.
@@ -289,15 +289,7 @@ AI는 초안만 저장한다. 기존 확정을 새 초안으로 대체하면 과
 - 공개 mock의 자원 예산은 동시에 1개, report별 총 20개 UUID다. 실패 요청도 이력과 예산에 포함하며 과거 UUID를 삭제해 재사용하지 않는다. 이는 운영 규모나 보고서 건수 제한이 아니다.
 - 사람이 이 테스트의 그룹 이름·검토 사유에 입력한 내용도 다음 모델 prompt에 포함된다. 실제 사내 자료/비밀값을 이 테스트에 작성하지 않는다. 회사 report는 승인된 VWP 수집·DB 경계를 사용하고 사내 OA 모델은 별도 운영 경로로 연결한다.
 
-브라우저의 실제 호출 검증은 별도 명시적 실행만 허용한다. 일반 회귀/화면 테스트에는 포함하지 않는다.
-
-```bash
-cd oa/dashboard
-SANITY_CODEX_LIVE_TEST=1 npx playwright test --config playwright.codex-live.config.ts
-```
-
-이 시험은 합성 QA 8003에서 버튼 클릭 1회·호출 중 새로고침·결과 복원·동일 UUID 재요청의 추가 호출 없음·원본/PoR 불변·TOP/모바일 표시를 확인한다.
-실제 호출은 12건이며 100,000건 전체 모델 처리나 2단계 모델 판정의 검증으로 쓰지 않는다.
+실제 모델을 호출하는 브라우저 전용 검사는 삭제했다. `npm run test:e2e`는 API mock만 사용하며 실제 호출 검증으로 표시하지 않는다. 합성 자료의 실제 모델 확인은 위 CLI의 명시적 `--live` 실행과 저장 결과를 사용한다. 과거 12건 버튼 검증 결과를 현재 코드의 재검증이나 100,000건·2단계 모델 판정 완료로 표시하지 않는다.
 
 ## 대용량 report의 순차 검토
 
@@ -548,9 +540,7 @@ cd oa/dashboard
 npx playwright test --config playwright.drag.config.ts
 ```
 
-시나리오별 `qa-log-drag-*` report 8개·각 120건을 추가한다. 기존 report가 다르면 교체를 거부하며,
-테스트는 이 QA report의 분류만 새 개정으로 시작한다. 단일/페이지 간 다중 이동·새 그룹/취소·키보드·터치 자동 스크롤·
-개정 충돌·저장 응답 유실 후 UUID 재시도·TOP 조회 및 원본/PoR 불변을 검증한다.
+`qa-log-drag-single`, `qa-log-drag-cancel` 두 report에 각 120건을 추가한다. 기존 report가 다르면 교체를 거부하며, 테스트는 이 QA report의 분류만 새 개정으로 시작한다. 실제 단일 이동·저장/새로고침·원본/PoR 불변과 같은 그룹/외부/취소 시 write 0회·TOP 읽기 전용 경계를 확인한다.
 공유 8001 서버는 이 seed 도구가 거부하며 기본 `test:e2e`는 이 통합 테스트를 실행하지 않는다.
 
 ### V2 근거 저장·확정 요청

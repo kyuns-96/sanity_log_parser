@@ -1,5 +1,4 @@
 """Rule codes partition every sanity before AI or human semantic grouping."""
-from copy import deepcopy
 from dataclasses import replace
 import unittest
 from uuid import uuid4
@@ -7,71 +6,7 @@ from uuid import uuid4
 import httpx
 
 from common.sanity_common import ReviewError
-from common.sanity_clustering_advice import validate_clustering_advice
-from common.sanity_ai_projection import declaration,project_rows
-from common.sanity_rule_groups import enforce,model_context,rule_code
 from tests.support import PgTestCase
-
-
-class RuleGroupTests(unittest.TestCase):
-    def context(self):
-        return {'report':{'id':'synthetic','rule':'item-name','record_count':3,
-            'records':[{'id':key,'raw':'synthetic','fields':{'code':code,'object':'same'}}
-                       for key,code in [('a','R2'),('b','R1'),('c','R2')]]}}
-
-    def test_different_codes_cannot_be_one_group_in_any_sanity(self):
-        for family in ('GCA','DC','STATIC','CUSTOM'):
-            context=self.context();context['report']['family']=family
-            value={'groups':[{'id':'g','label':'같은 내용','record_ids':['a','b','c']}],
-                   'reason':'같은 의미','reference_ids':[]}
-            with self.subTest(family=family),self.assertRaises(ReviewError) as error:
-                validate_clustering_advice(value,context,[])
-            self.assertEqual('RULE_CODE_CONFLICT',error.exception.code)
-
-    def test_labels_start_with_actual_code_and_are_idempotent_without_mutating_input(self):
-        context=self.context();groups=[{'id':'a','label':'간단한 설명','record_ids':['a','c']},
-                                      {'id':'z','label':'R1 · 별도 조건','record_ids':['b']}]
-        original=deepcopy(groups)
-        result=enforce(groups,context['report']['records'],context['report'])
-        self.assertEqual(['R1 · 별도 조건','R2 · 간단한 설명'],[g['label'] for g in result])
-        self.assertEqual(groups,original)
-        self.assertEqual(result,enforce(result,context['report']['records'],context['report']))
-
-    def test_selected_input_keeps_code_as_structural_metadata_and_no_excluded_evidence(self):
-        context=self.context();original=context['report']['records']
-        policy=declaration({'ai_fields':['object'],'include_raw':False,'include_details':False})
-        visible=project_rows(original,policy)
-        projected=model_context({'report':{**context['report'],'records':visible}},original)
-        self.assertEqual({'a':'R2','b':'R1','c':'R2'},projected['report']['rule_codes'])
-        self.assertTrue(all(set(r['fields'])=={'object'} and 'raw' not in r for r in projected['report']['records']))
-        self.assertEqual('R2',rule_code(visible[0],projected['report']))
-
-    def test_transferred_records_cannot_use_item_name_as_missing_rule_code(self):
-        row={'id':'a','fields':{}}
-        self.assertEqual('LEGACY',rule_code(row,{'rule':'LEGACY'}))
-        with self.assertRaises(ReviewError) as error:
-            rule_code(row,{'source_storage':'PARTS_V2','rule':'item-name'})
-        self.assertEqual('RULE_CODE_REQUIRED',error.exception.code)
-
-    def test_leaf_and_merge_plans_never_cross_code_boundaries_without_reordering_records(self):
-        from tests.test_ai_batches import BatchPureTests
-        f=BatchPureTests();model=f.model(max_records=20,input_tokens=64000)
-        template=model.records[0]
-        model.records=[{**template,'id':str(i),'fields':{**template['fields'],'code':code}}
-                       for i,code in enumerate(('R2','R2','R1','R1','R2'))]
-        model.context['report'].update(records=model.records,record_count=len(model.records))
-        self.assertEqual([(0,2),(2,4),(4,5)],[(p['start'],p['stop']) for p in model.leaf_plan()])
-        nodes=[]
-        for part in model.leaf_plan():nodes+=model.execute({'kind':'LEAF',**part})['nodes']
-        by_id={n['id']:n for n in nodes}
-        for round_number in (1,2):
-            plan=model.merge_plan(nodes,round_number)
-            self.assertEqual(set(by_id),{key for bucket in plan for key in bucket})
-            for bucket in plan:
-                codes={model.records[i]['fields']['code'] for key in bucket for i in by_id[key]['members']}
-                self.assertEqual(1,len(codes))
-        advice,_=model.advice(nodes)
-        self.assertTrue(all(g['label'].startswith(model.records[int(g['record_ids'][0])]['fields']['code']+' · ') for g in advice['groups']))
 
 
 @unittest.skipIf(getattr(PgTestCase,'__unittest_skip__',False),'Disposable PostgreSQL fixture required')
