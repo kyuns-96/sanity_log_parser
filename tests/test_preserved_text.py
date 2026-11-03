@@ -119,7 +119,9 @@ class PreservedTextTests(unittest.TestCase):
             advisor = OAAdvisor(environment(), transport=httpx.MockTransport(model))
             call = lambda: advisor.cluster(context, packet['cases'], packet['identity_fields']) if stage == 'cluster' else advisor.review(context, [], [criterion(context)])
             result = call(); self.assertEqual([citation], result['metadata']['preserved_citations'])
-            self.assertTrue(result['metadata']['prompt_version'].endswith('.preserved-text-v1'))
+            self.assertEqual('oa-semantic-clustering-v3.preserved-text-v1.rule-code-v1' if stage == 'cluster'
+                             else 'oa-direct-evidence-review-v5.preserved-text-v1',
+                             result['metadata']['prompt_version'])
             self.assertNotIn('preserved_citations', result['advice'])
             citation['evidence_ids'] = [file['id']]
             with self.assertRaises(ReviewError): call()

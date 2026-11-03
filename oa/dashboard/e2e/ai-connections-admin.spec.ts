@@ -254,10 +254,11 @@ test('initial list failure is not an empty list and retry loads entries', async 
   const initial: Entry[] = [{ id: 'existing', revision: 1, client_key_registered: false,
     config: { label: '기존 합성 연결', enabled: true, execution_site: 'vwp', profile_id: profile.id,
       api: 'chat_completions', model: 'vwp-fast', models: ['vwp-fast'] } }]
-  const state = await adminFixture(page, initial); state.getFailures = 1
+  const state = await adminFixture(page, initial); state.getFailures = Infinity
   const panel = await openPanel(page)
   await expect(panel.getByRole('alert').filter({ hasText: /목록|불러오/ })).toBeVisible()
   await expect(panel.getByText('등록된 AI 연결이 없습니다', { exact: true })).toHaveCount(0)
+  state.getFailures = 0
   await panel.getByRole('button', { name: '새로고침', exact: true }).click()
   await expect(panel.getByRole('listitem').getByText('기존 합성 연결', { exact: true })).toBeVisible()
   expect(state.writes).toHaveLength(0)

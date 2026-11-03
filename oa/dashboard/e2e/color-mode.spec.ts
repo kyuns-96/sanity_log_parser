@@ -29,7 +29,7 @@ test('system appearance follows OS changes without storing a preference; an expl
 test('saved selection is applied before the application bundle loads', async ({ page }) => {
   await page.goto(workspace)
   await chooseTheme(page, '다크 모드')
-  await page.route('**/src/main.tsx', route => route.abort())
+  await page.route('**/src/main.tsx*', route => route.abort())
   await page.reload()
   await expect(page.locator('#root')).toBeEmpty()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')

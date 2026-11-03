@@ -126,7 +126,7 @@ class WorkspaceCodexButtonTests(PgTestCase):
         self.assertFalse(confirmed['reusable'])
         self.assertEqual('COMPLETED', self.post(client, report=REPORT_IDS[2])['status'])
         case = self.calls[-1]['human_confirmed_examples'][0]
-        self.assertEqual((confirmed['id'], '사람이 정한 제약 누락'), (case['id'], case['groups'][0]['label']))
+        self.assertEqual((confirmed['id'], 'MOCK001 · 사람이 정한 제약 누락'), (case['id'], case['groups'][0]['label']))
         self.assertEqual('사람이 정한 분류 확인', case['reason'])
         self.assertIn('폭 불일치와 구분', case['group_rationales'][0]['rationale']['content']['reason'])
 

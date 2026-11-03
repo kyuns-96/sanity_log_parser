@@ -22,8 +22,8 @@ def context(name="codex-mock-source"):
 
 def answer(value):
     ids = [record["id"] for record in value["report"]["records"]]
-    value = {"groups": [{"id": "clock", "label": "클록 정의 누락", "record_ids": ids[:4]},
-                       {"id": "io", "label": "입력 지연 누락", "record_ids": ids[4:]}],
+    value = {"groups": [{"id": "clock", "label": "MOCK001 · 클록 정의 누락", "record_ids": ids[:4]},
+                       {"id": "io", "label": "MOCK001 · 입력 지연 누락", "record_ids": ids[4:]}],
             "reason": "객체가 달라도 같은 위반 내용을 기준으로 분류했습니다.", "reference_ids": []}
     value["group_rationales"] = [{"group_id": group["id"], "reason": group["label"] + ": 原文の共通パターンを確認するための合成試験の根拠です。",
         "evidence_ids": group["record_ids"][:2], "reference_groups": []} for group in value["groups"]]
@@ -49,7 +49,7 @@ class CodexMockTests(unittest.TestCase):
         advisor = self.advisor(answer(value))
         result = advisor.propose(value, [], FIELDS)
         self.assertEqual((2, 4), (len(result["groups"]), len(result["groups"][0]["record_ids"])))
-        self.assertEqual("클록 정의 누락", result["groups"][0]["label"])
+        self.assertEqual("MOCK001 · 클록 정의 누락", result["groups"][0]["label"])
         self.assertEqual(8, len({record["fields"]["object"] for record in value["report"]["records"]}))
         self.assertEqual(result, validate_receipt(advisor.receipt, value, [], FIELDS))
 

@@ -165,7 +165,7 @@ class PreservedDatabaseTests(unittest.TestCase):
         values = [r[0] for r in self.reports() if r[0].get('preserved_sources')]
         self.assertEqual(2, len(values)); self.assertIn(original, values)
         other = next(r for r in values if r != original)
-        self.assertEqual(original['execution_id'], other['execution_id'])
+        self.assertNotEqual(original['execution_id'], other['execution_id'])
         self.assertEqual(original['raw_sha256'], other['raw_sha256'])
         self.assertNotEqual(original['analysis_id'], other['analysis_id'])
         self.assertNotEqual(source_digest(original), source_digest(other))
@@ -269,7 +269,8 @@ class PreservedAIInputTests(unittest.TestCase):
             return httpx.Response(200, json=chat(packet['reply']))
         advisor = OAAdvisor(environment(), transport=httpx.MockTransport(reply))
         first = advisor.cluster(packet['context'], packet['cases'], packet['identity_fields'])
-        self.assertTrue(first['metadata']['prompt_version'].endswith('.preserved-metadata-v1'))
+        self.assertEqual('oa-semantic-clustering-v3.preserved-metadata-v1.rule-code-v1',
+                         first['metadata']['prompt_version'])
         packet['context']['report']['preserved_sources'][0]['sha256'] = digest('changed synthetic bytes')
         second = advisor.cluster(packet['context'], packet['cases'], packet['identity_fields'])
         self.assertNotEqual(first['metadata']['input_sha256'], second['metadata']['input_sha256'])

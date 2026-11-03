@@ -170,10 +170,6 @@ test('logging out removes data and an old session cannot return through reload',
   await expect(page.getByRole('button', { name: '로그인', exact: true })).toBeVisible()
 })
 
-async function openReviewSettings(scope: Page | ReturnType<Page['locator']>) {
-  const settings = scope.locator('.ws-review-criteria-settings')
-  if (await settings.getAttribute('open') === null) await settings.locator(':scope > summary').click()
-}
 async function openReviewHistory(scope: Page | ReturnType<Page['locator']>) {
   const history = scope.locator('.ws-review-records')
   if (await history.getAttribute('open') === null) await history.locator(':scope > summary').click()
@@ -196,13 +192,22 @@ test('a human can pass a tool FAIL, persist the reason and let a TOP read the in
   await page.getByRole('radio', { name: /PASS/ }).check()
   const reason = `허용된 기능 모드의 예외 확인 · 브라우저 검증 ${Date.now()}`
   await page.getByLabel('판정 근거', { exact: true }).fill(reason)
-  await openReviewSettings(page)
-  await page.getByRole('checkbox', { name: '이 판정의 조건을 다음 검토에서 재사용', exact: true }).check()
-  await page.getByLabel('재사용할 판단 기준', { exact: true }).fill('CAS_0003 / FUNC_SS의 확인된 기능 모드 예외입니다. 다른 규칙·모드에는 적용하지 않습니다.')
-  await expect(page.getByRole('checkbox', { name: /검사 규칙/ })).toBeDisabled()
-  await expect(page.getByRole('checkbox', { name: /모드/ })).toBeChecked()
   await page.getByRole('button', { name: '판정 저장', exact: true }).click()
   await expect(page.getByRole('status')).toContainText('사용자 판정과 근거를 저장했습니다.')
+  // The current UI preserves earlier rule approvals without creating new ones.
+  // Prepare this existing legacy reference-engine fixture through its API.
+  const reviewUrl = '/workspace/api/blocks/project-1-cpu/versions/project-1-cpu-post-1/reports/sample-0028/review'
+  const currentReview = await (await page.request.get(reviewUrl)).json()
+  const session = await (await page.request.get('/workspace/api/session')).json()
+  const approval = await page.request.post(reviewUrl, {
+    headers: { Origin: new URL(page.url()).origin, 'X-CSRF-Token': session.csrf }, data: {
+      conclusion: 'PASS', reason, reusable: true, compatible_versions: false,
+      criteria: 'CAS_0003 / FUNC_SS의 확인된 기능 모드 예외입니다. 다른 규칙·모드에는 적용하지 않습니다.',
+      conditions: { rule: currentReview.facts.rule, mode: currentReview.facts.mode },
+      expected_revision: currentReview.revision, request_id: crypto.randomUUID(),
+    },
+  })
+  expect(approval.ok(), await approval.text()).toBe(true)
   await expect(page.locator('.ws-judgment-summary > div').nth(1)).toContainText('PASS')
   await page.getByRole('button', { name: '닫기', exact: true }).click()
   const row = page.locator('.ws-report-table tbody tr').filter({ hasText: 'sample-0028' })
@@ -323,7 +328,7 @@ async function openWorkbenchSupport(work: ReturnType<Page['locator']>) {
 }
 async function openWorkbenchMemo(work: ReturnType<Page['locator']>) {
   await openWorkbenchSupport(work)
-  const summary = work.getByText('전체 메모와 재사용 설정 (선택)', { exact: true })
+  const summary = work.getByText('전체 메모와 참고 엔진 설정 (선택)', { exact: true })
   if (await summary.locator('..').getAttribute('open') === null) await summary.click()
 }
 
@@ -356,8 +361,8 @@ test.describe.serial('two-stage group review with separate multi-record QA fixtu
     await pipelineOperation(page, 'qa-cluster-source', { kind: 'RENAME', destination_id: targetGroup.id, label: '동일 원인 그룹' })
     await supplementPipelineReasons(page, 'qa-cluster-source')
     await openWorkbenchSupport(pipeline)
-    await pipeline.getByText('전체 메모와 재사용 설정 (선택)', { exact: true }).click()
-    await pipeline.getByRole('checkbox', { name: '다음 보고서에서 이 분류 기준을 참고하도록 설정', exact: true }).check()
+    await pipeline.getByText('전체 메모와 참고 엔진 설정 (선택)', { exact: true }).click()
+    await pipeline.getByRole('checkbox', { name: '동일 조건의 참고 엔진에 분류 규칙 적용 허용', exact: true }).check()
     await pipeline.getByLabel('재사용할 분류 기준', { exact: true }).fill('이 객체 집합은 같은 원인의 문제입니다.')
     await pipeline.getByRole('button', { name: '분류 확정 · 판정 시작', exact: true }).click()
     await expect(pipeline.getByRole('region', { name: '2단계 확정 그룹별 판정' })).toBeVisible()
@@ -369,11 +374,17 @@ test.describe.serial('two-stage group review with separate multi-record QA fixtu
     await review.getByRole('button', { name: '제안 적용', exact: true }).click()
     await review.getByRole('radio', { name: /PASS/ }).check()
     await review.getByLabel('판정 근거', { exact: true }).fill('M1 구성에서 허용한 그룹의 예외를 확인했습니다.')
-    await openReviewSettings(review)
-    await review.getByRole('checkbox', { name: '이 판정의 조건을 다음 검토에서 재사용', exact: true }).check()
-    await review.getByLabel('재사용할 판단 기준', { exact: true }).fill('CLK_QA와 M1에서 확인한 허용 조건입니다.')
     await review.getByRole('button', { name: '판정 저장', exact: true }).click()
     await expect(review.getByRole('status')).toContainText('사용자 판정과 근거를 저장했습니다.')
+    const reviewPath = `/groups/${targetGroup.id}/review`
+    const currentReview = await (await page.request.get(pipelineBase + 'qa-cluster-source' + reviewPath)).json()
+    await pipelinePost(page, 'qa-cluster-source', reviewPath, {
+      conclusion: 'PASS', reason: 'M1 구성에서 허용한 그룹의 예외를 확인했습니다.',
+      criteria: 'CLK_QA와 M1에서 확인한 허용 조건입니다.',
+      conditions: { rule: currentReview.facts.rule, mode: currentReview.facts.mode },
+      reusable: true, compatible_versions: false, expected_revision: currentReview.revision,
+      expected_cluster_revision: currentReview.current.cluster_revision, request_id: crypto.randomUUID(),
+    })
     await expect(pipeline.locator('.ws-review-progress > span').nth(1)).toContainText('1 / 2')
     await page.getByRole('button', { name: '검사 대장으로 돌아가기', exact: true }).click()
     await page.getByLabel('검사 검색').fill('qa-cluster-source')
@@ -478,13 +489,14 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
     expect(view.record_count).toBe(10000); expect(view.summary.total).toBe(100)
     expect(view.task.chunks).toHaveLength(20)
     expect((await metadata.body()).length).toBeLessThan(40000)
+    const originalGroup = await work.locator('.ws-selected-group-header h2').first().innerText()
     await openWorkbenchMemo(work)
     await work.getByLabel('전체 분류 메모 (선택)', { exact: true }).fill('10,000건의 전체 배정을 확인하고 페이지 간 선택을 검토합니다.')
     await work.getByRole('checkbox', { name: '현재 페이지 로그 50건 이하 선택', exact: true }).check()
     await work.getByRole('button', { name: '다음 그룹 원문 페이지', exact: true }).click()
     await expect(work.locator('.ws-record-pages .ws-pagination')).toContainText('51–100 / 100')
     await work.locator('.ws-paged-record [role="checkbox"]').first().check()
-    await expect(work.locator('.ws-workbench-edit')).toContainText('선택한 로그 51건')
+    await expect(work.locator('.ws-workbench-edit')).toContainText('로그 51건 선택')
     await work.getByRole('button', { name: '새 그룹', exact: true }).click()
     await page.getByLabel('분리할 새 그룹 이름', { exact: true }).fill('브라우저 분리그룹')
     await page.getByRole('dialog').getByRole('button', { name: '선택 로그를 새 그룹으로 분리', exact: true }).click()
@@ -493,9 +505,9 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
     await openWorkbenchMemo(work)
     await work.getByLabel('전체 분류 메모 (선택)', { exact: true }).fill('원문을 대조하여 두 그룹을 같은 원인으로 다시 묶습니다.')
     await work.getByRole('button', { name: '병합', exact: true }).click()
-    await work.getByRole('checkbox', { name: '브라우저 분리그룹 그룹 전체 선택', exact: true }).check()
-    await work.getByLabel('그룹 검색', { exact: true }).fill('그룹 1')
-    await work.getByRole('checkbox', { name: '그룹 1 그룹 전체 선택', exact: true }).check()
+    await work.getByRole('checkbox', { name: 'CLK_0003 · 브라우저 분리그룹 그룹 전체 선택', exact: true }).check()
+    await work.getByLabel('그룹 검색', { exact: true }).fill(originalGroup)
+    await work.getByRole('checkbox', { name: `${originalGroup} 그룹 전체 선택`, exact: true }).check()
     await work.getByRole('button', { name: '선택한 2개 그룹 병합', exact: true }).click()
     await page.getByRole('dialog').getByRole('button', { name: '그룹 병합', exact: true }).click()
     await expect(page.getByRole('dialog')).toBeHidden({ timeout: 30000 })
@@ -506,7 +518,7 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
     await openWorkbenchMemo(work)
     await work.getByLabel('전체 분류 메모 (선택)', { exact: true }).fill('현재 원본 10,000건의 분류 기준과 전체 배정을 확인했습니다.')
     await openWorkbenchMemo(work)
-    await work.getByRole('checkbox', { name: '다음 보고서에서 이 분류 기준을 참고하도록 설정', exact: true }).check()
+    await work.getByRole('checkbox', { name: '동일 조건의 참고 엔진에 분류 규칙 적용 허용', exact: true }).check()
     await work.getByLabel('재사용할 분류 기준', { exact: true }).fill('확인한 객체와 모드가 같은 반복 로그를 같은 그룹으로 분류합니다.')
     await work.locator('.ws-workbench-columns').scrollIntoViewIfNeeded()
     await work.getByRole('button', { name: '분류 확정 · 판정 시작', exact: true }).click()
@@ -517,9 +529,6 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
     await work.getByRole('button', { name: '제안 적용', exact: true }).click()
     await work.getByRole('radio', { name: /PASS/ }).check()
     await work.getByLabel('판정 근거', { exact: true }).fill('해당 규칙과 모드에서 허용한 조건을 전체 그룹 근거로 확인했습니다.')
-    await openReviewSettings(work)
-    await work.getByRole('checkbox', { name: '이 판정의 조건을 다음 검토에서 재사용', exact: true }).check()
-    await work.getByLabel('재사용할 판단 기준', { exact: true }).fill('이번 규칙과 모드에서 확인한 허용 조건입니다.')
     await work.getByRole('button', { name: '판정 저장', exact: true }).click()
     await work.getByRole('button', { name: /그룹별 판정/ }).click()
     await expect(work.locator('.ws-review-progress > span').nth(1)).toContainText('1 / 100')
@@ -533,7 +542,7 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
     await work.getByRole('button', { name: /그룹별 판정/ }).click()
     await expect(work.locator('.ws-judgment-summary > div').nth(1)).toContainText('PASS')
     await work.getByRole('button', { name: '다음 미검토 그룹', exact: true }).click()
-    await expect(work.locator('.ws-judgment-summary > div').nth(1)).toContainText('아직 없어요')
+    await expect(work.locator('.ws-judgment-summary > div').nth(1)).toContainText('미판정')
     const context = await browser.newContext()
     try {
       const top = await context.newPage(); await gpuWorkspace(top, 'user03')
@@ -564,7 +573,7 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
       await work.getByText('원본 로그 검색·조회 · 10,000건', { exact: true }).click()
       await work.getByLabel('전체 원문 검색', { exact: true }).fill(`${report}-e-10000`)
       await expect(work.locator('.ws-workbench-source .ws-paged-record')).toHaveCount(1)
-      await expect(work.locator('.ws-workbench-source .ws-paged-record')).toContainText(`${report}-e-10000`)
+      await expect(work.locator('.ws-workbench-source .ws-paged-record')).toHaveAttribute('data-record-id', `${report}-e-10000`)
       const data = await (await page.request.get(pipelineBase + report + '/workbench')).json()
       expect(data.record_count).toBe(10000); expect(data.current.group_count).toBe(100)
       await page.getByRole('button', { name: '검사 대장으로 돌아가기', exact: true }).click()
@@ -629,7 +638,7 @@ test.describe.serial('single 10000-record report sequential workbench', () => {
       await work.getByText('원본 로그 검색·조회 · 100,000건', { exact: true }).click()
     await work.getByLabel('전체 원문 검색', { exact: true }).fill(`${report}-e-100000`)
     await expect(work.locator('.ws-workbench-source .ws-paged-record')).toHaveCount(1, { timeout: 30000 })
-    await expect(work.locator('.ws-workbench-source .ws-paged-record')).toContainText(`${report}-e-100000`)
+    await expect(work.locator('.ws-workbench-source .ws-paged-record')).toHaveAttribute('data-record-id', `${report}-e-100000`)
     await openWorkbenchSupport(work)
       await work.getByText('원본 로그 검색·조회 · 100,000건', { exact: true }).click()
     await openWorkbenchMemo(work)
