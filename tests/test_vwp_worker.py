@@ -1,5 +1,5 @@
 """Synthetic VWP placement, lightweight web requests and recovery boundaries."""
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -99,9 +99,9 @@ class VwpWorkerTests(PgTestCase):
     def test_only_proven_unsent_calls_retry_and_the_limit_is_persisted(self):
         job=self.request();self.prepare()
         self.c.callback=lambda request:(_ for _ in ()).throw(httpx.ConnectError("synthetic",request=request))
-        from oa.sanity_ai_jobs import _now
+
         for attempt in range(6):
-            at=_now()+timedelta(seconds=400*attempt)
+            at=datetime.now(timezone.utc)+timedelta(seconds=400*attempt)
             with executing_on("vwp"),patch("oa.sanity_ai_jobs._db_now",return_value=at):result=self.c.run_job(now=at)
             self.assertEqual("FAILED" if attempt==5 else "PENDING",result["status"],result)
         self.assertEqual(6,len(self.v.wire))
@@ -122,9 +122,9 @@ class VwpWorkerTests(PgTestCase):
     def test_malformed_received_reply_is_retried_five_times_and_recorded_as_called(self):
         self.request();self.prepare()
         self.c.callback=lambda request:httpx.Response(200,content=b"invalid synthetic JSON")
-        from oa.sanity_ai_jobs import _now
+
         for attempt in range(6):
-            at=_now()+timedelta(seconds=400*attempt)
+            at=datetime.now(timezone.utc)+timedelta(seconds=400*attempt)
             with executing_on("vwp"),patch("oa.sanity_ai_jobs._db_now",return_value=at):result=self.c.run_job(now=at)
             self.assertEqual("FAILED" if attempt==5 else "PENDING",result["status"],result)
         self.assertEqual("FAILED",result["status"])
@@ -134,7 +134,7 @@ class VwpWorkerTests(PgTestCase):
 
     def test_batch_retries_only_the_unsent_child_and_keeps_measured_completed_work(self):
         from tests.test_vwp_inference import configuration
-        from oa.sanity_ai_jobs import _now
+
         settings=BatchSettings(enabled=True,context_tokens=32768,input_tokens=16000,output_tokens=4096,
                                overhead_tokens=1024,max_records=1,output_parameter="max_tokens")
         self.connection=self.v.create(configuration(batch=settings.public()))
@@ -147,7 +147,7 @@ class VwpWorkerTests(PgTestCase):
         failed=self.prepare()
         self.assertEqual(("RUNNING",1,1),(failed["status"],failed["progress"]["completed_calls"],failed["progress"]["retry_count"]))
         self.c.callback=None
-        at=_now()+timedelta(seconds=10)
+        at=datetime.now(timezone.utc)+timedelta(seconds=10)
         with executing_on("vwp"),patch("oa.sanity_ai_jobs._db_now",return_value=at):second=self.c.run_job(now=at)
         self.assertEqual(2,second["progress"]["completed_calls"])
         self.assertIsNotNone(second["progress"]["stage_eta_seconds"])

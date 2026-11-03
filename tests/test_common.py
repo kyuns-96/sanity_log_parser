@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.sanity_common import ReviewError, atomic_json, canonical_json, coverage, read_bundle, read_json, render_report, safe_path, validate_payload, write_bundle, pack_json, unpack_json, unpack_bundle, digest
+from common.sanity_common import ReviewError, coverage, read_json, render_report, safe_path, validate_payload, pack_json, unpack_json, unpack_bundle, digest
 
 
 def pass_payload():
@@ -116,30 +116,6 @@ class CommonTests(unittest.TestCase):
         self.assertEqual(coverage(p)["approved_na"], 0)
         self.assertEqual(coverage(p)["review_status"], "INCOMPLETE")
 
-    def test_deterministic_bundle_and_tamper_detection(self):
-        p = pass_payload()
-        path = write_bundle(p, self.root)
-        before = {f.name: f.read_bytes() for f in self.root.iterdir()}
-        write_bundle(p, self.root)
-        self.assertEqual(before, {f.name: f.read_bytes() for f in self.root.iterdir()})
-        self.assertEqual(read_bundle(path), p)
-        payload_path = self.root / "b-pass.json.gz"
-        payload_path.write_bytes(payload_path.read_bytes()[:-1] + b"x")
-        with self.assertRaises(ReviewError) as error:
-            read_bundle(path)
-        self.assertEqual(error.exception.code, "INTEGRITY_ERROR")
-
-    def test_gzip_expansion_is_bounded_even_if_manifest_lies(self):
-        path = write_bundle(pass_payload(), self.root)
-        manifest = read_json(path)
-        raw = gzip.compress(b" " * 10000, mtime=0)
-        (self.root / manifest["payload_file"]).write_bytes(raw)
-        manifest.update(size_bytes=len(raw), uncompressed_bytes=1, sha256=hashlib.sha256(raw).hexdigest())
-        atomic_json(path, manifest)
-        with self.assertRaises(ReviewError) as error:
-            read_bundle(path, max_bytes=1000)
-        self.assertEqual(error.exception.code, "SIZE_LIMIT")
-
     def test_json_ambiguity_and_paths_rejected(self):
         for text in ('{"x":1,"x":2}', '{"x":NaN}', '{"x":1e999}', '[1,2]'):
             path = self.root / "invalid.json"
@@ -149,27 +125,6 @@ class CommonTests(unittest.TestCase):
         for path in ("../escape", "/tmp/escape", "a/../b", "a\\b"):
             with self.assertRaises(ReviewError):
                 safe_path(self.root, path)
-
-    def test_same_id_conflicting_output_not_overwritten(self):
-        write_bundle(pass_payload(), self.root)
-        changed = pass_payload()
-        changed["run"]["tool_version"] = "2"
-        with self.assertRaises(ReviewError) as error:
-            write_bundle(changed, self.root)
-        self.assertEqual(error.exception.code, "BUNDLE_CONFLICT")
-
-    def unchecked_bundle(self, payload):
-        """Simulate a buggy sender with valid framing/checksum but invalid semantics."""
-        raw = canonical_json(payload)
-        compressed = gzip.compress(raw, mtime=0)
-        filename = payload["bundle_id"] + ".json.gz"
-        (self.root / filename).write_bytes(compressed)
-        manifest = self.root / (payload["bundle_id"] + ".manifest.json")
-        atomic_json(manifest, dict(schema_version=1, bundle_id=payload["bundle_id"],
-                    run_id=payload["run"]["run_id"], payload_file=filename,
-                    size_bytes=len(compressed), sha256=hashlib.sha256(compressed).hexdigest(),
-                    uncompressed_bytes=len(raw)))
-        return manifest
 
     def test_evidence_from_other_report_is_rejected_at_receive_boundary(self):
         payload = finding_payload()
@@ -181,7 +136,7 @@ class CommonTests(unittest.TestCase):
         payload["source_files"].append(dict(file_id="f-2", path="reports/b.json", size_bytes=10, sha256="1" * 64))
         payload["finding_groups"][0]["examples"][0]["file_id"] = "f-2"
         with self.assertRaises(ReviewError) as error:
-            read_bundle(self.unchecked_bundle(payload))
+            validate_payload(payload)
         self.assertEqual(error.exception.code, "INVALID_SCHEMA")
         self.assertIn("Evidence source", str(error.exception))
 
@@ -201,7 +156,7 @@ class CommonTests(unittest.TestCase):
                 else:
                     unit["identity_fields"].append("object")
                 with self.assertRaises(ReviewError) as error:
-                    read_bundle(self.unchecked_bundle(payload))
+                    validate_payload(payload)
                 self.assertEqual(error.exception.code, "INVALID_SCHEMA")
 
     def test_invalid_object_type_rejected_but_isolated_unknown_identity_allowed(self):

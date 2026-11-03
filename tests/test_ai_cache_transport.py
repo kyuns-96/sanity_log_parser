@@ -1,6 +1,6 @@
 """Synthetic no-cache transport, immutable job pins and retry boundaries."""
 from dataclasses import replace
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 from collections import Counter
 import hashlib
 import json
@@ -9,7 +9,6 @@ from unittest.mock import patch
 
 import httpx
 
-from common.sanity_ai_cache import CacheSettings
 from common.sanity_ai_execution import executing_on
 from common.sanity_common import ReviewError, canonical_json
 from common.sanity_integration_examples import clustering_example
@@ -39,7 +38,7 @@ class CacheTransportTests(unittest.TestCase):
         new_request=explicit._request({'synthetic':'input'},'synthetic instruction')[0]
         self.assertEqual(old_request,new_request);self.assertEqual(old.describe(),explicit.describe())
         self.assertNotIn('cache',json.loads(old_request));self.assertNotIn('cache',old.describe())
-        enabled=OAAdvisor(replace(settings,cache=CacheSettings()))
+        enabled=OAAdvisor(replace(settings,cache=True))
         self.assertNotEqual(old.describe()['config_sha256'],enabled.describe()['config_sha256'])
 
     def test_real_oa_chat_and_responses_requests_include_cache_and_hash_actual_bytes(self):
@@ -52,7 +51,7 @@ class CacheTransportTests(unittest.TestCase):
                 return httpx.Response(200,json={'model':'synthetic-model-v1','status':'completed','output':[
                     {'type':'message','role':'assistant','status':'completed',
                      'content':[{'type':'output_text','text':canonical_json(example['reply']).decode()}]}]})
-            settings=replace(OASettings.from_env(environment()),api=api,cache=CacheSettings())
+            settings=replace(OASettings.from_env(environment()),api=api,cache=True)
             adapter=OAAdvisor(settings,transport=httpx.MockTransport(respond))
             result=adapter.cluster(example['context'],example['cases'],example['identity_fields'])
             self.assertEqual(1,len(seen));self.assertEqual({'no-cache':True},json.loads(seen[0].content)['cache'])
@@ -67,7 +66,7 @@ class CacheTransportTests(unittest.TestCase):
         OAAdvisor(base,transport=httpx.MockTransport(respond)).cluster(
             example['context'],example['cases'],example['identity_fields'])
         boundary=len(seen[0].content);seen.clear()
-        enabled=replace(base,cache=CacheSettings(),max_input_bytes=boundary)
+        enabled=replace(base,cache=True,max_input_bytes=boundary)
         with self.assertRaises(ReviewError) as error:
             OAAdvisor(enabled,transport=httpx.MockTransport(respond)).cluster(
                 example['context'],example['cases'],example['identity_fields'])
@@ -123,7 +122,7 @@ class CacheTransportTests(unittest.TestCase):
             seen.append(request)
             if len(seen)==1:raise httpx.ConnectError('synthetic failure',request=request)
             return httpx.Response(200,json=chat(example['reply']))
-        settings=replace(OASettings.from_env(environment()),cache=CacheSettings(),
+        settings=replace(OASettings.from_env(environment()),cache=True,
                          fallback_endpoint='https://backup.example.test/v1/chat/completions')
         result=OAAdvisor(settings,transport=httpx.MockTransport(respond)).cluster(
             example['context'],example['cases'],example['identity_fields'])
@@ -195,7 +194,7 @@ class VwpCacheJobTests(PgTestCase):
 
     def test_cached_batch_safe_retry_retains_exact_body_and_checkpoint_hash(self):
         from oa.sanity_ai_batch_jobs import Ledger
-        from oa.sanity_ai_jobs import _now
+
         from tests.test_ai_batches import batch_settings
         self.cached_connection(batch=batch_settings(max_records=1).public())
         job=self.f.request();self.f.prepare()
@@ -203,7 +202,7 @@ class VwpCacheJobTests(PgTestCase):
         self.c.callback=refused
         waiting=self.f.prepare();self.assertEqual('RUNNING',waiting['status'])
         self.assertEqual(1,waiting['progress']['retry_count'])
-        self.c.callback=None;at=_now()+timedelta(seconds=400)
+        self.c.callback=None;at=datetime.now(timezone.utc)+timedelta(seconds=400)
         with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):self.c.run_job(now=at)
         result=self.f.v.finish();self.assertEqual('COMPLETED',result['status'],result)
         self.assertEqual(4,len(self.f.v.wire))

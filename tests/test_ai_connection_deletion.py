@@ -1,7 +1,7 @@
 """Synthetic connection deletion, revision history and in-flight job boundaries."""
 from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 from threading import Event
 import unittest
 from unittest.mock import patch
@@ -167,7 +167,7 @@ class ConnectionDeletionDatabaseTests(PgTestCase):
         self.assertEqual(0,self.c.admin_query("SELECT count(*) FROM {oa} WHERE record_type='WS_CLUSTER_EVENT'").fetchone()[0])
 
     def assert_unavailable_resume_display(self, *, failed, deleted):
-        from oa.sanity_ai_jobs import _now
+
         from oa.sanity_ai_monitor import Monitor
         from tests.test_ai_batches import batch_settings
         connection=self.f.create(configuration(batch=batch_settings(max_records=1).public()))
@@ -178,7 +178,7 @@ class ConnectionDeletionDatabaseTests(PgTestCase):
         if failed:
             def refused(request):raise httpx.ConnectError('synthetic connection failure',request=request)
             self.c.callback=refused
-            start=_now()
+            start=datetime.now(timezone.utc)
             for n in range(6):
                 at=start+timedelta(seconds=400*n)
                 with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):result=self.c.run_job(now=at)

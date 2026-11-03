@@ -77,18 +77,11 @@ PoR은 블록의 버전 참조이고 ECO/특정 검사 실행을 포함하지 �
 `common/sanity_postgres.py`는 psycopg2 커서·트랜잭션/savepoint와 UUID·JSONB·BYTEA 변환을 기존 저장 계약에 연결한다.
 트랜잭션 밖 autocommit, 내부 commit/rollback, 서버 측 커서와 세션 advisory lock을 유지한다.
 직접 접속 성공과 실제 배포 DB의 역할/DDL/트랜잭션 검증 완료는 구분한다.
-[공개용 접속 안내](dbaccess.example.md)의 이전 DBaaS HTTPS API는 **임시 읽기 전용**으로 남는다.
 실제 사내 접속 안내 `dbaccess.md`는 Git 업로드에서 제외한다.
 
 권한 모드는 기본 `restricted`다. `SANITY_DB_ALLOW_SINGLE_ACCOUNT`는 미설정/`false`에서 기존 역할·side·컬럼 격리를 검사하고 정확한 `true`에서만 `single_account`를 선택한다. 다른 값은 `DATABASE_CONFIG`이며 실패 후 다른 모드로 전환하지 않는다. 단일 모드는 명명된 앱 역할을 조회하지 않고 네 테이블 전체 컬럼의 유효 SELECT/INSERT/UPDATE를 요구한다. DELETE는 보유를 허용하지만 필수는 아니며 TRUNCATE/REFERENCES/TRIGGER·관리자 속성/역할 소속·테이블 소유/소유자 역할·앱 및 public 스키마 CREATE는 금지한다. 공통 테이블/필수 UNIQUE 검사와 기존 큐/트랜잭션/lease/SSO·업무 권한 보호를 유지한다. **단일 모드에는 DB의 private 접근·송수신 컬럼 격리가 없다.** 새 SQL/GRANT나 DDL 재실행은 요구하지 않는다. 읽기 전용 check는 `privilege_mode=restricted db_isolation=enforced` 또는 `privilege_mode=single_account db_isolation=not_enforced`를 출력한다. 자세한 설정/인계는 [DB 연결 인계](db/CONNECTION_HANDOFF.md#31-단일-계정-모드)를 따른다.
-`common/sanity_config.py`는 저장소 루트 `.env`/환경변수에서 설정을 읽고 `common/sanity_dbaas.py`는
-Bearer·사내 CA 검증·trust_env=False·30초 timeout·redirect 금지·응답 크기 제한을 적용한다.
-URL/토큰/CA 경로/서버 오류 본문은 출력하지 않는다. `/api/vi/me`는 `/api/v1/me`의 오타로 해석했다.
-현재 HTTP API는 운영 저장·메시지 등록·DDL 경로가 아니며, 이 API의 쓰기 지원을 전제로 확장하지 않는다.
-따라서 이 문서의 PostgreSQL 원자적 저장/잠금 동작을 HTTP에서 구현했다고 주장하지 않는다.
 `SANITY_DB_ACCESS=dbaas_http`를 명시한 전체 브리지는 DBAAS_SQL_CONTRACT_REQUIRED로 중단하며 DSN fallback은 없다.
 아래 저장 계약의 실행 구현은 기본 `SANITY_DB_ACCESS=postgresql` 직접 접속 모드다.
-공통 DBaaS API로 접근하는 HTTPS와 금지된 브리지 상호 간 직접 통신은 구분한다.
 
 ## 모듈과 데이터 소유권
 
@@ -109,7 +102,6 @@ URL/토큰/CA 경로/서버 오류 본문은 출력하지 않는다. `/api/vi/me
 DB에서 표현할 수 없는 NUL 등 정규화 필드는 조용히 삭제하지 않고 DB 오류로 중단한다.
 원본 snapshot과 디코딩 실패 표현의 실제 원본 바이트는 VWP 보존 정책에 따라 유지해야 한다.
 
-공통 `write_bundle/read_bundle`은 오프라인 형식 회귀 테스트용이다.
 앱 실행 경로는 `pack_json/unpack_json/unpack_bundle`과 DB 큐만 사용한다.
 명령 오류는 `code=...`와 종료 코드 2다. 불완전 분석/FAIL 결과도 유효 산출물이므로 종료 코드 0일 수 있다.
 
@@ -321,7 +313,7 @@ unevaluated/UNKNOWN records. COMMON-02F owns this common implementation.
 
 ## vwp-bridge payload
 
-CLI: `python3 vwp_bridge/main.py analyze --input DIR/run.json [--out RECEIPT_DIR]`
+CLI: `python3 vwp_bridge/main.py analyze --input DIR/run.json`
 Must validate readiness, inventory hash, safe paths and actual file hashes/sizes before
 parsing. Produce valid incomplete payload for missing/unsupported/malformed units.
 Integrity mismatch is an operational error. Preserve all occurrence/evidence records in the VWP private PostgreSQL table.
@@ -458,7 +450,7 @@ OA는 `sanity_oa_to_vwp`에 EVIDENCE_REQUEST를 넣는다.
 
 VWP `respond --request-id ... [--reject]`는 특정 요청만 점유한다. `work`는 다음 요청을 처리한다.
 유효 기간·봉인된 분석·단위·파일 연결·전체 선택 기록·원문 해시를 검사한다.
-일반 sanity 원문은 요청별 수동 승인 없이 응답한다. `--approve-export`는 호환용 선택 옵션이다.
+일반 sanity 원문은 요청별 수동 승인 없이 응답한다.
 EVIDENCE_RESPONSE의 message_id는 `response-<UUID>`, correlation_id는 요청 message_id다.
 project/run/bundle 일치는 DB FK로도 확인한다. 최종 결과는 FULFILLED/REJECTED/EXPIRED다.
 FULFILLED에만 gzip을 저장하며 내부에는 schema_version, request_id(요청 message_id),

@@ -87,7 +87,6 @@ test('single-log drag saves a real MOVE, keeps source/PoR, and reloads in the de
   await expect(page.locator('.ws-workbench-detail .ws-paged-record')).toHaveCount(50)
   await expect(page.getByRole('button', { name: '2 그룹별 판정', exact: false })).toBeDisabled()
   await page.evaluate(() => window.scrollTo(0, 0))
-  await page.screenshot({ path: 'artifacts/workbench-drag-desktop.png', fullPage: true, animations: 'disabled' })
   expect(errors).toEqual([])
 })
 
@@ -198,7 +197,6 @@ test('touch drag on mobile saves one log without horizontal overflow', async ({ 
     await expect(grip(page, 'touch')).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth+1)).toBe(true)
     await page.evaluate(() => window.scrollTo(0, 0))
-    await page.screenshot({ path: 'artifacts/workbench-drag-mobile.png', fullPage: true, animations: 'disabled' })
   } finally { await context.close() }
 })
 

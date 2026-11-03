@@ -20,17 +20,15 @@ TLS 설정을 입력합니다. 사용자/비밀번호는 VWP의 제한된 계정
 사용자가 psycopg2 접속을 확인했으며 기본 `SANITY_DB_ACCESS=postgresql`로 동작합니다.
 기존 `.env`의 `dbaas_http`는 직접 변경해야 합니다. 연결/권한 확인은
 `.venv/bin/python -m common.sanity_db check --side vwp`로 합니다.
-[공개용 접속 안내](../dbaccess.example.md)의 DBaaS HTTP는 임시 읽기 전용으로만 남습니다.
 명시적 HTTP 모드에서 분석 저장은 `DBAAS_SQL_CONTRACT_REQUIRED`로 중단하며 직접 접속으로 자동 우회하지 않습니다.
 
 ```bash
-.venv/bin/python vwp_bridge/main.py analyze --input /tmp/sanity-source/run.json --out /tmp/sanity-receipt
+.venv/bin/python vwp_bridge/main.py analyze --input /tmp/sanity-source/run.json
 .venv/bin/python vwp_bridge/main.py respond --request-id REQUEST_UUID
 .venv/bin/python vwp_bridge/main.py respond --request-id REQUEST_UUID --reject
 .venv/bin/python vwp_bridge/main.py work --interval 2
 ```
 
-`analyze --out`은 선택 사항이며 `receipt.json`만 생성합니다.
 분석 전후 파일 크기·해시·상대 경로와 실제 파일 목록을 검사합니다.
 누락·미지원·형식 오류도 예상 단위에 남기며 불완전 결과를 DB에 등록합니다.
 종료 코드 0은 명령 성공이지 sanity PASS나 검토 완료가 아닙니다.
@@ -45,7 +43,7 @@ TLS 설정을 입력합니다. 사용자/비밀번호는 VWP의 제한된 계정
 구현 버전을 불변 분석 계약과 `producer.parsers`에 기록합니다.
 
 ```bash
-.venv/bin/python vwp_bridge/corporate_analyze.py analyze --input /path/to/private/run.json --out /path/to/private/receipt
+.venv/bin/python vwp_bridge/corporate_analyze.py analyze --input /path/to/private/run.json
 ```
 
 기본 회사 registry는 비어 있으며 stub은 `PARSER_NOT_CONFIGURED`로 실패합니다.
@@ -80,7 +78,7 @@ RUN을 SEALED로 바꾸고 번들을 등록하는 작업을 같은 트랜잭션�
 ## 추가 근거 반출
 
 OA가 생성한 특정 요청 UUID에 `respond`를 실행하거나 `work`로 다음 요청을 처리합니다.
-일반 sanity report는 요청별 수동 승인을 요구하지 않습니다. `--reject`는 명시적 거부이고 `--approve-export`는 호환용 선택 옵션입니다.
+일반 sanity report는 요청별 수동 승인을 요구하지 않습니다. `--reject`는 명시적 거부입니다.
 유효 기간, 번들·unit·원본 파일·근거 해시를 검사하고 요청한 모든 기록이 있어야 FULFILLED입니다.
 최종 응답 등록과 요청 수신 확인은 원자적으로 처리합니다. 거부/만료 응답은 덮어쓰지 않습니다.
 

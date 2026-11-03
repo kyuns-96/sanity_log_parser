@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Download, FileSearch, FolderKanban, History, Layers3, LogOut, Menu, RefreshCw, Search, X } from 'lucide-react'
 import { Button } from './studio/components/ui/button'
-import { Input } from './studio/components/ui/input'
+import { Input } from './components/ui/input'
 import { Badge } from './studio/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './studio/components/ui/tabs'

@@ -34,8 +34,7 @@ OA 서버의 비공개 `.env`에 `SANITY_DB_HOST/PORT/NAME/USER_NAME/PASSWORD`, 
 TLS 설정을 입력합니다. 사용자/비밀번호는 OA의 제한된 계정이며 VWP 계정은 필요하지 않습니다.
 기존 `SANITY_OA_DSN`이 비어 있지 않으면 연결 필드보다 우선합니다. 연결/권한 확인은
 `.venv/bin/python -m common.sanity_db check --side oa`로 합니다.
-기존 `.env`의 `dbaas_http`는 직접 변경해야 합니다. 이 모드는 임시 읽기 전용으로만 남으며
-수신·검토 저장은 `DBAAS_SQL_CONTRACT_REQUIRED`로 중단합니다. SQLite/다른 접속 방식으로 우회하지 않습니다.
+기존 `.env`의 `dbaas_http`는 직접 변경해야 합니다. 이 모드의 DB 작업은 `DBAAS_SQL_CONTRACT_REQUIRED`로 중단합니다. SQLite/다른 접속 방식으로 우회하지 않습니다.
 
 루트 private .env에 SANITY_DASHBOARD_TOKEN(최소 32자)과 SANITY_DASHBOARD_REVIEWER를 설정합니다.
 토큰은 브라우저 메모리에만 유지하고 localStorage·URL·로그·VITE_*·소스에 넣지 않습니다.
@@ -166,5 +165,5 @@ OA 담당자는 [역할별 테스트](../TESTING.md)에 따라 기본 명령 하
 .venv/bin/python db/tests/run_mock.py --role oa
 ```
 
-화면을 변경한 경우 dashboard 폴더에서 `npm run build`와 해당 Playwright spec을 확인합니다. 브라우저 테스트에는 Chromium이 필요하며, 모든 E2E를 매번 반복하지 않습니다. 설치는 승인된 개발 환경에서 준비하며 사내 DB 접근을 대신하지 않습니다. 실제 실행 환경·성공 범위·누락 사항은 [REVIEW.md](../REVIEW.md)에 기록합니다.
+화면을 변경한 경우 dashboard 폴더에서 `npm run build`와 해당 Playwright spec을 확인합니다. 브라우저 테스트에는 Chromium이 필요하며, 모든 E2E를 매번 반복하지 않습니다. 설치는 승인된 개발 환경에서 준비하며 사내 DB 접근을 대신하지 않습니다.
 실제 사내 DB·report·운영 AI·다중 사용자 인증 검증을 로컬 테스트로 대신하지 않습니다.

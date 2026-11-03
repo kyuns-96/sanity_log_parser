@@ -9,8 +9,3 @@ services:
         read_only: true
         bind:
           create_host_path: false
-      - type: bind
-        source: ${VWP_BRIDGE_RECEIPT_DIR:?Set an absolute path to the receipt output directory}
-        target: /data/receipts
-        bind:
-          create_host_path: false

@@ -7,27 +7,16 @@ Export a read-only dashboard snapshot, then stop the disposable DB. No existing
 from __future__ import annotations
 
 import argparse
-import importlib.util
-import json
-import os
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
-def module(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    result = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(result)
-    return result
-
-
 def build(output, count, pg_bin):
-    runner = module("public_preview_pg_runner", ROOT / "db/tests/run_mock.py")
+    from db.tests import run_mock as runner
     database = runner.MockDatabase(runner.pg_binaries(pg_bin))
     print("artifacts=" + str(database.root), flush=True)
     staged = database.root / "source"
@@ -36,27 +25,14 @@ def build(output, count, pg_bin):
         database.start()
         database.setup(staged)
         environment = database.test_environment()
-        # All processing occurs in the credential-free code snapshot. Secrets stay
-        # in a private runtime file, never command arguments, stdout or exported JSON.
-        config = database.root / "preview-env.json"
-        descriptor = os.open(config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "w") as stream:
-            json.dump({key: value for key, value in environment.items() if key.startswith("SANITY_")}, stream)
         runtime = database.root / "process_preview.py"
         runtime.write_text(PROCESS_SCRIPT, encoding="utf-8")
         log = database.root / "process-preview.log"
-        try:
-            with log.open("wb") as stream:
-                result = subprocess.run([sys.executable, str(runtime), str(staged), str(config),
-                                         str(output.resolve()), str(count)], cwd=staged,
-                                        env=database.env, stdout=stream, stderr=subprocess.STDOUT)
-            if result.returncode:
-                raise RuntimeError("Synthetic preview processing failed; inspect the local process-preview.log")
-        finally:
-            config.unlink(missing_ok=True)
-        summary = json.loads((database.root / "dataset-summary.json").read_text())
-        print(json.dumps(summary, ensure_ascii=False, sort_keys=True), flush=True)
-        return summary
+        with log.open("wb") as stream:
+            result = subprocess.run([sys.executable, str(runtime), str(staged), str(output.resolve()), str(count)],
+                                    cwd=staged, env=environment, stdout=stream, stderr=subprocess.STDOUT)
+        if result.returncode:
+            raise RuntimeError("Synthetic preview processing failed; inspect the local process-preview.log")
     finally:
         database.stop()
 
@@ -64,28 +40,19 @@ def build(output, count, pg_bin):
 PROCESS_SCRIPT = """
 import argparse
 from collections import Counter
-import importlib.util
-import json
-import os
 from pathlib import Path
 import sys
 
-root, config, output, count = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), int(sys.argv[4])
+root, output, count = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3])
 sys.path.insert(0, str(root))
-os.environ.update(json.loads(config.read_text()))
-def load(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    result = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(result)
-    return result
 from common.sanity_common import atomic_json, coverage, digest
 from common.sanity_db import Database
 from oa.sanity_oa_store import OAStore
 from devtools.sanity_sample_reports import generate_library
 from vwp_bridge.integration.public_parsers import create_public_registry
-collector = load('preview_collector', root / 'vwp/main.py')
-bridge = load('preview_bridge', root / 'vwp_bridge/main.py')
-oa = load('preview_oa', root / 'oa/main.py')
+import vwp.main as collector
+import vwp_bridge.main as bridge
+import oa.main as oa
 library = generate_library(root.parent / 'reports', count)
 parsed, stored_records, bundle_count = {}, 0, 0
 for key, run in sorted(library['runs'].items()):
@@ -132,7 +99,6 @@ data = {'schema_version': 1, 'summary': summary, 'users': library['users'], 'pro
         'blocks': library['blocks'], 'sources': library['sources'], 'items': items}
 data['dataset_sha256'] = digest(data)
 atomic_json(output, data)
-atomic_json(root.parent / 'dataset-summary.json', summary)
 """
 
 

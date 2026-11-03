@@ -1,5 +1,4 @@
 import { expect, test } from '@playwright/test'
-import { writeFile } from 'node:fs/promises'
 import type { Page } from '@playwright/test'
 import type { PreservedSource } from '../src/PreservedSources'
 import type { ClusterModelMetadata, CodexJob, RationaleContent, ReportReview, ReviewCase, ReviewProposal } from '../src/workspaceApi'
@@ -25,7 +24,7 @@ const monitoredJob = () => ({ id: '30000000-0000-4000-8000-000000000001', status
   progress: { mode: 'BATCH', phase: 'CLASSIFY', completed_records: 40, total_records: 100, completed_calls: 2, round: 0,
     waiting: true, round_completed: 2, round_total: 5, seconds_per_record: 1.25, average_call_seconds: 25, stage_eta_seconds: 75 } })
 
-test('desktop AI cards show measured stage progress, transport and stage ETA', async ({ page }, info) => {
+test('desktop AI cards show measured stage progress, transport and stage ETA', async ({ page }) => {
   await mockOA(page)
   await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [monitoredJob()], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
   await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
@@ -37,7 +36,6 @@ test('desktop AI cards show measured stage progress, transport and stage ETA', a
   await expect(dashboard).toContainText('이번 단계 2 / 5')
   await expect(dashboard).not.toContainText('측정치 수집 중')
   await expect(dashboard.getByRole('link', { name: '검토 열기' })).toHaveAttribute('href', /review=report-a/)
-  await page.screenshot({ path: info.outputPath('ai-jobs-desktop.png'), fullPage: true })
 })
 
 test('parallel card shows in-flight calls without treating accumulated call time as elapsed time', async ({ page }) => {
@@ -395,7 +393,6 @@ test('admin default model is selected and classification controls align with the
     expect(Math.abs(box.height - button.height)).toBeLessThan(1)
     expect(Math.abs(box.y - button.y)).toBeLessThan(1)
   }
-  await page.screenshot({ path: test.info().outputPath('ai-classification-controls.png') })
   await action.click()
   await expect(page.locator('.ws-rationale-text').first()).toBeVisible()
   expect(state.writes.find(write => write.path.endsWith('/clustering/ai'))?.body).toMatchObject({ connection_id: connectionId, model_id: 'synthetic-second-model' })
@@ -600,7 +597,7 @@ test('production report preview opens group workflow without unsupported full-re
 
 
 for (const width of [1440, 1280]) {
-  test(`live workbench keeps all four functional panes and the final action visible at ${width}×${width === 1440 ? 900 : 800}`, async ({ page }, testInfo) => {
+  test(`live workbench keeps all four functional panes and the final action visible at ${width}×${width === 1440 ? 900 : 800}`, async ({ page }) => {
     await page.setViewportSize({ width, height: width === 1440 ? 900 : 800 })
     const state = await mockOA(page, { initialRevision: 1 })
     await page.goto(url)
@@ -623,7 +620,6 @@ for (const width of [1440, 1280]) {
     await expect(panes[3].getByRole('heading', { name: '분류 근거', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: /그룹별 판정/ })).toBeDisabled()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true)
-    await page.screenshot({ path: testInfo.outputPath(`live-four-panes-${width}.png`), fullPage: true })
 
     await page.getByRole('button', { name: '분류 확정 · 판정 시작', exact: true }).click()
     const review = page.locator('.ws-studio-decision .ws-judgment-workspace')
@@ -655,11 +651,10 @@ for (const width of [1440, 1280]) {
     expect(state.writes).toHaveLength(2)
     expect(state.writes.every(write => write.marker === '1')).toBe(true)
     expect(state.unexpected).toEqual([])
-    await page.screenshot({ path: testInfo.outputPath(`live-human-review-${width}.png`), fullPage: true })
   })
 }
 
-test('paged log table shows the chosen original by row or keyboard while preserving the group and selected records', async ({ page }, testInfo) => {
+test('paged log table shows the chosen original by row or keyboard while preserving the group and selected records', async ({ page }) => {
   test.setTimeout(60_000)
   await page.setViewportSize({ width: 1920, height: 1080 })
   const browserErrors: string[] = []
@@ -680,7 +675,6 @@ test('paged log table shows the chosen original by row or keyboard while preserv
     await expect(evidence.locator('.ws-record-loading-skeleton')).toHaveCount(6)
     await expect(evidence.locator('tr[data-record-id]')).toHaveCount(0)
     expect(state.writes).toEqual([])
-    await page.screenshot({ path: testInfo.outputPath('initial-record-loading-1920.png'), fullPage: true })
   } finally { releaseInitial(); state.recordPause = null }
   const initialRecords = await (await firstPage).json()
   expect(initialRecords.items[0]).not.toHaveProperty('reasons')
@@ -694,11 +688,9 @@ test('paged log table shows the chosen original by row or keyboard while preserv
     { width: 1440, height: 900, minimum: 8 },
     { width: 1280, height: 800, minimum: 6 },
   ]
-  const densityMeasurements: object[] = []
   const measureRows = () => evidence.locator('tr[data-record-id]').evaluateAll(rows => {
     const first = rows[0]
-    if (!first) return { visible: 0, total: 0, rowHeight: 0, portHeight: 0 }
-    const port = first.closest('.ws-paged-record-list')!
+    if (!first) return 0
     const header = first.closest('table')!.querySelector('thead')!.getBoundingClientRect()
     let top = Math.max(0, header.bottom); let bottom = innerHeight; let left = 0; let right = innerWidth
     for (let element = first.parentElement; element; element = element.parentElement) {
@@ -707,17 +699,15 @@ test('paged log table shows the chosen original by row or keyboard while preserv
       if (/auto|scroll|hidden|clip/.test(style.overflowX)) { left = Math.max(left, rect.left); right = Math.min(right, rect.right) }
     }
     const visible = rows.filter(row => { const rect = row.getBoundingClientRect(); return rect.top >= top - 1 && rect.bottom <= bottom + 1 && rect.left >= left - 1 && rect.right <= right + 1 }).length
-    return { visible, total: rows.length, rowHeight: first.getBoundingClientRect().height, portHeight: port.getBoundingClientRect().height }
+    return visible
   })
   async function checkDensity(phase: string) {
     for (const viewport of viewports) {
       await page.setViewportSize({ width: viewport.width, height: viewport.height })
       await expect(evidence.locator('tr[data-record-id]')).toHaveCount(50)
-      await expect.poll(async () => (await measureRows()).visible, { message: `${phase} ${viewport.width}×${viewport.height}: at least ${viewport.minimum} complete real log rows must be readable` }).toBeGreaterThanOrEqual(viewport.minimum)
-      densityMeasurements.push({ phase, ...viewport, ...await measureRows() })
+      await expect.poll(() => measureRows(), { message: `${phase} ${viewport.width}×${viewport.height}: at least ${viewport.minimum} complete real log rows must be readable` }).toBeGreaterThanOrEqual(viewport.minimum)
       await expect(original.locator('pre')).toBeInViewport()
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
-      if (viewport.width >= 1536) await page.screenshot({ path: testInfo.outputPath(`log-density-${phase}-${viewport.width}.png`), fullPage: true })
     }
   }
   await checkDensity('classification')
@@ -774,7 +764,6 @@ test('paged log table shows the chosen original by row or keyboard while preserv
     await previousRow.dispatchEvent('keydown', { key: 'Enter', code: 'Enter' })
     await expect(original.locator('.ws-record-original-id')).toHaveText('log-2')
     expect(state.writes).toEqual([])
-    await page.screenshot({ path: testInfo.outputPath('next-record-page-loading-1920.png'), fullPage: true })
   } finally { releaseNextPage(); state.recordPause = null }
   await expect(evidence.getByRole('alert')).toContainText('로그와 원문을 가져오지 못했습니다.')
   await expect(pages).toHaveAttribute('aria-busy', 'false')
@@ -784,7 +773,6 @@ test('paged log table shows the chosen original by row or keyboard while preserv
   await expect(evidence.getByRole('button', { name: '다음 그룹 원문 페이지', exact: true })).toBeDisabled()
   await expect(original.getByRole('button', { name: '선택 로그 원문 복사', exact: true })).toBeDisabled()
   expect(state.writes).toEqual([])
-  await page.screenshot({ path: testInfo.outputPath('failed-record-page-hides-stale-results-1920.png'), fullPage: true })
   let releaseRetry!: () => void
   state.recordPause = { offset: 50, promise: new Promise<void>(resolve => { releaseRetry = resolve }) }
   await evidence.getByRole('button', { name: '로그 다시 조회', exact: true }).click()
@@ -837,12 +825,9 @@ test('paged log table shows the chosen original by row or keyboard while preserv
   expect(state.writes[0]).toMatchObject({ path: base + '/clustering', marker: '1', body: { action: 'CONFIRM', expected_revision: 1 } })
   expect(browserErrors).toEqual([])
   expect(state.unexpected).toEqual([])
-  const measurementsPath = testInfo.outputPath('log-viewport-density.json')
-  await writeFile(measurementsPath, JSON.stringify(densityMeasurements, null, 2))
-  await testInfo.attach('log-viewport-density', { path: measurementsPath, contentType: 'application/json' })
 })
 
-test('mobile keeps original tool failure separate from a saved human pass and exposes each review action', async ({ page }, testInfo) => {
+test('mobile keeps original tool failure separate from a saved human pass and exposes each review action', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   const state = await mockOA(page, { initialRevision: 1 })
   await page.goto(url)
@@ -869,10 +854,9 @@ test('mobile keeps original tool failure separate from a saved human pass and ex
   expect(state.writes).toHaveLength(2)
   expect(state.writes.every(write => write.marker === '1')).toBe(true)
   expect(state.unexpected).toEqual([])
-  await page.screenshot({ path: testInfo.outputPath('live-mobile-original-and-human-results.png'), fullPage: true })
 })
 
-test('read only server capabilities allow inspection without granting mutations', async ({ page }, testInfo) => {
+test('read only server capabilities allow inspection without granting mutations', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
   const state = await mockOA(page, { readOnly: true, initialRevision: 1, confirmed: true })
   await page.goto(url)
@@ -891,7 +875,6 @@ test('read only server capabilities allow inspection without granting mutations'
   expect(state.writes).toEqual([])
   expect(state.unexpected).toEqual([])
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true)
-  await page.screenshot({ path: testInfo.outputPath('live-top-read-only.png'), fullPage: true })
 })
 
 const exceptionFields = { rule: 'SYNTHETIC_RULE', reason: '승인된 합성 구조의 특성을 확인했습니다.', conditions: '같은 블록에서 합성 모드와 검증된 구조가 모두 유지될 때만 참고합니다.' }
@@ -905,7 +888,7 @@ async function openConfirmedReview(page: Page, options: MockOptions = {}) {
   return state
 }
 
-test('human exceptions require explicit complete bounds, persist and restore without enabling automatic rules', async ({ page }, testInfo) => {
+test('human exceptions require explicit complete bounds, persist and restore without enabling automatic rules', async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 })
   const state = await openConfirmedReview(page)
   const review = page.locator('.ws-judgment-workspace')
@@ -946,7 +929,6 @@ test('human exceptions require explicit complete bounds, persist and restore wit
   expect(state.writes).toHaveLength(2)
   expect(state.writes.every(write => write.marker === '1')).toBe(true)
   expect(state.unexpected).toEqual([])
-  await page.screenshot({ path: testInfo.outputPath('confirmed-human-exception-fullhd.png'), fullPage: true })
 })
 
 test('a deferred review clears exception intent and legacy compatibility while preserving exception history', async ({ page }) => {
@@ -1116,7 +1098,6 @@ test('preserved source metadata stays visible without claiming AI body access', 
   await files.getByText('SHA256 확인', { exact: true }).first().click()
   await expect(files.getByText('b'.repeat(64), { exact: true })).toBeVisible()
   await expect(files.getByRole('link')).toHaveCount(0)
-  await page.screenshot({ path: test.info().outputPath('preserved-workbench.png'), fullPage: true })
   expect(state.unexpected).toEqual([])
 })
 
@@ -1139,7 +1120,6 @@ test('OWNER confirms preserved roles and bindings with the exact submission dige
   await dialog.getByText('보존 근거 파일 2개', { exact: true }).click()
   await expect(dialog).toContainText('원천 실행')
   await expect(dialog).toContainText('reports/companion/input.sdc')
-  await page.screenshot({ path: test.info().outputPath('preserved-owner.png'), fullPage: true })
   await dialog.getByRole('checkbox', { name: /보존 파일 2개의 역할·귀속/ }).check()
   await dialog.getByRole('textbox').fill('전체 범위와 보존 근거의 귀속 확인')
   await dialog.getByRole('button', { name: '범위 확정 후 접수', exact: true }).click()
@@ -1181,7 +1161,6 @@ test('preserved text viewer shows masked complete text pages and separate AI cit
   await expect(dialog.locator('pre')).toContainText('period 11')
   await expect(dialog.getByRole('button', { name: '다음 근거', exact: true })).toBeDisabled()
   expect(reads).toEqual([0, 10])
-  await page.screenshot({ path: test.info().outputPath('preserved-text.png'), fullPage: true })
   expect(state.unexpected).toEqual([])
 })
 
@@ -1423,7 +1402,7 @@ test('rolling unknown recovery requires and confirms the complete uncertain batc
     expected_step_sha256: primary.step_sha256, acknowledge_duplicate: true }])
 })
 
-test('AI cards show batch latency and authoritative merge iteration and group counts', async ({ page }, info) => {
+test('AI cards show batch latency and authoritative merge iteration and group counts', async ({ page }) => {
   await mockOA(page)
   const baseJob = monitoredJob()
   const job = { ...baseJob, merge_iteration: 3, current_group_count: 12,
@@ -1437,7 +1416,6 @@ test('AI cards show batch latency and authoritative merge iteration and group co
   await expect(card.getByText('현재 그룹 수').locator('..').locator('dd')).toHaveText('12개')
   await expect(card.getByText('로그 건당 평균')).toHaveCount(0)
   expect(await card.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true)
-  await page.screenshot({ path: info.outputPath('updated-ai-card.png'), fullPage: true })
   job.merge_iteration = 4; job.current_group_count = 0
   await page.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
   await expect(card.getByText('병합 iteration').locator('..').locator('dd')).toHaveText('4회')
@@ -1651,7 +1629,7 @@ test('iteration-capped AI cards show successful completion and the saved group c
   await expect(card.locator('.ai-job-progress-motion')).toHaveCount(0)
 })
 
-test('AI evidence switches start off and register classification and judgment independently', async ({ page }, info) => {
+test('AI evidence switches start off and register classification and judgment independently', async ({ page }) => {
   const state = await openConfirmedReview(page, { currentCase: savedReview({ conclusion: 'FAIL' }) })
   const classification = page.getByRole('switch', { name: '분류 근거 AI 등록', exact: true })
   const judgment = page.getByRole('switch', { name: '판정 근거 AI 등록', exact: true })
@@ -1674,7 +1652,6 @@ test('AI evidence switches start off and register classification and judgment in
   const thumb = judgment.locator('.ws-evidence-choice-thumb')
   await expect.poll(() => thumb.evaluate(element => getComputedStyle(element).transform)).toBe('matrix(1, 0, 0, 1, 24, 0)')
   expect(state.unexpected).toEqual([])
-  await page.screenshot({ path: info.outputPath('ai-evidence-switches-desktop.png'), fullPage: true })
 })
 
 test('AI evidence does not register before the server confirms and reuses a lost request', async ({ page }) => {
@@ -1718,7 +1695,7 @@ test('AI evidence switches respect read only capabilities and deferred judgments
   expect(second.writes).toHaveLength(0)
 })
 
-test('rationale summary shows a short sentence first and expands the complete explanation', async ({ page }, info) => {
+test('rationale summary shows a short sentence first and expands the complete explanation', async ({ page }) => {
   const reason = '같은 클록 정의 누락을 묶었습니다. ' + '공통 원인은 확인되지 않았으며 각 경로의 예외와 구분 조건을 별도로 확인해야 합니다. '.repeat(15) + '마지막 상세 조건도 보존합니다.'
   await mockOA(page, { initialRevision: 1, rationale: { summary: '클록 정의 누락 · 원인과 예외 미확인', reason, evidence_ids: ['log-1'], reference_groups: [] } })
   await page.goto(url)
@@ -1735,7 +1712,6 @@ test('rationale summary shows a short sentence first and expands the complete ex
   await expect(panel.locator('.ws-rationale-full .ws-rationale-text')).toHaveText(reason)
   await panel.getByRole('button', { name: '상세 분류 근거 접기', exact: true }).click()
   await expect(panel.locator('.ws-rationale-full .ws-rationale-text')).not.toBeVisible()
-  await page.screenshot({ path: info.outputPath('classification-short-summary.png'), fullPage: true })
 })
 
 test('rationale summary can be edited without rewriting the detailed reason and survives reload', async ({ page }) => {
@@ -1836,7 +1812,7 @@ test('rationale disclosure edits the saved judgment only on request and opens th
   expect(state.unexpected).toEqual([])
 })
 
-test('rationale disclosure keeps classification registration pinned while the inspector scrolls on desktop', async ({ page }, info) => {
+test('rationale disclosure keeps classification registration pinned while the inspector scrolls on desktop', async ({ page }) => {
   const reason = ('같은 규칙 안에서 대상과 검토 조건을 비교했습니다. 상세한 적용 조건과 예외는 각 로그에서 다시 확인합니다. '.repeat(60)).slice(0, 1900)
   const state = await mockOA(page, { initialRevision: 1, confirmed: true, rationale: { summary: '동일한 규칙 · 대상별 조건과 예외 확인', reason, evidence_ids: ['log-1'], reference_groups: [] } })
   await page.goto(url)
@@ -1861,7 +1837,6 @@ test('rationale disclosure keeps classification registration pinned while the in
     if (enabled) await expect(control).toBeChecked()
     else await expect(control).not.toBeChecked()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-    await page.screenshot({ path: info.outputPath(`rationale-sticky-${width}.png`), fullPage: true, animations: 'disabled' })
   }
   expect(state.writes).toHaveLength(2)
   expect(state.writes.every(write => write.path.endsWith('/evidence/CLUSTER') && write.marker === '1')).toBe(true)
@@ -1869,7 +1844,7 @@ test('rationale disclosure keeps classification registration pinned while the in
   expect(state.unexpected).toEqual([])
 })
 
-test('project membership hides large assignment name lists while preserving actual PoR actors and project names', async ({ page }, info) => {
+test('project membership hides large assignment name lists while preserving actual PoR actors and project names', async ({ page }) => {
   const state = await mockOA(page)
   const assigned = Array.from({ length: 80 }, (_, index) => ({ id: `synthetic-member-${index}`, username: `synthetic-member-${index}`, name: `합성 목록 멤버 ${index}`, role: 'MEMBER' }))
   const porActor = { id: 'synthetic-por-actor', username: 'synthetic-por-actor', name: '합성 PoR 지정자', role: 'MEMBER' }
@@ -1898,7 +1873,6 @@ test('project membership hides large assignment name lists while preserving actu
   await expect(page.locator('.ws-history')).toContainText('합성 기준 버전 지정')
   await expect(page.getByText(/합성 목록 멤버/)).toHaveCount(0)
   await expect(page.getByRole('button', { name: '합성 프로젝트 프로젝트', exact: true })).toBeVisible()
-  await page.screenshot({ path: info.outputPath('project-membership-no-name-lists.png'), fullPage: true, animations: 'disabled' })
   expect(state.writes).toEqual([])
   expect(state.unexpected).toEqual([])
 })

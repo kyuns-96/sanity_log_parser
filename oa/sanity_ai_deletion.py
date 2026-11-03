@@ -5,7 +5,6 @@ function installation or privilege change is performed by the application.
 Report evidence and human decisions are retained, along with a small immutable
 marker that prevents reuse of a deleted inference request ID.
 """
-from common.sanity_common import digest
 from common.sanity_db import uuid_value
 from common.sanity_submission import check
 from oa.sanity_workspace import record_id
@@ -29,10 +28,9 @@ def marker(service, identity):
     if row is None:
         return None
     value = row['payload']
-    check(isinstance(value, dict) and set(value) == {'namespace', 'id', 'actor_id', 'sha256'}
+    check(isinstance(value, dict) and {'namespace', 'id', 'actor_id'} <= set(value)
           and value['namespace'] == NAMESPACE and value['id'] == str(identity)
           and isinstance(value['actor_id'], str) and 1 <= len(value['actor_id']) <= 100
-          and value['sha256'] == digest({k: v for k, v in value.items() if k != 'sha256'})
           and row['record_id'] == record_id('WS_CONFIG', key) and row['state'] == {} and row['version'] == 0
           and row['status'] == 'RECORDED' and row['created_at'] == row['updated_at']
           and all(row.get(k) is None for k in _NULL_COLUMNS), 'AI_JOB_CORRUPT')
@@ -83,7 +81,6 @@ def purge_locked(service,identity,user_id):
         check(previous['actor_id']==user_id,'AI_JOB_CORRUPT')
         return {'id':identity,'deleted':True}
     value = {'namespace': NAMESPACE, 'id': identity, 'actor_id': user_id}
-    value['sha256'] = digest(value)
     # The marker and all execution rows change atomically, including if DELETE
     # is revoked between the permission check and the actual statement.
     with service.db.transaction():

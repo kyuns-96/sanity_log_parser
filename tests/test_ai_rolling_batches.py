@@ -1,7 +1,7 @@
 """Synthetic rolling dispatch, bounded durable windows and concurrency-aware ETA."""
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 from threading import Event, Lock
 import time
 import unittest
@@ -12,7 +12,7 @@ import httpx
 
 from common.sanity_ai_execution import executing_on
 from common.sanity_common import ReviewError
-from oa.sanity_ai_jobs import _now
+
 from oa.sanity_ai_parallel_jobs import _wall_metrics
 from tests.support import PgTestCase
 
@@ -211,7 +211,7 @@ class RollingJobsTests(PgTestCase):
             waiting=future.result(timeout=15)
         self.assertEqual('RUNNING',waiting['status']);self.assertEqual(3,len(f.v.wire))
         self.assertIsNone(f.run_wave());self.assertEqual(3,len(f.v.wire))
-        f.c.callback=None;at=_now()+timedelta(seconds=400)
+        f.c.callback=None;at=datetime.now(timezone.utc)+timedelta(seconds=400)
         with patch('oa.sanity_ai_jobs._db_now',return_value=at):
             result=f.finish()
         self.assertEqual('COMPLETED',result['status'],result)
@@ -258,7 +258,7 @@ class RollingJobsTests(PgTestCase):
             old=executor.submit(f.run_wave)
             try:
                 self.assertTrue(blocked.wait(10));f.wait_progress(job,3)
-                at=_now()+timedelta(seconds=600)
+                at=datetime.now(timezone.utc)+timedelta(seconds=600)
                 with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):
                     unknown=f.c.run_job(now=at)
                     self.assertEqual('UNKNOWN',unknown['status'])
@@ -332,7 +332,7 @@ class RollingJobsTests(PgTestCase):
 
     def test_eta_updates_after_refills_and_uses_current_inflight_ages(self):
         from oa.sanity_ai_parallel_jobs import _execute
-        f=self.f;job=self.create(records=5);clock=[_now()]
+        f=self.f;job=self.create(records=5);clock=[datetime.now(timezone.utc)]
         entered=[Event() for _ in range(5)];release=[Event() for _ in range(5)]
         def block(request):
             packet=f.packet(request)

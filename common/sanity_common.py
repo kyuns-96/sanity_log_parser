@@ -371,15 +371,6 @@ def coverage(payload, decisions=None) -> dict:
     return result
 
 
-def _immutable_bytes(path, data):
-    path = Path(path)
-    if path.exists() or path.is_symlink():
-        if path.is_symlink() or path.read_bytes() != data:
-            raise ReviewError("BUNDLE_CONFLICT", "Existing bundle has different contents")
-        return
-    _atomic_bytes(path, data)
-
-
 def pack_json(value, max_bytes=67108864):
     """Byte contract used by the shared DB, independent of local files."""
     raw = canonical_json(value)
@@ -434,66 +425,6 @@ def unpack_bundle(message):
             or metadata.get("producer_version") != payload["producer"]["version"]):
         raise ReviewError("INTEGRITY_ERROR", "Database message manifest differs from bundle")
     return payload
-
-
-def write_bundle(payload, out_dir) -> Path:
-    validate_payload(payload)
-    out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    bundle_id = payload["bundle_id"]
-    raw = canonical_json(payload)
-    if len(raw) > 67108864:
-        raise ReviewError("SIZE_LIMIT", "Payload exceeds prototype 64 MiB transport limit")
-    compressed = gzip.compress(raw, mtime=0)
-    filename = f"{bundle_id}.json.gz"
-    manifest = {"schema_version": 1, "bundle_id": bundle_id, "run_id": payload["run"]["run_id"],
-                "payload_file": filename, "size_bytes": len(compressed),
-                "sha256": hashlib.sha256(compressed).hexdigest(), "uncompressed_bytes": len(raw)}
-    _immutable_bytes(out / filename, compressed)
-    path = out / f"{bundle_id}.manifest.json"
-    _immutable_bytes(path, canonical_json(manifest) + b"\n")
-    return path
-
-
-def read_bundle(manifest_path, max_bytes=67108864) -> dict:
-    path = Path(manifest_path)
-    try:
-        if path.stat().st_size > 65536:
-            raise ReviewError("SIZE_LIMIT", "Manifest too large")
-        manifest = read_json(path)
-        _require(type(manifest.get("schema_version")) is int and manifest["schema_version"] == 1,
-                 "Unsupported manifest schema")
-        bundle_id = require_id(manifest.get("bundle_id"), "bundle_id")
-        require_id(manifest.get("run_id"), "run_id")
-        _require(manifest.get("payload_file") == f"{bundle_id}.json.gz", "Unexpected payload filename")
-        for key in ("size_bytes", "uncompressed_bytes"):
-            _require(_count(manifest.get(key)), "Invalid declared size")
-            if manifest[key] > max_bytes:
-                raise ReviewError("SIZE_LIMIT", "Bundle exceeds size limit")
-        compressed_path = safe_path(path.parent, manifest["payload_file"])
-        if compressed_path.stat().st_size != manifest["size_bytes"]:
-            raise ReviewError("INTEGRITY_ERROR", "Compressed size mismatch")
-        with compressed_path.open("rb") as stream:
-            compressed = stream.read(max_bytes + 1)
-        if len(compressed) > max_bytes:
-            raise ReviewError("SIZE_LIMIT", "Compressed payload too large")
-        if hashlib.sha256(compressed).hexdigest() != manifest.get("sha256"):
-            raise ReviewError("INTEGRITY_ERROR", "Payload checksum mismatch")
-        with gzip.GzipFile(fileobj=io.BytesIO(compressed)) as stream:
-            raw = stream.read(max_bytes + 1)
-        if len(raw) > max_bytes:
-            raise ReviewError("SIZE_LIMIT", "Expanded payload too large")
-        if len(raw) != manifest["uncompressed_bytes"]:
-            raise ReviewError("INTEGRITY_ERROR", "Expanded size mismatch")
-        payload = _decode_json(raw.decode("utf-8"))
-        validate_payload(payload)
-        if payload["bundle_id"] != bundle_id or payload["run"]["run_id"] != manifest["run_id"]:
-            raise ReviewError("INTEGRITY_ERROR", "Manifest identity mismatch")
-        return payload
-    except ReviewError:
-        raise
-    except (OSError, EOFError, ValueError, UnicodeError, zlib.error) as exc:
-        raise ReviewError("BUNDLE_READ_ERROR", "Cannot read complete bundle") from exc
 
 
 def _cell(value):

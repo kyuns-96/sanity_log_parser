@@ -11,7 +11,7 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.sanity_common import ReviewError, atomic_json, canonical_json, digest, read_json, require_id, safe_path, sha256_file, validate_payload, identity_value_valid
+from common.sanity_common import ReviewError, canonical_json, digest, read_json, require_id, safe_path, sha256_file, validate_payload, identity_value_valid
 from common.sanity_db import Database
 from vwp_bridge.sanity_evidence import PgEvidence, PRODUCER_VERSION
 from common.sanity_parsers import ParseContext, ParserRegistry, checked_records, extraction_reasons, NOT_PERFORMED
@@ -361,7 +361,7 @@ def analyze_unit(unit, source, root, evidence, parser_registry=None):
     return result
 
 
-def analyze(input_path, out_dir=None, parser_registry=None):
+def analyze(input_path, *, parser_registry=None):
     input_path = Path(input_path)
     manifest = read_json(input_path)
     root = input_path.resolve().parent
@@ -403,8 +403,6 @@ def analyze(input_path, out_dir=None, parser_registry=None):
         # Recheck after parsing to catch a report changing during analysis.
         validate_manifest(manifest, root)
         receipt = evidence.seal(payload)
-    if out_dir is not None:
-        atomic_json(Path(out_dir) / "receipt.json", receipt)
     return payload, receipt
 
 
@@ -413,12 +411,9 @@ def main(argv=None, parser_registry=None):
     commands = parser.add_subparsers(dest="command", required=True)
     command = commands.add_parser("analyze")
     command.add_argument("--input", required=True)
-    command.add_argument("--out", help="optional local receipt directory; never used as transport")
     respond = commands.add_parser("respond", help="handle a specific OA evidence request through PostgreSQL")
     respond.add_argument("--request-id", required=True)
-    permission = respond.add_mutually_exclusive_group()
-    permission.add_argument("--approve-export", action="store_true", help="compatibility flag; normal report access is already allowed")
-    permission.add_argument("--reject", action="store_true", help="record a final export rejection")
+    respond.add_argument("--reject", action="store_true", help="record a final export rejection")
     worker = commands.add_parser("work", help="poll DB classification and ordinary evidence requests")
     worker.add_argument("--once", action="store_true")
     worker.add_argument("--interval", type=int, default=2)
@@ -432,7 +427,7 @@ def main(argv=None, parser_registry=None):
             from vwp_bridge.sanity_exchange import respond_evidence
             print(json.dumps(respond_evidence(args.request_id, not args.reject), sort_keys=True))
             return 0
-        payload, receipt = analyze(args.input, args.out, parser_registry)
+        payload, receipt = analyze(args.input, parser_registry=parser_registry)
         print(json.dumps({"status": "ENQUEUED", **receipt, "units": len(payload["review_units"]),
                           "groups": len(payload["finding_groups"])}, sort_keys=True))
         return 0

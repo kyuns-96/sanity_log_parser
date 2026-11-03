@@ -124,19 +124,19 @@ worker는 `python -m vwp_bridge.main work --interval 2`를 그대로 실행한�
 
 ## 6. 완료된 snapshot 분석
 
-VWP 영역의 완료된 snapshot 상위 디렉터리를 `VWP_BRIDGE_SNAPSHOT_DIR`, 로컬 receipt 출력 디렉터리를 `VWP_BRIDGE_RECEIPT_DIR`에 절대 경로로 설정한다. **두 호스트 디렉터리를 먼저 준비**하고 UID 10001에 입력 읽기/탐색과 출력 쓰기 권한을 부여한다. 입력은 읽기 전용 `/data/snapshots`, 출력은 `/data/receipts`에 마운트한다. `run.json`과 함께 수집된 `reports/`를 같은 snapshot 안에 보존한다.
+VWP 영역의 완료된 snapshot 상위 디렉터리를 `VWP_BRIDGE_SNAPSHOT_DIR`에 절대 경로로 설정한다. 호스트 디렉터리를 먼저 준비하고 UID 10001에 읽기/탐색 권한을 부여한다. 입력은 읽기 전용 `/data/snapshots`에 마운트한다. `run.json`과 함께 수집된 `reports/`를 같은 snapshot 안에 보존한다.
 
 ```bash
 # 회사 parser registry를 명시적으로 주입한다. 이 명령은 DB에 분석을 저장한다.
 docker compose --env-file vwp_bridge/docker/.env \
   -f vwp_bridge/docker/compose.yaml -f vwp_bridge/docker/compose.analysis.yaml \
   run --rm --no-deps vwp-bridge python -m vwp_bridge.corporate_analyze analyze \
-  --input /data/snapshots/RUN_ID/run.json --out /data/receipts/RUN_ID
+  --input /data/snapshots/RUN_ID/run.json
 ```
 
 CA도 필요하면 `compose.ca.yaml`을 추가하며 두 override의 마운트는 함께 적용된다. 기본 제공 parser로 분석할 때는 `vwp_bridge.corporate_analyze`를 `vwp_bridge.main`으로 바꾼다. 회사 registry는 기본 비어 있으며 실제 형식 지원을 별도로 확인해야 한다. 종료 코드 0은 명령 성공이고 sanity PASS나 사람의 검토 완료를 뜻하지 않는다.
 
-`--out`은 로컬 `receipt.json` 출력이며 OA 전송 경로가 아니다. 원본 snapshot의 영속 보관·백업은 현장 정책으로 관리하며 OA에는 위 디렉터리를 마운트하지 않는다. 기존 worker의 추가 근거 응답은 DB에 봉인된 근거를 사용하므로 이 분석용 마운트가 필요하지 않다.
+원본 snapshot의 영속 보관·백업은 현장 정책으로 관리하며 OA에는 위 디렉터리를 마운트하지 않는다. 기존 worker의 추가 근거 응답은 DB에 봉인된 근거를 사용하므로 이 분석용 마운트가 필요하지 않다.
 
 ## 7. Compose 없이 빌드·실행
 
@@ -178,22 +178,3 @@ docker compose --env-file vwp_bridge/docker/.env \
 ```
 
 외부 개발 검증과 승인된 회사 베이스의 실제 이미지 빌드·UID/volume 권한·DB/TLS·모델 연결 검증은 구분한다. 운영 접속 확인과 worker 시작은 현장 담당자가 위 절차에 따라 수행한다.
-
-2026-10-23 중앙 수집 서비스의 외부 개발 검증:
-
-- Compose 5.6.0에서 기본/legacy 조합 8개, 중앙 수집과 CA/분석 override 조합 4개, 필수 경로 설정 누락 거부 3개로 총 15개 시나리오를 확인했다. 중앙 profile에서 legacy worker가 제외되고 VWP AI 비활성화·기존 UID/권한·자동 경로 생성 금지 설정이 유지된다.
-- 공개 Python 3.10 베이스로 실제 이미지를 빌드했다. 네트워크를 차단한 실제 Compose 컨테이너에서 제출 진입점, UID/GID·특수문자 환경값·읽기 전용 root/JSON·영속 spool/archive 쓰기와 컨테이너 재생성 후 보존, 읽기 전용 CA, 없는 bind 경로 3종 거부, DB 미설정 차단의 8개 시나리오가 통과했다. 시험 컨테이너와 네트워크는 정리했다. 이미지는 `sanity-vwp-bridge:central-intake-20261023`로 남겼다.
-- 별도 socket 전용 임시 PostgreSQL에서 `run_tests.py --profile quick --require-db` 172개와 제출 계약·DB·공개 참고 파서 전용 시험 42개가 통과했다. 실패·오류·skip은 각각 0개다. `full`과 100,000건 검사는 실행하지 않았다.
-- 실제 사내 DB·모델·report는 사용하지 않았다. GCA를 포함한 공개 참고 파서 시험은 합성 자료의 계약 검증이며 사내 형식 지원 완료가 아니다. CA 시험도 합성 파일의 마운트/권한 검사이며 회사 인증서·TLS 연결 검증과 구분한다.
-
-기존 CLI/legacy Docker 구성의 외부 개발 검증 기록:
-
-- Dockerfile 문법 검사와 Compose 2.30.3의 기본/CA/분석/worker 조합 8가지 통과. 합성 비밀번호의 `$`·`#`·따옴표 보존과 누락 설정의 거부를 확인했다.
-- VWP 전용 의존성만 설치한 Python 3.12.3 환경에서 UID/GID 10001로 세 CLI의 `--help`, 읽기 전용 소스와 모의 worker 실행, DB 미설정 시 고정 오류를 확인했다. DB·모델은 호출하지 않았다.
-- Docker SDK의 context 필터로 필요한 소스 보존과 합성 비공개/report/산출물 경로 25개의 제외를 확인했다. 전달되는 Python 소스의 Python 3.10 문법 검사도 통과했다.
-- 기존 DB 설정 10개·parser 27개·연동 계약 14개, 총 51개 테스트 통과.
-
-- Docker Engine 29.9.1, Buildx 0.38.0, Compose 5.6.0을 설치해 실제 Dockerfile/Compose 이미지 빌드에 성공했다. 공개 `python:3.10-slim-bookworm` 베이스의 Python 3.10.22와 고정한 VWP 전용 의존성을 확인했다.
-- 실제 Docker/Compose 실행 시나리오 10개가 통과했다. 네트워크 없이 기본 CLI 실행, 설치된 Compose와 최소 지원 Compose 2.30.3의 실행, UID/GID 10001·특수문자 보존·읽기 전용 root·capability 제거·`noexec` tmpfs·역할별 의존성, 회사/공개 parser 진입점, CA/입력의 읽기 전용 마운트와 receipt 출력 보존, DB 미설정 시 고정 오류, 없는 bind 경로의 생성 거부, 기본 worker 제외, 명시적 worker 시작·SIGTERM 종료를 확인했다.
-
-빌드한 이미지는 `sanity-vwp-bridge:local`로 남겼다. 검증용 컨테이너와 Compose 네트워크는 정리했다. 실제 DB·모델에 접속하지 않았으며, CA 확인은 합성 파일의 마운트/권한 점검이다. 승인된 회사 베이스 이미지·실제 DB/TLS·모델 연결은 현장에서 확인해야 한다.

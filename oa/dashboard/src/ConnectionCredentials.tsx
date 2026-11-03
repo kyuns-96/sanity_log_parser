@@ -2,7 +2,7 @@ import { useEffect, useId, useState } from 'react'
 import { ExternalLink, Save } from 'lucide-react'
 import { Button } from './studio/components/ui/button'
 import { Badge } from './studio/components/ui/badge'
-import { Input } from './studio/components/ui/input'
+import { Input } from './components/ui/input'
 import './ai-connections.css'
 
 type Status = { registered: boolean; revision: number; connection_changed?: boolean; expired?: boolean; expires_soon?: boolean; expires_at?: string | null }

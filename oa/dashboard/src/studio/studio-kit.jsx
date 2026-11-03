@@ -8,7 +8,7 @@ import {
 import { Button as StudioButton } from "./components/ui/button";
 import { Badge } from "./components/ui/badge";
 import { Checkbox as StudioCheckbox } from "./components/ui/checkbox";
-import { Input } from "./components/ui/input";
+import { Input } from "../components/ui/input";
 import {
   Select as SelectRoot,
   SelectContent,
@@ -18,7 +18,7 @@ import {
 } from "./components/ui/select";
 import { Tabs as TabsRoot, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { RadioGroup, RadioGroupItem } from "./components/ui/radio-group";
-import { Textarea as StudioTextarea } from "./components/ui/textarea";
+import { Textarea as StudioTextarea } from "../components/ui/textarea";
 import {
   Table,
   TableHeader,

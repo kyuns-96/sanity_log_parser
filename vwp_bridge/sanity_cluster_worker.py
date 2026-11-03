@@ -122,7 +122,7 @@ def process_cluster(jid=None, adapter_factory=AIAdapter):
                 mode = request["command"]["mode"]
                 needs_ai = mode == "AI" or mode == "AUTO" and (bool(request["command"]["instruction"]) or model_input["unresolved_records"] > 0)
                 response = {"rules": request["rules"], "explanation": "선택한 규칙을 전체 기록에 시험 적용합니다.", "needs_clarification": False}
-                provenance = {"adapter": "RULES_ONLY", "input_hash": digest(model_input),
+                provenance = {"adapter": "RULES_ONLY",
                               **{k: model_input[k] for k in ("scanned_records", "omitted_records", "sample_method", "oversized_sample_records")},
                               "sample_ids": [r["record_id"] for r in model_input["sample"]]}
                 if needs_ai and model_input["scanned_records"]:
@@ -138,7 +138,7 @@ def process_cluster(jid=None, adapter_factory=AIAdapter):
                             except FutureTimeout:
                                 incoming.renew(message)
                     validate_ai_response(response, model_input["sample"])
-                    provenance = {**provenance, **adapter.metadata(), "response_hash": digest(response)}
+                    provenance = {**provenance, **adapter.metadata()}
                 header = {"scope_hash": digest(request["scope"]), "rules": response["rules"],
                           "explanation": response["explanation"], "needs_clarification": response["needs_clarification"],
                           "provenance": provenance}

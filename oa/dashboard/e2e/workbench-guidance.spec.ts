@@ -56,7 +56,6 @@ test('arrival aligns groups, original logs and professional rationale in one vie
   await page.locator('.ws-workbench-group-heading').getByRole('button', { name: '취소', exact: true }).click()
   expect((await (await page.request.get(base+'/clustering')).json()).revision).toBe(current.revision)
   expect(external).toEqual([])
-  await page.screenshot({ path: 'artifacts/guidance-first-visit.png', fullPage: true, animations: 'disabled' })
   // Follow the guide until only the current group remains. Asking for the next
   // explanation must keep its log context and editing controls available.
   for (let index = 0; index < 2; index++) {
@@ -105,7 +104,6 @@ test('a person can follow the two stages through PASS, FAIL, hold, correction an
   expect(view.summary.counts).toMatchObject({ PASS: 2, FAIL: 1, DEFER: 0 })
   expect(view.summary.complete).toBe(true)
   expect(await (await page.request.get(base+'/source')).text()).toBe(source)
-  await page.screenshot({ path: 'artifacts/guidance-completed.png', fullPage: true, animations: 'disabled' })
   await page.getByRole('button', { name: '보고서 목록으로', exact: true }).click()
   await expect(page.getByRole('heading', { name: '보고서 검토' })).toBeVisible()
   await expect(page.getByRole('columnheader', { name: '검사 규칙', exact: true })).toHaveCount(0)
@@ -130,7 +128,6 @@ test('mobile explains a blocked next step and keeps an unfinished editor safe', 
   await expect(page.getByRole('button', { name: '분류 확정 · 판정 시작', exact: true })).toBeEnabled()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth+1)).toBe(true)
   await page.evaluate(() => window.scrollTo(0, 0))
-  await page.screenshot({ path: 'artifacts/guidance-mobile.png', fullPage: true, animations: 'disabled' })
   expect(errors).toEqual([])
 })
 

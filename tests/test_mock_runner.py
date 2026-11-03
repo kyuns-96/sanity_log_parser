@@ -20,7 +20,7 @@ class MockRunnerTests(unittest.TestCase):
         names = ['tests.test_common', 'tests.test_auth']
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            database = Mock(root=root, server_version_num=180000)
+            database = Mock(root=root)
             calls = []
             def execute(staged, environment, log, script, *args):
                 calls.append((script, args))
@@ -29,10 +29,6 @@ class MockRunnerTests(unittest.TestCase):
                     self.assertEqual(names, list(args[start:start + len(names)]))
                     (root / 'tests.json').write_text(json.dumps({'profile':'quick', 'include':names,
                         'tests_run':2, 'skipped':0, 'successful':True}))
-                elif script == 'devtools/demo.py':
-                    output = Path(args[args.index('--out') + 1]);output.mkdir()
-                    (output / 'receipt.json').write_text('{"coverage":{}}')
-                elif script == 'tests/benchmark_postgresql.py':log.write_text('{}')
             with patch.object(runner, 'pg_binaries', return_value=Path('/synthetic/bin')), \
                     patch.object(runner, 'MockDatabase', return_value=database) as create, \
                     patch.object(runner, 'stage_source'), patch.object(runner, 'execute', side_effect=execute), \
@@ -41,7 +37,6 @@ class MockRunnerTests(unittest.TestCase):
             self.assertEqual(1, create.call_count)
             database.stop.assert_called_once()
             self.assertEqual(1, sum(script == 'run_tests.py' for script, _ in calls))
-            self.assertEqual(names, json.loads((root/'summary.json').read_text())['include'])
 
     def test_additional_scope_is_bound_to_manifest_and_each_parallel_worker(self):
         names = ['tests.test_common']
@@ -67,7 +62,7 @@ class MockRunnerTests(unittest.TestCase):
                 command = call.args[0]
                 self.assertEqual(names[0], command[command.index('--include') + 1])
             reports[1]['include'] = []
-            self.assertFalse(runner.combine_shards(manifest, reports, [0,0], 1)['complete'])
+            self.assertFalse(runner.combine_shards(manifest, reports, [0,0])['complete'])
 
     def shard_reports(self):
         manifest = {"profile": "full", "test_ids": ["test-d", "test-a", "test-c", "test-b"]}
@@ -75,18 +70,16 @@ class MockRunnerTests(unittest.TestCase):
         for index, ids in enumerate((["test-a", "test-c"], ["test-b", "test-d"])):
             reports.append({"profile": "full", "shard": f"{index+1}/2", "tests_total": 4,
                 "test_ids": ids, "tests_selected": 2, "tests_run": 2, "failures": 0,
-                "errors": 0, "skipped": 0, "successful": True, "failed_tests": [],
-                "timings": [{"test": name, "seconds": 0.1} for name in ids]})
+                "errors": 0, "skipped": 0, "successful": True, "failed_tests": []})
         return manifest, reports
 
     def test_parallel_reports_require_exact_complete_nonduplicated_execution(self):
         manifest, reports = self.shard_reports()
-        report = runner.combine_shards(manifest, reports, [0, 0], 1.2)
+        report = runner.combine_shards(manifest, reports, [0, 0])
         self.assertTrue(report["successful"])
         self.assertTrue(report["complete"])
         self.assertEqual((4, 0, 0, 0), tuple(report[key] for key in ("tests_run", "failures", "errors", "skipped")))
-        self.assertCountEqual(manifest["test_ids"], [row["test"] for row in report["timings"]])
-        empty=runner.combine_shards({"profile":"full","test_ids":[]},[],[],0)
+        empty=runner.combine_shards({"profile":"full","test_ids":[]},[],[])
         self.assertFalse(empty["successful"])
         self.assertFalse(empty["complete"])
         for defect in ("missing", "duplicate", "partial", "exit", "profile"):
@@ -95,10 +88,10 @@ class MockRunnerTests(unittest.TestCase):
                 codes = [0, 0]
                 if defect == "missing": reports[1] = None
                 elif defect == "duplicate": reports[1] = reports[0]
-                elif defect == "partial": reports[1]["timings"].pop()
+                elif defect == "partial": reports[1]["tests_run"] -= 1
                 elif defect == "exit": codes[1] = -9
                 elif defect == "profile": reports[1]["profile"] = "quick"
-                report = runner.combine_shards(manifest, reports, codes, 1.2)
+                report = runner.combine_shards(manifest, reports, codes)
                 self.assertFalse(report["successful"])
                 self.assertFalse(report["complete"])
                 self.assertTrue(report["worker_errors"])
@@ -111,22 +104,12 @@ class MockRunnerTests(unittest.TestCase):
                 reports[1]["successful"] = key == "skipped"
                 reports[1]["failed_tests"] = [] if key == "skipped" else ["test-d"]
                 codes = [0, 0 if key == "skipped" else 1]
-                report = runner.combine_shards(manifest, reports, codes, 1.2)
+                report = runner.combine_shards(manifest, reports, codes)
                 self.assertTrue(report["complete"])
                 self.assertFalse(report["successful"])
                 self.assertEqual(1, report[key])
 
     def test_fast_cluster_is_explicit_and_preserves_scram_and_private_socket(self):
-        from types import SimpleNamespace
-        # Runner wall budgets must count suspend on systems with BOOTTIME.
-        for boot_clock in (True, False):
-            clock = SimpleNamespace(monotonic=Mock(side_effect=[100, 107]))
-            if boot_clock:
-                clock.CLOCK_BOOTTIME = 9
-                clock.clock_gettime = Mock(side_effect=[100, 131])
-            with patch.object(runner, "time", clock):
-                began = runner.elapsed_time()
-                self.assertEqual(31 if boot_clock else 7, runner.elapsed_time() - began)
         for durability in ("ephemeral", "durable"):
             with self.subTest(durability=durability), patch.object(runner.os, "geteuid", return_value=1000):
                 database = runner.MockDatabase(Path("/synthetic/bin"), durability=durability)
@@ -151,49 +134,12 @@ class MockRunnerTests(unittest.TestCase):
                     runner.main(["--jobs", value])
                 database.assert_not_called()
 
-    def test_profiles_forward_scope_and_keep_large_probes_explicit(self):
-        for profile, arguments, rows, groups, scenario_count in (
-            ("quick", [], 100, 10, 1), ("regression", ["--profile", "regression"], 100, 10, 1),
-            ("full", ["--profile", "full"], 10000, 100, 4),
-        ):
-            with self.subTest(profile=profile), tempfile.TemporaryDirectory() as temp:
-                root = Path(temp)
-                database = Mock(root=root, server_version_num=120001)
-                calls = []
-
-                def execute(staged, environment, log, script, *args):
-                    calls.append((script, args))
-                    if script == "run_tests.py":
-                        (root / "tests.json").write_text(json.dumps({
-                            "profile": profile, "tests_run": 1, "skipped": 0, "successful": True}))
-                    elif script == "devtools/demo.py":
-                        output = Path(args[args.index("--out") + 1])
-                        output.mkdir()
-                        (output / "receipt.json").write_text('{"coverage": {}}')
-                    elif script == "tests/benchmark_postgresql.py":
-                        log.write_text(json.dumps({"rows": args[1], "groups": args[3]}))
-
-                with patch.object(runner, "pg_binaries", return_value=Path("/synthetic/bin")), \
-                        patch.object(runner, "MockDatabase", return_value=database), \
-                        patch.object(runner, "stage_source"), patch.object(runner, "execute", side_effect=execute), \
-                        redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                    self.assertEqual(0, runner.main(["--jobs", "1", *arguments]))
-                database.stop.assert_called_once()
-                result = json.loads((root / "summary.json").read_text())
-                self.assertEqual(profile, result["profile"])
-                self.assertEqual(profile == "full", result["full_suite"])
-                self.assertEqual({"rows": rows, "groups": groups}, result["scale"])
-                self.assertEqual(scenario_count, len(result["scenarios"]))
-                test_call = next(args for script, args in calls if script == "run_tests.py")
-                self.assertEqual(profile, test_call[test_call.index("--profile") + 1])
-                self.assertIn("--require-db", test_call)
-
-    def test_failed_regression_retains_counts_and_timings_in_the_failed_summary(self):
+    def test_failed_regression_stops_database_and_returns_failure(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            database = Mock(root=root, server_version_num=180000)
+            database = Mock(root=root)
             report = {"profile": "quick", "tests_run": 9, "failures": 5, "errors": 2,
-                      "skipped": 0, "successful": False, "seconds": 42.0, "timings": []}
+                      "skipped": 0, "successful": False}
 
             def execute(staged, environment, log, script, *args):
                 if script == "run_tests.py":
@@ -205,13 +151,9 @@ class MockRunnerTests(unittest.TestCase):
                     patch.object(runner, "stage_source"), patch.object(runner, "execute", side_effect=execute), \
                     redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 self.assertEqual(1, runner.main(["--jobs", "1"]))
-            summary = json.loads((root / "summary.json").read_text())
-            self.assertEqual("FAILED", summary["status"])
-            self.assertEqual(report, summary["tests"])
-            self.assertTrue(summary["db_stopped"])
             database.stop.assert_called_once()
 
-    def test_failed_start_still_stops_and_records_failure(self):
+    def test_failed_start_still_stops_and_returns_failure(self):
         with tempfile.TemporaryDirectory() as temp:
             database = Mock(root=Path(temp))
             database.start.side_effect = runner.MockError("synthetic startup failure")
@@ -221,9 +163,6 @@ class MockRunnerTests(unittest.TestCase):
                 self.assertEqual(1, runner.main([]))
             database.stop.assert_called_once()
             database.setup.assert_not_called()
-            summary = json.loads((Path(temp) / "summary.json").read_text())
-            self.assertEqual("FAILED", summary["status"])
-            self.assertTrue(summary["db_stopped"])
 
     def test_shell_database_and_ai_configuration_is_not_inherited(self):
         source = {"PATH": "/usr/bin", "LANG": "C.UTF-8", "SANITY_VWP_DSN": "private",

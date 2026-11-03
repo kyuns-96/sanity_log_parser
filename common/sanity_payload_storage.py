@@ -105,10 +105,6 @@ def _restore(kind, header, payload_bytes=None):
     return value, raw
 
 
-def decode_payload(kind, header, payload_bytes=None):
-    return _restore(kind, header, payload_bytes)[0]
-
-
 def restore_row(kind, row):
     payload, raw = _restore(kind, row['payload'], row.get('payload_bytes'))
     result = {**row, 'payload': payload}

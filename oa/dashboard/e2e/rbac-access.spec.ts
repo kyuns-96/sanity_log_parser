@@ -240,7 +240,6 @@ test('user grants distinguish same-name accounts, search stable IDs, and retain 
   await panel.getByRole('button', { name: /synthetic-person-b/ }).click()
   for (const width of [1440, 1280]) {
     await page.setViewportSize({ width, height: 1000 })
-    await panel.screenshot({ path: `artifacts/oa-batch-followup/user-grants/user-grants-${width}.png`, animations: 'disabled' })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
   }
   expect(state.writes).toEqual([])
@@ -413,17 +412,14 @@ test('welcome and administrator share the Studio neutral theme without mobile ov
   await accessServer(page, true)
   await page.goto('/?page=welcome')
   await expect(page.getByRole('heading', { name: '권한 요청', exact: true })).toBeVisible()
-  await page.screenshot({ path: 'artifacts/rbac-welcome-desktop.png', fullPage: true, animations: 'disabled' })
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.getByRole('heading', { name: '권한 요청', exact: true })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
   expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())).toBe('#4f46e5')
-  await page.screenshot({ path: 'artifacts/rbac-welcome-mobile.png', fullPage: true, animations: 'disabled' })
   await page.getByRole('button', { name: '메뉴 열기', exact: true }).click()
   await page.getByRole('button', { name: '관리자 모드', exact: true }).click()
   await expect(page.getByRole('heading', { name: '프로젝트·권한 관리', exact: true })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
-  await page.screenshot({ path: 'artifacts/rbac-admin-mobile.png', fullPage: true, animations: 'disabled' })
 })
 
 const syntheticVwpProfile = { id: 'synthetic-vwp-profile', label: '합성 VWP 실행', api: 'chat_completions',

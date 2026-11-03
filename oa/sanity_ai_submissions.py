@@ -1,10 +1,9 @@
 """Small web submissions; complete input preparation belongs to the VWP worker."""
-from copy import deepcopy
 from datetime import timedelta
 import re
 
 from common.sanity_ai_execution import worker_site
-from common.sanity_common import ReviewError, digest, canonical_json
+from common.sanity_common import ReviewError, canonical_json
 from common.sanity_db import uuid_value, lock_key
 from common.sanity_vwp_ai import require
 from oa.sanity_workspace import record_id
@@ -72,12 +71,10 @@ class Submissions:
             "PREPARING":{"PREPARING","PREPARED","FAILED","STALE","CANCELLED"}}
         for row in rows:
             event = row["payload"]
-            require(isinstance(event, dict) and set(event) == {"namespace","id","sequence","previous_sha256","at","status","data","sha256"}
+            require(isinstance(event, dict) and {"namespace","id","sequence","at","status","data"} <= set(event)
                     and event["namespace"] == NAMESPACE and event["id"] == identity
                     and event["status"] in transitions.get(previous["status"] if previous else None, set())
                     and type(event["sequence"]) is int and event["sequence"] == (previous["sequence"] + 1 if previous else 1)
-                    and event["previous_sha256"] == (previous["sha256"] if previous else None)
-                    and event["sha256"] == digest({k:v for k,v in event.items() if k != "sha256"})
                     and row["workspace_key"] == PREFIX + identity + "." + f"{event['sequence']:06d}"
                     and row["record_id"] == record_id("WS_CONFIG",row["workspace_key"])
                     and row["state"] == {} and row["version"] == 0 and row["created_at"] == row["updated_at"]
@@ -121,9 +118,8 @@ class Submissions:
         from oa.sanity_ai_jobs import _db_now
         event = {"namespace":NAMESPACE,"id":data["command"]["request_id"],
             "sequence":previous["sequence"] + 1 if previous else 1,
-            "previous_sha256":previous["sha256"] if previous else None,"at":_db_now(self.db).isoformat(),
-            "status":status,"data":deepcopy(data)}
-        event["sha256"] = digest(event)
+            "at":_db_now(self.db).isoformat(),
+            "status":status,"data":data}
         require(len(canonical_json(event)) <= 32768,"AI_INPUT_LIMIT")
         key = PREFIX + event["id"] + "." + f"{event['sequence']:06d}"
         self.service.ws.put("WS_CONFIG",key,event)

@@ -133,7 +133,7 @@ test.describe('independent Studio workbench preview', () => {
     await expect(page.getByRole('tab', { name: '이력', exact: true })).toHaveAttribute('aria-selected', 'true')
   })
 
-  test('desktop and phone layouts have no horizontal overflow and desktop confirmation stays visible', async ({ page }, testInfo) => {
+  test('desktop and phone layouts have no horizontal overflow and desktop confirmation stays visible', async ({ page }) => {
     for (const [width, height] of [[1440, 900], [1280, 800], [390, 844]]) {
       await page.setViewportSize({ width, height })
       await openStudio(page)
@@ -153,7 +153,6 @@ test.describe('independent Studio workbench preview', () => {
         await confirm.click()
         await expect(page.locator('.progress-label')).toContainText('1 / 5')
       }
-      await page.screenshot({ path: testInfo.outputPath(`studio-${width}.png`), fullPage: true, animations: 'disabled' })
     }
   })
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Button } from './studio/components/ui/button'
-import { Input } from './studio/components/ui/input'
+import { Input } from './components/ui/input'
 import type { AccessApi } from './accessApi'
 
 type Limits = { max_concurrency: number; max_jobs: number }

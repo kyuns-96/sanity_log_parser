@@ -45,7 +45,6 @@ test('human edits keep the original, persist on reload and bulk confirmation ope
   await page.getByText('원안·참고 사례·이력', { exact: true }).click()
   await page.getByText('이 그룹의 근거 변경 이력', { exact: false }).click()
   await expect(page.locator('.ws-rationale-disclosure[open]')).toContainText('불확실성 설명을 보완')
-  await page.screenshot({ path: 'artifacts/rationale-human-review.png', fullPage: true })
   await page.getByRole('button', { name: '분류 확정 · 판정 시작', exact: true }).click()
   await expect(page.getByRole('region', { name: '2단계 확정 그룹별 판정', exact: true })).toBeVisible()
   const confirmed = await cluster(page, 'edit')
@@ -78,7 +77,6 @@ test('dragging marks only affected explanations stale and the current reason can
   await page.getByLabel('작성·수정 사유', { exact: true }).fill('이동 후 전체 구성에 맞게 근거 수정')
   await page.getByRole('button', { name: '근거 저장·확인', exact: true }).click()
   await expect(page.locator('.ws-rationale')).toHaveAttribute('data-rationale-state', 'CONFIRMED')
-  await page.screenshot({ path: 'artifacts/rationale-after-drag.png', fullPage: true })
 })
 
 test('legacy confirmed history shows missing reasons and cannot enable new judgments', async ({ page }) => {
@@ -88,7 +86,6 @@ test('legacy confirmed history shows missing reasons and cannot enable new judgm
   await expect(page.getByRole('button', { name: '분류 확정 · 판정 시작', exact: true })).toBeDisabled()
   await expect(page.getByRole('button', { name: /그룹별 판정/ })).toBeDisabled()
   await expect(page.getByRole('button', { name: '근거 작성', exact: true })).toBeVisible()
-  await page.screenshot({ path: 'artifacts/rationale-legacy-missing.png', fullPage: true })
 })
 
 test('TOP reads group reasons and history without editing controls', async ({ page }) => {

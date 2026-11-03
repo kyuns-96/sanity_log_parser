@@ -4,7 +4,7 @@ Snapshots are display data only. Authorization, dispatch and result acceptance
 always use the original job/input ledgers. No log bodies or credentials belong
 here. A missing observation cannot make an uncertain call safe to repeat.
 """
-from common.sanity_common import ReviewError, canonical_json, digest
+from common.sanity_common import ReviewError, canonical_json
 from common.sanity_db import Database,lock_key,json_value
 from common.sanity_ai_execution import worker_site
 from common.sanity_vwp_ai import require
@@ -34,12 +34,11 @@ def record(service, identity, command, target, public, *, phase=None, call_id=No
             public={**public,'progress':{**progress,'active_descriptors':progress['active_descriptors'][:32],
                 'active_descriptors_truncated':len(progress['active_descriptors'])>32}}
     value = {"namespace":NAMESPACE, "id":identity, "actor_id":command["user_id"], "target":target,
-        "sequence":previous["sequence"]+1 if previous else 1,"previous_sha256":previous["sha256"] if previous else None,
+        "sequence":previous["sequence"]+1 if previous else 1,
         "command":{k:command[k] for k in ("block_id","version_id","report_id","group_id")},
         "at":at.isoformat(), "job":public}
     if phase:value["phase"] = phase
     if call_id:value["call_id"] = call_id
-    value["sha256"] = digest(value)
     require(len(canonical_json(value)) <= 16384,"AI_OUTPUT_LIMIT")
     key = PREFIX + identity + "." + f"{value['sequence']:010d}"
     service.ws.put("WS_CONFIG",key,value)
@@ -76,7 +75,6 @@ def validate(row):
     require(isinstance(value,dict) and value.get("namespace")==NAMESPACE
         and type(value.get("sequence")) is int and value["sequence"]>=1
         and row["workspace_key"]==PREFIX+value["id"]+"."+f"{value['sequence']:010d}"
-        and value.get("sha256")==digest({k:v for k,v in value.items() if k!="sha256"})
         and row["record_id"]==record_id("WS_CONFIG",row["workspace_key"])
         and row["state"]=={} and row["version"]==0 and row["created_at"]==row["updated_at"],"AI_MONITOR_CORRUPT")
     return value

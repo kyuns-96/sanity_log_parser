@@ -28,9 +28,9 @@
 
 VWP와 OA는 망 분리 환경이다. 두 bridge는 같은 PostgreSQL DB의 4개 테이블로만 통신한다. SQLite, 브리지 사이 파일 전달, 직접 HTTP/RPC, 로컬 DB fallback은 사용하지 않는다. 대시보드 브라우저가 OA 로컬 API에 접속하는 것은 브리지 간 통신과 구분한다.
 
-사용자가 **psycopg2로 PostgreSQL 직접 접속 가능**함을 확인했다. 기본 접근 모드는 `SANITY_DB_ACCESS=postgresql`이며 host·user_name·password는 비공개 `.env`/환경변수에서 설정한다. DB 이름·포트·스키마·TLS 정책도 같은 경로에서 설정한다. 기존 DBaaS HTTP 접근은 **임시 읽기 전용**으로만 유지하며 명시적으로 선택한 HTTP 모드에서 직접 접속으로 자동 전환하지 않는다. 실제 배포 DB의 DDL·권한·잠금·트랜잭션 검증 완료를 접속 방법 확인과 혼동하지 않는다.
+사용자가 **psycopg2로 PostgreSQL 직접 접속 가능**함을 확인했다. 기본 접근 모드는 `SANITY_DB_ACCESS=postgresql`이며 host·user_name·password는 비공개 `.env`/환경변수에서 설정한다. DB 이름·포트·스키마·TLS 정책도 같은 경로에서 설정한다. 실제 배포 DB의 DDL·권한·잠금·트랜잭션 검증 완료를 접속 방법 확인과 혼동하지 않는다.
 
-사용자가 VWP AI의 API·CLI와 함께 **OA AI의 OpenAI 호환 API**가 있음을 확인했다. 모델 비밀값은 호출 서버의 비공개 환경에서 관리하며 OA의 설정 키·호출 계약은 [AI_RUNTIME.md](oa/AI_RUNTIME.md)에 제공한다. 본 프로젝트 report 원문·객체 경로·측정값·관련 설정은 OA가 DB 경계로 전달받아 조회하는 범위다. 사내 세부 형식·모델 호환성·한도·배포 검증은 현장에서 확인하고 실제 원문·접속값은 외부에 제공하지 않는다. 운영 RBAC는 22절, 업무 범위는 15절, 실행법은 [README.md](README.md), 현재 직렬화는 [PROTOCOL.md](PROTOCOL.md), 검증 결과는 [REVIEW.md](REVIEW.md)를 따른다.
+사용자가 VWP AI의 API·CLI와 함께 **OA AI의 OpenAI 호환 API**가 있음을 확인했다. 모델 비밀값은 호출 서버의 비공개 환경에서 관리하며 OA의 설정 키·호출 계약은 [AI_RUNTIME.md](oa/AI_RUNTIME.md)에 제공한다. 본 프로젝트 report 원문·객체 경로·측정값·관련 설정은 OA가 DB 경계로 전달받아 조회하는 범위다. 사내 세부 형식·모델 호환성·한도·배포 검증은 현장에서 확인하고 실제 원문·접속값은 외부에 제공하지 않는다. 운영 RBAC는 22절, 업무 범위는 15절, 실행법은 [README.md](README.md), 현재 직렬화는 [PROTOCOL.md](PROTOCOL.md)를 따른다.
 
 ## 2. 환경별 책임과 흐름
 
@@ -177,9 +177,7 @@ AI URL·token은 VWP 서버의 비공개 `.env`/환경변수에서 읽는다. AP
 
 PostgreSQL 설정은 `SANITY_DB_HOST`, `SANITY_DB_PORT`(기본 5432), `SANITY_DB_NAME`, `SANITY_DB_USER_NAME`, `SANITY_DB_PASSWORD`, `SANITY_DB_SCHEMA`(기본 public), `SANITY_DB_SSLMODE`(기본 verify-full), `SANITY_DB_SSLROOTCERT`(필요 시 절대 CA 파일 경로)를 사용한다. 호스트·DB 이름·계정·비밀번호가 없으면 실패하며 다른 로컬 DB를 사용하지 않는다. VWP/OA 각 실행 서버는 기본적으로 같은 키 이름으로 서로 다른 제한 계정을 설정한다. 명시적인 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`에서는 7절의 공유 로그인 계약을 사용하며 private DB 격리를 보장하지 않는다. 비어 있지 않은 해당 side의 `SANITY_VWP_DSN`/`SANITY_OA_DSN`은 기존 환경·테스트 호환용으로 연결 필드보다 우선하므로 필드 방식으로 바꿀 때 제거/비운다. 비밀번호는 psycopg2의 별도 인자로 전달하며 실패 시 다른 설정/TLS 수준으로 재시도하지 않는다. `.env`보다 환경변수가 우선하고 보간은 하지 않는다. 기존 `.env`의 HTTP 모드는 운영자가 직접 바꿔야 한다.
 
-임시 DBaaS는 DBAAS_BASE_URL과 별칭 DBASS_BASE_URL이 다르면 중단한다. DBAAS_TOKEN과 절대 경로 DBAAS_CA_PATH를 사용하며 PEM/DER CA를 검증한다. 검증 끄기·redirect·환경 proxy는 사용하지 않는다. HTTPX timeout 30초는 각 I/O 대기 제한이며 요청 전체 시간 보장이 아니다. URL·토큰·CA 경로·서버 detail을 진단에 출력하지 않는다.
-
-임시 클라이언트는 /api/v1/me, /api/v1/resources의 읽기 확인과 명시적 query 전송을 제공하지만 POST가 DB 쓰기 지원을 뜻하지 않는다. 요청/응답 한도는 각 8MiB이고 불확실한 POST 결과는 자동 재시도하지 않는다. 현재 HTTP 모드의 저장 계층은 DBAAS_SQL_CONTRACT_REQUIRED로 중단한다. 세션의 읽기 전용 표시는 저장 어댑터 준비 완료를 뜻하지 않는다. 정식 방식은 트랜잭션·rollback·잠금·역할 권한·자료형·크기 제한·DDL 적용 경로까지 확인해야 한다.
+`SANITY_DB_ACCESS=dbaas_http`는 `DBAAS_SQL_CONTRACT_REQUIRED`로 중단하며 직접 PostgreSQL 접속으로 우회하지 않는다.
 
 ## 11. 사람 검토·이력·전체 완료 조건
 
@@ -211,7 +209,7 @@ OA는 단위와 서로 다른 record ID 1~100개, 사유, 요청 UUID를 공유 
 
 FULFILLED/REJECTED/EXPIRED는 최종 결과이며 거부·만료를 승인으로 덮어쓰지 않는다. OA도 요청 ID 집합과 원문 해시를 대조한다. 추가 근거는 원래 분석·사람 판정을 자동 변경하지 않는다. group/줄 범위 선택은 후속 범위다.
 
-**반영한 동작:** `respond --request-id` 또는 VWP `work`가 일반 원문 요청을 처리한다. `--approve-export`는 호환용 선택 옵션이고 `--reject`는 명시적 거부다. 등록된 비밀값·명시적 자격증명 패턴은 원문 응답에서 마스킹하고 source_raw_sha256/raw_sha256/redacted를 보존한다. OA 미리보기는 4,000자이고 전체 상세는 기본 8,000자·최대 16,000자씩 조회한다. 인증·범위·무결성 검사와 사람의 sanity 검토는 그대로 유지한다. 비밀정보 검사는 범용 DLP가 아니며 분석 번들/분류 입력·출력에서 발견하면 identity를 변경하는 대신 전달을 중단한다.
+**반영한 동작:** `respond --request-id` 또는 VWP `work`가 일반 원문 요청을 처리한다. `--reject`는 명시적 거부다. 등록된 비밀값·명시적 자격증명 패턴은 원문 응답에서 마스킹하고 source_raw_sha256/raw_sha256/redacted를 보존한다. OA 미리보기는 4,000자이고 전체 상세는 기본 8,000자·최대 16,000자씩 조회한다. 인증·범위·무결성 검사와 사람의 sanity 검토는 그대로 유지한다. 비밀정보 검사는 범용 DLP가 아니며 분석 번들/분류 입력·출력에서 발견하면 identity를 변경하는 대신 전달을 중단한다.
 
 **현재 legacy 구현:** VWP OpenAI 호환 API/선택 CLI와 DB 작업자를 제공하며 기본 AI 설정은 disabled다. 이 경로의 URL/token/model은 VWP 비공개 `.env`에 두고 자연어 요청도 VWP 큐로 처리한다. 이는 새 OA 모델 실행·사례 검색·최초 직접 근거 판정의 완료가 아니다. OA 목표 연결은 [AI 판단 설계](AI_DECISION_DESIGN.md)를 따른다. API 실패 시 다른 모델·합성 결과로 자동 우회하거나 없는 근거를 인용하지 않으며 AI 제안만으로 사람의 확정을 기록하지 않는다. 현재 직렬화는 PROTOCOL을 따른다.
 
@@ -223,7 +221,7 @@ FULFILLED/REJECTED/EXPIRED는 최종 결과이며 거부·만료를 승인으로
 - UI/API: 인증 실패·설정 누락·읽기 전용·페이지·수신 없음·검토 차단·개정 충돌·보고서 다운로드·근거 요청/응답·명시적 demo·오류 시 fallback 금지.
 - schema: 신청 원본 4개·기존 설정 SQL 2개를 유지하고, 증분 변경 SQL의 기존 데이터 보존·제약 검증·rollback과 폐지된 Jira 스키마 부재를 검사.
 
-DB 없는 순수 테스트와 실제 제한된 계정의 PostgreSQL 통합 결과를 구분한다. 테스트는 별도 sanity_test_* DB의 자신이 만든 임시 스키마만 정리하며 운영 DB를 초기화하지 않는다. run_tests.py --require-db는 DB 검증 조건이 없으면 실패한다. 테스트 수와 결과는 실제 실행 후 REVIEW.md에 기록하며 문서 설계만으로 통과를 주장하지 않는다.
+DB 없는 순수 테스트와 실제 제한된 계정의 PostgreSQL 통합 결과를 구분한다. 테스트는 별도 sanity_test_* DB의 자신이 만든 임시 스키마만 정리하며 운영 DB를 초기화하지 않는다. run_tests.py --require-db는 DB 검증 조건이 없으면 실패한다.
 
 10,000~100,000줄 입력에 반복/고유 그룹 분포, 입력 바이트, 최대 행 길이, 시간·메모리·DB 용량을 함께 측정한다. legacy summary JSON 16MiB, 전송 압축 전후 각각 64MiB, 원문 한 건 64MiB 제한이 있다. legacy 최초 분석 번들의 고유 그룹 전체 목록·초대형 행의 엄격한 메모리 상한, 보존/삭제 작업자는 별도 과제다. 새 V2 제출은 envelope 포함 압축 전/후 각 4MiB·최대 1,000건씩 분할하고 전체 수신을 검증한다. 전체 검토 context의 1,000,000건/256MiB 예산 초과는 명시적으로 차단하며 잘라 완료로 표시하지 않는다.
 
@@ -422,7 +420,7 @@ FAIL 그룹 연관 후보는 대상 record와 후보 group의 개정, 참조한 
 
 AI 호출 동안 DB의 긴 트랜잭션을 유지하지 않는다. 작업 점유·기한·필요한 lease 갱신·재시도·부분 실패를 구현하고, AI/API 실패는 실패/재시도 대기로 표시한다. 기존 규칙 결과는 조회 가능하지만 AI 실패를 검토 완료로 바꾸지 않는다. API 결과가 불확실할 때 CLI로 자동 중복 실행하는 정책은 가정하지 않고 실제 호출 계약에 맞춰 정한다.
 
-현재 분류 작업자는 직접 PostgreSQL 모드에서 별도 프로세스로 구현했으며 분류 처리 중 heartbeat와 체크포인트를 사용한다. 임시 HTTP 읽기 전용 접근에는 적용할 수 없고 정식 DB 쓰기·트랜잭션 접근 계약은 여전히 필요하다.
+현재 분류 작업자는 직접 PostgreSQL 모드에서 별도 프로세스로 구현했으며 분류 처리 중 heartbeat와 체크포인트를 사용한다.
 
 ### 14.10. 누락 검출과 완료 조건
 
@@ -732,7 +730,7 @@ GCA는 이 프로젝트에서 PrimeTime 제약조건 검사를 다루는 **Galax
 물리 계약은 `db/005_workspace.sql`, 사용/검증 범위는 [WORKSPACE.md](oa/WORKSPACE.md)를 따른다.
 2026-10-22 프로젝트 등록·권한 신청/승인의 운영 공통 API는 22절을 따른다. 실제 회사 SSO/DB 현장 검증과 VWP 버전·PoR의 운영 SSO 연결은 별도다. 합성 workspace의 예시 자료를 운영 자료로 표시하지 않는다.
 
-현재 Tailscale로 공유한 `/workspace`는 독립 테스트 DB를 사용하는 확인 환경이다. 운영 서비스의 사내 SSO·접속 경로·배포 구성을 확정한 주소가 아니다. 기존 메모리 데모와 새 서버 통합의 검증 결과는 [REVIEW.md](REVIEW.md)에 구분해 기록하며, 이 결과를 실제 사내 인증·운영 DB 검증으로 대신하지 않는다.
+현재 Tailscale로 공유한 `/workspace`는 독립 테스트 DB를 사용하는 확인 환경이다. 운영 서비스의 사내 SSO·접속 경로·배포 구성을 확정한 주소가 아니다.
 
 ### 15.12. 수용 기준
 
@@ -1020,7 +1018,7 @@ sanity item에서 시작하는 전용 작업 화면에 **1. 로그 분류 → 2.
 | 과거 사례와 다른 패턴 또는 달라진 그룹 구성이 필요한 report | AI가 새 그룹·분리·병합을 제안할 수 있고 현재 report 전체 ID를 보존. 과거 그룹 사전에 강제로 배정하지 않음 |
 | 브라우저의 초기 진입·그룹 선택·검색·마지막 페이지 | 렌더 행 수 제한, 전체 원문/구성의 동시 전개 없음, 페이지 이동과 입력 가능, 측정값 기록 |
 
-명세 작성 시점의 `/workspace`는 report당 로그 1,000건·그룹 100개 한도와 개별 report 모달이었다. 이후 사용자 지시에 따라 Sanity item의 전용 순차 화면, 서버 편집·페이지 API, DB에 진행 상태를 저장하는 분할 작업을 구현했다. 평균 10,000건과 100,000건 입력은 같은 경로를 사용한다. 구현 계약과 명시적 자원 예산은 [WORKSPACE.md](oa/WORKSPACE.md), 완료한 검증의 규모·측정값·실행 환경은 [REVIEW.md](REVIEW.md)에 기록한다.
+명세 작성 시점의 `/workspace`는 report당 로그 1,000건·그룹 100개 한도와 개별 report 모달이었다. 이후 사용자 지시에 따라 Sanity item의 전용 순차 화면, 서버 편집·페이지 API, DB에 진행 상태를 저장하는 분할 작업을 구현했다. 평균 10,000건과 100,000건 입력은 같은 경로를 사용한다. 구현 계약과 명시적 자원 예산은 [WORKSPACE.md](oa/WORKSPACE.md)를 따른다.
 
 OA 모델 공통 호출·작업·검색은 제공하지만 실제 사내 API/자료·의미 판단 품질은 미검증이다. 위 대량 분할 검증은 합성 데이터/결정적 참고 엔진에 해당하며 실제 모델 분할/통합은 COMMON-05 후속이다. 더 큰 입력·실제 사내 형식/SDK·운영 지연/메모리 목표는 사내 검증 대상이며 이 문서의 100,000건 수용 시나리오를 무제한 처리 보장으로 표현하지 않는다.
 위 수용 시나리오는 전체 목표이며 한도 내 OA 첫 순환 구현만으로 전부 완료한 것으로 표시하지 않는다. 기존 정확한 필드 참고 엔진과 합성 mock의 결과는 실제 사내 모델의 초기 분류·판단 정확도나 100,000건 모델 처리 보장이 아니다.
@@ -1240,7 +1238,7 @@ VWP AI는 허용된 회사 launcher의 로컬 입력 준비/합성 시험, 회�
 
 ### 20.4. 구현과 검증 경계
 
-COMMON-02A~E의 공통 제출 CLI/spool·영속 원본·분할 DB 전달/수신·receipt/상태 복구와 기존 두 단계 검토 연결을 제공했다. `008_submissions.sql`은 DBA 검토·적용용이며 운영 DB에는 실행하지 않았다. 세 사내 AI는 [SUBMISSION.md](vwp/SUBMISSION.md)의 허용된 원천/신원·승인·계정 매핑 어댑터와 현장 검증 자료를 제공한다. SSO 현재 권한을 쓰는 운영 V2 수신·workbench 공통 연결은 제공한다. 실제 mount/ACL·회사 원천/신원 SDK·모델 API와 운영 배포 검증은 별도다. 합성 10,000/100,000건 및 독립 PostgreSQL 결과는 [REVIEW.md](REVIEW.md)에 기록하며 운영 검증으로 대체하지 않는다.
+COMMON-02A~E의 공통 제출 CLI/spool·영속 원본·분할 DB 전달/수신·receipt/상태 복구와 기존 두 단계 검토 연결을 제공했다. `008_submissions.sql`은 DBA 검토·적용용이며 운영 DB에는 실행하지 않았다. 세 사내 AI는 [SUBMISSION.md](vwp/SUBMISSION.md)의 허용된 원천/신원·승인·계정 매핑 어댑터와 현장 검증 자료를 제공한다. SSO 현재 권한을 쓰는 운영 V2 수신·workbench 공통 연결은 제공한다. 실제 mount/ACL·회사 원천/신원 SDK·모델 API와 운영 배포 검증은 별도다.
 
 ## 21. SSO 영속 계정 저장 구조 — 009
 

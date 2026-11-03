@@ -11,7 +11,9 @@ from common.sanity_workspace_rationale import validate_content
 
 class RationaleDiagnosticsTests(unittest.TestCase):
     def setUp(self):
-        self.context={'report':{'record_count':2,'records':[{'id':'r0'},{'id':'r1'}]}}
+        self.context={'report':{'record_count':2,'records':[
+            {'id':'r0','fields':{'code':'SYNTHETIC-CHECK'}},
+            {'id':'r1','fields':{'code':'SYNTHETIC-CHECK'}}]}}
         self.group={'id':'g','label':'합성 그룹','record_ids':['r0','r1']}
         self.rationale={'group_id':'g','reason':'합성 이유', 'evidence_ids':['r0'], 'reference_groups':[]}
         self.advice={'groups':[self.group],'reason':'합성 분류','reference_ids':[], 'group_rationales':[self.rationale]}

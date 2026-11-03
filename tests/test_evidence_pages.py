@@ -16,7 +16,7 @@ from common.sanity_raw_sources import RawSourceStore
 from common.sanity_submission_store import SubmissionStore
 from tests import test_payload_storage as fixtures
 from tests.support import PgTestCase, ROOT, psycopg2
-from vwp_bridge.payload_compaction import MaintenanceDatabase, compact, fingerprint
+from vwp_bridge.payload_compaction import MaintenanceDatabase, compact
 from vwp_bridge.submission_analysis import SourceEvidence, public_records
 
 
@@ -226,29 +226,29 @@ class EvidencePageDatabaseTests(PgTestCase):
         self.assertEqual(20, len(self.records(analysis)))
         self.assertGreater(sum(r['record_type'] == KIND for r in self.physical(analysis)), 1)
 
-    def test_fingerprint_repack_and_restore_guard_preserve_pages_and_raw_sources(self):
+    def test_repack_and_restore_guard_preserve_pages_and_raw_sources(self):
         self.install(); analysis = self.seed(count=300)
-        with self.owner() as db: before = fingerprint(db)
+        before = self.physical(analysis)
         wire = self.records(analysis)
         self.admin.execute(self.source('maintenance/repack_payload_storage.sql'))
         with self.owner() as db:
-            self.assertEqual(before, fingerprint(db))
+            self.assertEqual(before, self.physical(analysis))
             for apply in (False, True):
                 with self.assertRaises(ReviewError) as error: compact(db, restore_plain=True, apply=apply)
                 self.assertEqual('PAGE_STORAGE_RESTORE_REQUIRED', error.exception.code)
-            self.assertEqual(before, fingerprint(db))
+            self.assertEqual(before, self.physical(analysis))
         self.assertEqual(wire, self.records(analysis))
         with Database('vwp') as db:
             self.assertTrue(EvidencePageStorage(db).enabled)
             RawSourceStore(db, 'synthetic-page-node')
 
     def test_011_restore_cannot_claim_old_reader_compatibility_after_012_even_before_new_pages(self):
-        self.seed('existing-rows'); self.install()
+        analysis = self.seed('existing-rows'); self.install()
         with self.owner() as db:
-            before = fingerprint(db)
+            before = self.physical(analysis)
             with self.assertRaises(ReviewError) as error: compact(db, restore_plain=True, apply=True)
             self.assertEqual('PAGE_STORAGE_RESTORE_REQUIRED', error.exception.code)
-            self.assertEqual(before, fingerprint(db))
+            self.assertEqual(before, self.physical(analysis))
 
     def test_partial_schema_and_missing_index_fail_closed(self):
         self.install()

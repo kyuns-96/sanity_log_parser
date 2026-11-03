@@ -1,5 +1,5 @@
 """Synthetic VWP personal credentials, immutable pins and private transport."""
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 import json
 from types import SimpleNamespace
 import unittest
@@ -14,7 +14,7 @@ from common.sanity_ai_execution import executing_on
 from common.sanity_common import ReviewError, canonical_json, digest
 from common.sanity_db import json_value
 from common.sanity_vwp_ai_profiles import ProfileStore
-from oa.sanity_ai_jobs import _now
+
 from oa.sanity_ai_model import OASettings
 from oa.sanity_vwp_inference import LocalClient
 from tests.support import PgTestCase
@@ -177,7 +177,7 @@ class VwpPersonalCredentialDatabaseTests(PgTestCase):
         job=self.w.request();self.w.prepare()
         self.c.callback=lambda request:httpx.Response(503)
         for attempt in range(6):
-            at=_now()+timedelta(seconds=400*attempt)
+            at=datetime.now(timezone.utc)+timedelta(seconds=400*attempt)
             with executing_on("vwp"),patch("oa.sanity_ai_jobs._db_now",return_value=at):result=self.c.run_job(now=at)
         self.assertEqual("FAILED",result["status"])
         self.assertTrue(result["resumable"])
@@ -200,7 +200,7 @@ class VwpPersonalCredentialDatabaseTests(PgTestCase):
         first=self.w.prepare();self.assertEqual("PENDING",first["status"])
         self.assertEqual(1,len(self.v.wire))
         with self.v.store() as (store,_,_):store.tokens(store.get(self.w.connection)).save("owner","synthetic-rotated-key",1)
-        at=_now()+timedelta(seconds=400)
+        at=datetime.now(timezone.utc)+timedelta(seconds=400)
         with executing_on("vwp"),patch("oa.sanity_ai_jobs._db_now",return_value=at):result=self.c.run_job(now=at)
         self.assertEqual(("STALE","AI_CREDENTIAL_CHANGED"),(result["status"],result["error"]))
         self.assertEqual(1,len(self.v.wire))
@@ -227,7 +227,7 @@ class VwpPersonalCredentialDatabaseTests(PgTestCase):
 
     def assert_reservation_remains_unknown(self,job):
         self.assertEqual([],self.v.wire)
-        at=_now()
+        at=datetime.now(timezone.utc)
         with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):result=self.c.run_job(now=at)
         self.assertEqual('RUNNING',result['status'])
         future=at+timedelta(seconds=400)

@@ -1,4 +1,4 @@
-import { Input } from './studio/components/ui/input'
+import { Input } from './components/ui/input'
 import type { BatchConfig, ProcessingConfig, ReasoningConfig } from './aiConnectionTypes'
 
 export default function AIProcessingLimits({ config, busy, onChange }: { config: ProcessingConfig; busy: boolean; onChange: (value: Partial<ProcessingConfig>) => void }) {

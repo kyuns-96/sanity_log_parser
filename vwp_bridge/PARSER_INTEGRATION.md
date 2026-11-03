@@ -211,7 +211,7 @@ return registry
 기존 지원 형식은 종전 `vwp_bridge/main.py analyze`를 사용한다. 회사 파서는 같은 명령에 아래 진입점을 사용한다. 먼저 `vwp/main.py collect`로 완료된 실행의 원문 snapshot을 만든다. 운영 DB 변경/분석 실행은 기존 사용자 검토·적용 절차를 따른다.
 
 ```bash
-.venv/bin/python vwp_bridge/corporate_analyze.py analyze --input /path/to/private/run.json --out /path/to/private/receipt
+.venv/bin/python vwp_bridge/corporate_analyze.py analyze --input /path/to/private/run.json
 ```
 
 일반 `main.py`는 회사 코드를 자동 import하지 않는다. 기존 내장 형식은 회사 진입점에서도 종전대로 동작한다. 의존성·새 env 키·새 실행 방식이 필요하면 Codex에게 문의한다.

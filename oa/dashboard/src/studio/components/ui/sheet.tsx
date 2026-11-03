@@ -13,24 +13,6 @@ function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />;
 }
 
-function SheetTrigger({
-  ...props
-}: React.ComponentProps<typeof SheetPrimitive.Trigger>) {
-  return <SheetPrimitive.Trigger data-slot="sheet-trigger" {...props} />;
-}
-
-function SheetClose({
-  ...props
-}: React.ComponentProps<typeof SheetPrimitive.Close>) {
-  return <SheetPrimitive.Close data-slot="sheet-close" {...props} />;
-}
-
-function SheetPortal({
-  ...props
-}: React.ComponentProps<typeof SheetPrimitive.Portal>) {
-  return <SheetPrimitive.Portal data-slot="sheet-portal" {...props} />;
-}
-
 function SheetOverlay({
   className,
   ...props
@@ -56,7 +38,7 @@ function SheetContent({
   side?: "top" | "right" | "bottom" | "left";
 }) {
   return (
-    <SheetPortal>
+    <SheetPrimitive.Portal data-slot="sheet-portal">
       <SheetOverlay />
       <SheetPrimitive.Content
         data-slot="sheet-content"
@@ -80,7 +62,7 @@ function SheetContent({
           <span className="sr-only">Close</span>
         </SheetPrimitive.Close>
       </SheetPrimitive.Content>
-    </SheetPortal>
+    </SheetPrimitive.Portal>
   );
 }
 
@@ -89,16 +71,6 @@ function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="sheet-header"
       className={cn("flex flex-col gap-1.5 p-4", className)}
-      {...props}
-    />
-  );
-}
-
-function SheetFooter({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="sheet-footer"
-      className={cn("mt-auto flex flex-col gap-2 p-4", className)}
       {...props}
     />
   );
@@ -132,11 +104,8 @@ function SheetDescription({
 
 export {
   Sheet,
-  SheetTrigger,
-  SheetClose,
   SheetContent,
   SheetHeader,
-  SheetFooter,
   SheetTitle,
   SheetDescription,
 };

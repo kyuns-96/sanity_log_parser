@@ -1,7 +1,7 @@
 """Synthetic parallel batch jobs: bounded dispatch, durable results and recovery."""
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 from dataclasses import replace
 import json
 from threading import Event, Lock
@@ -16,7 +16,7 @@ from common.sanity_ai_execution import executing_on, worker_site
 from common.sanity_common import ReviewError
 from common.sanity_db import json_value
 from oa.sanity_ai_budget import BatchSettings
-from oa.sanity_ai_jobs import _now
+
 from tests.support import PgTestCase
 
 
@@ -157,7 +157,7 @@ class ParallelVwpJobsTests(PgTestCase):
 
     def test_wall_samples_follow_overlapping_completions_and_reset_at_merge(self):
         job=self.create_job(records=4);entered=[Event(),Event()];release=[Event(),Event()]
-        clock=[_now()]
+        clock=[datetime.now(timezone.utc)]
         def block(request):
             packet=self.packet(request)
             if packet['batch']['stage']=='LEAF' and packet['batch']['start'] in (0,1):
@@ -312,7 +312,7 @@ class ParallelVwpJobsTests(PgTestCase):
                 started.set()
                 if not release.wait(20):raise AssertionError('synthetic call was not released')
         self.c.callback=block
-        at=_now()+timedelta(seconds=600)
+        at=datetime.now(timezone.utc)+timedelta(seconds=600)
         with ThreadPoolExecutor(max_workers=1) as executor:
             old=executor.submit(self.run_wave)
             try:
@@ -454,7 +454,7 @@ class ParallelVwpJobsTests(PgTestCase):
         first=self.run_wave()
         self.assertEqual('RUNNING',first['status'],first)
         self.assertEqual(1,first['progress']['completed_calls'])
-        start=_now()
+        start=datetime.now(timezone.utc)
         for number in range(1,6):
             at=start+timedelta(seconds=400*number)
             with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):result=self.c.run_job(now=at)
@@ -488,7 +488,7 @@ class ParallelVwpJobsTests(PgTestCase):
         def block(_request):
             entered.set()
             if not release.wait(20):raise AssertionError('synthetic retry was not released')
-        self.c.callback=block;at=_now()+timedelta(seconds=400)
+        self.c.callback=block;at=datetime.now(timezone.utc)+timedelta(seconds=400)
         with patch('oa.sanity_ai_jobs._db_now',return_value=at),ThreadPoolExecutor(max_workers=1) as executor:
             def retry():
                 with executing_on('vwp'):return self.c.run_job(now=at)

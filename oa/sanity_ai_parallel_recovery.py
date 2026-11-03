@@ -7,7 +7,7 @@ No source records or model requests are hydrated by the display preflight.
 from datetime import timedelta
 import re
 
-from common.sanity_common import ReviewError, digest
+from common.sanity_common import ReviewError
 from common.sanity_db import lock_key, uuid_value
 from common.sanity_submission import check
 from oa.sanity_ai_batch_jobs import attempts
@@ -277,7 +277,6 @@ def resume(service, user_id, job_id, request_id):
                                 resume={'request_id':request_id,'actor_id':user_id})
     result = _append(service,event,user_id,request_id,checkpoint)
     value = {'namespace':NAMESPACE,'id':request_id,'job_id':job_id,'actor_id':user_id}
-    value['sha256'] = digest(value)
     service.ws.put('WS_CONFIG', PREFIX+request_id, value)
     return service.public(result)
 
@@ -308,6 +307,5 @@ def retry_unknown(service, user_id, job_id, request_id, expected_event_sha256, e
     result = _append(service,event,user_id,request_id,checkpoint)
     value = {'namespace':NAMESPACE,'id':request_id,'job_id':job_id,'actor_id':user_id,
              'event_sha256':expected_event_sha256,'step_sha256':expected_step_sha256}
-    value['sha256'] = digest(value)
     service.ws.put('WS_CONFIG', PREFIX+request_id, value)
     return service.public(result)

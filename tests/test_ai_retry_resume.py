@@ -1,5 +1,5 @@
 """Synthetic tests for explicit resume, saved checkpoints and authorization."""
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import unittest
 from unittest.mock import patch
@@ -11,7 +11,7 @@ from common.sanity_ai_execution import executing_on
 from common.sanity_common import ReviewError
 from common.sanity_db import json_value
 from oa.sanity_ai_budget import BatchSettings
-from oa.sanity_ai_jobs import _now
+
 from tests.support import PgTestCase
 
 
@@ -49,7 +49,7 @@ class ResumeCheckpointTests(PgTestCase):
 
     def exhaust(self):
         self.c.callback=lambda request:(_ for _ in ()).throw(httpx.ConnectError('synthetic',request=request))
-        start=_now()
+        start=datetime.now(timezone.utc)
         for attempt in range(6):
             at=start+timedelta(seconds=200*attempt)
             with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):result=self.c.run_job(now=at)
@@ -79,7 +79,7 @@ class ResumeCheckpointTests(PgTestCase):
         def next_response(request):
             with self.c.service() as service:observed.append(service.status('owner',job['id']))
             return httpx.Response(401)
-        self.c.callback=next_response;at=_now()+timedelta(seconds=400)
+        self.c.callback=next_response;at=datetime.now(timezone.utc)+timedelta(seconds=400)
         with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):result=self.c.run_job(now=at)
         self.assertNotIn('validation_failure',observed[0])
         self.assertEqual('FAILED',result['status']);self.assertNotIn('validation_failure',result)
@@ -103,7 +103,7 @@ class ResumeCheckpointTests(PgTestCase):
             ledger=Ledger(service,service._load(job['id']));step,_=ledger.last()
             self.assertEqual(failure['validation_failure'],step['failure']['validation_failure'])
             self.assertEqual({'kind','error','model_called','response_complete'},set(step['failure']['receipt']))
-        self.c.callback=None;at=_now()+timedelta(seconds=400)
+        self.c.callback=None;at=datetime.now(timezone.utc)+timedelta(seconds=400)
         with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):success=self.c.run_job(now=at)
         self.assertEqual(2,success['progress']['completed_calls']);self.assertNotIn('validation_failure',success)
         result=self.w.v.finish();self.assertEqual('COMPLETED',result['status'],result)
@@ -124,7 +124,7 @@ class ResumeCheckpointTests(PgTestCase):
         self.assertEqual('MERGE',failed['progress']['phase'])
         self.assertEqual(2,failed['progress']['completed_calls'])
         self.assertEqual('RATIONALE_EVIDENCE_OUTSIDE_GROUP',failed['validation_failure']['code'])
-        self.c.callback=None;at=_now()+timedelta(seconds=400)
+        self.c.callback=None;at=datetime.now(timezone.utc)+timedelta(seconds=400)
         with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):self.c.run_job(now=at)
         result=self.w.v.finish();self.assertEqual('COMPLETED',result['status'],result)
         self.assertEqual(4,len(self.w.v.wire))
@@ -132,7 +132,7 @@ class ResumeCheckpointTests(PgTestCase):
             ledger=Ledger(service,service._load(job['id']));self.assertIsNotNone(ledger.audit())
 
     def test_manual_resume_clears_terminal_diagnostic_without_repeating_completed_child(self):
-        job=self.setup_batch();self.c.callback=self.invalid_rationale;start=_now()
+        job=self.setup_batch();self.c.callback=self.invalid_rationale;start=datetime.now(timezone.utc)
         for number in range(6):
             at=start+timedelta(seconds=400*number)
             with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):failed=self.c.run_job(now=at)
@@ -207,7 +207,7 @@ class ResumeCheckpointTests(PgTestCase):
         from oa.sanity_workspace import WorkspaceStore
         job=self.setup_batch()
         self.c.callback=lambda request:(_ for _ in ()).throw(httpx.ConnectError('synthetic',request=request))
-        at=_now()+timedelta(seconds=1000)
+        at=datetime.now(timezone.utc)+timedelta(seconds=1000)
         with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):
             waiting=self.c.run_job(now=at)
         self.assertEqual('RUNNING',waiting['status'])
@@ -235,7 +235,7 @@ class ResumeCheckpointTests(PgTestCase):
                 return httpx.Response(503,headers={'Retry-After':'20'})
             return None  # The synthetic server produces a valid response.
         self.c.callback=respond
-        at=_now()
+        at=datetime.now(timezone.utc)
         for attempt,delay in enumerate((20,20,20,40,60),start=1):
             with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):
                 result=self.c.run_job(now=at)

@@ -35,7 +35,7 @@ VWP 원천→bridge의 HTTPS 제출과 VWP-bridge↔OA의 기존 DB 경계를 �
 
 | 지원 키 | 필수/기본값 | 인계할 내용 |
 |---|---|---|
-| `SANITY_DB_ACCESS` | `postgresql` | 직접 `psycopg2` 접속. `dbaas_http`는 임시 읽기 전용이며 저장 불가 |
+| `SANITY_DB_ACCESS` | `postgresql` | 직접 `psycopg2` 접속. `dbaas_http`는 지원하지 않으며 DB 작업을 차단 |
 | `SANITY_DB_HOST` | 필수 | 해당 망에서 접근 가능한 승인 endpoint와 인증서 호스트 일치 |
 | `SANITY_DB_PORT` | 기본 `5432` | 실제 발급 포트, 1~65535 |
 | `SANITY_DB_NAME` | 필수 | 두 bridge가 함께 사용하는 실제 DB 이름 |

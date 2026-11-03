@@ -4,22 +4,12 @@ import argparse
 import json
 import os
 from pathlib import Path
-import time
 import unittest
 
 
 ROOT = Path(__file__).resolve().parent
 PROFILES = ("quick", "regression", "full")
 ROLES = ("vwp", "vwp-bridge", "oa")
-ELAPSED_CLOCK = "CLOCK_BOOTTIME" if hasattr(time, "CLOCK_BOOTTIME") else "monotonic"
-
-
-def elapsed_time():
-    # On Android/Linux, MONOTONIC stops during device suspend. A three-minute
-    # budget must include that time rather than silently underreport it.
-    if hasattr(time, "CLOCK_BOOTTIME"):
-        return time.clock_gettime(time.CLOCK_BOOTTIME)
-    return time.monotonic()
 
 
 # Keep everyday checks within a three-minute target on the development device.
@@ -98,7 +88,7 @@ QUICK_TESTS = (
     "tests.test_payload_storage_migration.PayloadStorageMigrationTests.test_checkpoint_59_prepares_and_verifies_the_exact_original_011_catalog",
     "tests.test_evidence_pages_migration.EvidencePagesMigrationTests.test_checkpoint_60_applies_only_012_with_exact_original_catalog",
     "tests.test_shared_source_migration.SharedPacketMigrationTests.test_checkpoint_62_runs_exact_original_013_catalog",
-    "tests.test_mock_runner", "tests.test_test_runner", "tests.test_role_runner", "tests.test_http_support", "oa.test_auth_config", "oa.test_sso",
+    "tests.test_mock_runner", "tests.test_test_runner", "tests.test_role_runner", "oa.test_auth_config", "oa.test_sso",
 )
 # Preserve the previous quick scope for explicit, broader regression runs.
 # Full still discovers every original test, including large datasets and all
@@ -142,7 +132,7 @@ REGRESSION_TESTS = (
     "tests.test_shared_source_packets.SharedSourceDatabaseTests.test_foreign_keys_prevent_purging_acknowledged_bodies_and_apps_cannot_mutate_them",
     "tests.test_shared_source_packets.SharedSourceDatabaseTests.test_changed_or_truncated_queue_body_is_not_replaced_by_partial_logs",
     "tests.test_shared_source_packets.SharedSourceDatabaseTests.test_a_valid_packet_from_another_block_cannot_supply_a_private_part",
-    "tests.test_shared_source_packets.SharedSourceDatabaseTests.test_equivalent_gzip_idempotence_fingerprint_and_repack_keep_every_record",
+    "tests.test_shared_source_packets.SharedSourceDatabaseTests.test_equivalent_gzip_idempotence_and_repack_keep_every_record",
     "tests.test_shared_source_packets.SharedSourceDatabaseTests.test_partial_or_cascading_reference_contract_fails_closed",
     "tests.test_shared_source_packets.SharedSourceSubmissionFlows.test_tokenless_sso_owner_confirmation_keeps_full_shared_evidence",
     "tests.test_shared_source_packets.SharedSourceSubmissionFlows.test_group_confirmation_human_judgment_and_next_run_references_with_shared_bodies",
@@ -154,7 +144,7 @@ REGRESSION_TESTS = (
     "tests.test_evidence_pages.EvidencePageDatabaseTests.test_replay_compares_logical_records_across_equivalent_gzip_encodings",
     "tests.test_evidence_pages.EvidencePageDatabaseTests.test_crash_after_committed_full_page_resumes_without_missing_or_duplicate_logs",
     "tests.test_evidence_pages.EvidencePageDatabaseTests.test_missing_first_middle_and_final_pages_never_return_a_complete_report",
-    "tests.test_evidence_pages.EvidencePageDatabaseTests.test_fingerprint_repack_and_restore_guard_preserve_pages_and_raw_sources",
+    "tests.test_evidence_pages.EvidencePageDatabaseTests.test_repack_and_restore_guard_preserve_pages_and_raw_sources",
     "tests.test_evidence_pages.EvidencePageDatabaseTests.test_011_restore_cannot_claim_old_reader_compatibility_after_012_even_before_new_pages",
     "tests.test_evidence_pages.EvidencePageDatabaseTests.test_app_cannot_update_page_bytes_or_apply_012_and_reapplication_is_atomic",
     "tests.test_evidence_pages_migration.EvidencePagesPortalTests",
@@ -403,20 +393,6 @@ def shard_suite(suite, index, count):
     return unittest.TestSuite(sorted(cases, key=lambda test: test.id())[index::count])
 
 
-class TimedTestResult(unittest.TextTestResult):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.timings = []
-
-    def startTest(self, test):
-        self.started = elapsed_time()
-        super().startTest(test)
-
-    def stopTest(self, test):
-        self.timings.append({"test": test.id(), "seconds": round(elapsed_time() - self.started, 6)})
-        super().stopTest(test)
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=PROFILES, default="quick",
@@ -428,12 +404,9 @@ def main(argv=None):
     parser.add_argument("--list", action="store_true", help="list selected test IDs without executing them")
     parser.add_argument("--require-db", action="store_true", help="fail rather than skip PostgreSQL integration tests")
     parser.add_argument("--report-json", type=Path, help="write a new machine-readable result file (will not overwrite)")
-    parser.add_argument("--durations", type=int, default=5, help="show the N slowest tests (default: 5; 0: hide)")
     parser.add_argument("--shard", default="1/1", help="run disjoint shard INDEX/COUNT (one-based)")
     parser.add_argument("--manifest-json", type=Path, help="write selected test IDs without running tests")
     args = parser.parse_args(argv)
-    if args.durations < 0:
-        parser.error("--durations must be nonnegative")
     if args.role and args.profile != "quick":
         parser.error("--role selects quick role checks; run regression/full without --role for integrated validation")
     if args.role and args.include:
@@ -454,7 +427,6 @@ def main(argv=None):
             import psycopg2
         except ImportError:
             parser.error("--require-db needs psycopg2; install requirements.txt")
-    started = elapsed_time()
     company = []
     if args.role:
         try:
@@ -493,21 +465,15 @@ def main(argv=None):
         for test in test_cases(suite):
             print(test.id())
         return 0
-    result = unittest.TextTestRunner(verbosity=2, resultclass=TimedTestResult).run(suite)
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
     successful = result.wasSuccessful() and (not args.role or not result.skipped)
-    seconds = round(elapsed_time() - started, 3)
-    print(f"elapsed_seconds={seconds:.3f} elapsed_clock={ELAPSED_CLOCK}", flush=True)
-    print(f"profile={args.profile} tests_run={result.testsRun} seconds={seconds:.3f}", flush=True)
-    timings = sorted(result.timings, key=lambda row: row["seconds"], reverse=True)
-    for row in timings[:args.durations]:
-        print(f"slow_test seconds={row['seconds']:.3f} test={row['test']}", flush=True)
+    print(f"profile={args.profile} tests_run={result.testsRun}", flush=True)
     if args.role:
         print(f"role_tests_status={'PASSED' if successful else 'FAILED'} role={args.role}", flush=True)
     if args.report_json:
         report = {"profile": args.profile, "full_suite": full_suite, "tests_selected": selected,
                   "tests_run": result.testsRun, "failures": len(result.failures), "errors": len(result.errors),
                   "skipped": len(result.skipped), "successful": successful, **scope,
-                  "seconds": seconds, "elapsed_clock": ELAPSED_CLOCK, "timings": timings,
                   "tests_total": total, "test_ids": selected_ids, "shard": args.shard,
                   "failed_tests": [test.id() for test, _ in result.failures + result.errors]}
         with args.report_json.open("x", encoding="utf-8") as stream:

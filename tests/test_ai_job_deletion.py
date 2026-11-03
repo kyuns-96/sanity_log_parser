@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 """Real, isolated PostgreSQL deletion with synthetic reports and model replies."""
 import os
 import secrets
@@ -66,7 +67,7 @@ class AIJobDeletionDatabaseTests(unittest.TestCase):
                 "AND payload->>'job_id'=%s", (prefix, identity)).fetchone()[0])
         with self.c.service() as service:
             value = marker(service, identity)
-            self.assertEqual({'namespace', 'id', 'actor_id', 'sha256'}, set(value))
+            self.assertEqual({'namespace', 'id', 'actor_id'}, set(value))
             self.assertEqual((NAMESPACE, identity, 'owner'), (value['namespace'], value['id'], value['actor_id']))
 
     def test_completed_job_removes_execution_rows_and_preserves_report_and_proposal(self):
@@ -371,7 +372,7 @@ class AIJobDeletionDatabaseTests(unittest.TestCase):
         import json
         from threading import Event
         from common.sanity_ai_execution import executing_on
-        from oa.sanity_ai_jobs import _now
+
         from tests.test_ai_batches import batch_settings
         from tests.test_vwp_inference import configuration
         settings = replace(batch_settings(max_records=1), max_concurrency=2)
@@ -392,7 +393,7 @@ class AIJobDeletionDatabaseTests(unittest.TestCase):
                 self.assertTrue(entered[1].wait(10))
                 with self.c.service() as service:
                     self.assertEqual('RUNNING', service.cancel('owner', job['id'])['status'])
-                at = _now() + timedelta(seconds=400)
+                at = datetime.now(timezone.utc) + timedelta(seconds=400)
                 with executing_on('vwp'), patch('oa.sanity_ai_jobs._db_now', return_value=at):
                     self.assertEqual('UNKNOWN', self.c.run_job(now=at)['status'])
                 self.delete(job['id'])

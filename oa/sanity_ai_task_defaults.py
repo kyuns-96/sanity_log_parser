@@ -3,35 +3,28 @@
 The selection only supplies a UI default. Each submitted job still pins its
 explicit connection/model and validates its owner's own credential.
 """
-from copy import deepcopy
-
-from common.sanity_common import ReviewError, digest
+from common.sanity_common import ReviewError
 from common.sanity_db import lock_key, uuid_value
 from common.sanity_clustering import check
 from oa.sanity_ai_model import _model_id
 from oa.sanity_workspace import WorkspaceStore, record_id
 
 PREFIX = 'ai.task-defaults.'
-NAMESPACE = 'oa-ai-task-defaults-v1'
 TASKS = ('CLUSTER', 'REVIEW')
-
-
-def _selection(value, *, code):
-    check(value is None or isinstance(value,dict) and set(value)=={'connection_id','model_id'}, code)
-    if value is None:
-        return None
-    # A persisted selection uses one canonical identity, not a loose UUID form.
-    try:
-        connection_id = str(uuid_value(value['connection_id']))
-    except ReviewError:
-        raise ReviewError(code, 'Invalid task model selection') from None
-    check(connection_id == value['connection_id'] and _model_id(value['model_id']), code)
-    return {'connection_id':connection_id,'model_id':value['model_id']}
 
 
 def _defaults(value, *, code):
     check(isinstance(value,dict) and set(value)==set(TASKS), code)
-    return {task:_selection(value[task],code=code) for task in TASKS}
+    for selection in value.values():
+        check(selection is None or isinstance(selection,dict) and set(selection)=={'connection_id','model_id'}, code)
+        if selection is None:
+            continue
+        try:
+            connection_id = str(uuid_value(selection['connection_id']))
+        except ReviewError:
+            raise ReviewError(code, 'Invalid task model selection') from None
+        check(connection_id == selection['connection_id'] and _model_id(selection['model_id']), code)
+    return value
 
 
 class TaskDefaults:
@@ -39,26 +32,17 @@ class TaskDefaults:
         self.db = db
 
     def current(self):
-        from oa.sanity_ai_jobs import _NULL_COLUMNS
-        rows = self.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s "
-                               "ORDER BY workspace_key", (PREFIX+'%',)).fetchall()
-        previous = None
-        for revision, row in enumerate(rows,1):
-            value = row['payload']
-            check(isinstance(value,dict) and set(value)=={'namespace','revision','actor_id','defaults','previous_sha256','sha256'}
-                  and value['namespace']==NAMESPACE and type(value['revision']) is int and value['revision']==revision
-                  and isinstance(value['actor_id'],str) and 1<=len(value['actor_id'])<=200
-                  and value['previous_sha256']==(previous['sha256'] if previous else None)
-                  and row['workspace_key']==PREFIX+f'{revision:010d}'
-                  and row['record_id']==record_id('WS_CONFIG',row['workspace_key'])
-                  and row['state']=={} and row['version']==0 and row['status']=='RECORDED'
-                  and row['updated_at']==row['created_at'] and all(row.get(k) is None for k in _NULL_COLUMNS)
-                  and value['sha256']==digest({k:v for k,v in value.items() if k!='sha256'}), 'AI_TASK_DEFAULTS_CORRUPT')
-            check(_defaults(value['defaults'],code='AI_TASK_DEFAULTS_CORRUPT')==value['defaults'], 'AI_TASK_DEFAULTS_CORRUPT')
-            previous=value
-        if previous is None:
+        row = self.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s "
+                              "ORDER BY workspace_key DESC LIMIT 1", (PREFIX+'%',)).fetchone()
+        if row is None:
             return {'revision':0,'defaults':{task:None for task in TASKS}}
-        return {'revision':previous['revision'],'defaults':deepcopy(previous['defaults'])}
+        value = row['payload']
+        check(isinstance(value,dict) and type(value.get('revision')) is int
+              and 1<=value['revision']<=9999999999
+              and row['workspace_key']==PREFIX+f"{value['revision']:010d}"
+              and row['record_id']==record_id('WS_CONFIG',row['workspace_key']), 'AI_TASK_DEFAULTS_CORRUPT')
+        return {'revision':value['revision'],
+                'defaults':_defaults(value.get('defaults'),code='AI_TASK_DEFAULTS_CORRUPT')}
 
     @staticmethod
     def _admin(actor, db):
@@ -88,15 +72,6 @@ class TaskDefaults:
                 if value and value['connection_id']==connection_id:
                     check(value['model_id'] in connection['config']['models'],'AI_MODEL_NOT_ALLOWED')
         revision=expected_revision+1
-        if expected_revision:
-            row=self.db.execute("SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key=%s",
-                                (PREFIX+f'{expected_revision:010d}',)).fetchone()
-            check(row is not None,'AI_TASK_DEFAULTS_CORRUPT')
-            previous_sha256=row['payload']['sha256']
-        else:
-            previous_sha256=None
-        value={'namespace':NAMESPACE,'revision':revision,'actor_id':actor.user_id,'defaults':defaults,
-               'previous_sha256':previous_sha256}
-        value['sha256']=digest(value)
+        value={'revision':revision,'actor_id':actor.user_id,'defaults':defaults}
         WorkspaceStore(self.db).put('WS_CONFIG',PREFIX+f'{revision:010d}',value)
-        return {'revision':revision,'defaults':deepcopy(defaults)}
+        return {'revision':revision,'defaults':defaults}

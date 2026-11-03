@@ -1,13 +1,10 @@
 """Average (10,000) and larger (100,000) single-report sequential review."""
 import copy
 import json
-from pathlib import Path
-import resource
-import time
 from unittest.mock import patch
 import uuid
 
-from tests.http_support import TestClient
+from fastapi.testclient import TestClient
 
 from common.sanity_common import ReviewError, digest
 from common.sanity_db import Database
@@ -126,7 +123,6 @@ class WorkspaceScaleTests(PgTestCase):
     def test_100000_unique_groups_finish_all_records_resume_and_review_the_final_group(self):
         original = self.get("/workbench")
         por = self.client.get("/workspace/api/blocks/project-1-cpu/versions").json()["por"]
-        began = time.monotonic()
         task = self.task()
         self.assertEqual(5000, task["chunk_size"])
         first = self.post("/clustering/tasks/step", {"task_id": task["id"], "expected_chunk": 0})
@@ -137,7 +133,6 @@ class WorkspaceScaleTests(PgTestCase):
         self.assertEqual((100000, 20), (done["processed"], len(done["chunks"])))
         self.assertEqual(list(range(0, 100000, 5000)), [part["start"] for part in done["chunks"]])
         self.assertEqual(100000, done["chunks"][-1]["stop"])
-        classification_seconds = time.monotonic()-began
         view = self.get("/workbench")
         self.assertEqual((100000, 100000), (view["record_count"], view["summary"]["total"]))
         self.assertLess(len(json.dumps(view)), 40000)
@@ -161,18 +156,6 @@ class WorkspaceScaleTests(PgTestCase):
         self.assertEqual(original["source_sha256"], view["source_sha256"])
         self.assertEqual("FAIL", view["report"]["check_status"])
         self.assertEqual(por, self.client.get("/workspace/api/blocks/project-1-cpu/versions").json()["por"])
-        with Database("oa") as db, db.transaction(readonly=True):
-            size = db.execute("SELECT octet_length(payload::text) AS bytes FROM {oa} WHERE record_type='WS_REPORT' "
-                              "AND workspace_key='large-source'").fetchone()["bytes"]
-        artifacts = Path("artifacts"); artifacts.mkdir(exist_ok=True)
-        (artifacts / "workspace-100000-unique.json").write_text(json.dumps({
-            "status": "PASSED", "records": 100000, "groups": 100000, "chunks": len(done["chunks"]),
-            "classification_seconds": round(classification_seconds, 3), "workflow_seconds": round(time.monotonic()-began, 3),
-            "source_json_bytes": size, "metadata_serialized_bytes": len(json.dumps(view).encode()),
-            "group_page_count": len(groups["items"]), "record_page_count": len(last["items"]),
-            "runner_peak_rss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
-            "reviewed": view["summary"]["reviewed"], "source_and_por_unchanged": True,
-            "real_model_called": False}, indent=2)+"\n")
 
     def test_byte_budget_stops_before_source_fetch_or_partial_clustering(self):
         with patch('oa.sanity_workspace.MAX_REPORT_JSON_BYTES', 1):
@@ -250,7 +233,6 @@ class WorkspaceScaleTests(PgTestCase):
         self.assertEqual("STATE_CORRUPT", result["code"])
 
     def test_100000_records_keep_group_rationales_paged_and_bulk_adopted(self):
-        began=time.monotonic()
         done=self.finish(self.task())
         view=self.get('/workbench')
         self.assertEqual((100000,100),(view['record_count'],view['summary']['total']))
@@ -268,8 +250,3 @@ class WorkspaceScaleTests(PgTestCase):
         self.assertTrue(view['summary']['confirmed'])
         last=self.get('/clustering/records?expected_revision=2&offset=99950&limit=50')
         self.assertEqual((100000,50),(last['total'],len(last['items'])))
-        Path('artifacts').mkdir(exist_ok=True)
-        Path('artifacts/workspace-100000-rationales.json').write_text(json.dumps({
-            'status':'PASSED','records':100000,'groups':100,'chunks':len(done['chunks']),
-            'workflow_seconds':round(time.monotonic()-began,3),'metadata_bytes':len(json.dumps(view).encode()),
-            'runner_peak_rss_kib':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,'model_calls':0})+'\n')

@@ -5,6 +5,6 @@ if (process.env.SANITY_CODEX_LIVE_TEST !== '1') throw new Error('Explicit SANITY
 
 export default defineConfig({
   ...base, testMatch: 'codex-button-live.spec.ts', timeout: 240_000, retries: 0,
-  reporter: [['list'], ['json', { outputFile: 'artifacts/codex-button-live-browser.json' }]],
+  reporter: [['list']],
   outputDir: 'test-results/codex-button-live',
 })

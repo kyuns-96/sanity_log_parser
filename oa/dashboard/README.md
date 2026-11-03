@@ -193,7 +193,7 @@ SANITY_DASHBOARD_TEST_PORT=5188 npm run test:e2e
 Playwright는 실제 Chromium에서 명시적 데모, 로그인과 토큰 비저장, API 실패,
 UUID 재시도·개정 충돌, 읽기 전용, 판단 기록, 근거 요청·응답, 보고서 다운로드,
 390px 모바일 화면을 확인합니다. 데모 및 API 모킹 기반 UI 테스트이며 실제 DB·API 통합
-검증은 상위 프로젝트 테스트와 별도로 수행합니다. 화면 캡처는 `artifacts/`,
+검증은 상위 프로젝트 테스트와 별도로 수행합니다. 실패한 검사의 캡처·trace는 `test-results/`,
 결과 보고서는 `playwright-report/`에 생성됩니다.
 기본 mock UI 검사는 브라우저 context별로 격리하고 가용 CPU 수에 따라 최대 4개 작업자로 병렬 실행합니다.
 `SANITY_DASHBOARD_TEST_WORKERS=1 npm run test:e2e`로 직렬 실행하거나 1~16개를 명시할 수 있습니다.

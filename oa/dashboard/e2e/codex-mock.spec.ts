@@ -36,7 +36,6 @@ test('actual model output shows the confirmed name, new pattern and DB case refe
   await expect(panel.locator('.ws-workbench-group-list > div')).toHaveCount(2)
   await expect(panel.locator('.ws-workbench-detail .ws-paged-record')).toHaveCount(8)
   await page.evaluate(() => window.scrollTo(0, 0))
-  await page.screenshot({ path: 'artifacts/codex-feedback-desktop.png', fullPage: true, animations: 'disabled' })
   expect(errors).toEqual([])
 })
 
@@ -67,5 +66,4 @@ test('TOP reads the same AI groups on a narrow screen without editing or overflo
   await expect(page.getByRole('button', { name: '분류 확정 · 판정 시작', exact: false })).toHaveCount(0)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth+1)).toBe(true)
   await page.evaluate(() => window.scrollTo(0, 0))
-  await page.screenshot({ path: 'artifacts/codex-feedback-mobile.png', fullPage: true, animations: 'disabled' })
 })

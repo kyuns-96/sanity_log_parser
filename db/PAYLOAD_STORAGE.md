@@ -32,13 +32,9 @@ JSONB `payload`만 직접 조회하면 압축형의 본문 전체를 얻을 수 
 
 이 절은 사용자가 관리하는 **별도 DBA 유지보수**다. 제한된 앱 로그인이나 사내 연동 AI에 owner 권한을 주지 않는다. 공통 코드 배포와 011 적용만으로 기존 행이 자동 압축되거나 디스크가 줄어들지 않는다.
 
-`vwp_bridge.payload_compaction`은 DSN 값을 인자로 받지 않고 승인된 비공개 환경변수 **이름**을 받는다. 아래 `sanity_app`과 환경변수 이름은 예시다. 실제 접속값·자료·hash 결과는 사내에 보관한다. 변환 전후 비교 중에는 VWP 쓰기를 중지한다. 각 출력은 새로운 비공개 기록에 보관한다.
+`vwp_bridge.payload_compaction`은 DSN 값을 인자로 받지 않고 승인된 비공개 환경변수 **이름**을 받는다. 아래 `sanity_app`과 환경변수 이름은 예시다. 실제 접속값과 자료는 사내에 보관한다.
 
 ```bash
-# 읽기 전용: 011 전후/변환·재작성 전후의 논리적 동일성 기준
-.venv/bin/python -m vwp_bridge.payload_compaction \
-  --schema sanity_app --dsn-env SANITY_MAINTENANCE_DSN --fingerprint
-
 # 기본값은 읽기 전용 dry run. --max-rows는 한정된 미리보기이며 전체 검증이 아니다.
 .venv/bin/python -m vwp_bridge.payload_compaction \
   --schema sanity_app --dsn-env SANITY_MAINTENANCE_DSN --max-rows 1000
@@ -56,7 +52,7 @@ JSONB `payload`만 직접 조회하면 압축형의 본문 전체를 얻을 수 
 
 기존 공간을 즉시 줄이려면 DBA가 백업 복구 가능성, 쓰기 중지, 잠금 시간, 기존/새 테이블·인덱스·WAL을 수용할 여유 공간을 확인한 뒤 [별도 재작성 SQL](maintenance/repack_payload_storage.sql)을 검토한다. SQL은 전체 테이블을 다시 쓰고 인덱스를 재구성하며 커밋까지 ACCESS EXCLUSIVE를 유지한다. 원래 논리 값·hash·ID·시각은 바꾸지 않으며 컬럼 저장 속성도 유지한다. 실제 실행 시간과 추가 공간은 자료량·인프라에 따라 다르다.
 
-재작성 전후 `--fingerprint`의 행 수·논리 SHA256가 같아야 한다. 이 값은 UTC의 일관된 읽기 스냅샷으로 **모든 논리 컬럼·근거/원본 byte**를 검증하며 압축 표현 자체는 제외한다. 평상시 쓰기가 계속되면 정상 상태 변경도 hash에 반영되므로 쓰기 중지 중 비교한다. 이후 DBA가 통계를 갱신하고 실제 `pg_total_relation_size`와 main/TOAST/index, 제출 재시도·원본 복원·OA 전체 로그를 확인한다.
+이후 DBA가 통계를 갱신하고 실제 `pg_total_relation_size`와 main/TOAST/index, 제출 재시도·원본 복원·OA 전체 로그를 확인한다.
 
 ## 평문 복구와 이전 코드로의 복귀
 
@@ -70,17 +66,4 @@ JSONB `payload`만 직접 조회하면 압축형의 본문 전체를 얻을 수 
   --schema sanity_app --dsn-env SANITY_MAINTENANCE_DSN --restore-plain --apply
 ```
 
-복구는 payload와 근거 `raw_bytes`를 원래 값으로 되돌리고 압축 컬럼만 NULL로 만든다. 동일성 fingerprint·전체 근거 조회·남은 압축 행 0건을 확인한 뒤 이전 reader를 사용한다. 기존 데이터나 011 컬럼/제약을 삭제할 필요는 없다. 압축 본문이 손상됐다면 원문을 추정하거나 누락한 채 복구 완료로 표시하지 않는다.
-
-## 합성 검증과 용량 비교
-
-다음 도구는 **새 소켓 전용 합성 DB만 생성**하며 기존 DB/DSN/report를 입력받지 않는다. 전후 전체 논리 행·원문 byte·마스킹된 source records·OUTBOX 패킷의 hash와 행 수가 같아야 결과를 기록한다. 종료 시 생성한 서버를 중지한다.
-
-```bash
-.venv/bin/python db/tests/benchmark_payload_storage.py \
-  --pg-bin /path/to/postgresql/bin --rows 10000 --out /private/new-storage-benchmark.json
-```
-
-PostgreSQL 12.1의 합성 10,000건 비교에서 원문은 3,170,000 bytes, 전후 저장 행은 10,017건으로 동일했다. 변환·명시적 재작성 후 해당 VWP 테이블의 물리 총량은 **26,492,928 → 19,374,080 bytes (26.87% 감소)**였다. 변환 직후에는 38,887,424 bytes로 늘었다. 회사 원문의 압축률·최종 사용량을 보장하는 결과가 아니며 실제 회사 DB 사용량에 이 비율을 그대로 적용하지 않는다. OA/전송 큐의 별도 사용량·WAL·백업량도 전체 용량 계획에 포함한다.
-
-PostgreSQL의 압축과 기존 행 재저장 의미는 [PG12 TOAST](https://www.postgresql.org/docs/12/storage-toast.html), [ALTER TABLE](https://www.postgresql.org/docs/12/sql-altertable.html)을, 물리/논리 집계 구분은 [용량 측정 함수](https://www.postgresql.org/docs/12/functions-admin.html#FUNCTIONS-ADMIN-DBSIZE)를 따른다. 사내 원문·실제 모델의 판단 품질은 사내 검증 대상이다.
+복구는 payload와 근거 `raw_bytes`를 원래 값으로 되돌리고 압축 컬럼만 NULL로 만든다. 전체 근거 조회·남은 압축 행 0건을 확인한 뒤 이전 reader를 사용한다. 기존 데이터나 011 컬럼/제약을 삭제할 필요는 없다. 압축 본문이 손상됐다면 원문을 추정하거나 누락한 채 복구 완료로 표시하지 않는다.

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Button } from './studio/components/ui/button'
-import { Input } from './studio/components/ui/input'
+import { Input } from './components/ui/input'
 import { Badge } from './studio/components/ui/badge'
 import type { AccessApi } from './accessApi'
 import type { VwpConnectionEntry, VwpConnectionConfig, VwpProfile } from './aiConnectionTypes'
