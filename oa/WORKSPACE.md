@@ -371,7 +371,7 @@ GCA·VC LP·SpyGlass 각각 단일 report에서 100,000개 record의 파싱/원�
 GCA의 100,000건/100,000개 고유 그룹은 전체 분류 118.851초, 원본 JSON 60,845,516 bytes,
 metadata 직렬화 6,831 bytes였다. 해당 시점의 회귀 runner 누적 최대 RSS는 699,168KiB이며 순수 분류만의 메모리 측정값은 아니다.
 이 측정은 다른 검증도 실행한 4GB 개발 환경의 참고 엔진 결과이며 실제 회사 AI의 품질/처리량이나 운영 지연 목표가 아니다.
-브라우저 회귀에는 GCA 1만 건을 사용한다. 10만 건 전체 모델 입력·최종 partition 검사는 백엔드 `full`에 유지한다.
+브라우저 회귀에는 GCA 1만 건을 사용한다.
 공유 자료는 기존 1,000개를 보존하고 도구별 10,000건 report 3개와 GCA 100,000건 report 1개를 추가한다. 전체 샘플 분포의 평균을 10,000건으로 맞춘 데이터셋은 아니다.
 
 ## 사용자 판정과 사례 재사용
@@ -504,7 +504,7 @@ DB 파일은 기본 `/var/lib/sanity-review-workspace/` 아래, 비공개 실행
 
 ```bash
 .venv/bin/python db/tests/run_mock.py --pg-bin /path/to/postgresql/bin
-# 전수 회귀·포털 전체 단계·10만 건 검증은 필요할 때 별도로 실행
+# 전수 회귀·포털 전체 단계 검증은 필요할 때 별도로 실행
 .venv/bin/python db/tests/run_mock.py --profile full --pg-bin /path/to/postgresql/bin
 cd oa/dashboard
 SANITY_DASHBOARD_TEST_PORT=5188 npm run test:e2e

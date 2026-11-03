@@ -150,7 +150,7 @@ OA 또는 VWP 개인 인증값을 처리하려면 웹과 작업자에 같은 암
 
 DB 검사가 필요한 OA·VWP-bridge는 별도 개발 머신에서 `db/tests/run_mock.py --role oa` 또는 `--role vwp-bridge`를 사용합니다. 역할 mock은 공개 대표 검사만 실행하며 회사 구현/비공개 fixture·통합 demo·scale probe는 포함하지 않습니다. 실제 파일 보안의 Termux 한계는 아래 미해결 기록과 같습니다.
 
-설계 Codex는 관련 전용 검사와 기본 `quick`을 `--include`로 합쳐 같은 ID를 한 번만 실행합니다. 백엔드 quick 60개, regression 65개, full 67개이며, 브라우저 19개·컨테이너 11개·독립 DB 2개를 포함한 전체는 99개입니다. 프로필별 범위와 실행 준비는 [TESTING.md](TESTING.md)를 따릅니다. 기본 quick은 독립 DB 준비·종료를 포함해 3분 이내를 목표로 합니다.
+설계 Codex는 관련 전용 검사와 기본 `quick`을 `--include`로 합쳐 같은 ID를 한 번만 실행합니다. 백엔드 quick 60개, regression 65개, full 66개이며, 브라우저 19개·컨테이너 11개·독립 DB 2개를 포함한 전체는 98개입니다. 프로필별 범위와 실행 준비는 [TESTING.md](TESTING.md)를 따릅니다. 기본 quick은 독립 DB 준비·종료를 포함해 3분 이내를 목표로 합니다.
 ```bash
 # 선택 대상 확인 / 기본 회귀
 .venv/bin/python run_tests.py --profile quick --list

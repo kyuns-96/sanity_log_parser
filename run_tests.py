@@ -13,7 +13,7 @@ ROLES = ("vwp", "vwp-bridge", "oa")
 
 
 # The public suite keeps one owner for each retained behavior. Full discovery
-# also includes the complete portal replay and the 100,000-record model flow.
+# also includes the complete portal replay.
 QUICK_TESTS = (
     "tests.test_auth", "tests.test_submission_contracts", "tests.test_submission_https",
     "tests.test_submission_files", "tests.test_submission_tokenless.InternalIntakeContracts",

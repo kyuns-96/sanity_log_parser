@@ -60,7 +60,7 @@ owner/DBA가 점검 시간에 파일 전체를 한 트랜잭션으로 실행한�
 `tests/`는 개발자용 로컬 검증 도구이며 DB 신청이나 운영 설치 시 실행할 파일이 아니다.
 사내 담당자는 먼저 [역할별 기본 검사](../TESTING.md)를 실행한다. DB 확인이 필요한 경우에만 `db/tests/run_mock.py --role oa` 또는 `--role vwp-bridge`로 해당 역할의 공개 기본+DB 대표 검사를 실행한다. mock은 회사 구현/테스트·비공개 fixture의 snapshot 제외 정책을 유지한다. VWP 원천은 DB 검사가 없다. `--role`과 regression/full은 함께 사용하지 않는다.
 사내 DB 없이 새 합성 DB를 만드는 명령은 `.venv/bin/python db/tests/run_mock.py`다.
-기본은 `quick` 핵심 회귀다. 이전의 넓은 quick 범위는 `--profile regression`으로 실행한다. 전수 회귀·포털 전체 단계·10만 건 검증은 `--profile full`로 별도 실행한다. 모든 프로필은 실제 DB의 원본 DDL/SQL smoke와 제한 계정 권한 검사를 수행한다. 프로필 선택은 테스트 데이터 범위이며 앱의 처리 한도나 무결성 검사를 변경하지 않는다. 실제 실행 건수와 실패 ID는 `tests.json`에 보존한다. 임시 DB는 OS의 임시 디렉터리를 사용하므로 Termux에서도 `/tmp` 쓰기 권한이 필요하지 않다.
+기본은 `quick` 핵심 회귀다. TLS 제출·페이지 복구·보존 본문 회귀는 `--profile regression`으로 실행한다. 전수 회귀·포털 전체 단계 검증은 `--profile full`로 별도 실행한다. 모든 프로필은 실제 DB의 원본 DDL/SQL smoke와 제한 계정 권한 검사를 수행한다. 프로필 선택은 테스트 데이터 범위이며 앱의 처리 한도나 무결성 검사를 변경하지 않는다. 실제 실행 건수와 실패 ID는 `tests.json`에 보존한다. 임시 DB는 OS의 임시 디렉터리를 사용하므로 Termux에서도 `/tmp` 쓰기 권한이 필요하지 않다.
 
 mock 실행기는 사용 가능한 CPU 수에 맞춰 최대 4개의 프로세스로 실행한다. `--jobs 1`은 직렬 실행이며 `--jobs 2`처럼 1~16개를 명시할 수 있다. 각 작업자는 별도 DB·스키마·환경변수에서 실행하므로 advisory lock과 데이터가 다른 작업자와 충돌하지 않는다. 발견한 테스트 ID를 먼저 `manifest.json`에 고정하고, 작업자별 `tests-worker-N.json`과 로그를 남긴다. 실행 결과를 합칠 때 각 작업자의 선택 ID가 겹치지 않고 실제 실행 건수가 선택 범위와 일치하는지 검사한다. 누락·중복·중도 종료·skip은 성공으로 처리하지 않는다. 직접 준비한 DB에 대한 `run_tests.py`의 기본은 직렬이며 자동으로 DB를 만들거나 복제하지 않는다.
 
