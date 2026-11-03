@@ -138,12 +138,12 @@ python3 db/portal/runbook.py verify --bundle /private/portal-bundle --snapshot /
 
 PG15의 NULLS NOT DISTINCT 플래그는 [PG12 catalog](https://www.postgresql.org/docs/12/catalog-pg-index.html)와 [PG15 catalog](https://www.postgresql.org/docs/15/catalog-pg-index.html)의 차이를 반영한다. 새 버전에서 이 플래그가 true인 인덱스/제약을 false로 덮어 정규화하지 않으며, 예상과 다른 정의는 계속 거부한다.
 
-전수 `full` 검증에는 10만 건 보고서/10만 그룹 사례가 포함되므로 여러 PostgreSQL 버전은 **순차 실행**한다. 메모리 부족으로 DB 프로세스가 종료되면 검증 실패로 중단한다. `quick`/`full`은 사용자가 정한 실행 범위이며 기존 대용량 입력·기대값은 유지한다. `quick` 성공을 전수 통과로 표시하거나 실패한 검사를 생략해 통과시키지 않는다.
+운영 기준인 PG12.1 이상 12.x 바이너리를 명시한다. `full`은 백엔드 전체 회귀와 포털 전체 단계를 확인한다. 메모리 부족으로 DB 프로세스가 종료되면 검증 실패로 중단한다. `quick` 성공을 전수 통과로 표시하거나 실패한 검사를 생략해 통과시키지 않는다.
 
 ```bash
-.venv/bin/python db/tests/run_mock.py --pg-bin /path/to/postgresql/bin
-# 포털 기준 변경·전체 회귀·대용량 검증이 필요할 때
-.venv/bin/python db/tests/run_mock.py --profile full --pg-bin /path/to/postgresql/bin
+.venv/bin/python db/tests/run_mock.py --pg-bin /path/to/postgresql12/bin
+# 포털 기준 변경·전체 회귀가 필요할 때
+.venv/bin/python db/tests/run_mock.py --profile full --pg-bin /path/to/postgresql12/bin
 ```
 
 원본 증분을 바꿔야 할 때의 `build_reference.py`/`plan.json` 갱신은 Codex 담당이다. 사내 AI가 계획 hash나 비교 조건을 바꿔 불일치를 통과시키지 않는다.

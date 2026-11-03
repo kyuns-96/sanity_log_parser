@@ -1,6 +1,6 @@
 # 테스트 실행
 
-저장소의 검사는 백엔드 67개, 브라우저 19개, 컨테이너 11개, 독립 DB 검사 2개로 총 99개다. 같은 테스트 ID를 다른 역할·프로필에서 다시 선택해도 별도 검사로 세지 않는다. 백엔드 `full`만 실행하면 67개이며 브라우저·컨테이너까지 실행한 결과로 표시하지 않는다.
+저장소의 검사는 백엔드 66개, 브라우저 19개, 컨테이너 11개, 독립 DB 검사 2개로 총 98개다. 같은 테스트 ID를 다른 역할·프로필에서 다시 선택해도 별도 검사로 세지 않는다. 백엔드 `full`만 실행하면 66개이며 브라우저·컨테이너까지 실행한 결과로 표시하지 않는다.
 
 ## 담당자별 실행
 
@@ -33,7 +33,7 @@ OA DB 검사는 실제 권한·AI/사람 확정·근거 등록·암호화된 개
 |---|---:|---|
 | `quick` | 60 | 인증·보안·parser·DB 권한/트랜잭션·AI 작업·사람 확정·실패 전파 |
 | `regression` | 65 | quick + 최신 저장 형식의 TLS 제출·OWNER 확인·페이지 복구·보존 본문 |
-| `full` | 67 | regression + 포털 전체 66단계 재현·10만 건 전체 모델 입력/최종 partition |
+| `full` | 66 | regression + 포털 전체 66단계 재현 |
 
 ```bash
 .venv/bin/python db/tests/run_mock.py --pg-bin /path/to/postgresql12/bin
@@ -43,7 +43,7 @@ OA DB 검사는 실제 권한·AI/사람 확정·근거 등록·암호화된 개
 .venv/bin/python db/tests/run_mock.py --include tests.test_ai_rolling_batches --pg-bin /path/to/postgresql12/bin
 ```
 
-기본은 `quick`이며 독립 DB 준비·종료를 포함해 3분 이내를 목표로 한다. 최대 4개 작업자를 사용하고 `--jobs 1 --durability durable`로 직렬·디스크 동기화를 선택할 수 있다. 포털 변경은 `--include tests.test_shared_source_migration`으로 전체 단계·이전 단계의 최종 카탈로그·테이블 OID 보존을 확인한다. 무관한 10만 건 검사를 매번 반복하지 않는다.
+기본은 `quick`이며 독립 DB 준비·종료를 포함해 3분 이내를 목표로 한다. 최대 4개 작업자를 사용하고 `--jobs 1 --durability durable`로 직렬·디스크 동기화를 선택할 수 있다. 포털 변경은 `--include tests.test_shared_source_migration`으로 전체 단계·이전 단계의 최종 카탈로그·테이블 OID 보존을 확인한다.
 
 `--include`는 공개 `tests.test_*`·`oa.test_*`·`vwp.test_*`·`vwp_bridge.test_*`의 실제 모듈/클래스/메서드만 받는다. 없거나 비어 있으면 실패하며 모든 작업자의 선택이 같고 실행이 빠짐없이 끝났는지 대조한다. `--list`는 실행하지 않고 목록만 보여준다. `--report-json 새파일.json`은 기존 파일을 덮어쓰지 않는다.
 

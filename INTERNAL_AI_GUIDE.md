@@ -278,7 +278,7 @@ git diff --check
 기본 역할 명령은 DB 없이 공개 계약과 자기 역할의 `integration/company_*/test_*.py`만 실행한다. 회사 검사 수가 0이면 어댑터 검증 미실시로 보고하고 import 오류·skip을 성공으로 생략하지 않는다. 파일 보안의 실제 하드링크/root 소유 검사도 유지하며 Termux의 해당 2건은 사내 독립 Linux 실환경 검증 대기로 구분한다.
 
 DB 연결 동작 확인이 필요한 OA·VWP-bridge는 PostgreSQL 12.1+ 서버 바이너리가 준비된 별도 개발 머신에서 `.venv/bin/python db/tests/run_mock.py --role oa` 또는 `--role vwp-bridge`를 실행한다. 통합 demo·scale probe는 선택하지 않고 회사 코드/비공개 fixture snapshot 제외 정책을 유지한다. 사내 실제 DB에 실행하는 명령이 아니며 VWP 원천에는 DB 검사가 없다.
-2026-11-03 사용자 결정에 따라 저장소 전체 검사는 브라우저·컨테이너·독립 DB를 포함해 100개 이내로 정리했다. 백엔드 기본 `quick` 60개, `regression` 65개, `full` 67개를 구분하며 full에는 포털 전체 단계와 10만 건 모델 검사가 포함된다. 독립 mock의 PG12 준비·종료를 포함해 기본 실행은 3분 이내를 목표로 한다. 역할·프로필별 실제 실행 범위는 [TESTING.md](TESTING.md)를 따른다. 이 정리는 내부 AI에게 기존 테스트·입력·기대값·앱 한도를 수정하거나 실패를 생략할 권한을 주지 않는다.
+2026-11-03 사용자 결정에 따라 저장소 전체 검사는 브라우저·컨테이너·독립 DB를 포함해 100개 이내로 정리했다. 백엔드 기본 `quick` 60개, `regression` 65개, `full` 66개를 구분하며 full에는 포털 전체 단계 검사가 포함된다. 독립 mock의 PG12 준비·종료를 포함해 기본 실행은 3분 이내를 목표로 한다. 역할·프로필별 실제 실행 범위는 [TESTING.md](TESTING.md)를 따른다. 이 정리는 내부 AI에게 기존 테스트·입력·기대값·앱 한도를 수정하거나 실패를 생략할 권한을 주지 않는다.
 회사 테스트는 기존 허용된 자기 서버의 `integration/company_*/`에 작성한다. 새 `run_tests.py --role`만 해당 역할의 회사 테스트를 함께 찾으며, 더 좁은 확인에는 기존 디렉터리별 unittest 명령도 사용할 수 있다. 역할 없는 공통 quick/regression의 선택 범위와 mock의 회사 구현/비공개 fixture 제외는 유지한다. 회사 SDK/원천은 명시적 모의 client와 합성 자료로 검증하며 실제 서비스 호출·공통 코드·기존 테스트 수정 권한은 확대하지 않는다.
 SSO 어댑터 성공만으로 업무 API를 공개하지 않는다. 관리자/권한 엔진 미설정 시 `503 AUTHORIZATION_NOT_IMPLEMENTED`는 의도된 보호 상태다. 설정된 경우에도 관리 화면의 승인과 봉인된 결과 scope·서버 대상별 검사를 모두 충족해야 한다.
 미구현 상태의 `AUTH_SSO_NOT_CONFIGURED`도 숨기지 않는다. 구현 후 예상하지 못한 같은 오류가 계속되면 문의한다.
