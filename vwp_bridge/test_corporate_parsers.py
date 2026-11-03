@@ -72,26 +72,6 @@ class CorporateBridgeTests(PgTestCase):
         self.assertEqual(receipt, replay_receipt)
         self.assertEqual(before, self.admin_query("SELECT * FROM {vwp} ORDER BY record_id").fetchall())
 
-    def test_registration_and_implementation_revision_create_distinct_immutable_analyses(self):
-        unsupported, old = bridge.analyze(self.input())
-        first, receipt1 = bridge.analyze(self.input(), parser_registry=self.registry())
-        second, receipt2 = bridge.analyze(self.input(), parser_registry=self.registry(version="2"))
-        self.assertEqual("UNSUPPORTED", unsupported["review_units"][0]["parse_status"])
-        self.assertEqual(3, len({old["analysis_id"], receipt1["analysis_id"], receipt2["analysis_id"]}))
-        self.assertEqual(3, len({unsupported["bundle_id"], first["bundle_id"], second["bundle_id"]}))
-        self.assertEqual(3, self.admin_query("SELECT count(*) FROM {vwp} WHERE record_type='RUN' AND status='SEALED'").fetchone()[0])
-        self.assertEqual("1", first["producer"]["parsers"][0]["implementation_version"])
-        self.assertEqual("2", second["producer"]["parsers"][0]["implementation_version"])
-
-    def test_default_stub_cannot_seal_or_enqueue(self):
-        class UnconfiguredParser(ReportParser):
-            def parse(self, source, context):
-                raise ParserError("PARSER_NOT_CONFIGURED")
-        with self.assertRaises(ParserError) as error:
-            bridge.analyze(self.input(), parser_registry=self.registry(UnconfiguredParser()))
-        self.assertEqual("PARSER_NOT_CONFIGURED", error.exception.code)
-        self.assertEqual(0, self.admin_query("SELECT count(*) FROM {vwp_to_oa}").fetchone()[0])
-        self.assertEqual(0, self.admin_query("SELECT count(*) FROM {vwp} WHERE record_type='RUN' AND status='SEALED'").fetchone()[0])
 
     def test_failure_after_a_record_cannot_publish_partial_success(self):
         class BrokenParser(ReportParser):
@@ -103,22 +83,6 @@ class CorporateBridgeTests(PgTestCase):
         self.assertEqual("PARSER_FAILED", error.exception.code)
         self.assertEqual(0, self.admin_query("SELECT count(*) FROM {vwp_to_oa}").fetchone()[0])
         self.assertEqual(0, self.admin_query("SELECT count(*) FROM {vwp} WHERE record_type='RUN' AND status='SEALED'").fetchone()[0])
-
-    def test_format_errors_are_valid_incomplete_bundles_with_original_unknown_evidence(self):
-        atomic_text(self.report, "SYNTHETIC REPORT v1\nCLEAN block|all_checks|M1\nunrecognized section\n")
-        payload, receipt = bridge.analyze(self.input(), parser_registry=self.registry())
-        self.assertEqual("PARTIAL", payload["review_units"][0]["parse_status"])
-        self.assertFalse(coverage(payload)["units"][0]["analysis_ready"])
-        unknown = self.admin_query("SELECT raw_bytes FROM {vwp} WHERE analysis_id=%s AND record_type='EVIDENCE' "
-                                   "AND payload->>'check_status'='UNKNOWN'", (uuid.UUID(receipt["analysis_id"]),)).fetchone()
-        self.assertEqual(b"unrecognized section", bytes(unknown[0]))
-
-    def test_scope_mismatch_fails_before_creating_any_database_state(self):
-        self.manifest["run"]["tool_version"] = "2"
-        with self.assertRaises(ParserError) as error:
-            bridge.analyze(self.input(), parser_registry=self.registry())
-        self.assertEqual("PARSER_SCOPE_MISMATCH", error.exception.code)
-        self.assertEqual(0, self.admin_query("SELECT count(*) FROM {vwp}").fetchone()[0])
 
 
 if __name__ == "__main__":

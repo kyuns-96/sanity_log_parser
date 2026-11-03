@@ -25,4 +25,4 @@ AI 검색은 등록된 현재 유효한 근거를 기존 전역 공유 범위에
 
 OA 웹/프런트엔드와 중앙 VWP AI worker의 `oa/`·`common/`을 같은 릴리스로 맞춘다. 구형 worker는 등록 선택을 검사하지 못한다. 기존에 자동 후보화된 사례를 고정한 진행 작업은 새 정책에서 사례 검증에 실패할 수 있으며 미등록 근거로 결과를 적용하지 않는다. 등록 전환은 기존 원본·확정 이력을 일괄 수정하거나 회사 AI의 공통 코드 수정 권한을 넓히지 않는다.
 
-사내 담당자는 자기 역할의 `run_tests.py --role oa|vwp-bridge`와 필요한 독립 mock의 같은 `--role`만 확인한다. 새 등록·API·검색/참조 경계는 `tests.test_ai_evidence_choices`, `tests.test_ai_retrieval`, `tests.test_ai_knowledge`에서 합성 자료로 검증한다. 실제 모델 품질/속도와 운영 배포는 별도 현장 확인이다.
+사내 담당자는 자기 역할의 `run_tests.py --role oa|vwp-bridge`와 필요한 독립 mock의 같은 `--role`만 확인한다. 새 등록·API·검색/참조 경계는 `tests.test_ai_evidence_choices`, `tests.test_oa_ai_feedback`에서 합성 자료로 검증한다. 실제 모델 품질/속도와 운영 배포는 별도 현장 확인이다.

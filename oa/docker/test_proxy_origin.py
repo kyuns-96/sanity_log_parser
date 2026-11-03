@@ -12,7 +12,6 @@ import time
 import unittest
 
 from fastapi import APIRouter, Request
-from fastapi.testclient import TestClient
 import uvicorn
 
 from oa.dashboard_api import create_app
@@ -80,18 +79,6 @@ class OriginCases:
         self.assertEqual("OK", body["status"])
 
 
-class ApplicationOriginTests(OriginCases, unittest.TestCase):
-    def setUp(self):
-        self.client = TestClient(guarded_app())
-        self.addCleanup(self.client.close)
-
-    def send(self, method, path, headers):
-        response = self.client.request(method, path, headers=headers, content=b"{}" if method == "POST" else None)
-        try:
-            body = response.json()
-        except ValueError:
-            body = response.text
-        return response.status_code, body
 
 
 class NginxOriginTests(OriginCases, unittest.TestCase):

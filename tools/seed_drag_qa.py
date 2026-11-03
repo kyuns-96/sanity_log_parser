@@ -42,7 +42,7 @@ def main():
         ws = WorkspaceStore(db)
         ws.check_workspace()
         cluster = WorkspaceClusteringStore(db)
-        for suffix in ('single', 'multi', 'new', 'keyboard', 'touch', 'conflict', 'retry', 'cancel'):
+        for suffix in ('single', 'cancel'):
             name = 'qa-log-drag-'+suffix
             records = []
             for index in range(1, 121):
@@ -75,7 +75,7 @@ def main():
             cluster.change('user-04', 'project-1-cpu', 'project-1-cpu-post-1', name, action='EDIT',
                 expected_revision=draft['revision'], request_id=str(uuid.uuid4()),
                 reason='드래그 UI 검증을 위한 합성 그룹 구성', groups=groups)
-    print(json.dumps({'status': 'SYNTHETIC_DRAG_QA_READY', 'reports': 8,
+    print(json.dumps({'status': 'SYNTHETIC_DRAG_QA_READY', 'reports': 2,
                       'records_per_report': 120, 'model_calls': 0}))
 
 

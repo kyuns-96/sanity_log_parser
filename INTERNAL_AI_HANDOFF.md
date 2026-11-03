@@ -31,7 +31,7 @@ Q1 이후의 수집·버전 연결은 [분산 수집·PRE/POST 설계](vwp/SOURC
 | 실제 프로젝트·블록·버전/담당 | 운영 레지스트리·Welcome 신청/승인·legacy scope 권한, 별도 source import/workspace PoR | 실제 원천의 고정 ID·소속·동일 계정 대응, 사내 검증 | 운영 관리 계약은 [ACCESS_MANAGEMENT](oa/ACCESS_MANAGEMENT.md). 운영 `/api/workbench/*`와 source receiver의 권한 연결 제공. 현장 어댑터/배포 검증 필요 |
 | DB·TLS·운영 실행 | 직접 PostgreSQL·네 테이블·기존 전송/작업자 | 회사 환경의 확인된 접속/SDK 제약 자료 | 실제 DB 확인·DDL/배포는 사용자/DBA 관리 |
 
-타입 선언은 [sanity_integration_contracts.py](common/sanity_integration_contracts.py)에 있다. 기존 필드와 호출의 호환성을 유지하며 추가 계약은 해당 명세에서 구분한다. 2026-10-23 판정의 구조화된 `exception` 및 모든 블록·revision·ECO의 공유 확정 지식은 [규칙 예외와 AI 참고 범위](oa/WORKSPACE.md#규칙-예외와-ai-참고-범위)를 따른다. 예외도 다음 AI의 참고 지식이며 별도 버전 참고 허용은 필요 없다. 원문·파싱 로그는 공유 DTO와 분리하고 기존 열람 권한을 유지한다. 기존 `reusable` 승인 기록을 예외/전역 규칙 실행 승인으로 재해석하거나 내부 AI의 수정 권한을 넓히지 않는다. 타입 힌트는 런타임 검증·권한 검사·회사 연결을 대신하지 않는다. 작은 합성 입력/출력은 [sanity_integration_examples.py](common/sanity_integration_examples.py), 실행 가능한 계약 검증은 [test_integration_contracts.py](tests/test_integration_contracts.py)에 있다.
+타입 선언은 [sanity_integration_contracts.py](common/sanity_integration_contracts.py)에 있다. 기존 필드와 호출의 호환성을 유지하며 추가 계약은 해당 명세에서 구분한다. 2026-10-23 판정의 구조화된 `exception` 및 모든 블록·revision·ECO의 공유 확정 지식은 [규칙 예외와 AI 참고 범위](oa/WORKSPACE.md#규칙-예외와-ai-참고-범위)를 따른다. 예외도 다음 AI의 참고 지식이며 별도 버전 참고 허용은 필요 없다. 원문·파싱 로그는 공유 DTO와 분리하고 기존 열람 권한을 유지한다. 기존 `reusable` 승인 기록을 예외/전역 규칙 실행 승인으로 재해석하거나 내부 AI의 수정 권한을 넓히지 않는다. 타입 힌트는 런타임 검증·권한 검사·회사 연결을 대신하지 않는다. 작은 합성 입력/출력은 [sanity_integration_examples.py](common/sanity_integration_examples.py), 실제 DB·HTTP를 통과하는 AI/사람 확정 흐름은 [test_oa_ai_feedback.py](tests/test_oa_ai_feedback.py)에서 확인한다.
 
 ## 2. 책임과 시스템 경계
 

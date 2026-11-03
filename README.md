@@ -150,34 +150,33 @@ OA 또는 VWP 개인 인증값을 처리하려면 웹과 작업자에 같은 암
 
 DB 검사가 필요한 OA·VWP-bridge는 별도 개발 머신에서 `db/tests/run_mock.py --role oa` 또는 `--role vwp-bridge`를 사용합니다. 역할 mock은 공개 대표 검사만 실행하며 회사 구현/비공개 fixture·통합 demo·scale probe는 포함하지 않습니다. 실제 파일 보안의 Termux 한계는 아래 미해결 기록과 같습니다.
 
-설계 Codex의 공통 변경은 관련 전용 테스트와 기본 통합 **`quick`** 프로필을 `--include`로 합쳐 한 번에 확인합니다. 같은 테스트 ID는 한 번만 실행하며 DB 준비·병렬 실행·종료도 한 실행에서 처리합니다. 기본 실행은 독립 mock DB 준비·종료를 포함해 **3분 이내 완료를 목표**로 합니다. 무거운 전체 흐름과 이전의 넓은 quick 범위는 `regression`, 전체 회귀·포털 전체 단계·10만 건 검사는 `full`로 보존합니다. `--report-json 새파일.json`으로 실행 결과를 기록할 수 있습니다.
-
+설계 Codex는 관련 전용 검사와 기본 `quick`을 `--include`로 합쳐 같은 ID를 한 번만 실행합니다. 백엔드 quick 60개, regression 65개, full 67개이며, 브라우저 20개·컨테이너 11개·독립 DB 2개를 포함한 전체는 100개입니다. 프로필별 범위와 실행 준비는 [TESTING.md](TESTING.md)를 따릅니다. 기본 quick은 독립 DB 준비·종료를 포함해 3분 이내를 목표로 합니다.
 ```bash
 # 선택 대상 확인 / 기본 회귀
 .venv/bin/python run_tests.py --profile quick --list
 .venv/bin/python run_tests.py --profile quick
 
 # 별도의 새 로컬 PostgreSQL + 합성 입력·모의 AI 응답으로 통합 검증
-.venv/bin/python db/tests/run_mock.py --profile quick
+.venv/bin/python db/tests/run_mock.py --profile quick --pg-bin /path/to/postgresql12/bin
 
 # quick + 변경 기능의 전용 검사를 중복 없이 한 번에 실행
-.venv/bin/python db/tests/run_mock.py --include tests.test_ai_parallel_width
+.venv/bin/python db/tests/run_mock.py --include tests.test_ai_rolling_batches --pg-bin /path/to/postgresql12/bin
 
-# 이전의 넓은 quick 회귀 범위가 필요한 경우
-.venv/bin/python db/tests/run_mock.py --profile regression
+# TLS 제출·페이지 복구·보존 본문까지 확인할 경우
+.venv/bin/python db/tests/run_mock.py --profile regression --pg-bin /path/to/postgresql12/bin
 
 # 필요할 때 전체 검증 (기존 DB나 회사 자료를 사용하지 않음)
-.venv/bin/python db/tests/run_mock.py --profile full
+.venv/bin/python db/tests/run_mock.py --profile full --pg-bin /path/to/postgresql12/bin
 
 # 디스크 동기화를 유지하는 직렬 검증
-.venv/bin/python db/tests/run_mock.py --profile quick --jobs 1 --durability durable
+.venv/bin/python db/tests/run_mock.py --profile quick --jobs 1 --durability durable --pg-bin /path/to/postgresql12/bin
 ```
 
-mock 실행에는 로컬 PostgreSQL 서버 바이너리(`initdb`, `pg_ctl`, `postgres`)가 필요합니다. PATH에 없으면 `--pg-bin /path/to/postgresql/bin`을 지정합니다. 독립 DB를 만들며 사내 `.env`·접속 정보·실제 report는 읽지 않습니다. 일반 회귀는 외부 모델을 호출하지 않습니다. 별도로 명시하는 [실제 모델 합성 시험](oa/WORKSPACE.md)은 일반 회귀와 구분합니다. DB 테스트의 skip이나 `quick` 통과를 전수·운영 검증 성공으로 표시하지 않습니다.
+mock 실행에는 로컬 PostgreSQL 서버 바이너리(`initdb`, `pg_ctl`, `postgres`, `psql`)가 필요합니다. 운영 기준인 PG12.1 이상 12.x를 `--pg-bin /path/to/postgresql12/bin`으로 명시합니다. 독립 DB를 만들며 사내 `.env`·접속 정보·실제 report는 읽지 않습니다. 일반 회귀는 외부 모델을 호출하지 않습니다. 별도로 명시하는 [실제 모델 합성 시험](oa/WORKSPACE.md)은 일반 회귀와 구분합니다. DB 테스트의 skip이나 `quick` 통과를 전수·운영 검증 성공으로 표시하지 않습니다.
 
 mock 실행기는 CPU 가용량에 맞춰 최대 4개의 작업자 DB를 만들고 테스트를 분산합니다. `--jobs`로 병렬 수를 지정하며, 선택한 테스트와 실제 실행한 ID를 대조해 누락·중복·중도 종료를 검출합니다. 폐기용 mock 클러스터는 기본적으로 디스크 동기화를 끄며 `--durability durable`로 원래 동기화 동작을 선택할 수 있습니다. 이 설정은 운영 DB에 적용하지 않습니다. 자세한 격리·결과 파일·내구성 범위는 [DB 검증 안내](db/README.md)를 따릅니다.
 
-- **PostgreSQL 18:** 포털 카탈로그 호환 문제가 미해결입니다. 업무 HTTP의 `AI available` 기대값 불일치도 남아 있습니다.
+- **PostgreSQL 18:** 포털 카탈로그 호환 문제가 미해결입니다.
 - **Termux:** 실제 하드링크 생성과 root 소유 설정 파일이 필요한 기존 보안 테스트 2건은 사내 독립 Linux 실환경 검증 대기입니다. [`tests/test_submission_files.py`](tests/test_submission_files.py)의 로컬 합성 stat/소유권 검증 통과는 실제 하드링크·소유권 검증 완료를 뜻하지 않습니다. 보안 검사·기대값은 유지합니다.
 - **사내 확인 대상:** 실제 report parser·SSO/OWNER·운영 DB/TLS·VWP 작업자 배포·컨테이너 실행·모델 API 호환성 및 판단 품질·속도·대량 처리 한도는 현장 검증이 필요합니다. 합성 데이터의 저장 규모나 모델 응답 mock만으로 운영 성능을 보장하지 않습니다.
 

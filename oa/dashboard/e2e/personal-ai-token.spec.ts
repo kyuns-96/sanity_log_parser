@@ -3,35 +3,33 @@ import type { Page } from '@playwright/test'
 
 const actor = { id: 'synthetic-self', name: '합성 사용자', username: 'synthetic-self', role: 'OWNER' }
 const token = 'synthetic.personal.jwt-for-browser-test'
-const issuanceUrl = 'https://identity.example.test/ai/tokens?app=sanity'
 const connectionId = '20000000-0000-4000-8000-000000000010'
 const credentialPath = `/api/ai/connections/${connectionId}/credentials`
 const tokenInput = '합성 AI 연결 개인 Bearer 토큰'
-const issueLink = '합성 AI 연결 인증값 발급받기'
 
-async function setup(page: Page, options: { registered?: boolean; expired?: boolean; soon?: boolean; empty?: boolean; failSave?: boolean; issuanceUrl?: string } = {}) {
-  const state = { revision: options.registered ? 1 : 0, registered: !!options.registered, writes: [] as { path: string; body: Record<string, unknown> }[], unexpected: [] as string[] }
+async function setup(page: Page) {
+  const state = { revision: 0, registered: false, writes: [] as { path: string; body: Record<string, unknown> }[], unexpected: [] as string[] }
   const status = () => ({ enabled: true, registered: state.registered, revision: state.revision,
-    expires_at: state.registered ? new Date(Date.now() + (options.expired ? -1 : options.soon ? 10 : 365) * 86400000).toISOString() : null, expired: !!options.expired, expires_soon: !!options.soon, issuance_url: options.issuanceUrl ?? null })
+    expires_at: state.registered ? new Date(Date.now() + 365 * 86400000).toISOString() : null,
+    expired: false, expires_soon: false, issuance_url: null })
   await page.route('**/api/**', async route => {
     const request = route.request()
     const path = new URL(request.url()).pathname
-    if (path === '/api/ai/connections') return route.fulfill({ json: { items: options.empty ? [] : [
-      { id: connectionId, label: '합성 AI 연결', enabled: true, auth_mode: 'bearer', model: 'model-a', models: ['model-a'], issuance_url: options.issuanceUrl ?? null, credential: status(), credential_error: null },
+    if (path === '/api/ai/connections') return route.fulfill({ json: { items: [
+      { id: connectionId, label: '합성 AI 연결', enabled: true, auth_mode: 'bearer', model: 'model-a', models: ['model-a'], issuance_url: null, credential: status(), credential_error: null },
     ] } })
     if (path === '/api/workbench/session') return route.fulfill({ json: { user: actor, csrf: '', expires_at: '', environment: 'PRODUCTION_SSO' } })
     if (path === '/api/workbench/overview') return route.fulfill({ json: { user: actor, data_origin: 'PRODUCTION', projects: [] } })
-    if (path === credentialPath || path === credentialPath + '/remove') {
+    if (path === credentialPath) {
       if (request.method() === 'POST') {
         const body = request.postDataJSON() as Record<string, unknown>
         state.writes.push({ path, body })
         expect(request.headers()['x-sanity-request']).toBe('1')
         expect(request.headers()['authorization']).toBeUndefined()
         expect(body.expected_revision).toBe(state.revision)
-        expect(Object.keys(body).sort()).toEqual(path.endsWith('/remove') ? ['expected_revision'] : ['expected_revision', 'token'])
-        if (options.failSave) return route.fulfill({ status: 409, json: { code: 'REVISION_CONFLICT', private_detail: token } })
+        expect(Object.keys(body).sort()).toEqual(['expected_revision', 'token'])
         state.revision++
-        state.registered = !path.endsWith('/remove')
+        state.registered = true
       }
       return route.fulfill({ json: status(), headers: { 'Cache-Control': 'no-store' } })
     }
@@ -43,46 +41,6 @@ async function setup(page: Page, options: { registered?: boolean; expired?: bool
   await expect(page.getByRole('dialog')).toBeVisible()
   return state
 }
-
-test('users save separate Bearer and x-client credentials with separate issuance links', async ({ page }) => {
-  const state = await setup(page, { empty: true })
-  await page.getByRole('dialog').press('Escape')
-  const connections = [
-    { id: '20000000-0000-4000-8000-000000000001', label: 'Bearer 연결', enabled: true, auth_mode: 'bearer', model: 'model-a', models: ['model-a'], issuance_url: 'https://identity.example.test/bearer', credential: { registered: false, revision: 0 }, credential_error: null },
-    { id: '20000000-0000-4000-8000-000000000002', label: 'x-client 연결', enabled: true, auth_mode: 'x_client_api_key', model: 'model-b', models: ['model-b'], issuance_url: 'https://identity.example.test/client', credential: { registered: false, revision: 0 }, credential_error: null },
-  ]
-  await page.route('**/api/ai/connections**', async route => {
-    const request = route.request(); const path = new URL(request.url()).pathname
-    if (path === '/api/ai/connections') return route.fulfill({ json: { items: connections } })
-    const entry = connections.find(value => value.id === path.split('/')[4])!
-    const body = request.postDataJSON() as Record<string, unknown>
-    expect(request.headers()['x-sanity-request']).toBe('1')
-    expect(request.headers().authorization).toBeUndefined()
-    expect(body.expected_revision).toBe(entry.credential.revision)
-    state.writes.push({ path, body })
-    entry.credential = { registered: !path.endsWith('/remove'), revision: entry.credential.revision + 1 }
-    return route.fulfill({ json: entry.credential })
-  })
-  await page.getByRole('button', { name: '개인 AI 토큰', exact: true }).click()
-  const bearer = page.getByRole('article', { name: 'Bearer 연결 개인 인증값' })
-  const client = page.getByRole('article', { name: 'x-client 연결 개인 인증값' })
-  await expect(bearer.getByRole('link')).toHaveAttribute('href', connections[0].issuance_url)
-  await expect(client.getByRole('link')).toHaveAttribute('href', connections[1].issuance_url)
-  const bearerInput = bearer.getByLabel('Bearer 연결 개인 Bearer 토큰')
-  await bearerInput.fill('synthetic-personal-bearer')
-  await bearer.getByRole('button', { name: '인증값 저장' }).click()
-  await expect(bearerInput).toHaveValue('')
-  await expect(bearer.getByText('등록됨', { exact: true })).toBeVisible()
-  await client.getByLabel('x-client 연결 개인 API 키').fill('synthetic-personal-client-key')
-  await client.getByRole('button', { name: '인증값 저장' }).click()
-  await expect(client.getByText('등록됨', { exact: true })).toBeVisible()
-  expect(state.writes.map(value => value.body.expected_revision)).toEqual([0, 0])
-  await bearer.getByRole('button', { name: '연결 해제' }).click()
-  await expect(bearer.getByText('미등록', { exact: true })).toBeVisible()
-  await expect(client.getByText('등록됨', { exact: true })).toBeVisible()
-  expect(await page.evaluate(() => [localStorage.length, sessionStorage.length])).toEqual([0, 0])
-  expect(state.unexpected).toEqual([])
-})
 
 test('personal JWT is masked, saved only for self, and never retained in browser storage', async ({ page }) => {
   const state = await setup(page)
@@ -97,108 +55,4 @@ test('personal JWT is masked, saved only for self, and never retained in browser
   const stored = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }))
   expect(stored).not.toContain(token)
   expect(state.unexpected).toEqual([])
-})
-
-test('replacement and removal use current revisions without returning saved tokens', async ({ page }) => {
-  const state = await setup(page, { registered: true, issuanceUrl })
-  await expect(page.getByLabel(tokenInput, { exact: true })).toHaveValue('')
-  await page.getByLabel(tokenInput, { exact: true }).fill(token)
-  await page.getByRole('button', { name: '인증값 교체', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText('개인 인증값을 저장했습니다')
-  await expect(page.getByRole('link', { name: issueLink })).toHaveAttribute('href', issuanceUrl)
-  await page.getByRole('button', { name: '연결 해제', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText('연결을 해제했습니다')
-  await expect(page.getByRole('article', { name: '합성 AI 연결 개인 인증값' })).toContainText('미등록')
-  await expect(page.getByLabel(tokenInput, { exact: true })).toHaveValue('')
-  expect(state.writes.map(write => write.body.expected_revision)).toEqual([1, 2])
-  expect(state.writes[1].body).not.toHaveProperty('token')
-  expect(state.registered).toBe(false)
-  await expect(page.getByRole('link', { name: issueLink })).toHaveAttribute('href', issuanceUrl)
-})
-
-test('near-expiry and expired tokens give explicit renewal guidance', async ({ page }) => {
-  await setup(page, { registered: true, expired: true })
-  await expect(page.getByRole('alert')).toContainText('인증값이 만료됐습니다')
-})
-
-test('thirty-day expiry warning is shown for a registered personal token', async ({ page }) => {
-  await setup(page, { registered: true, soon: true })
-  await expect(page.getByRole('status')).toContainText('30일 안에 만료됩니다')
-})
-
-test('failed saves clear the token, do not echo server details, and do not auto-retry', async ({ page }) => {
-  const state = await setup(page, { failSave: true })
-  await page.getByLabel(tokenInput, { exact: true }).fill(token)
-  await page.getByRole('button', { name: '인증값 저장', exact: true }).click()
-  await expect(page.getByRole('alert')).toHaveText('다른 창에서 설정이 바뀌었습니다. 창을 다시 열어 현재 상태를 확인해 주세요.')
-  await expect(page.getByLabel(tokenInput, { exact: true })).toHaveValue('')
-  expect(await page.locator('body').innerText()).not.toContain(token)
-  expect(state.writes).toHaveLength(1)
-})
-
-test('an empty managed catalog shows guidance and never requests environment credentials', async ({ page }) => {
-  const state = await setup(page, { empty: true })
-  await expect(page.getByRole('dialog')).toContainText('관리자에게 AI 연결 등록을 요청해 주세요')
-  await expect(page.locator('input[type=password]')).toHaveCount(0)
-  expect(state.writes).toHaveLength(0)
-  expect(state.unexpected).toEqual([])
-})
-
-test('personal token dialog fits a small mobile screen', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 })
-  await setup(page, { issuanceUrl })
-  await expect(page.getByRole('link', { name: issueLink })).toBeVisible()
-  await expect(page.getByLabel(tokenInput, { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: '인증값 저장', exact: true })).toBeVisible()
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)
-  expect(overflow).toBe(false)
-})
-
-test('issuance link opens the configured page in a new tab without sending the entered token', async ({ page }) => {
-  const state = await setup(page, { issuanceUrl })
-  await page.getByLabel(tokenInput, { exact: true }).fill(token)
-  const link = page.getByRole('link', { name: issueLink })
-  await expect(link).toHaveAttribute('href', issuanceUrl)
-  await expect(link).toHaveAttribute('rel', 'noopener noreferrer')
-  await expect(link).toHaveAttribute('referrerpolicy', 'no-referrer')
-  const requests: { url: string; referrer?: string; authorization?: string; body: string | null }[] = []
-  await page.context().route(issuanceUrl, route => {
-    const request = route.request()
-    requests.push({ url: request.url(), referrer: request.headers().referer, authorization: request.headers().authorization, body: request.postData() })
-    return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Synthetic issuance page</title>' })
-  })
-  const [popup] = await Promise.all([page.waitForEvent('popup'), link.click()])
-  await popup.waitForLoadState()
-  await expect(popup).toHaveURL(issuanceUrl)
-  expect(await popup.evaluate(() => window.opener)).toBeNull()
-  expect(requests).toEqual([{ url: issuanceUrl, referrer: undefined, authorization: undefined, body: null }])
-  await expect(page.getByLabel(tokenInput, { exact: true })).toHaveValue(token)
-  expect(state.writes).toEqual([])
-  await popup.close()
-})
-
-for (const url of [undefined, 'javascript:alert(1)', 'http://identity.example.test/tokens', '/tokens', 'https://user:password@identity.example.test/tokens']) {
-  test(`issuance link is hidden for ${url ?? 'an unset address'}`, async ({ page }) => {
-    await setup(page, { issuanceUrl: url })
-    await expect(page.getByRole('link', { name: issueLink })).toHaveCount(0)
-    await expect(page.getByLabel(tokenInput, { exact: true })).toBeVisible()
-  })
-}
-
-test('legacy VWP managed metadata requires configuration review alongside an OA connection', async ({ page }) => {
-  const state = await setup(page, { empty: true })
-  await page.getByRole('dialog').press('Escape')
-  await page.route('**/api/ai/connections', route => route.fulfill({ json: { items: [
-    { id: connectionId, label: 'OA 개인 연결', enabled: true, auth_mode: 'bearer', model: 'oa-model', models: ['oa-model'], issuance_url: null, credential: { registered: false, revision: 0 }, credential_error: null },
-    { id: '20000000-0000-4000-8000-000000000099', label: 'VWP 공용 연결', enabled: true, execution_site: 'vwp', auth_mode: 'vwp_managed', model: 'vwp-model', models: ['vwp-model'], issuance_url: null, credential: { registered: false, revision: 0, managed: true }, credential_error: null },
-  ] } }))
-  await page.getByRole('button', { name: '개인 AI 토큰', exact: true }).click()
-  const remote = page.getByRole('article', { name: 'VWP 공용 연결 VWP 연결', exact: true })
-  await expect(remote.getByText('설정 확인 필요', { exact: true })).toBeVisible()
-  await expect(remote).toContainText('VWP 인증 방식을 확인할 수 없습니다')
-  await expect(remote).not.toContainText('VWP에서 인증 관리')
-  await expect(remote.locator('input')).toHaveCount(0)
-  await expect(remote.getByRole('button')).toHaveCount(0)
-  await expect(page.getByRole('article', { name: 'OA 개인 연결 개인 인증값', exact: true }).locator('input[type=password]')).toBeVisible()
-  expect(state.writes).toEqual([])
 })

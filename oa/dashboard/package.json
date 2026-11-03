@@ -12,7 +12,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "test:e2e": "playwright test",
     "test:workspace": "playwright test --config playwright.workspace.config.ts",
-    "test:studio": "npm run build && playwright test --config playwright.studio.config.ts"
+    "test:drag": "playwright test --config playwright.drag.config.ts"
   },
   "dependencies": {
     "@phosphor-icons/react": "2.1.10",

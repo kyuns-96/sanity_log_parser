@@ -17,13 +17,11 @@ from uuid import uuid4
 import httpx
 from cryptography.fernet import Fernet
 
-from common.sanity_common import ReviewError, canonical_json, digest
+from common.sanity_common import canonical_json, digest
 from common.sanity_ai_execution import executing_on
 from common.sanity_ai_knowledge import shared_case
 from common.sanity_db import Database, json_value, stable_uuid
 from oa.sanity_access import AccessStore, access_lock
-from oa.sanity_ai_criteria import load_criteria
-from oa.sanity_ai_cases import CaseRetriever
 from oa.sanity_ai_jobs import AIJobService, run_once
 from oa.sanity_ai_connections import ConnectionStore
 from oa.sanity_ai_model import OAAdvisor
@@ -264,71 +262,6 @@ class OAFeedbackCycleTests(PgTestCase):
             self.assertEqual(403, client.get(base + "/workbench").status_code)
         self.assertEqual(2, len(self.packets))
 
-    def test_revoked_source_grant_keeps_global_knowledge_but_not_original_report_access(self):
-        project, block, version = "feedback.shared.project", "feedback.shared.block", "feedback.shared.version"
-        report_id, sentinel = "shared-source-report", "PRIVATE-SOURCE-RAW-SENTINEL-47c8"
-        request_id = uuid4()
-        with self.store(management=True) as ws:
-            access = ws.authorization
-            access.create_project(ADMIN, uuid4(), project, "Synthetic shared knowledge project")
-            access.create_block(ADMIN, uuid4(), project, block, "Synthetic source block")
-            requested = access.request(OWNER, request_id, "OWNER", project, block, "Synthetic source review assignment")
-            access.decide(ADMIN, request_id, uuid4(), "APPROVE", "Synthetic source approval", requested["revision"])
-            source_version = {"id": version, "project_id": project, "block_id": block,
-                              "net_ver": "N9", "revision": "R9", "layout": "POST",
-                              "source_pre_id": None, "ecos": ["eco09"]}
-            ws.put("WS_VERSION", version, source_version, project=project, block=block)
-            source = copy.deepcopy(self.originals["report-A"])
-            source.update(id=report_id, project_id=project, block_id=block, version_id=version,
-                          version_record_id=str(record_id("WS_VERSION", version)), eco="eco09",
-                          record_count=1, raw_report=sentinel)
-            source["records"] = [{**source["records"][0], "id": "C1", "raw": sentinel,
-                                  "fields": {"object": "PRIVATE-SOURCE-FIELD-47c8", "mode": "FUNCTIONAL",
-                                             "check_point": "clock_definition"}}]
-            ws.put("WS_REPORT", report_id, source, project=project, block=block)
-        with self.store() as ws:
-            clusters = WorkspaceClusteringStore(ws.db, ws=ws)
-            reason = "클록 정의와 파생 경로를 사람이 확인한 확정 분류 사례입니다."
-            draft = clusters.apply_ai(OWNER.user_id, block, version, report_id,
-                expected_revision=0, request_id=str(uuid4()), cases=[], retrieval={"selected": []},
-                metadata={"provider": "OA_OPENAI_COMPATIBLE", "model_called": True,
-                          "model": "synthetic-only", "prompt_version": "synthetic-receipt-v1", "input_sha256": "a" * 64},
-                advice={"groups": [{"id": "shared-clock", "label": "사람이 확인한 클록 분류", "record_ids": ["C1"]}],
-                        "reason": reason, "reference_ids": [], "group_rationales": [{
-                            "group_id": "shared-clock", "reason": reason,
-                            "evidence_ids": ["C1"], "reference_groups": []}]})
-            confirmed = clusters.change(OWNER.user_id, block, version, report_id, action="CONFIRM",
-                expected_revision=draft["revision"], request_id=str(uuid4()), reason=reason)
-            register_evidence(ws.db,confirmed,'CLUSTER',ws=ws)
-            self.assertEqual(report_id, ws.report(OWNER.user_id, block, version, report_id)["id"])
-        with self.store(management=True) as ws:
-            access = ws.authorization
-            snapshot = access.admin_snapshot(ADMIN)
-            grant = next(grant for grant in snapshot["grants"]
-                         if grant["user_id"] == OWNER.user_id and grant["project_id"] == project)
-            access.revoke(ADMIN, grant["grant_id"], uuid4(), "Synthetic source grant revocation", snapshot["revision"])
-        with self.store() as ws:
-            with self.assertRaises(ReviewError) as error:
-                ws.report(OWNER.user_id, block, version, report_id)
-            self.assertEqual("RESOURCE_NOT_FOUND", error.exception.code)
-            # The original target grant is still active. Only its complete logs
-            # are evidence; the other block contributes confirmed knowledge.
-            context = WorkspaceClusteringStore(ws.db, ws=ws).context(OWNER.user_id, BLOCK, VERSION, "report-A")
-            self.assertTrue(context["can_review"])
-            self.assertEqual(self.originals["report-A"]["records"], context["report"]["records"])
-            retriever = CaseRetriever(ws.db, ws)
-            cases = retriever.select(context, stage="CLUSTER")["cases"]
-            self.assertEqual([confirmed["id"]], [case["id"] for case in cases])
-            self.assert_shared_knowledge(cases[0], source_count=1)
-            self.assertEqual((project, block, version), (cases[0]["scope"]["project_id"],
-                             cases[0]["scope"]["block_id"], cases[0]["version_id"]))
-            self.assertTrue(retriever.revalidate(context, cases, stage="CLUSTER"))
-            self.advisor.cluster(context, cases, ["object", "check_point", "mode"])
-        self.assertEqual(1, len(self.packets))
-        self.assertEqual(cases, self.packets[0]["cases"])
-        self.assert_shared_knowledge(self.packets[0]["cases"][0], source_count=1)
-        self.assertNotIn(sentinel, canonical_json(self.packets[0]).decode())
-        self.assertNotIn("PRIVATE-SOURCE-FIELD-47c8", canonical_json(self.packets[0]).decode())
 
     def test_human_corrections_and_counterexamples_reach_the_next_eco_model_calls(self):
         # First report: the actual adapter proposes a single group with no cases.

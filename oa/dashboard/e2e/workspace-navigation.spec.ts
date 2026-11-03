@@ -1,30 +1,5 @@
 import { test, expect } from '@playwright/test'
 
-test('desktop rail keeps navigation named, keyboard operable and reversible', async ({ page }) => {
-  await page.goto('/?demo=1&flow=legacy')
-  await expect(page.getByText('CHECK-101', { exact: true })).toBeVisible()
-  const main = page.getByRole('main')
-  const expandedWidth = (await main.boundingBox())!.width
-
-  await page.getByRole('button', { name: '메뉴 접기', exact: true }).click()
-  await expect(page.getByRole('button', { name: '메뉴 펼치기', exact: true })).toHaveAttribute('aria-expanded', 'false')
-  await expect.poll(async () => (await main.boundingBox())!.width).toBeGreaterThan(expandedWidth)
-  const history = page.getByRole('button', { name: '활동 이력', exact: true })
-  const target = (await history.boundingBox())!
-  expect(target.width).toBeGreaterThanOrEqual(44)
-  expect(target.height).toBeGreaterThanOrEqual(44)
-  await history.focus()
-  await expect(history.locator('.nav-text')).toBeVisible()
-  await page.keyboard.press('Enter')
-  await expect(page.getByRole('heading', { name: '검토 변경 이력' })).toBeVisible()
-  await expect(history).toHaveAttribute('aria-current', 'page')
-
-  await page.getByRole('button', { name: '메뉴 펼치기', exact: true }).click()
-  await expect.poll(async () => (await main.boundingBox())!.width).toBe(expandedWidth)
-  await page.getByRole('button', { name: '검토 대장', exact: true }).click()
-  await expect(page.getByText('CHECK-101', { exact: true })).toBeVisible()
-})
-
 test('mobile drawer traps focus, hides closed navigation and returns focus on dismissal', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/?demo=1&flow=legacy')

@@ -214,7 +214,7 @@ Codex 공통 구현과 사내 SDK 구현을 분리한다. 상세 API·저장·�
 
 - 서버: `oa/sanity_auth.py`, `oa/dashboard_api.py`.
 - 화면: `oa/dashboard/src/App.tsx`, `DashboardLogin.tsx`, `useDashboardAuth.ts`, `types.ts`, `demo.ts`. Node 20.18에서 프런트엔드를 다시 빌드한다.
-- 검증: `oa/test_auth_config.py`, `oa/test_sso.py`, `oa/dashboard/e2e/sso-login.spec.ts`, `dashboard.spec.ts`. 권한 미설정 시 기존 SSO 업무 API 차단 검증을 유지하고, 설정 후 범위 제한은 새 전용 검증으로 확인한다.
+- 검증: `tests/test_auth.py`, `oa/test_sso.py`, `oa/dashboard/e2e/sso-login.spec.ts`. 권한 미설정 시 기존 SSO 업무 API 차단 검증을 유지하고, 설정 후 범위 제한은 새 전용 검증으로 확인한다.
 
 2026-10-20 인증 UI 변경만에는 새 환경변수나 DB SQL이 필요하지 않았다. 최신 관리 기능은 OA 전용 `SANITY_ADMIN_USER_ID`를 추가하며 DB SQL은 추가하지 않는다. 프록시는 기존 `/api/*`, `/auth/*`를 같은 OA 서비스로 전달한다. 설정 조회 → SSO 로그인 이동 → 콜백 후 세션 조회 → POST 로그아웃을 실제 HTTPS 진입 주소에서 사내 검증한다. 실제 SAML 검증·회사 저장소·SP 등록은 합성 검증의 범위에 포함되지 않는다. 인계에는 고정 오류 코드와 합성/실환경 검증 결과만 기록하며 실제 사내 코드·diff·세션 쿠키·SAML 원문을 외부에 전달하지 않는다.
 
@@ -236,7 +236,7 @@ Codex 공통 구현과 사내 SDK 구현을 분리한다. 상세 API·저장·�
 .venv/bin/python -m pip install -r oa/requirements.txt
 .venv/bin/python -m pip check
 .venv/bin/python -c "from importlib.metadata import version; import signxml, lxml.etree, cryptography; print({name: version(name) for name in ('signxml', 'lxml', 'cryptography')})"
-.venv/bin/python -m unittest tests.test_auth oa.test_sso oa.test_auth_config -v
+.venv/bin/python -m unittest tests.test_auth oa.test_sso -v
 ```
 
 회사 어댑터 전용 시험은 작성된 `oa/integration/company_sso/`에서 별도로 실행한다. 설치·import와 합성 서명 검증은 실제 SAML 검증·회사 IdP/SP 등록·세션/CSRF·업무 권한 연결을 대신하지 않는다. 사내에서는 기존 정상/위조/만료/재전송/폐기 검증을 유지한다.

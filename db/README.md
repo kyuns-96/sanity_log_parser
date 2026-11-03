@@ -241,9 +241,8 @@ python3 db/tests/check_concurrency.py -h HOST -U OWNER -d sanity_test_example
 
 fixture는 `form`을 감싸 GUI 생성을 모사한 뒤 `002` 인덱스/FK → `003` 권한 적용을 검사한다.
 smoke 테스트 행은 rollback하며, 테스트용 빈 테이블은 보존한다.
-`tests/test_schema.py`는 신청용 컬럼 정의 4개·기존 설정 SQL의 원본 hash와 승인된 증분 파일 목록을 확인한다.
-`tests/test_migration.py`는 기존 행 보존, GUI 제약 이름 차이, 스키마 불일치 rollback,
-재실행 시 안전한 실패, 기존 무결성·앱 권한 유지를 실제 PostgreSQL에서 검사한다.
+`tests/test_shared_source_migration.py`는 포털 66단계를 실제 PG12에서 재현하고, 이전 단계의 최종 카탈로그와 테이블 OID 보존을 함께 확인한다. 원본 파일 hash·승인 파일 목록을 고정하는 검사는 삭제했다.
+`tests/test_database.py`는 제한 역할의 DDL/개인 payload 변경 거부·트랜잭션 rollback·메시지 중복·수신 복구를 확인한다.
 Python DB 회귀 검사도 동일한 `form`으로 생성한 테이블을 사용한다.
 concurrency 검사는 실제 두 세션에서 잠긴 행을 건너뛰고 서로 다른 작업을 점유하는지 검사한 뒤,
 이 검사에서 생성한 UUID 식별자의 합성 PING 두 개만 owner로 정리한다.

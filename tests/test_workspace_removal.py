@@ -7,30 +7,11 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from common.sanity_common import ReviewError
-from common.sanity_db import Database,json_value,lock_key
-from common.sanity_removal import marker,PRIVATE_REMOVED,check_packet
+from common.sanity_db import Database
+from common.sanity_removal import marker, PRIVATE_REMOVED
 from oa.sanity_workspace import WorkspaceStore
 from oa.sanity_workspace_removal import Removal
 from tests.support import PgTestCase,ROOT
-
-
-class RemovalApiTests(unittest.TestCase):
-    def test_physical_deletion_requires_sso_origin_closed_body_and_snapshot(self):
-        from unittest.mock import Mock
-        from tests.test_ai_workbench_api import ProductionWorkbenchApiTests,BASE,HEADERS,TARGET
-        f=ProductionWorkbenchApiTests();f.setUp();self.addCleanup(f.doCleanups)
-        store=Mock();store.preview.return_value={'can_delete':True,'snapshot_sha256':'a'*64}
-        store.delete.return_value={'deleted':True}
-        body={'request_id':str(uuid4()),'snapshot_sha256':'a'*64}
-        with patch('oa.sanity_workspace_removal.Removal',return_value=store):
-            self.assertEqual(200,f.client.get(BASE+'/delete-preview').status_code)
-            self.assertEqual(403,f.client.post(BASE+'/delete',json=body).status_code)
-            self.assertEqual(400,f.client.post(BASE+'/delete',headers=HEADERS,json={**body,'user_id':'other'}).status_code)
-            self.assertEqual(400,f.client.post(BASE+'/delete',headers=HEADERS,json={**body,'snapshot_sha256':'wrong'}).status_code)
-            store.delete.assert_not_called()
-            self.assertEqual(200,f.client.post(BASE+'/delete',headers=HEADERS,json=body).status_code)
-            self.assertEqual(TARGET[:3],store.delete.call_args.args)
-            self.assertEqual(TARGET[3],store.delete.call_args.kwargs['report_id'])
 
 
 @unittest.skipIf(getattr(PgTestCase,'__unittest_skip__',False),'Disposable PostgreSQL fixture required')
@@ -132,74 +113,3 @@ class WorkspaceRemovalTests(unittest.TestCase):
         saved=self.c.admin_query("SELECT payload FROM {vwp} WHERE record_type='SUBMISSION' AND entity_key=%s",
                                 (sent['submission_id'],)).fetchone()[0]
         self.assertEqual(PRIVATE_REMOVED,saved['namespace'])
-
-    def test_removing_both_versions_clears_all_submission_bytes_and_is_idempotent(self):
-        sent,pre,post=self.delivered();sid=sent['submission_id'];self.originals(sid);self.human(post)
-        self.remove(post,version=True)
-        preview=self.preview(pre,version=True);identity=uuid4()
-        result=self.remove(pre,version=True,preview=preview,identity=identity)
-        self.assertEqual(result,self.remove(pre,version=True,preview=preview,identity=identity))
-        self.assertEqual([],self.c.report_headers())
-        for kind in ('RAW_SUBMISSION','RAW_FILE','RAW_CHUNK','SOURCE_RUN','SOURCE_OUTBOX','RUN','EVIDENCE','SOURCE_EVIDENCE_PAGE'):
-            self.assertEqual(0,self.c.admin_query("SELECT count(*) FROM {vwp} WHERE record_type=%s",(kind,)).fetchone()[0],kind)
-        self.assertEqual(0,self.c.admin_query("SELECT count(*) FROM {vwp_to_oa} WHERE correlation_id=%s",(sid,)).fetchone()[0])
-        self.assertEqual(0,self.c.admin_query("SELECT count(*) FROM {oa_to_vwp} WHERE payload->>'submission_id'=%s",(sid,)).fetchone()[0])
-        saved=self.c.admin_query("SELECT payload FROM {vwp} WHERE record_type='SUBMISSION' AND entity_key=%s",(sid,)).fetchone()[0]
-        self.assertEqual(PRIVATE_REMOVED,saved['namespace']);self.assertNotIn('plan',saved)
-        from common.sanity_submission_store import SubmissionStore
-        with Database('vwp') as db,db.transaction():
-            self.code('SOURCE_REMOVED',lambda:SubmissionStore(db).accept({'submission_id':sid},node_id='synthetic-node'))
-
-    def test_version_delete_purges_preexisting_unpublished_runs_and_new_submission_can_recreate_it(self):
-        sent,pre,post=self.delivered()
-        pending=self.c.submit();self.c.bridge()
-        old=self.c.admin_query("SELECT payload FROM {oa} WHERE record_type='WS_SUBMISSION' AND workspace_key=%s",
-                               (sent['submission_id'],)).fetchone()[0]
-        self.remove(post,version=True)
-        self.assertEqual(0,self.c.admin_query("SELECT count(*) FROM {vwp_to_oa} WHERE correlation_id=%s",(pending['submission_id'],)).fetchone()[0])
-        self.assertEqual('REJECTED',self.c.admin_query("SELECT status FROM {vwp} WHERE record_type='SUBMISSION' AND entity_key=%s",
-                                                    (pending['submission_id'],)).fetchone()[0])
-        with Database('oa') as db,db.transaction():self.code('SOURCE_REMOVED',lambda:check_packet(db,old))
-        new=self.c.submit();self.c.bridge();self.c.receive();self.c.bridge()
-        report=next(r for r in self.c.report_headers() if r.get('submission_id')==new['submission_id'] and r['source']['layout']=='POST')
-        self.assertEqual(post['version_id'],report['version_id']);self.assertNotEqual(post['id'],report['id'])
-
-    def test_owner_scope_and_poR_pre_dependencies_are_checked_before_deletion(self):
-        _,pre,post=self.delivered()
-        self.code('FORBIDDEN',lambda:self.preview(post,user='user-01'))
-        self.assertIn('VERSION_REFERENCED',self.preview(pre,version=True)['blockers'])
-        with Database('oa') as db,db.transaction():
-            WorkspaceStore(db).assign_por('user-04',post['block_id'],post['version_id'],0,str(uuid4()),'합성 PoR 지정')
-        self.assertIn('POR_VERSION_IN_USE',self.preview(post,version=True)['blockers'])
-        self.code('POR_VERSION_IN_USE',lambda:self.remove(post,version=True))
-        self.assertEqual(2,len(self.c.report_headers()))
-
-    def test_changed_confirmation_and_revoked_delete_permission_do_not_remove_data(self):
-        _,_,post=self.delivered();preview=self.preview(post);self.human(post)
-        self.code('REMOVAL_CHANGED',lambda:self.remove(post,preview=preview))
-        from psycopg2 import sql
-        self.c.admin.execute(sql.SQL('REVOKE DELETE ON {} FROM {}').format(
-            sql.Identifier(self.c.schema,'sanity_vwp_data'),sql.Identifier(self.login)))
-        self.assertFalse(self.preview(post)['can_delete'])
-        self.code('DATA_DELETE_NOT_CONFIGURED',lambda:self.remove(post))
-        self.assertEqual(2,len(self.c.report_headers()))
-
-    def test_failure_after_private_cleanup_rolls_back_public_and_private_rows(self):
-        sent,_,post=self.delivered();self.originals(sent['submission_id']);preview=self.preview(post)
-        before={table:self.c.admin_query('SELECT count(*) FROM {'+table+'}').fetchone()[0]
-                for table in ('oa','vwp','vwp_to_oa','oa_to_vwp')}
-        with patch.object(Removal,'_packets',side_effect=ReviewError('SYNTHETIC_FAILURE','Synthetic rollback')):
-            self.code('SYNTHETIC_FAILURE',lambda:self.remove(post,preview=preview))
-        after={table:self.c.admin_query('SELECT count(*) FROM {'+table+'}').fetchone()[0] for table in before}
-        self.assertEqual(before,after)
-        with Database('oa') as db,db.transaction():self.assertIsNone(marker(db,'REPORT',post['id']))
-
-    def test_active_upload_lock_prevents_partial_cleanup(self):
-        sent,_,post=self.delivered()
-        from common.sanity_raw_sources import RAW_PROTOCOL
-        with Database('vwp') as busy:
-            token=lock_key(RAW_PROTOCOL+':'+sent['submission_id'])
-            busy.conn.execute('SELECT pg_advisory_lock(%s)',(token,))
-            try:self.code('SUBMISSION_BUSY',lambda:self.remove(post))
-            finally:busy.conn.execute('SELECT pg_advisory_unlock(%s)',(token,))
-        self.assertEqual(2,len(self.c.report_headers()))

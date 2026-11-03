@@ -2,14 +2,11 @@
 from dataclasses import replace
 import json
 import unittest
-from uuid import uuid4
 
 import httpx
 
-from common.sanity_db import json_value
 from oa.sanity_ai_budget import BatchSettings
 from oa.sanity_ai_model import OAAdvisor
-from oa.sanity_workspace import record_id
 from tests.support import PgTestCase
 
 
