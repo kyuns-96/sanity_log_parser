@@ -394,6 +394,7 @@ test('admin default model is selected and classification controls align with the
     expect(Math.abs(box.y - button.y)).toBeLessThan(1)
   }
   await action.click()
+  await page.getByRole('button', { name: '상세 분류 근거 보기', exact: true }).click()
   await expect(page.locator('.ws-rationale-text').first()).toBeVisible()
   expect(state.writes.find(write => write.path.endsWith('/clustering/ai'))?.body).toMatchObject({ connection_id: connectionId, model_id: 'synthetic-second-model' })
 })
@@ -412,6 +413,7 @@ test('connection selection is distinct from model ID and respects its personal c
   await page.getByRole('button', { name: '최신 구성 다시 조회', exact: true }).click()
   await expect(selector).toHaveValue(connections[1].id)
   await page.getByRole('button', { name: 'AI로 그룹 만들기', exact: true }).click()
+  await page.getByRole('button', { name: '상세 분류 근거 보기', exact: true }).click()
   await expect(page.locator('.ws-rationale-text').first()).toBeVisible()
   expect(state.writes.find(write => write.path.endsWith('/clustering/ai'))?.body).toMatchObject({ connection_id: connections[1].id, model_id: model.model })
   expect(state.unexpected).toEqual([])
@@ -502,6 +504,7 @@ test('unconfigured OA AI does not offer a reference-engine substitute', async ({
 test('pending jobs resume with GET only and unknown outcomes never auto-submit', async ({ page }) => {
   const state = await mockOA(page, { initialJob: { id: 'existing-job', status: 'PENDING', error: null, model: model.model, created_at: at, expected_revision: 0, input_case_count: 0 } })
   await page.goto(url)
+  await page.getByRole('button', { name: '상세 분류 근거 보기', exact: true }).click()
   await expect(page.locator('.ws-rationale-text').first()).toBeVisible()
   expect(state.writes).toEqual([])
   state.revision = 0
@@ -1217,6 +1220,7 @@ test('task-specific defaults and user selection are sent for classification and 
   const classification = page.getByRole('combobox', { name: '분류 AI 모델', exact: true })
   await expect(classification).toHaveValue(model.model)
   await page.getByRole('button', { name: 'AI로 그룹 만들기', exact: true }).click()
+  await page.getByRole('button', { name: '상세 분류 근거 보기', exact: true }).click()
   await expect(page.locator('.ws-rationale-text').first()).toBeVisible()
   expect(state.writes.find(write => write.path.endsWith('/clustering/ai'))?.body).toMatchObject({ connection_id: connectionId, model_id: model.model })
   await page.getByRole('button', { name: '분류 확정 · 판정 시작', exact: true }).click()
@@ -1297,7 +1301,7 @@ test('parallel batch mean uses call duration and ETA uses the fixed wall-time sn
   await mockOA(page)
   const baseJob = monitoredJob()
   const measuredAt = new Date(Date.now() - 30000).toISOString()
-  const expectedEnd = new Date(Date.parse(measuredAt) + 300000).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const expectedEnd = await page.evaluate(timestamp => new Date(timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), Date.parse(measuredAt) + 300000)
   const job = { ...baseJob, observed_at: new Date().toISOString(), progress: { ...baseJob.progress, execution: 'parallel-v1',
     wall_seconds_per_record: 1.25, wall_stage_eta_seconds: 300, wall_measured_at: measuredAt, seconds_per_record: 123, stage_eta_seconds: 999 } }
   await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
@@ -1315,7 +1319,7 @@ test('parallel merge shows batch mean and estimates only the current stage', asy
   await mockOA(page)
   const baseJob = monitoredJob()
   const measuredAt = new Date(Date.now() - 10000).toISOString()
-  const expectedEnd = new Date(Date.parse(measuredAt) + 180000).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const expectedEnd = await page.evaluate(timestamp => new Date(timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), Date.parse(measuredAt) + 180000)
   const job = { ...baseJob, progress: { ...baseJob.progress, execution: 'parallel-v1', phase: 'MERGE',
     wall_seconds_per_record: 2.5, wall_stage_eta_seconds: 180, wall_measured_at: measuredAt } }
   await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [job], server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))
@@ -1355,15 +1359,15 @@ test('rolling jobs refresh their concurrency-aware ETA from completed-call measu
   await page.goto(url.replace('tab=reports', 'tab=ai-jobs').replace('&review=report-a', ''))
   const dashboard = page.getByRole('region', { name: 'AI 작업 현황', exact: true })
   const eta = dashboard.locator('.ai-job-metrics').getByText('이번 단계 예상 종료').locator('..').locator('dd')
-  const end = () => new Date(Date.parse(job.progress.wall_measured_at) + job.progress.wall_stage_eta_seconds * 1000)
-    .toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-  await expect(eta).toHaveText(end())
+  const end = () => page.evaluate(timestamp => new Date(timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    Date.parse(job.progress.wall_measured_at) + job.progress.wall_stage_eta_seconds * 1000)
+  await expect(eta).toHaveText(await end())
   await expect(dashboard).toContainText('동시 처리 2 / 2개 · 작업 상한 8개')
   await expect(dashboard).toContainText('완료된 자리에 다음 배치를 이어서 처리합니다.')
   job.progress.wall_stage_eta_seconds = 180
   job.progress.wall_measured_at = new Date(Date.parse(measuredAt) + 5000).toISOString()
   await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
-  await expect(eta).toHaveText(end())
+  await expect(eta).toHaveText(await end())
   job.progress.retry_after = '2099-01-01T00:00:00Z'
   await dashboard.getByRole('button', { name: 'AI 작업 현황 새로고침' }).click()
   await expect(eta).toHaveText('재시도 대기 중')
@@ -1377,7 +1381,7 @@ test('rolling unknown recovery requires and confirms the complete uncertain batc
   const members = [primary, { ...primary, call_token: 'synthetic-call-2', index: 4 }]
   const job = { ...baseJob, status: 'UNKNOWN', can_cancel: false, can_retry_unknown: true,
     unknown_recovery: primary, unknown_recoveries: [] as typeof members,
-    progress: { ...baseJob.progress, execution: 'parallel-v2' } }
+    progress: { ...baseJob.progress, execution: 'parallel-v2', concurrency: 2 } }
   const writes: Record<string, unknown>[] = []
   await page.route('**/api/workbench/ai/jobs', route => route.fulfill({ json: { items: [job],
     server_time: new Date().toISOString(), worker: { site: 'vwp', online: true, last_seen: new Date().toISOString() } } }))

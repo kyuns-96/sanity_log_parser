@@ -15,14 +15,17 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import httpx
+from cryptography.fernet import Fernet
 
 from common.sanity_common import ReviewError, canonical_json, digest
+from common.sanity_ai_execution import executing_on
 from common.sanity_ai_knowledge import shared_case
 from common.sanity_db import Database, json_value, stable_uuid
 from oa.sanity_access import AccessStore, access_lock
 from oa.sanity_ai_criteria import load_criteria
 from oa.sanity_ai_cases import CaseRetriever
 from oa.sanity_ai_jobs import AIJobService, run_once
+from oa.sanity_ai_connections import ConnectionStore
 from oa.sanity_ai_model import OAAdvisor
 from oa.sanity_auth import Actor
 from oa.sanity_production_workspace import ProductionWorkspaceStore
@@ -31,6 +34,7 @@ from oa.sanity_workspace_clustering import WorkspaceClusteringStore
 from oa.sanity_workspace_group_review import WorkspaceGroupReviewStore
 from tests.support import PgTestCase, ROOT
 from tests.evidence_support import register_evidence
+from tests.test_ai_connections import configuration
 
 
 ADMIN = Actor("feedback.test.admin", "Synthetic administrator", "sso")
@@ -175,7 +179,7 @@ class OAFeedbackCycleTests(PgTestCase):
 
     def test_production_http_routes_use_sso_grants_jobs_and_separate_human_confirmation(self):
         from fastapi.testclient import TestClient
-        from oa.dashboard_api import create_app
+        from oa.dashboard_api import ScopedActor, create_app
         from oa.sanity_auth import AuthError, LocalUser, SSOIdentityProvider, UserDirectory, VerifiedIdentity
 
         class Provider(SSOIdentityProvider):
@@ -192,9 +196,18 @@ class OAFeedbackCycleTests(PgTestCase):
         base = f"/api/workbench/blocks/{BLOCK}/versions/{VERSION}/reports/report-A"
         headers = {"X-Sanity-Request": "1", "Origin": "http://127.0.0.1", "Sec-Fetch-Site": "same-origin"}
         factory = lambda scope: AIJobService(scope.db, scope.ws, advisor=self.advisor)
-        with patch.dict(os.environ, {"SANITY_ADMIN_USER_ID": ADMIN.user_id}), \
+        connection_id = str(uuid4())
+        with patch.dict(os.environ, {"SANITY_ADMIN_USER_ID": ADMIN.user_id,
+                "SANITY_OA_AI_TOKEN_STORE_SECRET": Fernet.generate_key().decode()}), \
                 patch("oa.ai_workbench_api.jobs", side_effect=factory), \
                 TestClient(app, base_url="http://127.0.0.1", raise_server_exceptions=False) as client:
+            with self.store(management=True) as ws:
+                connections = ConnectionStore(ws.db)
+                admin = ScopedActor(ADMIN, ws.authorization)
+                connections.save(admin, connection_id, configuration(
+                    endpoint=self.advisor.settings.endpoint, model="synthetic-feedback-v1",
+                    models=["synthetic-feedback-v1"], json_mode=True), 0)
+                connections.tokens(connections.get(connection_id)).save(OWNER.user_id, "synthetic-feedback-credential", 0)
             self.assertEqual(401, client.get("/api/workbench/session").status_code)
             client.cookies.set("synthetic_session", "synthetic-owner-session")
             session = client.get("/api/workbench/session")
@@ -203,13 +216,16 @@ class OAFeedbackCycleTests(PgTestCase):
             view = client.get(base + "/workbench")
             self.assertEqual(200, view.status_code, view.text)
             self.assertTrue(view.json()["ai"]["available"])
-            request = {"request_id": str(uuid4()), "expected_revision": 0}
+            request = {"request_id": str(uuid4()), "expected_revision": 0, "connection_id": connection_id}
             self.assertEqual(403, client.post(base + "/clustering/ai", json=request).status_code)
             accepted = client.post(base + "/clustering/ai", json=request, headers=headers)
             self.assertEqual(202, accepted.status_code, accepted.text)
             self.assertEqual("PENDING", accepted.json()["status"])
             self.assertEqual([], self.packets)
-            result = run_once(lambda: Database("oa"), self.workspace, self.advisor)
+            with executing_on("vwp"):
+                prepared = run_once(lambda: Database("oa"), self.workspace, self.advisor)
+                self.assertEqual("PENDING", prepared["status"], prepared)
+                result = run_once(lambda: Database("oa"), self.workspace, self.advisor)
             self.assertEqual("COMPLETED", result["status"], result)
             view = client.get(base + "/workbench").json()
             self.assertEqual("COMPLETED", view["ai"]["job"]["status"])
@@ -223,9 +239,13 @@ class OAFeedbackCycleTests(PgTestCase):
             self.assertEqual(200, confirmed.status_code, confirmed.text)
             review_base = base + "/groups/ai-all/review"
             requested = client.post(review_base + "/ai", headers=headers, json={
-                "expected_revision": 0, "expected_cluster_revision": 2, "request_id": str(uuid4())})
+                "expected_revision": 0, "expected_cluster_revision": 2, "request_id": str(uuid4()),
+                "connection_id": connection_id})
             self.assertEqual(202, requested.status_code, requested.text)
-            self.assertEqual("COMPLETED", run_once(lambda: Database("oa"), self.workspace, self.advisor)["status"])
+            with executing_on("vwp"):
+                prepared = run_once(lambda: Database("oa"), self.workspace, self.advisor)
+                self.assertEqual("PENDING", prepared["status"], prepared)
+                self.assertEqual("COMPLETED", run_once(lambda: Database("oa"), self.workspace, self.advisor)["status"])
             reviewed = client.get(review_base + "?compact=true")
             self.assertEqual(200, reviewed.status_code, reviewed.text)
             proposal = reviewed.json()["proposal"]
@@ -284,7 +304,8 @@ class OAFeedbackCycleTests(PgTestCase):
         with self.store(management=True) as ws:
             access = ws.authorization
             snapshot = access.admin_snapshot(ADMIN)
-            grant = next(grant for grant in snapshot["grants"] if grant["block_id"] == block)
+            grant = next(grant for grant in snapshot["grants"]
+                         if grant["user_id"] == OWNER.user_id and grant["project_id"] == project)
             access.revoke(ADMIN, grant["grant_id"], uuid4(), "Synthetic source grant revocation", snapshot["revision"])
         with self.store() as ws:
             with self.assertRaises(ReviewError) as error:

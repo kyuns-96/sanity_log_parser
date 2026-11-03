@@ -35,16 +35,18 @@ mock은 새 소켓 전용 PostgreSQL·작업자별 독립 DB를 만들고 종료
 
 ## 설계 Codex의 통합 검사
 
+운영 DB의 검증 기준은 PostgreSQL 12입니다. `--pg-bin`에는 PG12.1 이상 12.x 서버 바이너리 경로를 명시하고, 실행한 서버 버전을 확인합니다.
+
 ```bash
 # 공통 변경의 기본 통합 회귀 — 3분 이내 목표, DB 준비/종료 포함
-.venv/bin/python db/tests/run_mock.py --profile quick
+.venv/bin/python db/tests/run_mock.py --profile quick --pg-bin /path/to/postgresql12/bin
 
 # 변경한 기능의 전용 검사 + quick을 한 번에 실행 — 중복 ID는 한 번만
-.venv/bin/python db/tests/run_mock.py --include tests.test_ai_parallel_width
+.venv/bin/python db/tests/run_mock.py --pg-bin /path/to/postgresql12/bin --include tests.test_ai_parallel_width
 
 # 이전의 넓은 quick 범위 / 전수·포털·10만 건 검증
-.venv/bin/python db/tests/run_mock.py --profile regression
-.venv/bin/python db/tests/run_mock.py --profile full
+.venv/bin/python db/tests/run_mock.py --profile regression --pg-bin /path/to/postgresql12/bin
+.venv/bin/python db/tests/run_mock.py --profile full --pg-bin /path/to/postgresql12/bin
 ```
 
 Codex는 변경 부분의 모듈·클래스·메서드를 `--include` 뒤에 공백으로 나열할 수 있습니다. 기본 프로필에 더한 전체 목록을 먼저 정하고, 겹치는 테스트 ID를 한 번만 실행한 뒤 최대 4개 독립 작업자 DB의 결과를 합칩니다. 전용 검사와 quick을 같은 소스로 합쳐 완료했다면 별도 quick을 반복하지 않습니다. 예를 들어 `--include tests.test_ai_evidence_choices tests.test_ai_parallel_width`는 두 기능의 전용 검사와 quick을 한 번에 확인합니다. 목록만 보려면 `run_tests.py --include 모듈명 --list`를 사용합니다.

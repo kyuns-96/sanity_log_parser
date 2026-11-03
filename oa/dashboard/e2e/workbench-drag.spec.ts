@@ -126,9 +126,9 @@ test('drop onto new group asks for a name; cancelling changes nothing, and savin
   await expect(dialog).toBeHidden()
   const value = await assertPartition(page, 'new')
   expect(value.current.groups).toHaveLength(4)
-  expect(value.current.groups.find(group => group.label === '별도 확인할 클럭')?.record_ids).toEqual([`${report('new')}-e-001`])
+  expect(value.current.groups.find(group => group.label === 'DND_QA · 별도 확인할 클럭')?.record_ids).toEqual([`${report('new')}-e-001`])
   expect(value.current.reason).toBe('사람이 다른 원인으로 확인한 합성 사례')
-  await expect(page.locator('.ws-selected-group-header h2').first()).toHaveText('별도 확인할 클럭')
+  await expect(page.locator('.ws-selected-group-header h2').first()).toHaveText('DND_QA · 별도 확인할 클럭')
 })
 
 test('keyboard pickup, cancellation and move work; rename and final confirmation keep the two stages', async ({ page }) => {
@@ -150,7 +150,7 @@ test('keyboard pickup, cancellation and move work; rename and final confirmation
   await page.getByLabel('선택 그룹 이름').fill('사람이 검토할 폭 불일치')
   await page.getByRole('button', { name: '그룹 이름 저장', exact: true }).click()
   await expect(page.getByRole('dialog')).toBeHidden()
-  await expect(page.locator('.ws-selected-group-header h2').first()).toHaveText('사람이 검토할 폭 불일치')
+  await expect(page.locator('.ws-selected-group-header h2').first()).toHaveText('DND_QA · 사람이 검토할 폭 불일치')
   let review = await getCluster(page, 'keyboard')
   for (const group of review.current.groups) {
     const response = await post(page, 'keyboard', `/groups/${group.id}/rationale`, { action: 'SAVE',
@@ -163,7 +163,7 @@ test('keyboard pickup, cancellation and move work; rename and final confirmation
   }
   await page.reload()
   await page.getByText('설정과 이전 기록', { exact: true }).click()
-  await page.getByText('전체 메모와 재사용 설정 (선택)', { exact: true }).click()
+  await page.getByText('전체 메모와 참고 엔진 설정 (선택)', { exact: true }).click()
   await page.getByLabel('전체 분류 메모 (선택)', { exact: true }).fill('전체 120건의 그룹 배정을 확인했습니다.')
   await page.getByRole('button', { name: '분류 확정 · 판정 시작', exact: false }).click()
   await expect(page.getByRole('region', { name: '2단계 확정 그룹별 판정' })).toBeVisible()
