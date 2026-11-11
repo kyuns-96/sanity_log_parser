@@ -78,3 +78,23 @@ Hierarchy 누적 집계의 부모/자식 중복 합산 금지, logic_cells 분�
 - 상세 계약과 OA 사내 AI 허용 범위는 [메일 연동](oa/MAIL_INTEGRATION.md), AGENTS·내부 AI 가이드·OA 역할 지시문에 반영했다. 회사 AI는 자기 어댑터만 구현하며 공통 worker·Protocol·composition root·SSO·SQL·UI는 변경하지 않는다.
 - 검증: 기존 두 테이블 SQL을 설치한 별도 폐기 PostgreSQL 18.6 DB와 제한 DML 로그인으로 전체/일부 접수·전체 거부·명시 거부 예외·timeout·불완전 receipt·기본/누락/중복 수신자·접수 후 DB 완료 실패·미연결 CLI의 pending job 미점유를 확인했다. 발송 경계에서 별도 연결의 `FOR UPDATE NOWAIT`가 성공해 행 잠금이 해제됐음을 확인했고, 사람 읽음/확인/해소 상태와 자동 재호출 없음도 확인했다. 메일 제공자는 메모리 경계 대역이며 실제 외부 메일 호출은 0건이다. 폐기 DB·계정은 제거했고 사용자 DB는 변경하지 않았다.
 - TypeScript 검사·production build와 실제 Chromium 데모의 수신자 입력 안내를 확인했다. SMTP 안내가 없고 사내 메일 미발송 안내를 표시하며 runtime JS 오류는 없었다. 회사 서비스 구현·실제 발송·배포는 미검증이다. 새 테스트/fixture/mock/harness/검증 스크립트 파일은 추가하지 않았다.
+
+## 로그 검토 높이·메뉴 복귀 수정 — 2026-11-11
+
+- 사용자 보고: 1920×1080·5120×2160에서 가로만 확장되고 세로가 짧으며, 다른 메뉴에서 로그 검토로 돌아오면 멈춤.
+- 높이 원인: 통합 Workspace가 상세 main의 viewport 높이를 inline `auto`/최소 높이 0으로 덮어쓴 상태에서 부모 높이 전달도 없어 작업 열이 두 해상도 모두 최소 350px, 로그 목록이 100px로 축소됐다.
+- 수정: `AtlasShell`의 활성 `data-page`와 데스크톱 flex 높이 전달을 사용해 공통 chrome을 제외한 실제 남은 높이를 채운다. 고정 헤더 높이 계산이나 ResizeObserver는 추가하지 않았다. 임베디드 main의 inline 높이 덮어쓰기를 제거했고 작은 폭의 기존 레이아웃은 유지한다.
+- 멈춤 원인: React Activity 복귀 시 경로→선택 상태 적용과 이전 render의 선택 상태→URL 출력이 충돌했다. 운영 build에서 React #185, 개발 build에서 `WorkspacePage`의 `resetSelection`/경로 layout effect가 포함된 maximum update depth stack을 확인했다. 최초 URL rewrite 횟수만으로는 원인을 특정할 수 없었으며 개발 stack으로 좁혔다.
+- 수정: `appliedRouteSearch`를 선택 상태와 함께 반영하고, 현재 경로 적용이 끝나기 전에는 URL 출력을 건너뛴다. 보관 기능을 끄거나 오류를 숨기거나 강제 새로고침으로 우회하지 않았다. SSO·서버·DB·worker는 변경하지 않았다.
+- 검증: TypeScript 검사·production build 성공. 실제 Chromium의 같은 통합 데모 상세에서 1920×1080 작업 열 350→637px/로그 목록 100→351px, 5120×2160 작업 열 350→1717px/로그 목록 100→1431px를 확인했다. 두 크기 모두 document 크기가 viewport와 같아 전체 가로/세로 넘침이 없었다.
+- 두 크기 각각 수치·AI 분석, 홈·프로젝트, 업로드·실행에서 로그 검토로 왕복하고 같은 보고서를 다시 열었다. 총 6개 메뉴 복귀 흐름이 응답했고 JS 오류는 0건이었다. 확인은 합성 자료를 사용하는 실제 UI 구성요소로 수행했으며 실제 사내 SSO/실데이터 검증은 아니다.
+- 새 테스트/fixture/mock/harness/검증 스크립트 파일은 추가하지 않았다. 현재 실행용 정적 build에 반영했다. 발행 전 검증 기록이며 최종 merge·push SHA와 담당 조치는 `artifacts/internal-handoff/LATEST.md` 및 업데이트 003 인계문을 따른다. 이전 main `f87c1450016d1ec2b5e414f7a7bb5dc5d79c05e1`에는 이 수정이 없다.
+
+## 검토 사이드바 유지·데스크톱 검증 원칙 — 2026-11-11
+
+- 사용자 결정: 검토 상세에서도 사이드바를 유지한다. 사내 데스크톱 전용 시스템이므로 모바일 동작은 절대 확인하지 않으며 모바일 지원/개선을 추가 작업으로 추론하지 않는다. 루트 `AGENTS.md`와 대시보드 README에 검증 제한을 반영하고 장기 기억에도 저장했다.
+- `Workspace.tsx`의 검토 중 사이드바 렌더링 제외, 접기 상태 제외, 폭 조절 비활성 조건을 제거했다. `studio-system.css`·`sidebar-layout.css`의 검토 중 폭 0/왼쪽 여백 0 강제와 접기 스타일 예외를 제거했다. 기존 모바일 제어 기능은 별도로 확장하지 않았다.
+- 통합 화면은 `AtlasShell` 공통 메뉴만 사용하며 내부 메뉴를 중복 생성하지 않는다. 독립 Workspace는 기존 접기·폭 설정을 검토 중에도 사용하고 본문은 실제 사이드바 폭을 제외한 공간을 차지한다.
+- 검증: TypeScript 검사·production build 성공. 실제 Chromium 데스크톱 1920×1080·5120×2160에서 통합 production 화면의 공통 메뉴 244px 유지, 내부 메뉴 0개, 수치·AI 분석 왕복 후 같은 보고서 재개방, JS 오류 0건을 확인했다. 앞서 수정한 작업 열 높이 637px·1717px도 유지됐다.
+- 독립 Workspace는 Vite의 명시적 합성 자료 경로에서 두 크기 모두 메뉴 220px와 본문 시작점 일치를 확인했다. 1920×1080에서는 검토 중 접기·펼치기, 키보드 폭 조절 후 원래 폭 복원, 프로젝트 현황 왕복을 확인했고 JS 오류가 없었다. 실제 사내 SSO·실데이터 검증은 아니다.
+- 모바일 viewport·기기 에뮬레이션·모바일 동작 검증은 수행하지 않았다. 새 테스트/fixture/mock/harness/검증 스크립트 파일은 추가하지 않았다. 현재 실행용 build에 반영했다. 발행 상태는 위 최신 인계의 확정 SHA로 확인하며 실제 사내 배포 완료와 구분한다.

@@ -5,16 +5,15 @@
   }
   .sidebar-layout.sidebar-is-collapsed { --sidebar-width: 80px; }
 
-  .sidebar-layout.ws-studio-workspace:not(.ws-collapsed):not(.ws-studio-workbench-open) {
+  .sidebar-layout.ws-studio-workspace:not(.ws-collapsed) {
     --ws-sidebar-width: var(--sidebar-expanded-width, 220px);
   }
-  .sidebar-layout.ws-studio-workspace.ws-collapsed:not(.ws-studio-workbench-open) {
+  .sidebar-layout.ws-studio-workspace.ws-collapsed {
     --ws-sidebar-width: 78px;
   }
-  .sidebar-layout.ws-studio-workspace.ws-mode-enabled.ws-collapsed:not(.ws-studio-workbench-open) {
+  .sidebar-layout.ws-studio-workspace.ws-mode-enabled.ws-collapsed {
     --ws-sidebar-width: 80px;
   }
-  .sidebar-layout.ws-studio-workspace.ws-studio-workbench-open { --ws-sidebar-width: 0px; }
 
   .sidebar-layout > .sidebar,
   .sidebar-layout > .ws-sidebar {

@@ -39,7 +39,7 @@ export default function AtlasShell({ children, demoToolbar }: { children: ReactN
   const current = links.find(link => link.page === page && (!link.view || link.view === view))
   const go = (path: string) => { close(); setError(''); void navigate(atlas.href(path), auth.session?.user_id).catch(cause => setError(cause instanceof Error ? cause.message : '화면을 열지 못했습니다.')) }
   const choose = (projectId: string, blockId: string, versionId: string) => { setError(''); void atlas.selectScope({ projectId, blockId, versionId }).catch(cause => setError(cause instanceof Error ? cause.message : '범위를 변경하지 못했습니다.')) }
-  return <div className="atlas-shell"><a className="skip-link" href="#atlas-content">본문으로 건너뛰기</a>
+  return <div className="atlas-shell" data-page={page}><a className="skip-link" href="#atlas-content">본문으로 건너뛰기</a>
     {mobile && <button className="atlas-scrim" aria-label="메뉴 닫기" onClick={close} />}
     <aside className={`atlas-sidebar${mobile ? ' is-open' : ''}`} id="atlas-menu" ref={sidebarRef} aria-label="Design Atlas 탐색" role={isMobile && mobile ? 'dialog' : undefined} aria-modal={isMobile && mobile || undefined} inert={isMobile && !mobile}>
       <div className="atlas-brand-row" onClick={event => { if (event.target instanceof Element && event.target.closest('a') && !event.button && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) { event.preventDefault(); go('/') } }}><WorkspaceBrand href={atlas.href('/')} /><button className="atlas-mobile" onClick={close} aria-label="메뉴 닫기"><X size={20} /></button></div>
