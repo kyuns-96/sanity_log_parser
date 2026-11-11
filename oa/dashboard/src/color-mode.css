@@ -1,26 +1,26 @@
 :root { color-scheme: light; --form-footer-shadow: #ffffffed; }
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --canvas: #141323;
-  --surface: #1d1b30;
-  --surface-soft: #26243b;
-  --sidebar-surface: #19182a;
-  --surface-recessed: #171629;
-  --source: #171629;
-  --ink: #eeeefe;
-  --text-secondary: #c2c2dc;
-  --text-muted: #aaaac7;
-  --line: #403d59;
-  --line-soft: #302d46;
-  --accent: #b4b0ff;
-  --accent-soft: #302d52;
-  --accent-line: #625ca0;
-  --focus: #b4b0ff;
-  --ai: #c4b5fd;
-  --ai-soft: #35294f;
-  --ai-line: #7553a2;
+  --canvas: #101925;
+  --surface: #172437;
+  --surface-soft: #1d2d44;
+  --sidebar-surface: #132033;
+  --surface-recessed: #122034;
+  --source: #122034;
+  --ink: #e7effb;
+  --text-secondary: #bdcce2;
+  --text-muted: #a3b6d0;
+  --line: #334861;
+  --line-soft: #253951;
+  --accent: #8dbbff;
+  --accent-soft: #203d62;
+  --accent-line: #416b9e;
+  --focus: #8dbbff;
+  --ai: #9bc5ff;
+  --ai-soft: #203755;
+  --ai-line: #426eab;
   --code: #bdcbe2;
-  --primary-foreground: #1d1b30;
+  --primary-foreground: #101c2d;
   --success: #7ed7b2;
   --success-soft: #18362c;
   --success-line: #2b6350;
@@ -30,7 +30,7 @@
   --danger: #f39a93;
   --danger-soft: #3b2427;
   --danger-line: #79454b;
-  --form-footer-shadow: #1d1b30ed;
+  --form-footer-shadow: #172437ed;
 }
 
 .color-mode-trigger {

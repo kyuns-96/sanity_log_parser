@@ -14,6 +14,7 @@ export default function WorkspaceDemoBanner({ session, onAccount }: { session: W
       try { await onAccount(username) } catch { setError('계정을 전환하지 못했습니다. 다시 선택해 주세요.') } finally { setBusy(false) }
     }}>{workspaceDemoUsers.map(user => <option key={user.id} value={user.username}>{user.name} · {user.role} ({user.username})</option>)}</select></label>
       <details className="ws-demo-links"><summary>다른 예시<ChevronDown size={13} /></summary><nav aria-label="다른 데모 화면">{[
+        ['AI PASS 예시', '/workspace?demo=1&project=demo-atlas&block=demo-atlas-cpu&version=demo-atlas-cpu-net2-post&eco=chip_finish&item=gca_constraints&review=demo-atlas-cpu-net2-post-gca-004'],
         ['프로젝트·담당자', '/?demo=1&flow=access'], ['버전·ECO·PoR', '/?demo=1&flow=versions'],
         ['GCA 보고서', '/?demo=1&dataset=gca'], ['이전 검토 대장', '/?demo=1&flow=legacy'],
       ].map(([label, href]) => <a key={href} href={href}>{label}<ArrowUpRight size={13} /></a>)}</nav></details>

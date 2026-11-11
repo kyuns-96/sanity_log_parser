@@ -1,4 +1,4 @@
-# 서버별 소스 구조와 실행
+# Design Atlas 서버별 소스 구조와 실행
 
 2026-10-26 확인된 배치는 **VWP 사용자 환경 → HTTPS → 중앙 VWP-bridge → PostgreSQL → OA**다. 공유 폴더는 요구하지 않는다. [HTTPS 제출 설정](vwp/HTTPS_SUBMISSION.md)과 `vwp_bridge/docker/compose.https.yaml`을 사용한다. 원본은 [VWP private DB에 보관](vwp/DB_ORIGINALS.md)하며 bridge의 영구 archive/upload/receipt 디렉터리를 요구하지 않는다. 토큰 없는 CLI schema 3·서버 schema 4와 기존 010 migration을 사용하고 파싱에만 임시 공간을 쓴다. OA의 SSO/OWNER가 정확한 범위를 확정한 뒤 보고서를 공개한다. 아래 공유 파일시스템 schema 1 배치는 호환 경로다.
 
@@ -18,10 +18,11 @@
 | 공통 | `common/` | 사내 AI는 읽기 전용 | 설정·DB·전송 계약·추상 타입·순수 검증 |
 | 개발 시험 | `devtools/`, `tools/`, `tests/` | 설계 담당 Codex 관리 | 합성 report·seed·외부 모델 mock·QA |
 | DB 관리 | `db/` | 사용자/DBA 관리 | 기존 SQL·form·권한·접속 인계 |
+| Area/Power | `area_power/`, `oa/dashboard/src/areaPower/` | 기존 host SSO·프로젝트 권한에 연결하는 독립 수치 업무 | PostgreSQL 18.6·이미 신청한 두 테이블 / [설정·실행](area_power/README.md) |
 
 `vwp_bridge`는 Python 모듈로 실행할 수 있도록 밑줄을 사용한다. 이전 `vwp-dev/`, `vwp-bridge/`, `oa-bridge/`, 루트 `sanity_*.py`, `site_integration/`의 소스는 위 위치로 이동했다. import도 `common.*`, `vwp.*`, `vwp_bridge.*`, `oa.*`, `devtools.*`로 변경했다.
 
-각 서버에 저장소 전체가 있어도 **자기 진입점만 실행**한다. VWP-bridge는 OA 앱을 import하지 않고, OA의 일반 실행은 VWP 모델·외부 mock을 import하지 않는다. 두 서버 간 통신은 기존 PostgreSQL 네 테이블만 사용한다. 수집 snapshot은 VWP 영역 안에서 원천 수집→VWP-bridge로 전달하는 입력이다.
+각 서버에 저장소 전체가 있어도 **자기 진입점만 실행**한다. VWP-bridge는 OA 앱을 import하지 않고, OA의 일반 실행은 VWP 모델·외부 mock을 import하지 않는다. Sanity 서버 간 통신은 기존 PostgreSQL 네 테이블만 사용한다. 선택형 Area/Power의 통신도 별도 두 테이블을 통한 DB 작업이며 HTTP 중계가 아니다. 수집 snapshot은 VWP 영역 안에서 원천 수집→VWP-bridge로 전달하는 입력이다.
 
 ## 2. 의존성과 비공개 설정
 
@@ -29,7 +30,7 @@
 
 ```bash
 python3 -m venv .venv
-# VWP 원천 수집: 표준 라이브러리만 사용
+# 기존 Sanity 수집은 표준 라이브러리, 선택형 Area 업로더는 httpx/simplejson
 .venv/bin/python -m pip install -r vwp/requirements.txt
 # VWP-bridge 서버
 .venv/bin/python -m pip install -r vwp_bridge/requirements.txt
@@ -85,7 +86,7 @@ OA AI 운영 경로의 중앙 서비스는 V2 제출 API와 별도 source worker
 
 ### OA
 
-사내 Nginx 뒤에서 실행하는 간단한 CI/CD 구성은 [루트 Docker 안내](docker/README.md)를 따른다. 사내 OA Git에는 `docker/`, `oa/`, `common/`을 같은 루트에 두고 **`docker/Dockerfile-prod`**를 빌드한다. 컨테이너는 8080의 OA 앱 한 개만 실행한다. 아래 loopback 명령은 컨테이너 밖의 직접 실행용이다.
+사내 Nginx 뒤에서 실행하는 간단한 CI/CD 구성은 [루트 Docker 안내](docker/README.md)를 따른다. 사내 OA Git에는 `docker/`, `oa/`, `common/` 및 `area_power/__init__.py`, `area_power/common/`, `area_power/oa/`를 같은 루트에 두고 **`docker/Dockerfile-prod`**를 빌드한다. 통합 모듈의 Python 기준은 3.11 이상이다. 컨테이너는 8080의 OA 앱 한 개만 실행한다. 아래 loopback 명령은 컨테이너 밖의 직접 실행용이다.
 
 [담당 AI 지시문](oa/INTERNAL_AI_TASK.md)을 읽는다. 회사 인증/사용자 조회는 `oa/integration/corporate_sso.py`와 `company_sso/`에 구현하고, 기존 `oa/sso_app.py` 주입 지점을 사용한다.
 
@@ -143,3 +144,9 @@ sanity retry 11111111-1111-4111-8111-111111111111
 인계는 `.partial` 작성→같은 부모의 `<submission-id>.ready/` 공개→bridge 검증·영속 보관/DB 접수 순이다. `submit` 성공은 `LOCAL_QUEUED`이며, OA 최종 저장 응답을 확인한 `OA_STORED`와 다르다. 승인/누락/파싱 상태가 유효하지 않으면 OA 저장 후에도 검토가 차단된다. 제출 저장소를 제공할 수 없으면 설정 오류로 중단하며 HTTP/SCP·사용자 DB 로그인·OA 공유 파일로 우회하지 않는다.
 
 회사 실제 마운트·주소·계정은 비공개 배포 기록으로 대응한다. 문서의 기본 경로가 존재한다고 추정하거나 이 변경만으로 디렉터리 생성·PATH/service 배포·운영 SQL을 실행하지 않는다. 008 적용 후 VWP-bridge는 `python -m vwp_bridge.submission_worker`, OA는 `python -m oa.submission_receiver`를 별도로 실행한다. 기존 분류 worker와 구분하며 사용자/배포 담당자·DBA가 승인된 인프라와 실행을 관리한다.
+
+## 선택형 Area/Power 업무
+
+Canonical 저장소는 `design_atlas/`다. 공통 홈·프로젝트·블록·버전·사이드바·인증을 사용하고 로그와 수치 분석 엔진은 분리한다. 원래 `inst_area_tracking`의 실행 코드는 `area_power/`에 있다. 기존 `SANITY_*`·`AREA_POWER_*` 설정, `bin/sanity`·`bin/area-power` 수집 명령, 네 테이블과 두 테이블의 저장 계약은 유지한다. 제품명 변경 때문에 DB 식별자·기존 데이터를 재작성하지 않는다.
+
+OA에서 `AREA_POWER_ENABLED=true`와 Area DB 설정을 export한다. 공통 `/api/atlas/*` 카탈로그에서 범위를 등록·준비하며 별도 Area 등록 API는 제거했다. 선언·수치 계보·정확한 UUID binding은 기존 `WS_CONFIG` namespace에 저장하므로 새 테이블·DDL이 없다. VWP는 `uvicorn area_power.vwp_server.app:create_app --factory`와 `python -m area_power.vwp_server.worker`, 사용자 PC는 `python -m area_power.vwp`, OA 메일 소비는 `python -m area_power.oa.mail`을 실행한다. 실제 명령·역할별 비밀·snapshot은 [모듈 안내](area_power/README.md), 현재 로컬 실행은 [Design Atlas 인계](HANDOFF.md)를 따른다. 앱 자동 DDL·자동 SSO 전환·운영 demo fallback은 없다.

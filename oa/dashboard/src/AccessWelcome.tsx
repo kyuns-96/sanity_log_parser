@@ -5,6 +5,7 @@ import { Button } from './studio/components/ui/button'
 import { Badge } from './studio/components/ui/badge'
 import { Textarea } from './components/ui/textarea'
 import { WorkspaceBrand } from './components/WorkspaceBrand'
+import { ModuleNavigation } from './components/ModuleNavigation'
 import { ColorModeControl } from './components/ColorModeControl'
 import { SidebarModeSwitch } from './components/SidebarModeSwitch'
 import { SidebarResizer, useSidebarLayout } from './components/SidebarResizer'
@@ -13,6 +14,7 @@ import { useWorkspaceNavigation } from './useWorkspaceNavigation'
 import type { Session } from './types'
 import { accessError, requestStatus, roleLabel, scopeName } from './accessApi'
 import type { AccessApi, AccessCatalog, AccessPage, MyAccess } from './accessApi'
+import { useAtlas } from './atlasContext'
 import './accessManagement.css'
 
 export type AccessScreenProps = {
@@ -24,6 +26,7 @@ export function AccessLayout({ session, page, title, description, onNavigate, on
   session: Session; page: AccessPage; title: string; description: string; onNavigate: (page: AccessPage) => void
   onLogout: () => Promise<void>; signingOut: boolean; children: ReactNode
 }) {
+  const atlas = useAtlas()
   const navigateDashboard = useDashboardNavigation()
   const [navigationError, setNavigationError] = useState('')
   const screenId = useId()
@@ -31,15 +34,18 @@ export function AccessLayout({ session, page, title, description, onNavigate, on
   const mainId = `access-main-${screenId}`
   const [mobile, setMobile] = useState(false)
   const [collapsed, setCollapsed] = useDashboardSidebarState()
-  const sidebarLayout = useSidebarLayout(!collapsed)
+  const sidebarLayout = useSidebarLayout(!atlas && !collapsed)
   const closeMobile = useCallback(() => setMobile(false), [])
-  const { isMobile, sidebarRef, triggerRef } = useWorkspaceNavigation(mobile, closeMobile, true)
+  const { isMobile, sidebarRef, triggerRef } = useWorkspaceNavigation(mobile, closeMobile, !atlas)
   function navigate(next: AccessPage) { closeMobile(); onNavigate(next) }
+  const content = <><div className="am-heading"><h1>{title}</h1><p>{description}</p></div>{navigationError && <p role="alert" className="am-error">{navigationError}</p>}{children}</>
+  if (atlas) return <section className="studio-system studio-access"><div className="am-main">{content}</div></section>
   return <div style={sidebarLayout.style} className={`am-root shell studio-system studio-access sidebar-layout ${sidebarLayout.resizing ? 'sidebar-resizing' : ''} ${collapsed && !isMobile ? 'sidebar-is-collapsed' : ''}`}>
     <a className="skip-link" href={`#${mainId}`}>본문으로 건너뛰기</a>
     {mobile && <button className="sidebar-backdrop" aria-label="메뉴 닫기" onClick={closeMobile} tabIndex={-1} />}
     <aside id={menuId} ref={sidebarRef} className={`sidebar ${mobile ? 'sidebar-open' : ''}`} aria-label="워크스페이스 메뉴" role={isMobile && mobile ? 'dialog' : undefined} aria-modal={isMobile && mobile ? true : undefined} inert={isMobile && !mobile} aria-hidden={isMobile && !mobile}>
       <WorkspaceBrand />
+      <ModuleNavigation />
       <button className="sidebar-close" aria-label="메뉴 닫기" onClick={closeMobile}><X size={18} /></button>
       {session.is_admin === true && <SidebarModeSwitch mode={page === 'admin' ? 'admin' : 'user'} onChange={mode => { closeMobile(); return navigateDashboard(modeUrl(mode, session.can_read_business === true), session.user_id) }} />}
       <div className="portal-sidebar-context"><span className="workspace-icon">{page === 'admin' ? <Settings2 size={18} /> : <FolderKanban size={18} />}</span><div><strong>{page === 'admin' ? '서비스 관리' : '내 워크스페이스'}</strong><small>{page === 'admin' ? '프로젝트 · 사용자 권한' : '프로젝트 · 블록'}</small></div></div>
@@ -59,7 +65,7 @@ export function AccessLayout({ session, page, title, description, onNavigate, on
     <div className="main-shell" inert={isMobile && mobile} aria-hidden={isMobile && mobile}>
       <header className="topbar"><div className="breadcrumb"><button ref={triggerRef} className="mobile-menu" aria-label="메뉴 열기" aria-expanded={mobile} aria-controls={menuId} onClick={() => setMobile(true)}><Menu /></button><span>워크스페이스</span><ChevronRight size={13} /><strong>{page === 'admin' ? '관리자' : '내 프로젝트·권한'}</strong></div><div className="color-mode-actions"><ColorModeControl /><Badge variant="outline" className="access-session-badge"><ShieldCheck size={13} />SSO 로그인됨</Badge></div></header>
       {page !== 'admin' && <nav className="access-mobile-navigation" aria-label="계정 메뉴"><Button variant="ghost" aria-current="page" onClick={() => navigate('welcome')}>내 프로젝트·권한</Button>{session.can_read_business === true && <Button variant="ghost" onClick={() => navigate('review')}>검토 대장</Button>}</nav>}
-      <main id={mainId} className="am-main" tabIndex={-1}><div className="am-heading"><h1>{title}</h1><p>{description}</p></div>{navigationError && <p role="alert" className="am-error">{navigationError}</p>}{children}</main>
+      <main id={mainId} className="am-main" tabIndex={-1}>{content}</main>
     </div>
   </div>
 }

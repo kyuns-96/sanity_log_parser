@@ -22,7 +22,7 @@ body { text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; 
 [data-slot='dialog-overlay'] { background: #17233866; backdrop-filter: blur(2px); }
 [data-slot='table-head'] { background: var(--surface-soft); color: var(--text-muted); font-size: 12px; font-weight: 500; }
 [data-slot='table-cell'] { color: var(--text-secondary); font-size: 13px; }
-.console-mark { width: 29px; height: 29px; border-radius: 8px; background: linear-gradient(145deg, #4f46e5, #6d28d9); color: #fff; }
+.console-mark { width: 29px; height: 29px; border-radius: 8px; background: linear-gradient(145deg, #2563d4, #1587c4); color: #fff; }
 .console-mark svg { width: 22px; height: 22px; }
 .console-brand { gap: 8px; }
 .console-wordmark { min-width: 0; display: grid; gap: 3px; line-height: 1.1; letter-spacing: 0; }

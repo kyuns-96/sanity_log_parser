@@ -1,0 +1,8 @@
+-- Replace every <schema> token locally with the actual schema before execution.
+-- Never share the replacement value, connection details or private query output externally.
+-- Read-only inspection works before either table exists; the column/constraint/index lists may be empty.
+-- Each statement is independent and occupies one physical line.
+SELECT to_regclass('<schema>.di_area_power_csv') IS NOT NULL AS csv_table_exists, to_regclass('<schema>.tracking_record') IS NOT NULL AS tracking_table_exists;
+SELECT t.relname AS table_name, a.attname AS column_name, format_type(a.atttypid, a.atttypmod) AS data_type, a.attnotnull AS not_null, pg_get_expr(d.adbin, d.adrelid) AS column_default FROM pg_class t JOIN pg_attribute a ON a.attrelid = t.oid LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum WHERE t.oid IN (to_regclass('<schema>.di_area_power_csv'), to_regclass('<schema>.tracking_record')) AND a.attnum > 0 AND NOT a.attisdropped ORDER BY t.relname, a.attnum;
+SELECT t.relname AS table_name, c.conname AS constraint_name, c.contype AS constraint_type, c.convalidated AS validated, pg_get_constraintdef(c.oid) AS definition FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid WHERE t.oid IN (to_regclass('<schema>.di_area_power_csv'), to_regclass('<schema>.tracking_record')) ORDER BY t.relname, c.conname;
+SELECT t.relname AS table_name, i.relname AS index_name, x.indisvalid AS valid, x.indisready AS ready, pg_get_indexdef(i.oid) AS definition FROM pg_index x JOIN pg_class t ON t.oid = x.indrelid JOIN pg_class i ON i.oid = x.indexrelid WHERE t.oid IN (to_regclass('<schema>.di_area_power_csv'), to_regclass('<schema>.tracking_record')) ORDER BY t.relname, i.relname;

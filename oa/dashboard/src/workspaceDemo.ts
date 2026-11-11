@@ -2,13 +2,14 @@
 // No fetch, browser storage, server credentials, or model calls belong here.
 import { WorkspaceError } from './workspaceApi'
 import { workspaceDemoUsers as users } from './workspaceDemoAccounts'
+import { makeWorkspaceDemoCatalog } from './workspaceDemoCatalog'
+import type { DemoBlock, DemoProject, DemoVersion } from './workspaceDemoCatalog'
 import type {
   ClusterBrief, ClusterEvent, GroupBrief, GroupRationale, Judgment, PipelineGroup, PipelineTask,
   RationaleContent, ReviewCase, ReviewException, ReviewProposal, WorkspaceEvent, WorkspacePor, WorkspaceRecord,
   WorkspaceReport, WorkspaceSession, WorkspaceUser, WorkspaceVersion, WorkbenchView,
 } from './workspaceApi'
 
-type DemoBlock = { id: string; project_id: string; name: string; owner: WorkspaceUser; versions: WorkspaceVersion[]; por: WorkspacePor; events: WorkspaceEvent[] }
 type Snapshot = { event: ClusterEvent; rationales: Record<string, GroupRationale> }
 type DemoReport = {
   report: WorkspaceReport; version: WorkspaceVersion; records: WorkspaceRecord[]; sha: string;
@@ -35,22 +36,30 @@ async function hash(value: string) {
 
 export function makeWorkspaceDemo() {
   let user = users[3]
-  const projects = ['Atlas', 'Boreal', 'Cygnus'].map((name, index) => ({ id: `demo-${name.toLowerCase()}`, name, description: `${name} 합성 검사 프로젝트`, tops: [users[index]] }))
+  const passExampleId = 'demo-atlas-cpu-net2-post-gca-004'
+  const projects: DemoProject[] = ['Atlas', 'Boreal', 'Cygnus'].map((name, index) => ({ id: `demo-${name.toLowerCase()}`, name, description: `${name} 합성 검사 프로젝트`, tops: [users[index]], area_id: crypto.randomUUID() }))
   const owners = [[3, 4, 5], [6, 7, 8], [9, 3, 4]]
   const blocks: DemoBlock[] = projects.flatMap((project, projectIndex) => ['CPU', 'GPU', 'DDR'].map((name, index) => {
     const id = `${project.id}-${name.toLowerCase()}`
-    const versions: WorkspaceVersion[] = [2, 1].flatMap(sequence => (['POST', 'PRE'] as const).map(layout => ({
+    const versions: DemoVersion[] = [2, 1].flatMap(sequence => (['POST', 'PRE'] as const).map(layout => ({
       id: `${id}-net${sequence}-${layout.toLowerCase()}`, project_id: project.id, block_id: id,
       net_ver: `NET_00${sequence}`, revision: `REV00${sequence}-${name.toLowerCase()}${layout === 'POST' ? '-BE' : ''}`,
       layout, source_pre_id: layout === 'POST' ? `${id}-net${sequence}-pre` : null,
       ecos: layout === 'POST' ? ['chip_finish', 'eco01'] : [null],
+      source_namespace: 'synthetic_workspace_demo_v1',
+      // Layout-specific numerical ancestry is independent of the POST → PRE source link.
+      previous_version_id: sequence === 2 ? `${id}-net1-${layout.toLowerCase()}` : null,
+      area_id: crypto.randomUUID(),
     })))
-    return { id, project_id: project.id, name, owner: users[owners[projectIndex][index]], versions, por: emptyPor(), events: [] }
+    return { id, project_id: project.id, name, owner: users[owners[projectIndex][index]], versions, por: emptyPor(), events: [], area_id: crypto.randomUUID() }
   }))
+  const seededVersionIds = new Set(blocks.flatMap(block => block.versions.map(version => version.id)))
   const reports = new Map<string, DemoReport>()
   const receipts = new Map<string, { command: string; value: unknown }>()
-  const canWrite = (block: DemoBlock) => block.owner.id === user.id
-  const canRead = (block: DemoBlock) => canWrite(block) || projects.find(project => project.id === block.project_id)!.tops.some(top => top.id === user.id)
+  const catalog = makeWorkspaceDemoCatalog({ projects, blocks, user: () => user,
+    reports: (block, version) => version.ecos.flatMap(eco => versionReports(block, version, eco)).map(state => reportView(state)) })
+  const canWrite = (block: DemoBlock) => catalog.canAccess(block.project_id)
+  const canRead = canWrite
   const session = (): WorkspaceSession => ({ user, csrf: 'memory-demo', expires_at: '2099-01-01T00:00:00Z', environment: 'MEMORY_DEMO' })
 
   function scopedBlock(id: string) {
@@ -120,6 +129,7 @@ export function makeWorkspaceDemo() {
       row.binding = { source_sha256: state.sha, cluster_event_id: event.id, cluster_revision: event.revision, group_id: group.id, label: group.label, membership_sha256: await hash([...group.record_ids].sort().join('\n')) }
     }
     state.snapshots.push({ event, rationales: bound })
+    for (const proposal of Object.values(state.proposals)) proposal.stale = true
     return brief(current(state)!)
   }
   async function draft(state: DemoReport, fields = ['object', 'check_point', 'mode']) {
@@ -139,7 +149,7 @@ export function makeWorkspaceDemo() {
     await commit(state, 'PROPOSE', groups, rationales, { identity_fields: fields })
   }
   function versionReports(block: DemoBlock, version: WorkspaceVersion, eco: string | null) {
-    if (version.layout === 'PRE' || eco !== 'chip_finish') return []
+    if (!seededVersionIds.has(version.id) || version.layout === 'PRE' || eco !== 'chip_finish') return []
     const families = [
       { family: 'GCA', item: 'gca_constraints', count: version.net_ver === 'NET_002' ? 28 : 4, rules: ['CLK_0003', 'CAS_0003', 'CLK_0026'], points: ['clock_in', 'async_path', 'test_enable'] },
       { family: 'VCLP', item: 'vclp_low_power', count: 5, rules: ['ISO_CONTROL', 'LS_MISSING', 'RET_CONTROL'], points: ['isolation_en', 'level_shift', 'retention_en'] },
@@ -148,6 +158,7 @@ export function makeWorkspaceDemo() {
     return families.flatMap(config => Array.from({ length: config.count }, (_, index) => {
       const id = `${version.id}-${config.family.toLowerCase()}-${String(index + 1).padStart(3, '0')}`
       if (!reports.has(id)) {
+        const passExample = id === passExampleId
         const missing = index === config.count - 1, partial = index === 2
         let status = 'FAIL'
         if (missing || partial) status = 'UNKNOWN'
@@ -155,8 +166,9 @@ export function makeWorkspaceDemo() {
         const rule = config.rules[index % config.rules.length]
         const records: WorkspaceRecord[] = missing ? [] : Array.from({ length: 18 + index % 5 * 3 }, (_, number) => {
           const group = number % 3, object = `top/${block.name.toLowerCase()}/${['core', 'io', 'test'][group]}`, mode = group === 2 ? 'TEST' : 'FUNCTIONAL'
-          const raw = `[SYNTHETIC DEMO] ${rule} object=${object} check_point=${config.points[group]} mode=${mode} instance=u_${String(number + 1).padStart(3, '0')} result=${status}`
-          return { id: `${id}-log-${number + 1}`, check_status: status, fields: { rule, code: rule, object, check_point: config.points[group], mode, message: `${rule} · ${object}의 ${config.points[group]} 조건을 확인하세요.`, severity: status === 'PASS' ? 'INFO' : 'WARNING' },
+          const raw = `[SYNTHETIC DEMO] ${rule} object=${object} check_point=${config.points[group]} mode=${mode} instance=u_${String(number + 1).padStart(3, '0')} result=${status}${passExample ? ' clock=core_div2 master_clock=core_clk master_reaches_source=yes check_complete=yes' : ''}`
+          return { id: `${id}-log-${number + 1}`, check_status: status, fields: { rule, code: rule, object, check_point: config.points[group], mode, message: `${rule} · ${object}의 ${config.points[group]} 조건을 확인하세요.`, severity: status === 'PASS' ? 'INFO' : 'WARNING',
+            ...(passExample ? { clock: 'core_div2', master_clock: 'core_clk', master_reaches_source: 'yes', check_complete: 'yes' } : {}) },
             raw, line_start: number + 1, line_end: number + 1, reasons: partial ? ['SYNTHETIC_PARTIAL_INPUT'] : [] }
         })
         reports.set(id, { report: { id, project_id: block.project_id, block_id: block.id, version_id: version.id, eco, item_id: config.item, family: config.family,
@@ -170,10 +182,11 @@ export function makeWorkspaceDemo() {
 
   async function dispatch(path: string, body?: unknown): Promise<unknown> {
     const url = new URL(path, 'http://memory.demo'), params = url.searchParams, command = (body || {}) as Command
+    if (url.pathname.startsWith('/atlas/')) return catalog.request(url, body)
     if (url.pathname === '/session') return session()
     if (url.pathname === '/demo/account' && body) { user = users.find(user => user.username === command.username) || reject('NOT_FOUND'); return session() }
     if (url.pathname === '/overview') return { user, data_origin: 'SYNTHETIC_MEMORY_DEMO', projects: projects.map(project => ({ ...project, blocks: blocks.filter(block => block.project_id === project.id && canRead(block)).map(block => {
-      const version = block.por.version || block.versions[0], rows = versionReports(block, version, version.ecos[0])
+      const version = block.por.version || block.versions[0] || null, rows = version ? versionReports(block, version, version.ecos[0]) : []
       return { id: block.id, project_id: block.project_id, name: block.name, owners: [block.owner], can_assign_por: canWrite(block), por: block.por, report_version: version, total: rows.length, counts: count(rows.map(row => row.report.check_status)) }
     }) })).filter(project => project.blocks.length) }
     const parts = url.pathname.split('/').filter(Boolean)
@@ -228,6 +241,7 @@ export function makeWorkspaceDemo() {
         return state.proposals[key]
       }
       if (!command.reason?.trim() || !['PASS', 'FAIL', 'DEFER'].includes(command.conclusion || '')) reject('INVALID_REQUEST')
+      if (command.proposal_id && (!state.proposals[key] || state.proposals[key].id !== command.proposal_id || state.proposals[key].stale)) reject('PROPOSAL_STALE')
       if (!state.report.analysis_ready && command.conclusion !== 'DEFER') reject('REVIEW_BLOCKED')
       if (command.reusable && (!command.criteria?.trim() || command.conclusion === 'DEFER')) reject('INVALID_CRITERIA')
       let exception: ReviewException | null = null
@@ -336,10 +350,23 @@ export function makeWorkspaceDemo() {
     return reject('INVALID_REQUEST')
   }
   const taskFields = new Map<string, string[]>()
+  const passExample = versionReports(blocks[0], blocks[0].versions[0], 'chip_finish').find(state => state.report.id === passExampleId)!
+  const ready = (async () => {
+    passExample.sha = await hash(passExample.records.map(record => record.raw).join('\n'))
+    await draft(passExample)
+    const snapshot = current(passExample)!
+    await commit(passExample, 'CONFIRM', snapshot.event.groups, snapshot.rationales, { reason: 'AI PASS 판정 화면을 위한 합성 예시의 분류를 미리 확정했습니다.' })
+    for (const group of [{ id: 'report', record_ids: passExample.records.map(record => record.id) }, ...current(passExample)!.event.groups]) {
+      passExample.proposals[group.id] = { id: `demo-pass-${group.id}`, conclusion: 'PASS',
+        reason: `생성 클록 core_div2의 source에 master clock core_clk가 도달하고 검사가 완료되어 PASS를 제안합니다. 합성 점검 기준은 master_reaches_source=yes와 check_complete=yes를 모두 충족하는 것입니다. 이번 ${group.record_ids.length}개 로그 전체가 두 조건을 충족하며 미확인 항목이 없습니다. 이 결과는 화면 시연용 합성 AI 판정 예시이며 실제 모델을 호출하지 않았습니다.`,
+        evidence_ids: [...group.record_ids], references: [], advisor: 'MEMORY_DEMO', model_called: false, at: now() }
+    }
+  })()
   return async <T,>(path: string, options: { body?: unknown; signal?: AbortSignal } = {}): Promise<T> => {
+    await ready
     options.signal?.throwIfAborted()
     const command = options.body as Command | undefined
-    const key = command?.request_id ? `${user.id}:${path}:${command.request_id}` : null
+    const key = !path.startsWith('/atlas/') && command?.request_id ? `${user.id}:${path}:${command.request_id}` : null
     const previous = key ? receipts.get(key) : null, serialized = JSON.stringify(options.body)
     if (previous) {
       if (previous.command !== serialized) reject('REQUEST_CONFLICT')

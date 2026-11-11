@@ -6,11 +6,14 @@ import { Badge } from './studio/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './studio/components/ui/tabs'
 import { WorkspaceBrand } from './components/WorkspaceBrand'
+import { ModuleNavigation } from './components/ModuleNavigation'
+import { appUrl } from './appUrl'
 import { ColorModeControl } from './components/ColorModeControl'
 import { SidebarModeSwitch } from './components/SidebarModeSwitch'
 import { SidebarResizer, useSidebarLayout } from './components/SidebarResizer'
 import { modeUrl, useDashboardNavigation, useDashboardSidebarState } from './dashboardMode'
 import { useWorkspaceNavigation } from './useWorkspaceNavigation'
+import { useAtlas } from './atlasContext'
 import { productionWorkbench, reportDisplayName, WorkspaceError, toolResultStatus, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
 import type { ReviewCase, WorkspaceEvent, WorkspaceOverview, WorkspacePor, WorkspaceReport, WorkspaceReports, WorkspaceSession, WorkspaceVersions } from './workspaceApi'
 import AIJobsDashboard from './AIJobsDashboard'
@@ -30,6 +33,7 @@ function Status({ value }: { value: string }) { return <Badge variant="outline" 
 function Loading({ lines = 3 }: { lines?: number }) { return <div className="ws-skeleton" aria-label="불러오는 중" role="status">{Array.from({ length: lines }, (_, i) => <span key={i} />)}</div> }
 
 export default function Workspace({ routeSearch, initialSession }: { routeSearch?: string; initialSession?: WorkspaceSession } = {}) {
+  const atlas = useAtlas()
   const production = productionWorkbench()
   const [session, setSession] = useState<WorkspaceSession | null>(initialSession ?? null)
   const [checking, setChecking] = useState(!initialSession)
@@ -50,21 +54,23 @@ export default function Workspace({ routeSearch, initialSession }: { routeSearch
     catch (e) { setError(e instanceof Error ? e.message : '로그인 실패') }
     finally { setBusy(false) }
   }
-  if (checking) return <div className="ws-session-loading ws-studio-session"><WorkspaceBrand /><Loading /></div>
-  if (session) return <WorkspacePage key={session.user.id} session={session} routeSearch={routeSearch} onDemoAccount={async username => {
+  if (checking) return atlas ? <Loading /> : <div className="ws-session-loading ws-studio-session"><WorkspaceBrand /><Loading /></div>
+  if (session) return <WorkspacePage key={session.user.id} session={session} routeSearch={atlas?.routeSearch ?? routeSearch} onDemoAccount={async username => {
     const value = await request<WorkspaceSession>('/demo/account', { body: { username } })
     history.replaceState(null, '', `${location.pathname}?demo=1`)
     setSession(value)
   }} onExpired={() => { setSession(null); setError('로그인 세션이 만료되었습니다. 다시 연결해 주세요.') }} onLogout={() => { setSession(null); setError('') }} />
-  if (production) return <div className="ws-session-loading ws-studio-session"><WorkspaceBrand /><h1>AI 검토 워크스페이스</h1><p role="alert">{error || 'SSO 로그인 후 접근할 수 있습니다.'}</p><Button asChild><a href="/">포털에서 로그인·권한 확인<ArrowRight size={15} /></a></Button></div>
+  if (atlas) return <section className="ws-empty"><h1>로그 검토에 연결할 수 없습니다.</h1><p role="alert">{error || '운영 로그 검토는 권한이 확인된 SSO 세션이 필요합니다. 로컬 토큰은 지원하지 않습니다.'}</p><Button asChild><a href={appUrl('/?page=welcome')}>내 프로젝트·권한 확인<ArrowRight size={15} /></a></Button></section>
+  if (production) return <div className="ws-session-loading ws-studio-session"><WorkspaceBrand /><h1>AI 검토 워크스페이스</h1><p role="alert">{error || 'SSO 로그인 후 접근할 수 있습니다.'}</p><Button asChild><a href={appUrl('/')}>포털에서 로그인·권한 확인<ArrowRight size={15} /></a></Button></div>
   return <div className="ws-login ws-studio-login">
     <section className="ws-login-story"><WorkspaceBrand /><div><Badge variant="outline">AI 검토 워크스페이스</Badge><h1>분류부터 판정까지,<br />근거를 이어갑니다.</h1><p>AI의 제안을 검토하고 사람이 확정한 판단을<br />다음 보고서의 참고 사례로 쌓습니다.</p><div className="ws-login-steps"><span><b>01</b>로그 분류</span><span><b>02</b>그룹별 판정</span><span><b>03</b>사람의 확정</span></div></div><small>합성 검사 자료 · 독립 테스트 환경</small></section>
-    <main className="ws-login-main"><div className="color-mode-login"><ColorModeControl /></div><div className="ws-login-form"><Badge variant="secondary">테스트 환경</Badge><h2>워크스페이스에 로그인</h2><p>배정된 프로젝트와 블록의 검사 결과를 확인합니다.</p>{error && <p className="ws-error" role="alert">{error}</p>}<form onSubmit={login}><label htmlFor="ws-username">사용자 ID</label><Input id="ws-username" autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} required /><label htmlFor="ws-password">비밀번호</label><Input id="ws-password" type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required /><Button type="submit" disabled={busy || !password}>{busy ? '연결 중…' : '로그인'}<ArrowRight /></Button></form><details className="ws-account-help"><summary>테스트 계정 안내 <ChevronDown size={14} /></summary><p>공용 테스트 비밀번호 <code>sanity-workspace</code></p><dl><div><dt>user04 · 정민수</dt><dd>Atlas CPU · Cygnus GPU 담당</dd></div><div><dt>user01 · 이서연</dt><dd>Atlas TOP · 모든 블록 조회</dd></div><div><dt>user02 / user03</dt><dd>Boreal / Cygnus TOP</dd></div><div><dt>user05 ~ user10</dt><dd>각 배정 블록 담당자</dd></div></dl></details><Button variant="outline" className="ws-login-demo" onClick={() => location.assign('/workspace?demo=1')}>데모 둘러보기<ArrowRight size={15} /></Button><p className="ws-login-note">계정과 검사 자료는 예시입니다.<br />이 환경의 PoR과 변경 이력은 서버에 저장됩니다.</p></div><footer>테스트 로그인 · 운영 SSO와 별도 환경</footer></main>
+    <main className="ws-login-main"><div className="color-mode-login"><ColorModeControl /></div><div className="ws-login-form"><Badge variant="secondary">테스트 환경</Badge><h2>워크스페이스에 로그인</h2><p>배정된 프로젝트와 블록의 검사 결과를 확인합니다.</p>{error && <p className="ws-error" role="alert">{error}</p>}<form onSubmit={login}><label htmlFor="ws-username">사용자 ID</label><Input id="ws-username" autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} required /><label htmlFor="ws-password">비밀번호</label><Input id="ws-password" type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required /><Button type="submit" disabled={busy || !password}>{busy ? '연결 중…' : '로그인'}<ArrowRight /></Button></form><details className="ws-account-help"><summary>테스트 계정 안내 <ChevronDown size={14} /></summary><p>공용 테스트 비밀번호 <code>sanity-workspace</code></p><dl><div><dt>user04 · 정민수</dt><dd>Atlas CPU · Cygnus GPU 담당</dd></div><div><dt>user01 · 이서연</dt><dd>Atlas TOP · 모든 블록 조회</dd></div><div><dt>user02 / user03</dt><dd>Boreal / Cygnus TOP</dd></div><div><dt>user05 ~ user10</dt><dd>각 배정 블록 담당자</dd></div></dl></details><Button variant="outline" className="ws-login-demo" onClick={() => location.assign(appUrl('/workspace?demo=1'))}>데모 둘러보기<ArrowRight size={15} /></Button><p className="ws-login-note">계정과 검사 자료는 예시입니다.<br />이 환경의 PoR과 변경 이력은 서버에 저장됩니다.</p></div><footer>테스트 로그인 · 운영 SSO와 별도 환경</footer></main>
   </div>
 }
 
 function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccount }: { session: WorkspaceSession; routeSearch?: string; onExpired: () => void; onLogout: () => void; onDemoAccount: (username: string) => Promise<void> }) {
   const navigateDashboard = useDashboardNavigation()
+  const atlas = useAtlas()
   const demo = session.environment === 'MEMORY_DEMO'
   const production = session.environment === 'PRODUCTION_SSO'
   const initial = useRef(new URLSearchParams(routeSearch ?? location.search))
@@ -99,9 +105,9 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
   const [saveError, setSaveError] = useState('')
   const [mobile, setMobile] = useState(false)
   const [collapsed, setCollapsed] = useDashboardSidebarState()
-  const sidebarLayout = useSidebarLayout(!collapsed && !reviewing)
+  const sidebarLayout = useSidebarLayout(!atlas && !collapsed && !reviewing)
   const closeMobile = useCallback(() => setMobile(false), [])
-  const { isMobile, sidebarRef, triggerRef } = useWorkspaceNavigation(mobile, closeMobile, !reviewing)
+  const { isMobile, sidebarRef, triggerRef } = useWorkspaceNavigation(mobile, closeMobile, !atlas && !reviewing)
   const requestId = useRef<string | null>(null)
   const detailRequest = useRef(0)
   const loadedBlock = useRef(blockId)
@@ -120,9 +126,9 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
   useLayoutEffect(() => {
     if (routeSearch === undefined) return
     const params = new URLSearchParams(routeSearch)
-    const nextProject = params.get('project') || projectId
-    const nextBlock = params.get('block') || blockId
-    const nextVersion = params.get('version') || versionId
+    const nextProject = params.get('project') || (atlas ? '' : projectId)
+    const nextBlock = params.get('block') || (atlas ? '' : blockId)
+    const nextVersion = params.get('version') || (atlas ? '' : versionId)
     const nextEco = params.get('eco') || ''
     const nextItem = params.get('item')
     const scopeChanged = nextProject !== projectId || nextBlock !== blockId || nextVersion !== versionId || nextEco !== eco || nextItem !== itemId
@@ -141,14 +147,14 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
     request<WorkspaceOverview>('/overview').then(value => {
       if (!active) return
       setOverview(value)
-      setProjectId(previous => value.projects.some(project => project.id === previous) ? previous : value.projects[0]?.id || '')
+      if (!atlas) setProjectId(previous => value.projects.some(project => project.id === previous) ? previous : value.projects[0]?.id || '')
     }).catch(e => { if (active) handleError(e) })
     return () => { active = false }
   }, [refresh]) // Account is fixed for the lifetime of this keyed page.
   useEffect(() => {
-    if (!project) return
+    if (!project || atlas) return
     if (!project.blocks.some(block => block.id === blockId)) setBlockId(project.blocks[0]?.id || '')
-  }, [project, blockId])
+  }, [project, blockId, !!atlas])
   useEffect(() => {
     if (!blockId || !block) return
     const controller = new AbortController()
@@ -159,7 +165,7 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
     request<WorkspaceVersions>(`/blocks/${blockId}/versions`, { signal: controller.signal }).then(value => {
       if (controller.signal.aborted) return
       setVersions(value)
-      setVersionId(previous => value.items.some(version => version.id === previous) ? previous
+      if (!atlas) setVersionId(previous => value.items.some(version => version.id === previous) ? previous
         : value.por.version?.id || value.items.find(version => version.layout === 'POST')?.id || value.items[0]?.id || '')
     }).catch(handleError)
     return () => controller.abort()
@@ -171,7 +177,13 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
   }, [version, eco])
   useEffect(() => {
     setReportsLoading(true)
-    if (!version || !version.ecos.some(item => (item || '') === eco)) return
+    if (!version) return
+    if (!version.ecos.length) {
+      setReports({ items: [], total: 0, offset: 0, limit: 25, counts: {}, groups: [], version })
+      setReportsLoading(false)
+      return
+    }
+    if (!version.ecos.some(item => (item || '') === eco)) return
     const controller = new AbortController()
     const params = new URLSearchParams({ offset: String(offset), limit: '25' })
     if (eco) params.set('eco', eco)
@@ -199,15 +211,24 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
     return () => controller.abort()
   }, [blockId, refresh, !!block])
   useEffect(() => {
-    if (!project || !block || !version) return
-    const params = new URLSearchParams({ project: project.id, block: block.id, version: version.id, tab: view })
+    if (atlas) {
+      if (projectId !== atlas.scope.projectId || blockId !== atlas.scope.blockId || versionId !== atlas.scope.versionId) return
+      const current = new URLSearchParams(location.search)
+      if (current.get('page') !== 'workbench') return
+      if ((current.get('project') || '') !== projectId || (current.get('block') || '') !== blockId || (current.get('version') || '') !== versionId) return
+    } else if (!project || !block || !version) return
+    const params = new URLSearchParams(atlas ? routeSearch : undefined)
+    for (const [key, value] of Object.entries({ project: projectId, block: blockId, version: versionId, tab: view, eco, item: itemId, review: view === 'reports' ? workbenchId : '' })) {
+      if (value) params.set(key, value); else params.delete(key)
+    }
+    if (itemId !== null) params.set('item', itemId)
     if (demo) params.set('demo', '1')
     if (production) params.set('page', 'workbench')
-    if (eco) params.set('eco', eco)
-    if (itemId !== null) params.set('item', itemId)
-    if (view === 'reports' && workbenchId) params.set('review', workbenchId)
-    history.replaceState(null, '', `${production ? '/' : demo ? location.pathname : '/workspace'}?${params}`)
-  }, [projectId, blockId, versionId, view, eco, itemId, !!version, workbenchId])
+    const href = `${production ? appUrl('/') : demo ? location.pathname : appUrl('/workspace')}?${params}`
+    if (atlas) {
+      if (href !== location.pathname + location.search) atlas.replaceRoute(href)
+    } else history.replaceState(null, '', href)
+  }, [projectId, blockId, versionId, view, eco, itemId, !!version, workbenchId, routeSearch])
 
   function resetSelection() {
     setWorkbenchId('')
@@ -215,15 +236,32 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
     setItemId(null); setFamily(''); setStatus(''); setSearch(''); setOffset(0); requestId.current = null
   }
   function chooseProject(id: string) {
+    if (atlas) {
+      closeMobile()
+      const params = new URLSearchParams({ page: 'workbench', tab: 'overview', project: id })
+      void navigateDashboard(`/?${params}`, session.user.id).catch(handleError)
+      return
+    }
     resetSelection(); setProjectId(id); setBlockId(''); setVersionId(''); setVersions(null); setReports(null); setEco(''); setView('overview'); closeMobile()
   }
   function chooseBlock(id: string) {
+    if (atlas) {
+      closeMobile()
+      const params = new URLSearchParams({ page: 'workbench', tab: 'reports', project: projectId, block: id })
+      if (id === blockId && versionId) params.set('version', versionId)
+      void navigateDashboard(`/?${params}`, session.user.id).catch(handleError)
+      return
+    }
     resetSelection()
     if (id !== blockId) { setBlockId(id); setVersionId(''); setVersions(null); setReports(null); setEco('') }
     setView('reports'); closeMobile()
   }
   function chooseVersion(id: string) {
     if (id === versionId) return
+    if (atlas) {
+      void atlas.selectScope({ projectId, blockId, versionId: id }).catch(handleError)
+      return
+    }
     resetSelection(); setVersionId(id); setReports(null); setEco(versions?.items.find(version => version.id === id)?.ecos[0] || '')
   }
   function chooseItem(id: string) {
@@ -232,7 +270,7 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
     setWorkbenchId(''); setItemId(id); setFamily(''); setStatus(''); setSearch(''); setOffset(0); setReportsLoading(true)
   }
   async function logout() {
-    if (demo || production) { location.assign('/'); return }
+    if (demo || production) { location.assign(appUrl('/')); return }
     try { await request('/logout', { body: {}, csrf: session.csrf }); onLogout() } catch (e) { handleError(e) }
   }
   async function openReport(id: string) {
@@ -269,10 +307,10 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
   }
   const totals = project?.blocks.reduce((total, block) => ({ total: total.total + block.total, fail: total.fail + (block.counts.FAIL || 0), unknown: total.unknown + (block.counts.UNKNOWN || 0), por: total.por + Number(!!block.por.version) }), { total: 0, fail: 0, unknown: 0, por: 0 })
 
-  return <div style={sidebarLayout.style} className={`ws-app ws-studio-workspace sidebar-layout ${sidebarLayout.resizing ? 'sidebar-resizing' : ''} ${collapsed && !reviewing ? 'ws-collapsed' : ''}${reviewing ? ' ws-studio-workbench-open' : ''}${production && session.is_admin === true ? ' ws-mode-enabled' : ''}`}>
+  return <div style={atlas ? { minHeight: 0 } : sidebarLayout.style} className={`ws-app ws-studio-workspace ${atlas ? 'atlas-native-workspace' : `sidebar-layout ${sidebarLayout.resizing ? 'sidebar-resizing' : ''} ${collapsed && !reviewing ? 'ws-collapsed' : ''}`}${reviewing ? ' ws-studio-workbench-open' : ''}${!atlas && production && session.is_admin === true ? ' ws-mode-enabled' : ''}`}>
     <a className="skip-link" href="#ws-main">본문으로 건너뛰기</a>
-    {!reviewing && mobile && isMobile && <button className="ws-backdrop" aria-label="메뉴 닫기" onClick={closeMobile} />}
-    {!reviewing && <aside ref={sidebarRef} className={`ws-sidebar ${mobile ? 'ws-open' : ''}`} aria-label="워크스페이스 메뉴" role={mobile && isMobile ? 'dialog' : undefined} aria-modal={mobile && isMobile || undefined} inert={isMobile && !mobile}>
+    {!atlas && !reviewing && mobile && isMobile && <button className="ws-backdrop" aria-label="메뉴 닫기" onClick={closeMobile} />}
+    {!atlas && !reviewing && <aside ref={sidebarRef} className={`ws-sidebar ${mobile ? 'ws-open' : ''}`} aria-label="워크스페이스 메뉴" role={mobile && isMobile ? 'dialog' : undefined} aria-modal={mobile && isMobile || undefined} inert={isMobile && !mobile}>
       <div className="ws-studio-sidebar-header"><WorkspaceBrand /><button className="ws-mobile-close" aria-label="메뉴 닫기" onClick={closeMobile}><X size={19} /></button></div>
       {production && session.is_admin === true && <SidebarModeSwitch mode="user" onChange={mode => { closeMobile(); return navigateDashboard(modeUrl(mode, true), session.user.id) }} />}
       <span className="ws-sidebar-caption">워크스페이스</span>
@@ -290,17 +328,19 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
       </div>
       {!collapsed && !isMobile && <SidebarResizer layout={sidebarLayout} />}
     </aside>}
-    <div className="ws-main-shell" inert={!reviewing && isMobile && mobile}>
-      <header className={`ws-topbar ws-studio-topbar${reviewing ? ' ws-studio-workbench-topbar' : ''}`}>
+    <div className="ws-main-shell" style={atlas ? { marginLeft: 0, width: '100%' } : undefined} inert={!atlas && !reviewing && isMobile && mobile}>
+      {!atlas && <header className={`ws-topbar ws-studio-topbar${reviewing ? ' ws-studio-workbench-topbar' : ''}`}>
         <div className="ws-studio-header-brand">{reviewing ? <WorkspaceBrand /> : <><button ref={triggerRef} className="ws-mobile-trigger" aria-label="메뉴 열기" aria-expanded={mobile} onClick={() => setMobile(true)}><Menu size={20} /></button><span>워크스페이스</span></>}</div>
         <nav className="ws-studio-breadcrumb" aria-label="현재 작업 경로"><button onClick={() => chooseProject(projectId)}>{project?.name || '내 프로젝트'}</button>{view !== 'overview' && view !== 'ai-jobs' && block && <><ChevronRight size={12} /><button onClick={() => chooseBlock(block.id)}>{block.name}</button></>}{reviewing && version && <><ChevronRight size={12} /><span>{version.net_ver}</span><Badge variant="outline">{version.layout}</Badge></>}</nav>
+        <ModuleNavigation production={production} />
         <div className="ws-studio-header-user"><ColorModeControl />{production && <PersonalAiToken key={session.user.id} />}{reviewing && <Button variant="ghost" size="sm" aria-label="검사 대장으로 돌아가기" onClick={() => { setWorkbenchId(''); setRefresh(value => value + 1) }}><ArrowLeft size={14} /><span>검사 대장</span></Button>}<span className="ws-connected"><i />{production ? 'SSO 연결' : demo ? '데모 환경' : '테스트 환경'}</span><span className="ws-avatar ws-avatar-small">{session.user.name.slice(-2)}</span><span className="ws-studio-user-name">{session.user.name}</span></div>
-      </header>
-      <main id="ws-main" className={`ws-main${reviewing ? ' ws-main-reviewing' : ''}`} tabIndex={-1}>
-        {demo && <WorkspaceDemoBanner session={session} onAccount={onDemoAccount} />}
+      </header>}
+      <main id="ws-main" className={`ws-main${reviewing ? ' ws-main-reviewing' : ''}`} style={atlas && reviewing ? { height: 'auto', minHeight: 0 } : undefined} tabIndex={-1}>
+        {demo && !atlas && <WorkspaceDemoBanner session={session} onAccount={onDemoAccount} />}
+        {atlas && (reviewing ? <Button variant="ghost" size="sm" aria-label="검사 대장으로 돌아가기" onClick={() => { setWorkbenchId(''); setRefresh(value => value + 1) }}><ArrowLeft size={14} />검사 대장</Button> : <nav className="ws-block-strip" aria-label="로그 검토 기능">{[{ id: 'overview', label: '프로젝트 현황' }, { id: 'reports', label: '버전·검사 대장' }, { id: 'history', label: 'PoR 변경 이력' }, ...(production ? [{ id: 'ai-jobs', label: 'AI 작업 현황' }] : [])].map(item => <button key={item.id} aria-current={view === item.id ? 'page' : undefined} aria-pressed={view === item.id} onClick={() => setView(item.id)}>{item.label}</button>)}</nav>)}
         {!reviewing && <div className="ws-heading ws-studio-content-heading"><div><span className="eyebrow">{view === 'ai-jobs' ? 'AI 실행' : view === 'overview' ? '프로젝트' : view === 'history' ? '기준 버전 이력' : '검사 대장'}</span><h1>{view === 'ai-jobs' ? 'AI 작업 현황' : view === 'overview' ? `${project?.name || session.user.name} 프로젝트` : view === 'history' ? 'PoR 변경 이력' : `${block?.name || '블록'} · 버전과 검사 결과`}</h1><p>{view === 'ai-jobs' ? '내가 요청한 분류·판정 작업의 진행과 처리 시간을 확인합니다.' : view === 'overview' ? '담당 블록의 기준 버전과 검사 현황을 확인합니다.' : view === 'history' ? '기준 버전의 변경 사유와 확정자를 확인합니다.' : '버전과 sanity 항목을 선택하고 보고서 검토를 시작하세요.'}</p></div>{view !== 'ai-jobs' && <Button variant="outline" size="sm" onClick={() => { setError(''); setRefresh(value => value + 1) }}><RefreshCw size={14} />새로고침</Button>}</div>}
         {error && <div className="ws-error" role="alert">{error}</div>}{notice && <div className="ws-notice" role="status"><Check size={16} />{notice}</div>}
-        {!overview ? <Loading lines={4} /> : !project ? <div className="ws-empty"><FolderKanban /><h2>배정된 프로젝트가 없습니다.</h2><p>프로젝트 담당자에게 배정을 요청해 주세요.</p>{production && <a href="/?page=welcome">프로젝트 참여 신청</a>}</div> : <>
+        {!overview ? <Loading lines={4} /> : !project ? <div className="ws-empty"><FolderKanban /><h2>{atlas ? projectId ? '선택한 프로젝트의 로그를 조회할 수 없습니다.' : '공통 범위에서 프로젝트를 선택해 주세요.' : '배정된 프로젝트가 없습니다.'}</h2><p>{atlas ? demo ? '상단 공통 범위와 선택한 합성 계정의 프로젝트 배정으로 조회합니다.' : '프로젝트·블록·버전은 상단 공통 범위에서 선택합니다. 로그 접근에는 별도 SSO 권한이 적용됩니다.' : '프로젝트 담당자에게 배정을 요청해 주세요.'}</p>{production && <a href={appUrl('/?page=welcome')}>내 프로젝트·권한 확인</a>}</div> : <>
           {view === 'ai-jobs' && production ? <AIJobsDashboard refresh={refresh} /> : view === 'overview' ? <>
             {production && <AIJobsDashboard projectId={project.id} compact refresh={refresh} onAll={() => setView('ai-jobs')} />}
             <div className="ws-statistics"><section><span>수신 대상 검사</span><strong>{n(totals!.total)}<small>항목</small></strong></section><section><span>확인할 FAIL</span><strong className="ws-danger-text">{n(totals!.fail)}<small>항목</small></strong></section><section><span>판정 보류·미수신</span><strong>{n(totals!.unknown)}<small>항목</small></strong></section><section><span>PoR 지정</span><strong>{totals!.por}<small>/ {project.blocks.length}블록</small></strong></section></div>
@@ -308,13 +348,13 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
             <section className="ws-panel"><header className="ws-panel-header"><div><h2>블록별 현재 PoR</h2><p>프로젝트의 블록별 기준 버전과 검사 현황을 확인합니다.</p></div><span className="ws-caption">내 조회 범위 {project.blocks.length}개 블록</span></header><div className="ws-table-scroll"><table className="ws-block-table"><thead><tr><th>블록</th><th>현재 PoR</th><th>검사 현황</th><th>최근 지정</th><th /></tr></thead><tbody>{project.blocks.map(item => <tr key={item.id}><td><strong>{item.name}</strong></td><td>{item.por.version ? <><span className="ws-netver">{item.por.version.net_ver} <b>{item.por.version.layout}</b></span><code>{item.por.version.revision}</code></> : <span className="ws-muted">PoR 미지정</span>}</td><td><span className="ws-block-count">{item.total ? `${n(item.total)} 항목` : '미수신'}</span><small>{item.report_version?.net_ver} · {item.por.version ? 'PoR 버전' : '최신 수신'}</small>{item.total > 0 && <small>FAIL {item.counts.FAIL || 0} · 보류 {item.counts.UNKNOWN || 0}</small>}</td><td><small>{item.por.assigned_by?.name || '—'}<br />{time(item.por.assigned_at)}</small></td><td><Button variant="outline" size="sm" aria-label={`${item.name} 버전과 검사 보기`} onClick={() => chooseBlock(item.id)}>블록 열기<ArrowRight size={14} /></Button></td></tr>)}</tbody></table></div></section>
             <div className="ws-overview-foot"><p><Layers3 size={16} />{production ? '프로젝트 멤버는 모든 블록의 결과를 검토하고 PoR을 지정할 수 있습니다.' : 'PoR은 블록 담당자가 지정합니다. TOP 권한은 프로젝트 전체의 조회 범위입니다.'}</p><p>{production ? '수신된 검사 결과' : '수신된 예시 검사 결과'} · PoR 변경은 검사 판정과 기존 근거를 바꾸지 않습니다.</p></div>
           </> : <>
-            {!reviewing && <div className="ws-block-strip" aria-label="담당 블록 선택">{project.blocks.map(item => <button key={item.id} aria-pressed={blockId === item.id} onClick={() => chooseBlock(item.id)}><Layers3 size={15} />{item.name}</button>)}</div>}
-            {production && view === 'reports' && !reviewing && blockId && <SubmissionIntake key={blockId} blockId={blockId} refresh={refresh} onComplete={() => setRefresh(value => value + 1)} />}
-            {!versions || !block ? <Loading lines={4} /> : !version ? <div className="ws-empty"><FileSearch /><h3>수신된 버전이 아직 없습니다.</h3><p>VWP에서 보고서를 제출하면 버전과 검사 항목이 표시됩니다.</p></div> : <>
+            {!atlas && !reviewing && <div className="ws-block-strip" aria-label="담당 블록 선택">{project.blocks.map(item => <button key={item.id} aria-pressed={blockId === item.id} onClick={() => chooseBlock(item.id)}><Layers3 size={15} />{item.name}</button>)}</div>}
+            {production && view === 'reports' && !reviewing && block && <SubmissionIntake key={blockId} blockId={blockId} refresh={refresh} onComplete={() => setRefresh(value => value + 1)} />}
+            {atlas && !block ? <div className="ws-empty"><Layers3 /><h3>{blockId ? '선택한 블록의 로그를 조회할 수 없습니다.' : '공통 범위에서 블록을 선택해 주세요.'}</h3><p>상단 공통 범위의 정확한 블록 ID로 조회합니다.</p></div> : !versions || !block ? <Loading lines={4} /> : !version ? <div className="ws-empty"><FileSearch /><h3>{atlas ? versionId ? '선택한 버전의 로그를 조회할 수 없습니다.' : '공통 범위에서 버전을 선택해 주세요.' : '수신된 버전이 아직 없습니다.'}</h3><p>{atlas ? 'PoR이나 첫 버전을 자동으로 선택하지 않습니다. 상단에서 조회할 버전을 명시해 주세요.' : 'VWP에서 보고서를 제출하면 버전과 검사 항목이 표시됩니다.'}</p></div> : <>
               {!reviewing && view === 'history' && <PorSummary por={versions.por} canAssign={versions.can_assign_por} />}
               {view === 'history' ? <section className="ws-panel"><header className="ws-panel-header"><div><h2>{block.name} · 변경 기록</h2><p>{demo ? '현재 탭에 저장된 데모 지정 이력' : '최신 50건 · 서버에 저장된 지정 이력'}</p></div><span className="ws-caption">현재 개정 {por?.revision}</span></header>{events.length ? <ol className="ws-history">{events.map(event => <li key={event.id}><div className="ws-history-marker"><Check size={13} /></div><div><header><strong>{event.actor.name}</strong><span>{time(event.at)} · 개정 {event.revision}</span></header><h3>{event.version.net_ver}<span>{event.version.layout}</span></h3><code>{event.version.revision}</code><p>{event.reason}</p></div></li>)}</ol> : <div className="ws-empty"><History /><h3>아직 PoR 지정 이력이 없습니다.</h3><p>{production ? '프로젝트 멤버가 버전을 지정하면 이곳에 기록됩니다.' : '블록 담당자가 버전을 지정하면 이곳에 기록됩니다.'}</p><Button variant="outline" onClick={() => setView('reports')}>버전 목록 보기<ArrowRight size={14} /></Button></div>}</section> : <>
-                {!reviewing && <><section className="ws-version-bar ws-studio-version-toolbar" aria-label="조회할 버전 선택"><div className="ws-layout-toggle" role="group" aria-label="Layout 단계">{(['PRE', 'POST'] as const).map(layout => <button key={layout} disabled={!versions.items.some(item => item.layout === layout && item.net_ver === version.net_ver)} aria-pressed={version.layout === layout} onClick={() => { const next = versions.items.find(item => item.layout === layout && item.net_ver === version.net_ver); if (next) chooseVersion(next.id) }}>{layout}</button>)}</div><label>NET_VER · REVISION<select aria-label="조회 버전" value={versionId} onChange={e => chooseVersion(e.target.value)}>{versions.items.filter(item => item.layout === version.layout).map(item => <option value={item.id} key={item.id}>{item.net_ver} · {item.revision}</option>)}</select></label>{version.layout === 'POST' && <label>ECO<select aria-label="조회 ECO" value={eco} onChange={e => { resetSelection(); setEco(e.target.value); setReports(null) }}>{version.ecos.map(value => <option key={value || '__none'} value={value || ''}>{value || 'ECO 없음'}</option>)}</select></label>}</section>
-                <div className="ws-version-comparison"><PorSummary por={versions.por} canAssign={versions.can_assign_por} /><section className="ws-version-context"><div><span className="ws-caption">조회 중인 버전</span><h2>{version.net_ver}<span>{version.layout}{eco ? ` / ${eco}` : ''}</span>{isPor && <b className="ws-por-tag"><Check size={12} />현재 PoR</b>}</h2><code>{version.revision}</code></div>{versions.can_assign_por ? <Button disabled={isPor} onClick={() => { requestId.current = null; setReason(''); setSaveError(''); setConfirm(true) }}>{isPor ? <Check size={15} /> : <Layers3 size={15} />}{isPor ? '현재 PoR' : '이 버전을 PoR로 지정'}</Button> : <span className="ws-readonly">{production ? '프로젝트 멤버 권한이 있어야 PoR을 지정할 수 있습니다.' : '조회 권한 · PoR 지정은 블록 담당자만 가능'}</span>}{production && versions.can_assign_por && <WorkspaceRemoval key={version.id} base={`/blocks/${blockId}/versions/${version.id}`} title={`${version.net_ver} · ${version.revision} · ${version.layout}`} kind="버전" onRemoved={() => { setWorkbenchId(''); setVersionId(''); setVersions(null); setReports(null); setNotice('버전과 연관 원본·판정 이력을 삭제했습니다.'); setRefresh(v => v + 1) }} onAccessDenied={() => { setVersions(null); setReports(null); setRefresh(v => v + 1) }} />}</section></div></>}
+                {!reviewing && <>{(!atlas || version.layout === 'POST') && <section className="ws-version-bar ws-studio-version-toolbar" aria-label={atlas ? '조회할 ECO 선택' : '조회할 버전 선택'}>{!atlas && <><div className="ws-layout-toggle" role="group" aria-label="Layout 단계">{(['PRE', 'POST'] as const).map(layout => <button key={layout} disabled={!versions.items.some(item => item.layout === layout && item.net_ver === version.net_ver)} aria-pressed={version.layout === layout} onClick={() => { const next = versions.items.find(item => item.layout === layout && item.net_ver === version.net_ver); if (next) chooseVersion(next.id) }}>{layout}</button>)}</div><label>NET_VER · REVISION<select aria-label="조회 버전" value={versionId} onChange={e => chooseVersion(e.target.value)}>{versions.items.filter(item => item.layout === version.layout).map(item => <option value={item.id} key={item.id}>{item.net_ver} · {item.revision}</option>)}</select></label></>}{version.layout === 'POST' && <label>ECO<select aria-label="조회 ECO" value={eco} onChange={e => { resetSelection(); setEco(e.target.value); setReports(null) }}>{version.ecos.map(value => <option key={value || '__none'} value={value || ''}>{value || 'ECO 없음'}</option>)}</select></label>}</section>}
+                <div className="ws-version-comparison"><PorSummary por={versions.por} canAssign={versions.can_assign_por} /><section className="ws-version-context"><div><span className="ws-caption">조회 중인 버전</span><h2>{version.net_ver}<span>{version.layout}{eco ? ` / ${eco}` : ''}</span>{isPor && <b className="ws-por-tag"><Check size={12} />현재 PoR</b>}</h2><code>{version.revision}</code></div>{versions.can_assign_por ? <Button disabled={isPor} onClick={() => { requestId.current = null; setReason(''); setSaveError(''); setConfirm(true) }}>{isPor ? <Check size={15} /> : <Layers3 size={15} />}{isPor ? '현재 PoR' : '이 버전을 PoR로 지정'}</Button> : <span className="ws-readonly">{production ? '프로젝트 멤버 권한이 있어야 PoR을 지정할 수 있습니다.' : '조회 권한 · PoR 지정은 블록 담당자만 가능'}</span>}{production && versions.can_assign_por && <WorkspaceRemoval key={version.id} base={`/blocks/${blockId}/versions/${version.id}`} title={`${version.net_ver} · ${version.revision} · ${version.layout}`} kind="버전" onRemoved={() => { setWorkbenchId(''); if (atlas) { void atlas.selectScope({ projectId, blockId, versionId: '' }).then(atlas.reload).catch(handleError) } else setVersionId(''); setVersions(null); setReports(null); setNotice('버전과 연관 원본·판정 이력을 삭제했습니다.'); setRefresh(v => v + 1) }} onAccessDenied={() => { setVersions(null); setReports(null); setRefresh(v => v + 1) }} />}</section></div></>}
                 {!reports ? <Loading /> : <>
                   {!reviewing && <><div className="ws-report-counts"><span>버전 전체 <strong>{n(Object.values(reports.counts).reduce((a, b) => a + b, 0))}</strong></span><span>PASS <strong>{reports.counts.PASS || 0}</strong></span><span>FAIL <strong>{reports.counts.FAIL || 0}</strong></span><span>보류 <strong>{reports.counts.UNKNOWN || 0}</strong></span></div>
                   {reports.groups.length > 0 && <section className="ws-item-catalog" aria-label="Sanity item별 현황">
@@ -351,7 +391,7 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
             </>}
           </>}
         </>}
-        <footer className="ws-footer"><span>Sanity Lens AI · {production ? 'AI 검토 워크스페이스' : demo ? '워크스페이스 데모' : '테스트 워크스페이스'}</span><span>{production ? 'SSO 권한 적용 · 사람 확정 사례 축적' : demo ? '합성 검사 자료 · AI 호출 없음 · 새로고침 시 초기화' : 'SSO 미연결 · 예시 검사 자료 · PoR 서버 저장'}</span></footer>
+        <footer className="ws-footer"><span>Design Atlas · {production ? '로그 검토' : demo ? '워크스페이스 데모' : '테스트 워크스페이스'}</span><span>{production ? 'SSO 권한 적용 · 사람 확정 사례 축적' : demo ? '합성 검사 자료 · AI 호출 없음 · 새로고침 시 초기화' : 'SSO 미연결 · 예시 검사 자료 · PoR 서버 저장'}</span></footer>
       </main>
     </div>
     <Dialog open={confirm} onOpenChange={open => { if (!saving) setConfirm(open) }}><DialogContent className="ws-confirm" showCloseButton={false}><DialogHeader><DialogTitle>{block?.name}의 PoR을 변경할까요?</DialogTitle><DialogDescription>{production ? '이 블록의 기준 버전이 바뀌며 프로젝트 멤버가 같은 결과를 확인합니다.' : '이 블록의 기준 버전이 바뀌며 TOP과 담당자가 같은 결과를 확인합니다.'}</DialogDescription></DialogHeader><div className="ws-change-preview"><div><span>현재 PoR</span><strong>{por?.version?.net_ver || '미지정'}</strong><code>{por?.version?.revision || '—'}</code></div><ArrowRight size={19} /><div><span>변경할 버전</span><strong>{version?.net_ver} · {version?.layout}</strong><code>{version?.revision}</code></div></div><label className="ws-reason-label" htmlFor="ws-por-reason">변경 사유<textarea id="ws-por-reason" value={reason} maxLength={500} placeholder="기준 버전을 변경하는 이유를 남겨 주세요." onChange={e => { setReason(e.target.value); requestId.current = null }} disabled={saving} /></label><p className="ws-muted ws-confirm-note">지정자와 시각이 이력에 저장됩니다. 기존 검사 결과와 다른 블록의 PoR은 유지됩니다.</p>{saveError && <p className="ws-error" role="alert">{saveError}</p>}<div className="ws-dialog-actions"><Button variant="outline" onClick={() => setConfirm(false)} disabled={saving}>취소</Button><Button onClick={savePor} disabled={saving || !reason.trim()}>{saving ? '저장 중…' : 'PoR 지정 저장'}</Button></div></DialogContent></Dialog>

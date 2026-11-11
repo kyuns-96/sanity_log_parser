@@ -1,3 +1,4 @@
+import { appUrl } from './appUrl'
 import { useState } from 'react'
 import { ArrowLeft, ArrowRight, ArrowUpRight, Boxes, Check, CheckCircle2, ChevronRight, CircleHelp, ClipboardList, FolderKanban, History, LockKeyhole, Plus, RotateCcw, ShieldCheck, Sparkles, Trash2, UserRound, Users, X } from 'lucide-react'
 import { Button } from './components/ui/button'
@@ -85,7 +86,7 @@ export default function AccessFlowDemo() {
           <button className={view === 'projects' ? 'is-active' : ''} aria-current={view === 'projects' ? 'page' : undefined} onClick={() => setView('projects')}><FolderKanban size={17} />{user.admin ? '프로젝트 현황' : '내 프로젝트'}<span>{projects.length}</span></button>
           {manageable.length > 0 && <><div className="af-nav-label af-management-label">MANAGEMENT</div><button className={view === 'members' ? 'is-active' : ''} aria-current={view === 'members' ? 'page' : undefined} onClick={() => setView('members')}><Users size={17} />담당자 배정</button><button className={view === 'history' ? 'is-active' : ''} aria-current={view === 'history' ? 'page' : undefined} onClick={() => setView('history')}><History size={17} />변경 이력</button></>}
         </nav>
-        <div className="af-sidebar-note"><ShieldCheck size={21} /><strong>역할에 맞는 작업 공간</strong><p>프로젝트와 블록의 담당 범위에 따라 화면이 달라집니다.</p><a href="/?demo=1&flow=versions">PRE · POST · ECO · PoR <ArrowUpRight size={13} /></a><a href="/?demo=1&dataset=gca">기존 GCA 데모 <ArrowUpRight size={13} /></a></div>
+        <div className="af-sidebar-note"><ShieldCheck size={21} /><strong>역할에 맞는 작업 공간</strong><p>프로젝트와 블록의 담당 범위에 따라 화면이 달라집니다.</p><a href={appUrl('/?demo=1&flow=versions')}>PRE · POST · ECO · PoR <ArrowUpRight size={13} /></a><a href={appUrl('/?demo=1&dataset=gca')}>기존 GCA 데모 <ArrowUpRight size={13} /></a></div>
         <div className="af-current-user"><Avatar user={user} /><div><strong>{user.name}</strong><span>{label}</span></div></div>
       </aside>
       <div className="af-main-shell">

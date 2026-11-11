@@ -1,2 +1,5 @@
-# The VWP collector and plan contract use Python 3.10+ standard library only.
+# The existing Sanity collector remains standard-library only (Python 3.10+).
 # Company source SDK dependencies require a separate reviewed integration.
+# Optional Area/Power uploader (Python 3.11+); no DB driver on user PCs.
+httpx==0.28.1
+simplejson==3.20.2

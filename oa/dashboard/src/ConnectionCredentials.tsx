@@ -3,6 +3,7 @@ import { ExternalLink, Save } from 'lucide-react'
 import { Button } from './studio/components/ui/button'
 import { Badge } from './studio/components/ui/badge'
 import { Input } from './components/ui/input'
+import { appUrl } from './appUrl'
 import './ai-connections.css'
 
 type Status = { registered: boolean; revision: number; connection_changed?: boolean; expired?: boolean; expires_soon?: boolean; expires_at?: string | null }
@@ -22,7 +23,7 @@ const errors: Record<string,string> = {
   UNAUTHORIZED: '로그인 세션을 확인해 주세요.',
 }
 async function request<T>(path: string, body?: Record<string,unknown>, signal?: AbortSignal): Promise<T> {
-  const response = await fetch('/api/ai/connections' + path, { method: body ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal,
+  const response = await fetch(appUrl('/api/ai/connections' + path), { method: body ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal,
     ...(body ? { headers: { 'Content-Type': 'application/json', 'X-Sanity-Request': '1' }, body: JSON.stringify(body) } : {}) })
   const data = await response.json()
   if (!response.ok) throw new Error(errors[data.code] || 'AI 연결 설정을 완료하지 못했습니다. 창을 다시 열어 현재 상태를 확인해 주세요.')

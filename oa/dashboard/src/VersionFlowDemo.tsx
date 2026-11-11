@@ -1,3 +1,4 @@
+import { appUrl } from './appUrl'
 import { useState } from 'react'
 import { ArrowUpRight, Check, CheckCircle2, ChevronRight, ClipboardCheck, Layers3, RotateCcw, Sparkles, X } from 'lucide-react'
 import { Button } from './components/ui/button'
@@ -55,13 +56,13 @@ export default function VersionFlowDemo() {
   }
 
   return <div className="vf-root"><a className="skip-link" href="#workspace-main">본문으로 건너뛰기</a>
-    <div className="vf-demo-bar"><span><Sparkles size={14} /><strong>VERSION DEMO</strong><span>예시 데이터로 보는 버전 구조</span></span><div><a href="/?demo=1&flow=access">담당자 배정 데모 <ArrowUpRight size={13} /></a><button onClick={reset}><RotateCcw size={14} />초기화</button></div></div>
+    <div className="vf-demo-bar"><span><Sparkles size={14} /><strong>VERSION DEMO</strong><span>예시 데이터로 보는 버전 구조</span></span><div><a href={appUrl('/?demo=1&flow=access')}>담당자 배정 데모 <ArrowUpRight size={13} /></a><button onClick={reset}><RotateCcw size={14} />초기화</button></div></div>
     <div className="vf-shell">
       <aside className="vf-sidebar">
         <WorkspaceBrand href="/?demo=1&flow=versions" />
         <div className="vf-workspace"><span>A</span><div><strong>Atlas</strong><small>SoC DESIGN PROJECT</small></div></div>
         <div className="vf-nav-label">VERSION WORKSPACE</div>
-        <nav aria-label="버전 데모 메뉴"><a className="is-active" aria-current="page" href="/?demo=1&flow=versions"><Layers3 size={16} />블록별 PoR 조회</a><a href="/?demo=1&dataset=gca"><ClipboardCheck size={16} />GCA report 예시<ArrowUpRight size={12} /></a></nav>
+        <nav aria-label="버전 데모 메뉴"><a className="is-active" aria-current="page" href={appUrl('/?demo=1&flow=versions')}><Layers3 size={16} />블록별 PoR 조회</a><a href={appUrl('/?demo=1&dataset=gca')}><ClipboardCheck size={16} />GCA report 예시<ArrowUpRight size={12} /></a></nav>
         <div className="vf-sidebar-note"><strong>블록 → NET_VER + REVISION</strong><p>각 블록 담당자가 PoR을 정합니다.<br />ECO는 해당 세트 아래에서 관리합니다.</p></div>
       </aside>
       <div className="vf-main-shell">
