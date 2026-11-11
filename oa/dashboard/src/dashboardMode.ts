@@ -1,9 +1,10 @@
 import { createContext, useContext, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { DashboardMode } from './components/SidebarModeSwitch'
+import { appPathname, appUrl } from './appUrl'
 
 export type DashboardNavigate = (href: string, sourceUser?: string, reset?: boolean) => Promise<void>
-export const DashboardNavigationContext = createContext<DashboardNavigate>(async href => { location.assign(href) })
+export const DashboardNavigationContext = createContext<DashboardNavigate>(async href => { location.assign(appUrl(href)) })
 export const useDashboardNavigation = () => useContext(DashboardNavigationContext)
 export const DashboardSidebarContext = createContext<[boolean, Dispatch<SetStateAction<boolean>>] | null>(null)
 export function useDashboardSidebarState() {
@@ -12,19 +13,19 @@ export function useDashboardSidebarState() {
 }
 
 const returnKey = 'user_view'
-const userPages = new Set(['workbench', 'welcome', 'review'])
+const userPages: Record<string, true> = { workbench: true, welcome: true, review: true, 'area-power': true }
 
 export function userModeUrl(canRead: boolean, current = new URL(location.href)): string {
-  const fallback = canRead ? '/?page=workbench' : '/?page=welcome'
+  const fallback = appUrl(canRead ? '/?page=workbench' : '/?page=welcome')
   const value = current.searchParams.get(returnKey)
   if (!value || !value.startsWith('/?') || /[\\\u0000-\u001f\u007f]/u.test(value)) return fallback
   try {
     const url = new URL(value, current.origin)
-    if (url.origin !== current.origin || url.pathname !== '/' || !userPages.has(url.searchParams.get('page') || 'review')
+    if (url.origin !== current.origin || appPathname(url.pathname) !== '/' || !Object.hasOwn(userPages, url.searchParams.get('page') || 'review')
       || url.searchParams.has('demo') || url.searchParams.has('flow') || url.searchParams.has('dataset')) return fallback
-    if (!canRead && url.searchParams.get('page') !== 'welcome') return '/?page=welcome'
+    if (!canRead && url.searchParams.get('page') !== 'welcome') return appUrl('/?page=welcome')
     url.searchParams.delete(returnKey)
-    return url.pathname + url.search
+    return appUrl(url.pathname + url.search)
   } catch { return fallback }
 }
 
@@ -35,6 +36,6 @@ export function modeUrl(mode: DashboardMode, canRead: boolean): string {
   user.searchParams.delete(returnKey)
   const target = new URL('/', current.origin)
   target.searchParams.set('page', 'admin')
-  target.searchParams.set(returnKey, user.pathname + (user.search || '?page=review'))
-  return target.pathname + target.search
+  target.searchParams.set(returnKey, appPathname(user.pathname) + (user.search || '?page=review'))
+  return appUrl(target.pathname + target.search)
 }

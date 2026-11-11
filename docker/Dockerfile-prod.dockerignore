@@ -1,9 +1,15 @@
-# Build context: repository root. Only OA/common sources are needed.
+# Build context: repository root. OA, common, and Area OA/common sources only.
 **
 !common/
 !common/**
 !oa/
 !oa/**
+!area_power/
+!area_power/__init__.py
+!area_power/common/
+!area_power/common/**
+!area_power/oa/
+!area_power/oa/**
 
 **/.env
 **/.env.*

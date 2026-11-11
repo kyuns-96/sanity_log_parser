@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { appUrl } from './appUrl'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Activity, ArrowDownToLine, ArrowUpRight, Box, Check, CheckCheck, ChevronLeft, ChevronRight, CircleHelp, ClipboardCheck, Clock3, FileCheck2, FileSearch, Files, Fingerprint, Inbox, Layers3, LoaderCircle, LockKeyhole, LogOut, Menu, MessageSquareMore, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, ShieldCheck, Sparkles, X } from 'lucide-react'
 import { Button } from './studio/components/ui/button'
@@ -16,12 +17,14 @@ import { GcaDemoScope, GcaReportSource } from './GcaDemo'
 import { ClusterPanel } from './ClusterPanel'
 import { RawEvidence } from './RawEvidence'
 import { WorkspaceBrand } from './components/WorkspaceBrand'
+import { ModuleNavigation } from './components/ModuleNavigation'
 import { ColorModeControl } from './components/ColorModeControl'
 import { SidebarModeSwitch } from './components/SidebarModeSwitch'
 import { SidebarResizer, useSidebarLayout } from './components/SidebarResizer'
 import { modeUrl, useDashboardNavigation, useDashboardSidebarState } from './dashboardMode'
 import { useWorkspaceNavigation } from './useWorkspaceNavigation'
 import { useDashboardAuth } from './useDashboardAuth'
+import { useAtlas } from './atlasContext'
 import type { DashboardAuthSnapshot } from './useDashboardAuth'
 import { DashboardLogin } from './DashboardLogin'
 import AccessWelcome from './AccessWelcome'
@@ -42,7 +45,9 @@ function Pagination({ offset, total, limit, change }: { offset: number; total: n
 
 export default function App({ routePage, initialAuth }: { routePage?: AccessPage; initialAuth?: DashboardAuthSnapshot } = {}) {
   const navigateDashboard = useDashboardNavigation()
-  const [demo, setDemo] = useState(() => new URLSearchParams(location.search).get('demo') === '1')
+  const atlas = useAtlas()
+  const [legacyReview, setLegacyReview] = useState(false)
+  const [demo, setDemo] = useState(() => !atlas && new URLSearchParams(location.search).get('demo') === '1')
   const [demoDataset] = useState(() => new URLSearchParams(location.search).get('dataset'))
   const gcaDemo = demo && demoDataset === 'gca'
   const demoApi = useRef<ReturnType<typeof makeDemo> | null>(null)
@@ -56,7 +61,7 @@ export default function App({ routePage, initialAuth }: { routePage?: AccessPage
   const page = routePage ?? localPage
   const readySSO = session?.auth_method === 'sso' && session.authorization_ready === true
   const canRead = !!session && (session.auth_method !== 'sso' || readySSO && session.can_read_business === true)
-  const businessActive = canRead && (!readySSO || page === 'review')
+  const businessActive = canRead && (page === 'review' || !atlas && !readySSO) && (!atlas || legacyReview)
   const [commandError, setError] = useState('')
   const error = commandError || auth.error
   const [notice, setNotice] = useState('')
@@ -64,9 +69,9 @@ export default function App({ routePage, initialAuth }: { routePage?: AccessPage
   const busy = commandBusy || auth.signingOut
   const [mobile, setMobile] = useState(false)
   const [collapsed, setCollapsed] = useDashboardSidebarState()
-  const sidebarLayout = useSidebarLayout(!collapsed)
+  const sidebarLayout = useSidebarLayout(!atlas && !collapsed)
   const closeMobile = useCallback(() => setMobile(false), [])
-  const { isMobile, sidebarRef, triggerRef } = useWorkspaceNavigation(mobile, closeMobile, !!session)
+  const { isMobile, sidebarRef, triggerRef } = useWorkspaceNavigation(mobile, closeMobile, !atlas && !!session)
   const [bundles, setBundles] = useState<Page<Bundle>>({ items: [], total: 0, offset: 0, limit: 20 })
   const [bundleOffset, setBundleOffset] = useState(0)
   const [selected, setSelected] = useState('')
@@ -98,8 +103,7 @@ export default function App({ routePage, initialAuth }: { routePage?: AccessPage
   const refresh = () => { setError(''); setTick(v => v + 1) }
   function navigate(next: AccessPage) {
     const url = new URL(location.href)
-    if (next === 'review') url.searchParams.delete('page')
-    else url.searchParams.set('page', next)
+    url.searchParams.set('page', next)
     if (routePage) {
       closeMobile()
       void navigateDashboard(url.pathname + url.search, session?.user_id).catch(fail)
@@ -214,11 +218,17 @@ export default function App({ routePage, initialAuth }: { routePage?: AccessPage
     setNotice('검토 보고서를 다운로드했습니다.')
   })
 
-  if (!session || session.auth_method === 'sso' && !readySSO) return <DashboardLogin config={auth.config} session={session} checking={auth.checking} signingOut={auth.signingOut} error={error} accountProblem={auth.accountProblem} onToken={value => { setError(''); auth.loginWithToken(value) }} onRetry={() => { setError(''); auth.retry() }} onLogout={logout} />
+  if (!session || session.auth_method === 'sso' && !readySSO) return atlas ? <section className="empty"><h1>Design Atlas · 로그 검토</h1><p role="alert">{error || '공통 로그인에서 계정과 프로젝트 접근 권한을 확인해 주세요.'}</p><Button variant="outline" onClick={() => auth.retry()} disabled={auth.checking}>연결 다시 확인</Button></section> : <DashboardLogin config={auth.config} session={session} checking={auth.checking} signingOut={auth.signingOut} error={error} accountProblem={auth.accountProblem} onToken={value => { setError(''); auth.loginWithToken(value) }} onRetry={() => { setError(''); auth.retry() }} onLogout={logout} />
+  if (atlas && session.auth_method === 'local_token' && page !== 'review') return <main className="workspace" id="workspace-main" tabIndex={-1}>
+    <div className="page-heading"><div><h1>{page === 'admin' ? '관리자 권한 · SSO 필요' : '로컬 연결 계정'}</h1><p>현재 연결은 실제 로컬 토큰 모드이며 회사 SSO 계정이나 프로젝트 멤버십을 대신하지 않습니다.</p></div></div>
+    <section className="detail-panel"><div className="unit-detail"><h2>{session.reviewer}</h2><dl><dt>인증 방식</dt><dd><code>{session.auth_method}</code></dd><dt>접근 모드</dt><dd><code>{session.access_mode}</code> · {session.writable ? '쓰기 가능' : '읽기 전용'}</dd></dl>{session.notice && <p className="session-notice">{session.notice}</p>}<p>SSO 프로젝트 참여·권한 신청, 관리자 업무와 운영 로그 분류·판정은 로컬 토큰에서 지원하지 않습니다. 공통 카탈로그와 허용된 실제 로컬 데이터는 로그 조회 화면에서 확인할 수 있습니다.</p><p>토큰은 현재 탭 메모리에만 유지됩니다. 연결 종료는 공통 메뉴의 로그아웃을 사용해 주세요.</p><Button variant="outline" onClick={() => navigate('review')}><FileSearch size={16} />로그 조회</Button></div></section>
+    {error && <p className="error-banner" role="alert">{error}</p>}
+  </main>
   if (readySSO && (page !== 'review' || !canRead)) {
     const props = { session, api, onNavigate: navigate, onLogout: logout, onRefreshSession: auth.refreshSession, signingOut: auth.signingOut, notice: error }
     return page === 'admin' && session.is_admin === true ? <AccessAdmin {...props} /> : <AccessWelcome {...props} />
   }
+  if (atlas && page === 'review' && !legacyReview) return <AtlasReports onLegacy={() => setLegacyReview(true)} canWorkbench={(readySSO || atlas.demo) && canRead} />
 
   const c = detail?.coverage
   const progress = c && c.expected ? Math.round((c.reviewed + c.approved_na) / c.expected * 100) : 0
@@ -231,13 +241,14 @@ export default function App({ routePage, initialAuth }: { routePage?: AccessPage
   const canRequestEvidence = readySSO ? detail?.permissions?.can_request_evidence === true : session.writable
   const canReceiveEvidence = readySSO ? detail?.permissions?.can_receive_evidence === true : session.writable
   const canReceive = readySSO ? session.can_receive === true : session.writable
-  return <div style={sidebarLayout.style} className={`shell studio-system studio-portal sidebar-layout ${sidebarLayout.resizing ? 'sidebar-resizing' : ''} ${collapsed && !isMobile ? 'sidebar-is-collapsed' : ''}`}><a className="skip-link" href="#workspace-main">본문으로 건너뛰기</a>
-    {mobile && <button className="sidebar-backdrop" aria-label="메뉴 닫기" onClick={closeMobile} tabIndex={-1} />}
-    <aside id="workspace-menu" ref={sidebarRef} className={`sidebar ${mobile ? 'sidebar-open' : ''}`} aria-label="워크스페이스 메뉴" role={isMobile && mobile ? 'dialog' : undefined} aria-modal={isMobile && mobile ? true : undefined} inert={isMobile && !mobile} aria-hidden={isMobile && !mobile}>
+  return <div style={atlas ? { minHeight: 0 } : sidebarLayout.style} className={`shell studio-system studio-portal ${atlas ? 'atlas-native-review' : `sidebar-layout ${sidebarLayout.resizing ? 'sidebar-resizing' : ''} ${collapsed && !isMobile ? 'sidebar-is-collapsed' : ''}`}`}><a className="skip-link" href="#workspace-main">본문으로 건너뛰기</a>
+    {!atlas && mobile && <button className="sidebar-backdrop" aria-label="메뉴 닫기" onClick={closeMobile} tabIndex={-1} />}
+    {!atlas && <aside id="workspace-menu" ref={sidebarRef} className={`sidebar ${mobile ? 'sidebar-open' : ''}`} aria-label="워크스페이스 메뉴" role={isMobile && mobile ? 'dialog' : undefined} aria-modal={isMobile && mobile ? true : undefined} inert={isMobile && !mobile} aria-hidden={isMobile && !mobile}>
       <WorkspaceBrand />
       <button className="sidebar-close" aria-label="메뉴 닫기" onClick={closeMobile}><X size={18} /></button>
       {readySSO && session.is_admin === true && <SidebarModeSwitch mode="user" onChange={mode => { closeMobile(); return navigateDashboard(modeUrl(mode, session.can_read_business === true), session.user_id) }} />}
-      <div className="portal-sidebar-context"><span className="workspace-icon"><Layers3 size={18} /></span><div><strong>AI 분석 워크스페이스</strong><small>{demo ? '합성 데이터 · 데모' : '결과 · 근거 · 변경 이력'}</small></div></div>
+      <ModuleNavigation production={!demo} />
+      <div className="portal-sidebar-context"><span className="workspace-icon"><Layers3 size={18} /></span><div><strong>Design Atlas</strong><small>{demo ? '합성 데이터 · 데모' : '결과 · 근거 · 변경 이력'}</small></div></div>
       <div className="nav-label">워크스페이스</div>
       <nav aria-label="검토 메뉴">
         {readySSO && <Button variant="ghost" aria-label="AI 분류·판정" onClick={() => { closeMobile(); void navigateDashboard('/?page=workbench', session.user_id).catch(fail) }}><Layers3 size={18} /><span className="nav-text">AI 분류·판정</span></Button>}
@@ -249,15 +260,16 @@ export default function App({ routePage, initialAuth }: { routePage?: AccessPage
       <button className="sidebar-toggle" onClick={() => setCollapsed(value => !value)} aria-expanded={!collapsed} aria-label={collapsed ? '메뉴 펼치기' : '메뉴 접기'}>{collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}<span>메뉴 접기</span></button>
       <div className="sidebar-footer"><div className="avatar">{session.reviewer.slice(0, 1)}</div><div><strong>{session.reviewer}</strong><small>{session.writable ? '검토자' : '읽기 전용'}</small></div><Button variant="ghost" size="icon-sm" aria-label="연결 종료" disabled={busy} onClick={logout}><LogOut size={17} /></Button></div>
       {!collapsed && !isMobile && <SidebarResizer layout={sidebarLayout} />}
-    </aside>
-    <div className="main-shell" inert={isMobile && mobile} aria-hidden={isMobile && mobile}><header className="topbar"><div className="breadcrumb"><button ref={triggerRef} className="mobile-menu" aria-label="메뉴 열기" aria-expanded={mobile} aria-controls="workspace-menu" onClick={() => setMobile(true)}><Menu /></button><span>워크스페이스</span><ChevronRight size={13} /><strong>Sanity 검토</strong></div><div className="topbar-right"><ColorModeControl />{!demo && readySSO && <PersonalAiToken key={session.user_id} />}<span className="connection"><span className="online-dot" />{demo ? '데모 환경' : '연결됨'}</span><Separator orientation="vertical" /><span className="avatar avatar-small">{session.reviewer.slice(0, 1)}</span></div></header>
+    </aside>}
+    <div className="main-shell" style={atlas ? { marginLeft: 0, width: '100%' } : undefined} inert={!atlas && isMobile && mobile} aria-hidden={!atlas && isMobile && mobile}>{!atlas && <header className="topbar"><div className="breadcrumb"><button ref={triggerRef} className="mobile-menu" aria-label="메뉴 열기" aria-expanded={mobile} aria-controls="workspace-menu" onClick={() => setMobile(true)}><Menu /></button><span>Design Atlas</span><ChevronRight size={13} /><strong>로그 검토</strong></div><div className="topbar-right"><ColorModeControl />{!demo && readySSO && <PersonalAiToken key={session.user_id} />}<span className="connection"><span className="online-dot" />{demo ? '데모 환경' : '연결됨'}</span><Separator orientation="vertical" /><span className="avatar avatar-small">{session.reviewer.slice(0, 1)}</span></div></header>}
     <main className="workspace" id="workspace-main" tabIndex={-1}>
-      {demo && <div className="demo-banner"><Sparkles size={15} /><span><strong>데모 모드</strong> · 예시 검사 결과를 보여줍니다. 변경은 현재 세션에만 적용됩니다.</span><nav className="demo-navigation" aria-label="데모 화면"><a className="demo-switch" href={gcaDemo ? "/?demo=1" : "/?demo=1&dataset=gca"}>{gcaDemo ? "기본 예시" : "GCA 예시 보기"}</a><a className="demo-switch" href="/?demo=1&flow=access">프로젝트·담당자 데모</a><a className="demo-switch" href="/?demo=1&flow=versions">버전·ECO·PoR 데모</a></nav><button onClick={logout}>데모 종료 <ArrowUpRight size={13} /></button></div>}
+      {demo && <div className="demo-banner"><Sparkles size={15} /><span><strong>데모 모드</strong> · 예시 검사 결과를 보여줍니다. 변경은 현재 세션에만 적용됩니다.</span><nav className="demo-navigation" aria-label="데모 화면"><a className="demo-switch" href={appUrl(gcaDemo ? '/?demo=1' : '/?demo=1&dataset=gca')}>{gcaDemo ? "기본 예시" : "GCA 예시 보기"}</a><a className="demo-switch" href={appUrl('/?demo=1&flow=access')}>프로젝트·담당자 데모</a><a className="demo-switch" href={appUrl('/?demo=1&flow=versions')}>버전·ECO·PoR 데모</a></nav><button onClick={logout}>데모 종료 <ArrowUpRight size={13} /></button></div>}
+      {atlas && <div className="notice-banner" role="status"><FileSearch size={16} /><span>기존 접수 실행 대장은 공통 범위 필터를 지원하지 않습니다. 현재 계정에 허용된 실행을 표시합니다.</span><Button variant="outline" size="sm" onClick={() => setLegacyReview(false)}>선택 범위의 버전 로그로 돌아가기</Button></div>}
       {(!session.writable || readySSO && detail && !canReview) && <div className="notice-banner" role="status"><LockKeyhole size={16} />{readySSO ? '현재 결과는 조회만 가능합니다. 검토하려면 해당 블록의 OWNER 권한이 필요합니다.' : '읽기 전용 세션입니다. 검토와 수신 작업은 비활성화됩니다.'}</div>}
       {session.notice && <p className="session-notice"><ShieldCheck size={13} />{session.notice}</p>}
       {error && <div role="alert" className="error-banner"><span>{error}</span><button aria-label="오류 닫기" onClick={() => setError('')}><X size={16} /></button></div>}
       {notice && <div role="status" className="notice-banner"><CheckCheck size={16} /><span>{notice}</span><button aria-label="알림 닫기" onClick={() => setNotice('')}><X size={16} /></button></div>}
-      <div className="page-heading"><div><h1>Sanity 검토</h1><p>점검 결과를 확인하고, 근거를 바탕으로 판단하세요.</p></div><div className="heading-actions"><Button variant="outline" onClick={refresh} disabled={busy || loading}><RefreshCw className={loading ? 'spin' : ''} />새로고침</Button>{(!readySSO || canReceive) && <Button onClick={() => command(async () => { const result = await api<{ status: string }>('/api/receive', {}); setNotice(`수신 처리: ${result.status}`); setTick(v => v + 1) })} disabled={busy || !canReceive}><Inbox />결과 수신</Button>}</div></div>
+      <div className="page-heading"><div><h1>로그 검토</h1><p>점검 결과를 확인하고, 근거를 바탕으로 판단하세요.</p></div><div className="heading-actions"><Button variant="outline" onClick={refresh} disabled={busy || loading}><RefreshCw className={loading ? 'spin' : ''} />새로고침</Button>{(!readySSO || canReceive) && <Button onClick={() => command(async () => { const result = await api<{ status: string }>('/api/receive', {}); setNotice(`수신 처리: ${result.status}`); setTick(v => v + 1) })} disabled={busy || !canReceive}><Inbox />결과 수신</Button>}</div></div>
       {gcaDemo && <GcaDemoScope bundles={bundles.items} selected={selected} select={selectBundle} disabled={busy} />}
       <div className="stats-grid"><Stat label="전체 검토 대상" value={c ? number(c.expected) : '—'} icon={Layers3} caption="현재 선택한 실행의 sanity item" /><Stat label="검토 완료" value={c ? number(c.reviewed) : '—'} icon={CheckCheck} caption={c ? `해당 없음 ${c.approved_na}건 별도 승인` : '결과를 선택해 주세요'} tone="green" /><Stat label="검토 대기" value={c ? number(c.unresolved) : '—'} icon={Clock3} caption="사람의 확인이 필요한 항목" tone="amber" /><Stat label="누락된 결과" value={c ? number(c.missing) : '—'} icon={Files} caption="원본 결과의 추가 확인 필요" tone="red" /></div>
       <div className="content-grid"><section className="runs-panel"><div className="section-heading"><h2>{gcaDemo ? "블록 실행 이력" : "접수된 실행"} <span>{gcaDemo ? visibleBundles.length : bundles.total}</span></h2><Inbox size={17} /></div><div className="runs-list">{visibleBundles.length ? visibleBundles.map(bundle => <button className={`run-card ${selected === bundle.bundle_id ? 'run-selected' : ''}`} key={bundle.bundle_id} aria-pressed={selected === bundle.bundle_id} disabled={busy} onClick={() => selectBundle(bundle.bundle_id)}><div className="run-title"><span className="project-icon"><Box size={17} /></span><strong>{bundle.project}{gcaDemo && ` / ${bundle.design}`}</strong><Status value={bundle.coverage.check_status} /></div><div className="run-name" title={bundle.run_id}>{bundle.run_id}</div><div className="run-meta"><span>{date(bundle.created_at)}</span><span>개정 {bundle.review_revision}</span></div><div className="run-progress"><Progress value={bundle.coverage.expected ? (bundle.coverage.reviewed + bundle.coverage.approved_na) / bundle.coverage.expected * 100 : 0} /><span>{bundle.coverage.reviewed + bundle.coverage.approved_na}/{bundle.coverage.expected}</span></div></button>) : <Empty>접수된 실행이 없습니다.</Empty>}</div>{bundles.total > 20 && <Pagination offset={bundleOffset} total={bundles.total} limit={20} change={setBundleOffset} />}<div className="runs-foot"><ShieldCheck size={15} />수신만으로 검토가 승인되지 않습니다.</div></section>
@@ -277,11 +289,68 @@ export default function App({ routePage, initialAuth }: { routePage?: AccessPage
         <TabsContent value="history"><div className="tab-intro"><h3>검토 변경 이력</h3><p>검토자, 판단 사유와 적용 개정을 함께 보존합니다.</p></div>{detail.history.length ? <div className="timeline">{detail.history.map(entry => <div className="timeline-entry" key={entry.revision}><span className="timeline-dot"><Check size={12} /></span><div className="timeline-title"><strong>{entry.actor}</strong><span>개정 {entry.revision}</span></div>{entry.decisions.map((decision, i) => <div className="history-decision" key={i}><Status value={decision.conclusion} /><strong>{decision.review_unit_id || decision.unit_id || '검토 기록'}</strong><p>{decision.reason}</p><small>{date(decision.reviewed_at)}</small></div>)}</div>)}</div> : <Empty>아직 기록된 사람의 검토가 없습니다.</Empty>}{detail.history_total > detail.history.length && <p className="tiny">최근 {detail.history.length}건을 표시합니다. 전체 이력은 서버에 보존됩니다.</p>}</TabsContent>
         </Tabs><div className="detail-foot"><span><Sparkles size={14} />AI 검토 {textStatus[detail.context.ai.status] || detail.context.ai.status}</span><span title={detail.bundle_id}>{short(detail.bundle_id)}</span></div>
       </>}</section></div>
-      <footer className="workspace-footer"><span>SANITY <b>/</b> REVIEW CONSOLE</span><span>모든 항목을 추적하고, 모든 판단에 근거를 남깁니다.</span></footer>
+      <footer className="workspace-footer"><span>Design Atlas <b>/</b> 로그 검토</span><span>모든 항목을 추적하고, 모든 판단에 근거를 남깁니다.</span></footer>
     </main></div>
     <Dialog open={!!form} onOpenChange={open => { if (!open && !busy) setForm(null) }}><DialogContent><DialogHeader><DialogTitle>{form?.kind === 'review' ? '검토 의견 기록' : '추가 근거 요청'}</DialogTitle><DialogDescription>{form?.unit.item_id} · 개정 {form?.revision}{form?.kind === 'review' ? '을 기준으로 판단합니다.' : ' · 요청은 1시간 동안 유효합니다.'}</DialogDescription></DialogHeader><form onSubmit={submit} className="command-form">{error && <div role="alert" className="error-banner">{error}</div>}{form?.kind === 'review' ? <fieldset><legend>최종 판단</legend><div className="conclusion-buttons">{(['PASS', 'FAIL'] as const).map(value => <label key={value} className={`conclusion-option ${conclusion === value ? 'chosen' : ''}`}><input type="radio" name="conclusion" value={value} checked={conclusion === value} disabled={busy || value === 'PASS' && form.unit.check_status === 'FAIL'} onChange={() => { setConclusion(value); edit() }} /><Status value={value} /><span>{value === 'PASS' ? '정상으로 확인' : '문제로 확인'}</span></label>)}</div>{form.unit.check_status === 'FAIL' && <p className="tiny">규칙 판정이 FAIL인 항목은 PASS로 변경할 수 없습니다.</p>}</fieldset> : <label>요청할 기록 ID<Textarea aria-label="요청할 기록 ID" value={recordIds} onChange={e => { setRecordIds(e.target.value); edit() }} placeholder="기록 ID를 줄바꿈 또는 쉼표로 구분" required disabled={busy} /></label>}<label htmlFor="decision-reason">{form?.kind === 'review' ? '판단 사유' : '요청 사유'} <span className="required">*</span></label><Textarea id="decision-reason" value={reason} onChange={e => { setReason(e.target.value); edit() }} placeholder="확인한 근거와 판단 이유를 구체적으로 기록해 주세요." rows={4} required disabled={busy} maxLength={form?.kind === 'review' ? 2000 : 1000} /><p className="tiny">{form?.kind === 'review' ? `검토자: ${session.reviewer}. 현재 번들에만 적용되며 이전 기록은 보존됩니다.` : '알려진 기록 ID로 추가 근거를 요청하세요. 응답이 도착하면 별도로 수신해야 합니다.'}</p><DialogFooter><Button type="button" variant="outline" onClick={() => setForm(null)} disabled={busy}>취소</Button><Button type="submit" disabled={busy || !reason.trim()}>{busy && <LoaderCircle className="spin" />}{form?.kind === 'review' ? '검토 저장' : '요청 등록'}</Button></DialogFooter></form></DialogContent></Dialog>
     <Dialog open={!!evidence} onOpenChange={open => { if (!open) setEvidence(null) }}><DialogContent className="evidence-dialog"><DialogHeader><DialogTitle>수신한 추가 근거</DialogTitle><DialogDescription>{evidence?.result} · 총 {evidence?.record_count}개 기록</DialogDescription></DialogHeader><div className="evidence-records">{evidence?.records.map(record => <RawEvidence key={`${evidence.requestId}:${record.record_id}`} api={api} requestId={evidence.requestId} record={record} demo={demo} />)}</div></DialogContent></Dialog>
   </div>
+}
+
+type AtlasReport = {
+  id: string; project_id: string; block_id: string; version_id: string;
+  item_id?: string; family?: string; check_status?: string; record_count?: number; eco?: string | null;
+  source_storage?: string; [key: string]: unknown;
+}
+
+function AtlasReports({ onLegacy, canWorkbench }: { onLegacy: () => void; canWorkbench: boolean }) {
+  const atlas = useAtlas()
+  const auth = useDashboardAuth(true)
+  const navigateDashboard = useDashboardNavigation()
+  const projectId = atlas?.scope.projectId || ''
+  const blockId = atlas?.scope.blockId || ''
+  const versionId = atlas?.scope.versionId || ''
+  const [reports, setReports] = useState<Page<AtlasReport>>({ items: [], total: 0, offset: 0, limit: 25 })
+  const [offset, setOffset] = useState(0)
+  const [selected, setSelected] = useState<AtlasReport | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [refresh, setRefresh] = useState(0)
+  useLayoutEffect(() => {
+    setOffset(0); setSelected(null); setError('')
+    setReports({ items: [], total: 0, offset: 0, limit: 25 })
+  }, [projectId, blockId, versionId])
+  useEffect(() => {
+    if (!projectId) { setLoading(false); return }
+    const controller = new AbortController()
+    const params = new URLSearchParams({ project_id: projectId, offset: String(offset), limit: '25' })
+    if (blockId) params.set('block_id', blockId)
+    if (versionId) params.set('version_id', versionId)
+    setLoading(true); setError('')
+    auth.request<Page<AtlasReport>>(`/api/atlas/reports?${params}`, undefined, false, controller.signal)
+      .then(value => { if (!controller.signal.aborted) { setReports(value); setSelected(null) } })
+      .catch(cause => { if (!controller.signal.aborted) { setReports({ items: [], total: 0, offset, limit: 25 }); setSelected(null); setError(cause instanceof Error ? cause.message : '버전 로그를 불러오지 못했습니다.') } })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    return () => controller.abort()
+  }, [auth.request, projectId, blockId, versionId, offset, refresh])
+  function openWorkbench(report: AtlasReport) {
+    const target = new URL(appUrl('/?page=workbench'), location.origin)
+    for (const [key, value] of Object.entries({ project: report.project_id, block: report.block_id, version: report.version_id, review: report.id, tab: 'reports', item: report.item_id, eco: report.eco })) {
+      if (value) target.searchParams.set(key, value)
+    }
+    void navigateDashboard(target.pathname + target.search, auth.session?.user_id).catch(cause => setError(cause instanceof Error ? cause.message : '로그 검토를 열지 못했습니다.'))
+  }
+  return <main className="workspace" id="workspace-main" tabIndex={-1}>
+    <div className="page-heading"><div><h1>버전 로그</h1><p>공통 범위의 정확한 프로젝트·블록·버전 ID로 {atlas?.demo ? '합성 보고서' : '수신된 로그'}를 조회합니다.</p></div><div className="heading-actions"><Button variant="outline" onClick={() => setRefresh(value => value + 1)} disabled={loading || !projectId}><RefreshCw className={loading ? 'spin' : ''} />새로고침</Button>{!atlas?.demo && <Button variant="outline" onClick={onLegacy}>기존 접수 실행 검토</Button>}</div></div>
+    {error && <p className="error-banner" role="alert">{error}</p>}
+    {!projectId ? <Empty>상단 공통 범위에서 프로젝트를 선택해 주세요. 블록과 버전을 선택하면 조회 범위를 좁힐 수 있습니다.</Empty> : loading ? <LoadingDetail /> : error ? null : <>
+      <section className="detail-panel"><div className="section-heading"><h2>수신된 보고서 <span>{number(reports.total)}</span></h2></div>
+        {reports.items.length ? <Table><TableHeader><TableRow><TableHead>보고서</TableHead><TableHead>블록 · 버전 ID</TableHead><TableHead>검사 결과</TableHead><TableHead>기록 수</TableHead><TableHead>근거</TableHead></TableRow></TableHeader><TableBody>{reports.items.map(report => <TableRow key={report.id} className={selected?.id === report.id ? 'selected-row' : ''}><TableCell><strong>{report.id}</strong><div>{report.item_id || '항목 미분류'} · {report.family || '도구 미분류'}</div></TableCell><TableCell><code>{report.block_id}</code><br /><code>{report.version_id}</code></TableCell><TableCell>{report.check_status ? <Status value={report.check_status} /> : '미제공'}</TableCell><TableCell>{report.record_count === undefined ? '미제공' : number(report.record_count)}</TableCell><TableCell><Button variant="outline" size="sm" onClick={() => setSelected(report)}>수신 내용 보기</Button></TableCell></TableRow>)}</TableBody></Table> : <Empty>선택한 범위에 수신된 로그가 없습니다. 버전 선언이나 수치 분석 준비만으로 로그가 생성되지는 않습니다.</Empty>}
+        <Pagination offset={offset} total={reports.total} limit={25} change={setOffset} />
+      </section>
+      {selected && <section className="detail-panel"><div className="detail-header"><div><h2>{selected.id}</h2><p>{atlas?.demo ? '현재 탭의 합성 보고서 payload입니다. 실제 서버나 DB에서 읽은 자료가 아닙니다.' : '서버에 저장된 보고서 payload 원문입니다. 분할 저장된 원본은 이 목록 API에서 펼치지 않습니다.'}</p></div><Button variant="ghost" onClick={() => setSelected(null)}>닫기</Button></div><div className="unit-detail"><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(selected, null, 2)}</pre>{canWorkbench ? <Button onClick={() => openWorkbench(selected)}><FileSearch size={16} />로그 분류·판정 열기</Button> : <p className="session-notice">운영 로그 분류·판정은 권한이 확인된 SSO 세션에서만 지원합니다. 로컬 토큰에서 데모로 대체하지 않습니다.</p>}</div></section>}
+    </>}
+    <footer className="workspace-footer"><span>Design Atlas <b>/</b> 로그 검토</span><span>수신된 원본과 검토 권한을 그대로 유지합니다.</span></footer>
+  </main>
 }
 
 function RuleMetadata({ unit }: { unit: Unit }) {

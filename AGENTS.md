@@ -8,6 +8,7 @@
 
 - 수정은 가이드의 파일/메서드 허용 목록에 한정한다. 그 밖의 코드·SQL·UI·기존 테스트·설정 계약은 읽기 전용이다.
 - 실제 SSO SDK/계정 조회는 회사 어댑터에 연결하고, `AUTHORIZATION_NOT_IMPLEMENTED` 등 보호 장치를 해제하지 않는다.
+- 2026-11-11 사용자 결정의 사내 메일 연동은 [메일 Protocol 계약](oa/MAIL_INTEGRATION.md)을 따른다. OA 담당자는 `oa/integration/corporate_mail.py:create_mail_sender`의 본문·필요 import와 `company_mail/`의 승인 SDK wrapper만 구현한다. 공통 Protocol·worker·SQL·SSO·UI는 수정하지 않으며 새 테스트/fixture/mock/검증 스크립트 파일을 추가하지 않는다.
 - item별 report 파서는 [PARSER_INTEGRATION.md](vwp_bridge/PARSER_INTEGRATION.md)의 추상 계약과 허용된 회사 구현/등록 지점만 사용한다. 실제 report는 사내에서 검증하고 외부 Codex 문의에는 합성 입력만 전달한다.
 - 예상하지 못한 오류·테스트 실패·보호 파일 변경 필요 시 **수정/재시도를 중단하고 Codex에게 문의**한다. 자기 어댑터의 오류도 같다.
 - 문의는 가이드의 비식별 템플릿을 사용한다. 직접 연결 수단이 없으면 사용자가 현재 Codex 대화로 전달하도록 요청한다. 답변 전 상태는 `WAITING_FOR_CODEX`다.
@@ -29,3 +30,12 @@
 - `run_tests.py`와 `db/tests/run_mock.py`의 기본은 `quick`이다. 백엔드 quick 60개, regression 65개, full 66개를 구분한다. `full`에는 포털 전체 66단계가 포함되며 브라우저·컨테이너 실행은 별도다. 특정 migration/포털 변경은 `tests.test_shared_source_migration`의 전체 단계 검증을 우선한다.
 - 새 테스트를 quick에 넣을 때는 전체 연동 모듈 추가로 반복되는 DB 준비·전체 흐름 비용을 확인하고, 필요한 대표 테스트를 명시적으로 선택한다. 무거운 전체 흐름은 regression/full에 보존하고 해당 계약 변경 시 `--include`로 선택한다. 변경 부분의 전용 테스트를 quick과 합쳐 실행한 경우 같은 검사를 별도 명령으로 반복할 필요는 없다. quick 시간을 줄이려고 테스트의 입력·기대값·실패 조건을 바꾸지 않는다. `--include`는 Codex 통합 검사용이며 사내 담당자의 `--role` 범위를 확장하지 않는다.
 - 선택 프로필과 실제 실행 건수를 보고한다. `quick` 성공을 전수 통과로 표시하거나 기존 실패·입력·기대값·권한 검사를 없애서 통과시키지 않는다. 내부 AI의 기존 수정 허용 범위와 오류 시 중단 규칙은 그대로다.
+
+## 사내 AI 담당자별 인계문 작성
+
+- 사용자 요청으로 사내 AI 담당자에게 전달하는 인계문에는 **정확한 기준 Git commit SHA**를 반드시 포함한다. 브랜치명만 적거나 미커밋 작업을 해당 SHA에 포함된 변경처럼 표시하지 않는다. 미커밋·미발행 변경과 실제 사내 배포 검증 여부를 별도로 명시한다.
+- 각 담당자에게 **공통 지시까지 포함된 독립 파일**을 제공한다. 공통 문서를 따로 복사해야 이해할 수 있는 형태로 전달하지 않는다.
+- 저장 위치는 `/home/coder/workspace/design_atlas/artifacts/internal-handoff/`다. 기존 역할별 `vwp/`, `vwp_bridge/`, `oa/` 하위에 **동일한 업데이트 번호**의 `NNN_작업명.md` 파일을 작성한다. 첫 번호는 `001`, 다음은 `002`처럼 증가시킨다. `vwp_bridge`는 중앙 VWP 서버, `oa`는 OA 서버 담당이다.
+- 루트의 **`LATEST.md`를 최신 인계의 단일 진입점**으로 유지한다. 최신 업데이트 번호·작성일·정확한 Git SHA·push/미발행 상태·세 담당자 파일 링크를 기록한다. 다음 업데이트 때 이전 번호를 확인해 증가시키고 세 역할 파일과 LATEST를 함께 갱신한다.
+- 2026-11-11 사용자 요청에 따라 기존 혼재된 인계 Markdown은 삭제하고 번호 `001`부터 다시 시작한다. 이 삭제 범위는 `artifacts/internal-handoff/` 내부에 한정하며 프로젝트 문서는 삭제하지 않는다. 이후 번호가 있는 인계 기록은 보존하고 해당 경로의 Git 제외 정책을 유지한다.
+- 파일마다 공통 코드 기준 SHA·사내 checkout의 추가 변경 구분, 담당 작업·허용 범위·중단 조건, 실제 검증과 미검증 사항을 포함한다. 새 지침은 회사 AI의 코드 수정·배포·DB 실행 권한을 넓히지 않는다.

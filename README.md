@@ -1,14 +1,14 @@
-# Sanity Lens AI
+# Design Atlas
 
-**AI 로그 분석 · 판정 지원**
+**설계 검사·변화·근거를 하나의 작업 공간에서**
 
-Sanity report의 전체 로그를 AI가 분류하고 그룹별 판정과 근거를 제안합니다. 사람이 그룹 구성과 판정을 수정·확정하면 그 근거를 DB에 보존하고, 다음 report의 AI 판단에 참고 사례로 제공합니다. 수집부터 검토까지의 목표는 **이번 판단을 설명하고, 사람의 정정이 다음 판단에 반영되게 하는 것**입니다.
+Design Atlas는 공통 프로젝트·블록·버전을 기준으로 로그 검토와 구성·면적·전력 분석을 연결합니다. AI가 로그를 분류하고 문제 여부와 근거를 제안하면 사람이 최종 결정하며, 사용자가 선택한 확정 근거를 다음 판단에 활용합니다. 수치 변화는 코드로 계산하고 변경 설명의 적용 범위·설명 가능성은 별도로 검토합니다.
+
+기존 Sanity 검사와 Area/Power 추적은 독립 분석 엔진으로 유지하되 제품·홈·범위 선택·탐색은 하나로 통합합니다. 사용자에게 별도의 Area 프로젝트를 재등록하게 하지 않으며 기존 데이터·권한·네 테이블과 두 테이블의 저장 계약을 보존합니다. 파란색 공통 light/dark 테마를 사용합니다.
 
 [AI 판단 설계](AI_DECISION_DESIGN.md) · [모델 연결·실행](oa/AI_RUNTIME.md) · [VWP AI 작업자](vwp_bridge/AI_WORKER.md) · [설치·배포](DEPLOYMENT.md)
 
-![Sanity Lens AI의 인디고·바이올렛 테마와 프로젝트 현황](docs/images/sanity-lens-ai-demo.png)
-
-*현재 UI의 합성 데모 화면입니다. 표시된 사용자·프로젝트·검사 수치는 예시이며, 이 화면에서는 실제 DB·SSO·모델을 호출하지 않습니다.*
+현재 실행 상태·공통 카탈로그·기존 데이터 연결은 [Design Atlas 인계](HANDOFF.md)를 따른다.
 
 ## 무엇을 할 수 있나요?
 
@@ -22,9 +22,10 @@ Sanity report의 전체 로그를 AI가 분류하고 그룹별 판정과 근거�
 | 병렬 호출 | 관리자가 전체 호출 상한과 동시 작업 수를 지정합니다. 분류·판정 작업이 슬롯을 나눠 사용하고 완료 배치를 보존합니다. 기본은 8호출/4작업이며 기존 8 제한을 해제했습니다. [설정 안내](oa/PARALLEL_BATCHES.md) |
 | AI 입력 최적화 | item별 `ai_fields`·원문/부가정보 전송 설정으로 판단할 필드를 선택합니다. 전체 원본은 DB에 보존하며 짧은 요청 ID를 서버에서 원본에 연결합니다. [설정 안내](oa/AI_INPUT_FIELDS.md) |
 | 작업 현황·복구 | 카드에서 단계·완료량·배치당 평균 시간·병합 iteration·현재 그룹 수를 확인합니다. 진행 애니메이션, 안전한 재시도/재개와 작업 실행 기록 삭제를 제공합니다. 실제 삭제는 단일 계정의 기존 OA DELETE 권한이 필요합니다. |
-| 검토 워크스페이스 | 프로젝트·블록·NET_VER / REVISION·ECO·PoR, 권한별 검토와 변경 이력을 관리합니다. 인디고·바이올렛 테마, 밝은/어두운 모드, 폭 조절·접기 애니메이션을 지원하는 사이드바와 홈으로 돌아가는 브랜드 로고를 제공합니다. |
+| 검토 워크스페이스 | 공통 프로젝트·블록·NET_VER / REVISION을 유지하면서 로그와 수치를 탐색합니다. ECO·PoR·검토 이력, 파란색 light/dark 테마와 반응형 공통 사이드바를 제공합니다. |
 | 프로젝트 멤버 | 프로젝트 권한 하나로 모든 등록 블록을 조회·검토·수정합니다. 관리자는 사용자별 참여 프로젝트를 승인·회수하며, 블록 화면에 전체 담당자 명단을 표시하지 않습니다. |
 | 원본·근거 보존 | HTTPS 제출, 원본의 VWP private DB 보관, item별 파싱, 원문 위치·해시 검증을 연결합니다. 선택형 무손실 압축·근거 페이지·공유 본문 저장을 지원합니다. |
+| Area/Power 추적 | CSV gzip 보관·corner별 실행·명시 snapshot/기준·전체 또는 target 비교·매핑·변경 설명·AI 검토·알림을 같은 업무 화면에서 제공합니다. 운영 SSO는 현재와 기준 프로젝트 권한을 모두 검사합니다. |
 
 AI 제안은 사람이 확정한 결과와 구분합니다. 과거 사례가 없는 첫 report도 현재 로그와 확인된 기준으로 판단할 수 있어야 하며, 모델 호출 성공만으로 판단 품질 검증을 대신하지 않습니다.
 
@@ -53,7 +54,7 @@ flowchart LR
     D -->|현황·결과 조회| O
 ```
 
-VWP-bridge와 OA의 업무 데이터 전달은 기존 PostgreSQL 네 테이블을 사용합니다. 모델 API 호출과 사용자 CLI의 HTTPS 제출은 이 DB 경계와 별도입니다. AI 작업자를 옮기기 위해 새 HTTP 중계 서버·테이블·권한을 추가하지 않습니다.
+Sanity의 VWP-bridge와 OA 업무 데이터 전달은 기존 PostgreSQL 네 테이블을 사용합니다. 선택형 Area/Power는 이미 신청한 `di_area_power_csv`, `tracking_record` 두 테이블과 별도 namespace를 사용하며 Sanity 네 테이블을 바꾸지 않습니다. 양쪽 업무 모두 OA↔VWP 전달은 DB뿐입니다. 모델 API 호출과 사용자 CLI의 HTTPS 제출은 이 DB 경계와 별도입니다.
 
 | 실행 위치 / 역할 | 코드 | 책임 |
 |---|---|---|
@@ -91,6 +92,8 @@ npm --prefix oa/dashboard run dev
 ## 설치와 사내 배포
 
 Python **3.10 이상**, PostgreSQL **12.1 이상·UTF-8**을 전제로 합니다. Node.js는 화면 빌드·개발에 사용합니다. PostgreSQL 18의 알려진 호환 문제는 아래 검증 상태를 확인하세요.
+
+선택형 Area/Power를 함께 실행하면 Python **3.11 이상·PostgreSQL 18.6**과 `AREA_POWER_*` 설정을 사용합니다. 이 모듈의 준비가 Sanity 포털 도구의 PostgreSQL 18 호환 문제 해결을 뜻하지는 않습니다.
 
 ### 1. 의존성과 비공개 설정 준비
 
@@ -201,3 +204,20 @@ mock 실행기는 CPU 가용량에 맞춰 최대 4개의 작업자 DB를 만들�
 사내 연동 AI는 작업 전에 [AGENTS.md](AGENTS.md)와 [INTERNAL_AI_GUIDE.md](INTERNAL_AI_GUIDE.md)를 읽고 자기 역할의 허용 어댑터만 구현합니다. 실제 회사 자료·비밀값은 외부 대화나 공개 Git에 올리지 않습니다. 예상 밖 오류나 보호 코드 변경이 필요하면 기존 문의 절차를 따릅니다.
 
 수집·접수·파싱 성공은 검토 완료나 sanity PASS를 뜻하지 않습니다. 전체 근거·권한·개정·해시 검증이 실패하면 중단하며, 일부 결과·로컬 DB·다른 모델·데모로 자동 우회하지 않습니다. 원문 조회 권한과 자격증명 보호를 유지하고, SDC는 분석 자료로만 취급해 실행하지 않습니다. legacy 번들·CLI·VWP 규칙 제안 경로는 호환 기능이며 현재 전체 로그 AI 작업자와 구분합니다.
+
+## Design Atlas 실행과 공통 카탈로그
+
+기본 홈은 `/`다. 프로젝트·블록·버전을 한 번 선택하고 같은 사이드바에서 로그 검토와 구성·전력 분석을 연다. 공통 API는 `/api/atlas/*`, 수치 엔진 API는 `/api/area-power/*`다. 회사 배포는 기존 SSO entry point·관리자/프로젝트 권한 계약과 `AREA_POWER_ENABLED=true`를 사용한다. 별도 Area 로그인·프로젝트 재등록·OA↔VWP HTTP 중계는 없다. 현재·기준 양쪽 권한을 검사한다.
+
+현재 개발 호스트는 `.env.integrated.local`의 명시적 local_token 모드와 실제 로컬 DB로 실행한다. 기존 Area DB와 사용자 데이터는 보존했다. 접속·토큰은 비공개 설정 파일에서 확인하며, 사내 SSO 실패를 이 모드로 대체하지 않는다. 기존 `.venv`를 수정하지 않고 `.venv-integrated`를 사용했다.
+
+```bash
+set -a && source .env.integrated.local && set +a
+.venv-integrated/bin/python -m uvicorn oa.dashboard_api:app --host 127.0.0.1 --port 8000 --no-proxy-headers --no-access-log
+```
+
+현재 저장소는 `/home/coder/workspace/design_atlas`다. code-server 접속 주소는 **http://127.0.0.1:8080/login?to=%2Fproxy%2F8000%2F** 이며 로그인 후 공통 홈으로 복귀한다. code-server 인증은 해제하지 않는다. 홈에서 공통 프로젝트·블록·네이티브 버전을 등록하고 **수치 범위 준비**를 실행하면 내부 UUID가 명시적으로 연결된다. 기존 Area 데이터는 이름으로 합치지 않고 로컬 운영자가 UUID를 지정해 연결한다. 상세 worker·환경변수·두 테이블 적용은 [Area/Power 안내](area_power/README.md)를 따른다.
+
+### 통합 합성 데모
+
+**[Design Atlas 데모](http://127.0.0.1:8080/login?to=%2Fproxy%2F8000%2F%3Fdemo%3D1)** 는 실제 앱과 같은 공통 홈·메뉴·범위 선택과 로그·Area/Power 화면을 사용한다. 기존 데모 창은 새로고침한다. 선택·비교·revision·알림 상태는 탭 메모리에만 적용하며 초기화/새로고침 시 사라진다. 실제 DB·SSO·VWP·AI·메일은 호출하지 않는다. 자세한 동작과 경계는 [Dashboard 안내](oa/dashboard/README.md#통합-합성-데모)를 따른다.

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { AuthConfig, Session } from './types'
+import { appUrl } from './appUrl'
 
 export class DashboardRequestError extends Error {
   constructor(public code: string, public status: number) {
@@ -19,12 +20,17 @@ export class DashboardRequestError extends Error {
       AUTHORIZATION_FORBIDDEN: '이 작업에 필요한 권한이 없습니다. 현재 담당 범위를 확인해 주세요.',
       RESOURCE_NOT_FOUND: '현재 권한으로 이 검사 결과를 열 수 없습니다. 담당 범위를 확인해 주세요.',
       REQUEST_CONFLICT: '이미 처리되었거나 같은 요청 번호의 내용이 다릅니다. 최신 상태를 확인해 주세요.',
+      AREA_POWER_UNAVAILABLE: '구성·전력 분석 서비스가 설정되지 않았거나 현재 사용할 수 없습니다. 운영 담당자에게 문의해 주세요.',
+      AREA_BINDING_NOT_RECORDED: '부분 저장: 수치 DB에는 저장되었지만 공통 카탈로그 연결 기록은 완료되지 않았습니다. 범위를 새로고침해 상태를 확인한 후 필요한 경우 직접 다시 연결하세요.',
+      AREA_BINDING_CONFLICT: '명시적 연결이 충돌하거나 여러 기존 ID가 모호하게 연결되어 있습니다. 로컬 운영자 또는 관리자에게 실제 연결 ID를 확인하세요.',
+      AREA_PREVIOUS_NOT_PREPARED: '명시적으로 선택한 이전 수치 버전을 먼저 준비하세요. 이전 범위 선택 → 수치 분석 준비 후 이 범위로 돌아오세요.',
+      AREA_LINEAGE_REQUIRED: '이 버전의 수치 계보를 명시적으로 선언하세요. 계보 시작 또는 실제 이전 버전을 선택해야 합니다.',
     }
     super(`${messages[code] || '요청을 처리하지 못했습니다.'} (${code})`)
   }
 }
 
-async function result<T>(response: Response, plain = false): Promise<T> {
+async function result<T>(response: Response, plain: boolean | 'blob' = false): Promise<T> {
   if (!response.ok) {
     let code = `HTTP_${response.status}`
     try {
@@ -33,7 +39,7 @@ async function result<T>(response: Response, plain = false): Promise<T> {
     } catch { /* A proxy's non-JSON response is still an explicit failure. */ }
     throw new DashboardRequestError(code, response.status)
   }
-  return plain ? await response.text() as T : await response.json() as T
+  return plain === 'blob' ? await response.blob() as T : plain ? await response.text() as T : await response.json() as T
 }
 
 export function validAuthConfig(value: AuthConfig): boolean {
@@ -47,7 +53,7 @@ const message = (error: unknown) => error instanceof DashboardRequestError ? err
 
 /** Browser credentials stay in cookies or tab memory; the server selects one mode. */
 export type DashboardAuthSnapshot = { config: AuthConfig; session: Session }
-export function useDashboardAuth(enabled: boolean, initial?: DashboardAuthSnapshot) {
+function useDashboardAuthState(enabled: boolean, initial?: DashboardAuthSnapshot) {
   const [config, setConfig] = useState<AuthConfig | null>(() => initial && validAuthConfig(initial.config) && initial.session.auth_method === initial.config.mode ? initial.config : null)
   const [session, setSession] = useState<Session | null>(() => config ? initial?.session ?? null : null)
   const [token, setToken] = useState('')
@@ -71,7 +77,7 @@ export function useDashboardAuth(enabled: boolean, initial?: DashboardAuthSnapsh
     const controller = new AbortController()
     pending.current.add(controller)
     setChecking(true); setError('')
-    fetch('/api/auth-config', { credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal })
+    fetch(appUrl('/api/auth-config'), { credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal })
       .then(response => result<AuthConfig>(response))
       .then(value => {
         if (controller.signal.aborted) return
@@ -85,17 +91,20 @@ export function useDashboardAuth(enabled: boolean, initial?: DashboardAuthSnapsh
 
   useEffect(() => () => abortRequests(), [enabled, abortRequests])
 
-  const request = useCallback(async <T,>(path: string, body?: Record<string, unknown>, plain = false): Promise<T> => {
+  const request = useCallback(async <T,>(path: string, body?: Record<string, unknown> | string, plain: boolean | 'blob' = false, signal?: AbortSignal): Promise<T> => {
     if (!enabled || !config) throw new DashboardRequestError('AUTH_CONFIG', 503)
     if (config.mode === 'local_token' && !token) throw new DashboardRequestError('UNAUTHORIZED', 401)
     const controller = new AbortController()
+    signal?.throwIfAborted()
+    const cancel = () => controller.abort()
+    signal?.addEventListener('abort', cancel, { once: true })
     const version = generation.current
     pending.current.add(controller)
     try {
-      const response = await fetch(path, {
-        method: body ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'error',
-        headers: { ...(config.mode === 'local_token' ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { 'Content-Type': 'application/json', ...(config.mode === 'sso' ? { 'X-Sanity-Request': '1' } : {}) } : {}) },
-        ...(body ? { body: JSON.stringify(body) } : {}), signal: controller.signal,
+      const response = await fetch(appUrl(path), {
+        method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error',
+        headers: { ...(config.mode === 'local_token' ? { Authorization: `Bearer ${token}` } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'X-Sanity-Request': '1' }) },
+        ...(body !== undefined ? { body: typeof body === 'string' ? body : JSON.stringify(body) } : {}), signal: controller.signal,
       })
       const value = await result<T>(response, plain)
       if (version !== generation.current || controller.signal.aborted) throw new DOMException('Request cancelled', 'AbortError')
@@ -115,6 +124,7 @@ export function useDashboardAuth(enabled: boolean, initial?: DashboardAuthSnapsh
       }
       throw error
     } finally {
+      signal?.removeEventListener('abort', cancel)
       pending.current.delete(controller)
     }
   }, [enabled, config, token, abortRequests])
@@ -171,8 +181,7 @@ export function useDashboardAuth(enabled: boolean, initial?: DashboardAuthSnapsh
     pending.current.add(controller)
     try {
       // Origin is supplied by the browser. The company router validates it
-      // against its configured public SP origin before revoking the session.
-      const response = await fetch(config.logout_url, { method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal })
+      const response = await fetch(appUrl(config.logout_url), { method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal })
       const value = await result<{ status: string }>(response)
       if (controller.signal.aborted) return false
       if (value.status !== 'LOGGED_OUT') throw new DashboardRequestError('AUTH_INVALID_RESULT', 503)
@@ -191,4 +200,27 @@ export function useDashboardAuth(enabled: boolean, initial?: DashboardAuthSnapsh
   }
 
   return { config, session, checking, signingOut, error, accountProblem, businessDenied, request, refreshSession, loginWithToken, logout, retry }
+}
+
+export interface DashboardAuth {
+  config: AuthConfig | null
+  session: Session | null
+  checking: boolean
+  signingOut: boolean
+  error: string
+  accountProblem: boolean
+  businessDenied: number
+  request: <T>(path: string, body?: Record<string, unknown> | string, plain?: boolean | 'blob', signal?: AbortSignal) => Promise<T>
+  refreshSession: () => Promise<Session>
+  loginWithToken: (value: string) => void
+  logout: () => Promise<boolean>
+  retry: () => void
+}
+export const DashboardAuthContext = createContext<DashboardAuth | null>(null)
+
+/** The router owns one identity; standalone explicit demos keep their existing boundary. */
+export function useDashboardAuth(enabled: boolean, initial?: DashboardAuthSnapshot): DashboardAuth {
+  const shared = useContext(DashboardAuthContext)
+  const local = useDashboardAuthState(enabled && !shared, initial)
+  return shared ?? local
 }

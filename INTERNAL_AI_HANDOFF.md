@@ -84,6 +84,8 @@ VWP가 형식/점검 의미·정답을 준비하고 VWP-bridge가 parser를 구�
 
 표의 `company_*/`는 사내 AI가 추가할 수 있는 위치다. 자동 plugin 탐색·운영 등록 경로가 아니다. `common/sanity_integration_contracts.py`, `common/sanity_integration_examples.py`와 기존 공통 코드/SQL/UI/테스트는 사내 AI에게 읽기 전용이다. 새 의존성·env 키·서명/반환 변경이 필요하면 먼저 Codex에게 문의한다.
 
+**2026-11-11 Area/Power 사내 메일 추가 연동:** OA 담당자는 [MAIL_INTEGRATION.md](oa/MAIL_INTEGRATION.md)의 `MailSender` Protocol에 맞춰 `oa/integration/corporate_mail.py:create_mail_sender`의 본문·필요 import와 `company_mail/`의 승인된 회사 SDK wrapper만 구현한다. 공통 factory/worker 연결은 제공했으며 SMTP 구현·설정·fallback은 제거했다. 미연결은 job 점유 전 실패한다. 공통 Protocol·worker·composition root·SSO·SQL·UI는 읽기 전용이며 이번 연동에는 새 테스트/fixture/mock/검증 스크립트 파일을 추가하지 않는다. 실제 발송/배포는 사용자 승인 범위에서만 수행하고 예상 밖 오류는 기존 `WAITING_FOR_CODEX` 절차로 인계한다.
+
 ## 4. 사내 AI 작업 명세
 
 ### INT-01. SSO와 내부 사용자 연결

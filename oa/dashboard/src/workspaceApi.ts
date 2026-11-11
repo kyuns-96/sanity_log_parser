@@ -1,3 +1,4 @@
+import { appPathname, appUrl } from './appUrl'
 import type { PreservedSource, PreservedCitation, PreservedCitationSource } from './PreservedSources'
 export type WorkspaceUser = { id: string; name: string; username: string; role: string }
 export type WorkspaceSession = { user: WorkspaceUser; csrf: string; expires_at: string; environment: string; is_admin?: boolean }
@@ -124,8 +125,8 @@ export class WorkspaceError extends Error {
 // Keep the server boundary fixed for this document: an in-app visit to the
 // administrator must never redirect a retained workbench to the test API.
 // Importing the fixture in Node does not select any browser environment.
-const productionDocument = typeof location !== 'undefined' && location.pathname === '/'
-  && (new URLSearchParams(location.search).get('page') === 'workbench' || new URLSearchParams(location.search).get('demo') !== '1')
+const productionDocument = typeof location !== 'undefined' && appPathname() === '/'
+  && new URLSearchParams(location.search).get('demo') !== '1'
 export const productionWorkbench = () => productionDocument
 export const workspaceApiBase = () => productionWorkbench() ? '/api/workbench' : '/workspace/api'
 export const aiExecutionLabel = (value: { model: string; connection_label?: string }) => [value.connection_label, value.model].filter(Boolean).join(' / ')
@@ -226,7 +227,7 @@ export async function workspaceRequest<T>(path: string, options: { body?: unknow
   }
   let response: Response
   try {
-    response = await fetch(`${workspaceApiBase()}${path}`, {
+    response = await fetch(appUrl(`${workspaceApiBase()}${path}`), {
       method: options.body === undefined ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store',
       headers: options.body === undefined ? undefined : { 'Content-Type': 'application/json', ...(productionWorkbench() ? { 'X-Sanity-Request': '1' } : { 'X-CSRF-Token': options.csrf || '' }) },
       body: options.body === undefined ? undefined : JSON.stringify(options.body), signal: options.signal,

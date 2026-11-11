@@ -1,3 +1,4 @@
+import { appUrl } from './appUrl'
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowDownToLine, ArrowUpRight, Check, ChevronLeft, ChevronRight, Database, FileSearch, Layers3, LoaderCircle, Search, ShieldCheck, Users, X } from 'lucide-react'
 import { Button } from './studio/components/ui/button'
@@ -40,7 +41,7 @@ export default function ReportsPreview() {
   const [selected, setSelected] = useState<Item | null>(null)
   useEffect(() => {
     let active = true
-    fetch('/sample-data/reports-library.json', { cache: 'no-store' }).then(async response => {
+    fetch(appUrl('/sample-data/reports-library.json'), { cache: 'no-store' }).then(async response => {
       if (!response.ok) throw new Error('검사 예시 데이터를 불러오지 못했습니다. 샘플 데이터 생성 상태를 확인해 주세요.')
       const value = await response.json() as Data
       if (value.schema_version !== 1 || value.summary.origin !== 'SYNTHETIC_PUBLIC_REFERENCE'
@@ -83,7 +84,7 @@ export default function ReportsPreview() {
       <label className="rp-account"><span><Users size={14} />가상 계정 전환</span><select className="studio-native-select" aria-label="가상 사용자" value={userId} onChange={e => chooseUser(e.target.value)}>{data.users.map(item => <option key={item.id} value={item.id}>{item.name} · {item.role}</option>)}</select><small>{user?.role} · 예시 담당 범위</small></label>
       <div className="nav-label">PROJECTS</div><nav aria-label="예시 프로젝트">{data.projects.map(item => <button key={item.id} aria-label={`${item.name} 프로젝트`} disabled={!projects.some(project => project.id === item.id)} className={projectId === item.id ? 'nav-active' : ''} onClick={() => { setProjectId(item.id); resetFilters() }}><Layers3 size={17} />{item.name}{projectId === item.id && <Check size={14} />}</button>)}</nav>
       <div className="rp-sidebar-note"><ShieldCheck size={21} /><strong>가상 사용자 10명</strong><p>TOP 3명과 블록 담당자 7명으로 구성했습니다. 계정 전환은 실제 SSO 인증이 아닌 예시 탐색 기능입니다.</p></div>
-      <div className="rp-sidebar-links"><a href="/?demo=1&flow=versions">버전·PoR 데모 <ArrowUpRight size={13} /></a><a href="/?demo=1&flow=access">프로젝트 배정 데모 <ArrowUpRight size={13} /></a><a href="/?demo=1">기본 검토 대장 <ArrowUpRight size={13} /></a></div>
+      <div className="rp-sidebar-links"><a href={appUrl('/?demo=1&flow=versions')}>버전·PoR 데모 <ArrowUpRight size={13} /></a><a href={appUrl('/?demo=1&flow=access')}>프로젝트 배정 데모 <ArrowUpRight size={13} /></a><a href={appUrl('/?demo=1')}>기본 검토 대장 <ArrowUpRight size={13} /></a></div>
     </aside>
     <div className="main-shell"><header className="topbar"><div className="breadcrumb"><span>공개 형식 예시</span><ChevronRight size={13} /><strong>{project?.name || '미배정'}</strong></div><div className="color-mode-actions"><ColorModeControl /><span className="rp-readonly"><Database size={14} />파싱·DB 저장 검증 완료</span></div></header>
       <main className="workspace rp-workspace">

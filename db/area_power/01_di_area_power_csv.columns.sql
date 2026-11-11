@@ -1,0 +1,33 @@
+-- COLUMN DEFINITIONS ONLY; not a standalone SQL statement.
+-- di_area_power_csv creation has ALREADY BEEN REQUESTED: reference only, do not resubmit.
+-- Compare the approved/created columns locally before applying later constraint scripts.
+-- Use the private target schema in the internal webpage; never paste its name here.
+id uuid NOT NULL,
+project_id uuid NOT NULL,
+version_id uuid NOT NULL,
+block_id uuid NOT NULL,
+snapshot_id uuid NOT NULL,
+execution_name text NOT NULL,
+original_filename text NOT NULL,
+uploaded_by text NOT NULL,
+process_label text,
+voltage_v numeric,
+temp_c numeric,
+pex text,
+condition_key bytea NOT NULL,
+conditions_complete boolean NOT NULL DEFAULT false,
+analysis_conditions jsonb NOT NULL,
+structure_digest bytea,
+input_contract jsonb NOT NULL,
+root_summary jsonb,
+encoding text,
+csv_gzip bytea NOT NULL,
+original_sha256 bytea NOT NULL,
+original_byte_length bigint NOT NULL,
+compressed_byte_length bigint NOT NULL,
+row_count bigint,
+state text NOT NULL DEFAULT 'pending',
+validation_report jsonb,
+error_detail jsonb,
+validated_at timestamptz,
+created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP

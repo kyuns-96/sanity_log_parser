@@ -1,4 +1,4 @@
-# One company image containing Python 3.10+, Node 20.18 and npm.
+# One company image containing Python 3.11+, Node 20.18 and npm.
 ARG OA_BASE_IMAGE=sanity-oa-base:local
 FROM ${OA_BASE_IMAGE}
 
@@ -16,6 +16,9 @@ RUN npm --prefix oa/dashboard run build
 COPY common/ ./common/
 COPY oa/*.py ./oa/
 COPY oa/integration/ ./oa/integration/
+COPY area_power/__init__.py ./area_power/__init__.py
+COPY area_power/common/ ./area_power/common/
+COPY area_power/oa/ ./area_power/oa/
 
 USER 10001:10001
 EXPOSE 8080

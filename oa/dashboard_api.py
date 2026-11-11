@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 import sys
 from typing import Annotated, Literal
@@ -159,7 +160,7 @@ def authorized_actor(request: Request, actor: Actor = Depends(authenticated)):
         require_mutation_request(request)
     with Database("oa") as db, db.transaction():
         db.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        access_lock(db)
+        access_lock(db, exclusive=request.method == "POST" and request.url.path.endswith(("/api/atlas/projects", "/api/atlas/blocks")))
         store = AccessStore(db, admin)
         store.require_ready()
         store.require_actor(actor)
@@ -195,7 +196,7 @@ def create_app(*, auth_mode: AuthMode | None = None,
                user_directory: UserDirectory | None = None,
                auth_router: APIRouter | None = None,
                allowed_hosts: str | None = None):
-    app = FastAPI(title="OA Sanity Dashboard", docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="Design Atlas", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.authentication = AuthenticationService(mode=auth_mode, identity_provider=identity_provider,
                                                      user_directory=user_directory)
     app.add_middleware(RequestBoundary)
@@ -220,7 +221,9 @@ def create_app(*, auth_mode: AuthMode | None = None,
                                  "AI_JOB_ACTIVE", "AI_JOB_DELETED", "AI_INPUT_STALE", "AI_CASES_STALE", "AI_CRITERIA_STALE", "AI_CONFIG_CHANGED",
                                  "REMOVAL_CHANGED","POR_VERSION_IN_USE","VERSION_REFERENCED","SUBMISSION_BUSY","SOURCE_REMOVED",
                                  "AI_EVIDENCE_CHANGED","AI_EVIDENCE_NOT_READY",
-                                 "SOURCE_INTAKE_NOT_READY", "SOURCE_SCOPE_CONFIRMATION_REQUIRED"} else 400)
+                                 "SOURCE_INTAKE_NOT_READY", "SOURCE_SCOPE_CONFIRMATION_REQUIRED",
+                                 "AREA_BINDING_CONFLICT", "AREA_PREVIOUS_NOT_PREPARED", "AREA_LINEAGE_REQUIRED"} else
+                  503 if code == "AREA_POWER_UNAVAILABLE" else 400)
         return JSONResponse({"code": code}, status, headers={"Cache-Control": "no-store"})
 
     @app.exception_handler(RequestValidationError)
@@ -466,6 +469,22 @@ def create_app(*, auth_mode: AuthMode | None = None,
     app.include_router(create_ai_credentials_router(authorized_actor))
     from oa.ai_connections_api import create_ai_connections_router
     app.include_router(create_ai_connections_router(authorized_actor))
+
+    # Area is opt-in and uses this host's identity, locked grants, safe errors,
+    # request boundary and mutation-origin checks. Disabled hosts do not import
+    # Area's optional runtime/dependencies or attempt its independent DB.
+    area_enabled = os.environ.get("AREA_POWER_ENABLED", "").strip().lower() == "true"
+    app.state.area_power_enabled = area_enabled
+    from oa.atlas_api import create_atlas_router
+    app.include_router(create_atlas_router(authorized_actor))
+    if area_enabled:
+        from area_power.oa.app import create_area_power_router
+        app.include_router(create_area_power_router(authorized_actor))
+    else:
+        @app.api_route("/api/area-power", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+        @app.api_route("/api/area-power/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+        def area_unavailable(path: str = "", actor=Depends(authenticated)):
+            return JSONResponse({"code": "AREA_POWER_UNAVAILABLE"}, 503)
 
     # Company login/callback/logout routes must precede the root static mount.
     if auth_router is not None:

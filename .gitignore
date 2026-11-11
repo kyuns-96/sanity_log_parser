@@ -3,6 +3,7 @@ __pycache__/
 demo-output*/
 .coverage
 .venv/
+.venv-integrated/
 .env
 .env.*
 !.env.example
