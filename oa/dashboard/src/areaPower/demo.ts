@@ -5,7 +5,7 @@ import type { AtlasCatalog, AtlasVersion } from '../atlasContext'
 import { workspaceDemoRequest } from '../workspaceDemo'
 import type { Payload, TrackingRecord, Upload } from './api'
 
-const notice = '합성 데모 · 브라우저 메모리 전용 · 실제 DB / AI / SMTP / vwp 호출 없음'
+const notice = '합성 데모 · 브라우저 메모리 전용 · 실제 DB / AI / 사내 메일 / vwp 호출 없음'
 const object = (value: unknown): Payload => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Payload : {}
 const text = (value: unknown) => value == null ? '' : String(value)
 const list = (value: unknown): unknown[] => Array.isArray(value) ? value : []
@@ -296,7 +296,7 @@ function resultPayload(metric: string, group: Group, current: DemoUpload, baseli
 }
 function rejudge(comparison: TrackingRecord, changeIds: string[], recipients: string[], visible: Set<string>) {
   for (const id of changeIds) scopedRecord(id, 'change', visible)
-  const run = record('ai_run', { ...scopeFromRecord(comparison), parent_id: comparison.id }, { source: 'synthetic_memory_demo', notice, change_ids: changeIds, recipients, model_called: false, smtp_called: false, delivery_state: 'not_sent', verdict: 'needs_review', reason: '외부 AI를 호출하지 않았습니다. 선택한 원문 revision을 보존한 수동 검토 기록입니다.' }, 'needs_review')
+  const run = record('ai_run', { ...scopeFromRecord(comparison), parent_id: comparison.id }, { source: 'synthetic_memory_demo', notice, change_ids: changeIds, recipients, model_called: false, mail_called: false, delivery_state: 'not_sent', verdict: 'needs_review', reason: '외부 AI를 호출하지 않았습니다. 선택한 원문 revision을 보존한 수동 검토 기록입니다.' }, 'needs_review')
   for (const result of records.values()) if (result.record_type === 'metric_result' && result.parent_id === comparison.id && result.payload.is_candidate === true) {
     const judgement = record('judgement', { ...scopeFromRecord(comparison), parent_id: run.id }, { metric_result_id: result.id, verdict: 'needs_review', model_called: false, reason: '합성 수치 검토 후보. AI 분석은 수행되지 않았으며 변경 원문만으로 설명 여부를 단정하지 않습니다.', change_ids: changeIds, source: 'synthetic_memory_demo' }, 'needs_review')
     const existing = [...records.values()].find(row => row.record_type === 'alert' && row.parent_id === comparison.id && row.payload.metric_result_id === result.id)
@@ -344,7 +344,7 @@ function createComparison(input: Payload, visible: Set<string>) {
     if (cu.snapshot_id !== current.snapshot_id || bu && (!baseline || bu.snapshot_id !== baseline.snapshot_id)) fail('Power pair의 실행은 비교 양쪽의 명시적 snapshot에 속해야 합니다.')
   }
   const frozen = structuredClone(input)
-  const comparison = record('comparison', { ...scoped(current), upload_id: current.id, baseline_upload_id: baseline?.id || null }, { request: frozen, source: 'synthetic_memory_demo', notice, input_revisions: { current_upload_id: current.id, baseline_upload_id: baseline?.id || null, mapping_id: input.mapping_id || null, target_ids: strings(object(input.scope).target_ids), change_ids: strings(input.change_ids) }, model_called: false, smtp_called: false }, 'pending')
+  const comparison = record('comparison', { ...scoped(current), upload_id: current.id, baseline_upload_id: baseline?.id || null }, { request: frozen, source: 'synthetic_memory_demo', notice, input_revisions: { current_upload_id: current.id, baseline_upload_id: baseline?.id || null, mapping_id: input.mapping_id || null, target_ids: strings(object(input.scope).target_ids), change_ids: strings(input.change_ids) }, model_called: false, mail_called: false }, 'pending')
   const job = calculate(comparison, visible)
   rejudge(comparison, strings(input.change_ids), strings(input.recipients), visible)
   return { comparison, job, reused: false }

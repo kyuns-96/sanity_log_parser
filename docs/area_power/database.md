@@ -146,13 +146,13 @@ stateDiagram-v2
     running --> failed: 오류 기록
 ```
 
-소비 서버는 자기 `consumer_server`의 pending job만 짧은 트랜잭션에서 `FOR UPDATE SKIP LOCKED`로 점유한다. Running과 점유 정보를 commit한 뒤 CSV 분석·AI·SMTP 호출을 수행한다. 외부 호출 중 DB 트랜잭션이나 행 잠금을 유지하지 않는다. 결과 확정 시 자기 점유·상태를 다시 확인한다.
+소비 서버는 자기 `consumer_server`의 pending job만 짧은 트랜잭션에서 `FOR UPDATE SKIP LOCKED`로 점유한다. Running과 점유 정보를 commit한 뒤 CSV 분석·AI·사내 메일 호출을 수행한다. 외부 호출 중 DB 트랜잭션이나 행 잠금을 유지하지 않는다. 결과 확정 시 자기 점유·상태를 다시 확인한다.
 
 완료는 요청 범위 전체 처리 후에만 표시한다. 전체 예상/처리/실패/비교 불가 건수와 상세 범위는 payload에 남기고 실제 결과와 대조한다. 후보 0개를 미처리와 혼동하지 않는다.
 
 명시 재실행은 새 job ID·새 dedupe key로 등록하고 `previous_id`로 원 job을 연결한다. 원 job의 종류·대상·종료 상태를 앱에서 확인한다. 자동 재시도·점유 시간 만료 후 자동 회수는 전제하지 않는다.
 
-SMTP 발송과 DB commit은 하나의 트랜잭션이 아니다. 메일을 보낸 직후 상태 저장이 실패하면 발송 여부가 불명확해질 수 있다. 정확히 한 번 전송을 보장하지 않으며 발송 시도·응답·불명확 상태를 payload에 보존한다. Completed는 메일 서버의 수락 여부이지 수신자의 열람 확인이 아니다.
+사내 메일 접수와 DB commit은 하나의 트랜잭션이 아니다. 요청 직후 상태 저장이 실패하면 발송 여부가 불명확해질 수 있다. 정확히 한 번 전송을 보장하지 않으며 시도·접수/거부·불명확 상태를 payload에 보존한다. Completed는 회사 서비스의 전체 요청 접수이지 수신/열람 확인이 아니다. [MailSender 계약](../../oa/MAIL_INTEGRATION.md)과 회사 어댑터를 명시적으로 주입하며 미연결은 DB 접속·job 점유 전에 실패한다. 새 이력은 `provider_accepted`를 사용하고 과거 SMTP JSON 이력은 재작성하지 않는다. 추가 DDL은 없다.
 
 ## 조회와 성능 경계
 
@@ -214,4 +214,4 @@ SMTP 발송과 DB commit은 하나의 트랜잭션이 아니다. 메일을 보�
 
 실행 코드는 [공통 DB 계층](../../area_power/common/db.py), [VWP 적재](../../area_power/vwp_server/ingest.py), [분석 worker](../../area_power/vwp_server/worker.py), [OA 서비스](../../area_power/oa/service.py), [OA 메일](../../area_power/oa/mail.py)이다. 실제 스키마는 런타임 `AREA_POWER_DB_SCHEMA`로만 주입하며 Identifier로 인용한다. 앱은 컬럼·키·FK·필수 selection 유일성·CHECK 설치 상태를 읽기 전용으로 확인하고 DDL을 실행하지 않는다.
 
-로컬 PostgreSQL 18.6의 USAGE/DML 전용 계정으로 업로드·gzip bytea 왕복·명시 선택·revision 충돌·전체/target/split 비교·새 AI 실행·사용자 상태 보존·SMTP 수락을 확인했다. 실제 입력·결과와 검증 한계는 [README의 로컬 실행 검증](../../area_power/README.md#로컬-실행-검증)을 따른다. AI는 미설정 실패 경로만 확인했으며 사내 운영 연결·실데이터·성능 검증은 아니다.
+이전 구현 당시 로컬 PostgreSQL 18.6의 USAGE/DML 전용 계정으로 업로드·gzip bytea 왕복·명시 선택·revision 충돌·전체/target/split 비교·새 AI 실행·사용자 상태 보존·SMTP 수락을 확인했다. SMTP 구현은 현재 제거됐으므로 이 기록이 사내 메일 어댑터 검증을 뜻하지 않는다. 실제 입력·결과와 검증 한계는 [README의 로컬 실행 검증](../../area_power/README.md#로컬-실행-검증)을 따른다. AI는 미설정 실패 경로만 확인했으며 사내 운영 연결·실데이터·성능 검증은 아니다.

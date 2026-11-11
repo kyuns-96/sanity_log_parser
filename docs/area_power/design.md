@@ -30,9 +30,9 @@ Block별 CSV를 gzip으로 압축해 DB에 보관하고 area, Vth ratio, drive s
 
 ## 현재 구현
 
-Sanity 저장소의 `area_power.vwp` CLI, `area_power.vwp_server` 업로드 API·분석/AI worker, `area_power.oa` DB API·SMTP worker와 호스트 Dashboard의 Area/Power 업무 모듈을 구현했다. Dashboard는 shadcnstudio 공식 무료 registry 컴포넌트를 사용하며 실행·설정 방법과 출처는 [README](../../area_power/README.md)에 있다. 매핑·target·변경 설명은 Dashboard의 JSON 편집 폼으로 입력하고 서버가 계약을 검증한다.
+Design Atlas 저장소의 `area_power.vwp` CLI, `area_power.vwp_server` 업로드 API·분석/AI worker, `area_power.oa` DB API·추상 메일 worker와 호스트 Dashboard의 Area/Power 업무 모듈을 구현했다. 회사 메일 전송은 [MailSender Protocol](../../oa/MAIL_INTEGRATION.md)에 사내 AI가 어댑터를 연결하며 고정 SMTP 구현은 없다. Dashboard는 shadcnstudio 공식 무료 registry 컴포넌트를 사용하며 실행·설정 방법과 출처는 [README](../../area_power/README.md)에 있다. 매핑·target·변경 설명은 Dashboard의 JSON 편집 폼으로 입력하고 서버가 계약을 검증한다.
 
-로컬 PostgreSQL 18.6에서 실제 API·worker·화면·SMTP 수락을 확인했다. AI 미설정은 수치 결과를 보존한 채 needs_review로 남긴다. 실제 사내 DB·report_export·AI 제공자·메일 relay·실데이터 연결을 완료했다고 간주하지 않는다. Area/Power API는 Sanity 호스트의 인증 세션·서버 측 프로젝트 권한을 사용한다. 사내 SSO 어댑터 미설정 보호는 유지하며, 명시적인 local_token 개발 모드는 운영 SSO의 대체 경로가 아니다.
+로컬 PostgreSQL 18.6에서 실제 API·worker·화면과 이전 SMTP 구현의 수락을 확인한 기록이 있다. 현재 SMTP 구현은 제거됐으며 실제 사내 메일 연결 검증은 아니다. AI 미설정은 수치 결과를 보존한 채 needs_review로 남긴다. 실제 사내 DB·report_export·AI 제공자·메일 서비스·실데이터 연결을 완료했다고 간주하지 않는다. Area/Power API는 호스트의 인증 세션·서버 측 프로젝트 권한을 사용한다. 사내 SSO 어댑터 미설정 보호는 유지하며, 명시적인 local_token 개발 모드는 운영 SSO의 대체 경로가 아니다.
 
 ## 개발 구성과 DBaaS 운영
 
@@ -440,7 +440,7 @@ AI 호출 실패나 잘못된 응답은 성공으로 바꾸지 않는다. 후보
 
 조건별 현재 파일은 selection 레코드가 명시적으로 선택한다. 수정본 업로드로 자동 교체하지 않으며 완료 비교는 당시의 업로드·원문·매핑 revision을 고정한다. OA의 동시 선택 변경은 `row_version` 조건 갱신으로 충돌을 검출한다.
 
-작업도 `tracking_record`에 저장한다. 적재·비교·추출·판정은 vwp_server, 메일은 oa_server가 소비하며 자기 서버의 pending job만 짧은 트랜잭션에서 행 잠금으로 점유한다. AI·SMTP 호출 중 DB 잠금을 유지하지 않는다. 전체 요청 범위를 처리하기 전에는 완료로 표시하지 않으며 실패 이유·명시 재실행 이력을 보존한다.
+작업도 `tracking_record`에 저장한다. 적재·비교·추출·판정은 vwp_server, 메일은 oa_server가 소비하며 자기 서버의 pending job만 짧은 트랜잭션에서 행 잠금으로 점유한다. AI·사내 메일 호출 중 DB 잠금을 유지하지 않는다. 전체 요청 범위를 처리하기 전에는 완료로 표시하지 않으며 실패 이유·명시 재실행 이력을 보존한다.
 
 ## 조회와 알림 흐름
 
@@ -454,7 +454,7 @@ Power는 corner·mode·activity 등 조건과 분석 실행을 선택해 추이�
 
 알림 읽음·확인·해소는 AI 판정과 별도 상태다. 사용자가 알림을 닫았다고 해당 수치를 정상 데이터로 학습하거나 이후 기준에서 자동 제외하지 않는다. 판정 변경 시에는 변경된 이유를 기존 알림과 연결한다.
 
-vwp_server가 알림·mail job을 DB에 저장하고 OA가 읽어 사용자 메일을 발송한다. OA는 메일 발송 상태를 DB에 남기며 판정 완료와 전송 성공을 구분한다. SMTP와 DB는 단일 트랜잭션이 아니므로 정확히 한 번 전달을 보장하지 않는다. 수신 서버 수락 후 DB 기록 실패 등 발송 여부가 불명확한 상태를 숨기지 않는다.
+vwp_server가 알림·mail job을 DB에 저장하고 OA가 읽어 `MailSender`로 사내 메일을 요청한다. OA는 접수 상태를 DB에 남기며 판정 완료·서비스 접수·수신/열람을 구분한다. Protocol과 명시적 주입만 제공하며 실제 SDK/인증/발신 계정은 OA 회사 어댑터에 연결한다. 메일 서비스와 DB는 단일 트랜잭션이 아니므로 정확히 한 번 전달을 보장하지 않는다. 일부 거부·응답 불명·접수 후 DB 기록 실패를 숨기거나 자동 재발송하지 않는다. 미연결은 job 점유 전 실패한다.
 
 ## 남은 입력 계약과 실행 조건
 

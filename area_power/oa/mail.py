@@ -1,26 +1,24 @@
-"""Consume OA mail jobs without holding DB locks during SMTP delivery.
+"""Consume OA mail jobs through an explicitly injected company MailSender.
 
-SMTP acceptance is not recipient delivery and cannot be atomic with a DB commit.
+Service acceptance is not delivery and cannot be atomic with a DB commit.
 Each attempt is recorded before sending; ambiguous attempts are never retried here.
 """
 from __future__ import annotations
 
 import argparse
 import logging
-import smtplib
 import socket
-import ssl
 import time
 from datetime import datetime, timezone
-from email.message import EmailMessage
-from email.utils import format_datetime, make_msgid
+from collections.abc import Callable, Sequence
 from uuid import UUID, uuid4
 
 from area_power.common.config import Settings
 from area_power.common.db import Database
 from area_power.common.errors import DomainError
 from area_power.common.jsonutil import dumps, public
-from .service import Service, addresses, reject
+from area_power.common.mail import MailMessage, MailNotConfigured, MailReceipt, MailRejected, MailSender
+from .service import addresses, reject
 
 logger = logging.getLogger(__name__)
 
@@ -78,31 +76,19 @@ def mail_context(db, job, owner):
         return current_job, alert, event, comparison, metric, baseline, current
 
 
-def message_for(settings, job, alert, event, comparison, metric, baseline, current):
+def message_for(settings, job, alert, event, comparison, metric, baseline, current, *, attempt_id):
     job_recipients = job["payload"].get("recipients") or []
     alert_recipients = alert["payload"].get("recipients") or []
     recipients = addresses([*job_recipients, *alert_recipients])
     if not recipients:
-        recipients = addresses(settings.smtp_recipients)
+        recipients = addresses(settings.mail_recipients)
     if not recipients:
-        reject("No SMTP recipients are configured or requested.", "smtp_recipients_missing")
-    if not settings.smtp_host or not settings.smtp_from:
-        reject("SMTP host and sender must be configured.", "smtp_unconfigured")
-    sender = addresses([settings.smtp_from])[0]
-    if settings.smtp_ssl and settings.smtp_starttls:
-        reject("SMTP SSL and STARTTLS cannot both be enabled.", "smtp_configuration_invalid")
-    if bool(settings.smtp_username) != bool(settings.smtp_password):
-        reject("SMTP authentication requires both username and password.", "smtp_configuration_invalid")
+        reject("No mail recipients are configured or requested.", "mail_recipients_missing")
     payload = alert["payload"]
     metric_payload = metric["payload"] if metric else payload
     summary = str(payload.get("summary") or payload.get("kind") or "Design Atlas observation")
     summary = " ".join(summary.splitlines())[:180]
-    message = EmailMessage()
-    message["From"] = sender
-    message["To"] = ", ".join(recipients)
-    message["Date"] = format_datetime(now())
-    message["Message-ID"] = make_msgid(idstring=str(job["id"]))
-    message["Subject"] = f"[Design Atlas] {summary}"
+    subject = f"[Design Atlas] {summary}"
     body = [
         summary,
         f"Alert: {alert['id']}",
@@ -124,79 +110,85 @@ def message_for(settings, job, alert, event, comparison, metric, baseline, curre
         "",
         "This notification records a tracking observation, not a measurement of recipient acknowledgement.",
     ]
-    message.set_content("\n".join(body))
-    return message, sender, recipients
+    return MailMessage(
+        job_id=str(job["id"]), attempt_id=attempt_id, recipients=tuple(recipients),
+        subject=subject, text_body="\n".join(body),
+    )
 
 
-def deliver(settings, message, sender, recipients, emission):
-    context = ssl.create_default_context()
-    cls = smtplib.SMTP_SSL if settings.smtp_ssl else smtplib.SMTP
-    kwargs = {"host": settings.smtp_host, "port": settings.smtp_port, "timeout": 30}
-    if settings.smtp_ssl:
-        kwargs["context"] = context
-    smtp = cls(**kwargs)
-    try:
-        smtp.ehlo()
-        if settings.smtp_starttls:
-            smtp.starttls(context=context)
-            smtp.ehlo()
-        if settings.smtp_username:
-            smtp.login(settings.smtp_username, settings.smtp_password)
-        # Returning means DATA was accepted for all non-refused recipients.
-        emission["phase"] = "data_submitting"
-        return smtp.send_message(message, from_addr=sender, to_addrs=recipients)
-    finally:
-        # A failure in QUIT must not erase an already observed DATA acceptance.
-        try:
-            smtp.quit()
-        except Exception:
-            smtp.close()
+def validate_receipt(receipt, recipients):
+    if not isinstance(receipt, MailReceipt):
+        raise ValueError("Company mail adapter must return MailReceipt")
+    accepted = set(receipt.accepted_recipients)
+    rejected = set(receipt.rejected_recipients)
+    if (
+        not isinstance(receipt.accepted_recipients, tuple)
+        or not isinstance(receipt.rejected_recipients, tuple)
+        or len(accepted) != len(receipt.accepted_recipients)
+        or len(rejected) != len(receipt.rejected_recipients)
+        or accepted & rejected
+        or accepted | rejected != set(recipients)
+        or (receipt.provider_message_id is not None and not isinstance(receipt.provider_message_id, str))
+    ):
+        raise ValueError("Company mail receipt does not account for the requested recipients")
 
 
-def consume_once(db, settings, owner=None):
+def consume_once(db, settings, sender: MailSender, owner=None):
+    if sender is None:
+        raise MailNotConfigured("An explicit company mail adapter is required")
     owner = owner or f"oa-mail:{socket.gethostname()}:{uuid4()}"
     job = db.claim_job("oa_server", owner)
     if job is None:
         return False
-    emission = {"attempt_id": str(uuid4()), "started_at": now(), "phase": "preparing", "smtp_accepted": False}
+    emission = {"attempt_id": str(uuid4()), "started_at": now(), "phase": "preparing", "provider_accepted": False}
     sending = False
     accepted = False
     try:
         if job["job_kind"] != "mail":
             reject("OA consumer only supports mail jobs.", "invalid_job_kind")
         context = mail_context(db, job, owner)
-        message, sender, recipients = message_for(settings, *context)
-        emission.update(phase="sending", recipients=recipients, message_id=str(message["Message-ID"]), alert_id=context[1]["id"], event_id=context[2]["id"] if context[2] else None)
+        message = message_for(settings, *context, attempt_id=emission["attempt_id"])
+        emission.update(phase="sending", recipients=list(message.recipients), alert_id=context[1]["id"], event_id=context[2]["id"] if context[2] else None)
         # Durable before the external side effect. A lost process stays running;
         # operators must decide whether a new explicit rerun is safe.
         record_emission(db, job["id"], owner, emission)
         sending = True
-        refused = deliver(settings, message, sender, recipients, emission)
-        accepted = len(refused) < len(recipients)
-        emission.update(phase="accepted" if not refused else "partially_accepted", smtp_accepted=accepted, accepted_recipients=[recipient for recipient in recipients if recipient not in refused], refused_recipients=list(refused), finished_at=now())
+        receipt = sender.send(message)
+        validate_receipt(receipt, message.recipients)
+        accepted = bool(receipt.accepted_recipients)
+        rejected = bool(receipt.rejected_recipients)
+        phase = "partially_accepted" if accepted and rejected else "accepted" if accepted else "rejected"
+        emission.update(
+            phase=phase, provider_accepted=accepted,
+            accepted_recipients=list(receipt.accepted_recipients),
+            rejected_recipients=list(receipt.rejected_recipients),
+            provider_message_id=receipt.provider_message_id, finished_at=now(),
+        )
         record_emission(db, job["id"], owner, emission)
-        error = {"code": "smtp_partial_acceptance", "message": "SMTP accepted only some recipients; inspect emission details before any explicit rerun."} if refused else None
+        if rejected:
+            error = {
+                "code": "mail_partial_acceptance" if accepted else "mail_recipients_rejected",
+                "message": "The company service rejected some or all recipients; review the receipt before an explicit rerun.",
+            }
+        else:
+            error = None
         db.finish_job(job["id"], owner, error=error)
     except Exception as exc:
         if accepted:
-            code = "smtp_accepted_db_ambiguous"
-            text = "SMTP acceptance was observed, but durable completion was not confirmed. Do not resend without operator review."
+            code = "mail_accepted_db_ambiguous"
+            text = "Company mail acceptance was observed, but durable completion was not confirmed. Do not resend without operator review."
+        elif isinstance(exc, MailNotConfigured):
+            code, text = "mail_unconfigured", "The company mail adapter is not configured; no submission was attempted."
+        elif isinstance(exc, MailRejected):
+            code, text = "mail_recipients_rejected", "The company mail service explicitly rejected the request."
+        elif sending:
+            code, text = "mail_delivery_ambiguous", "Company mail submission outcome is unknown. Inspect the service before any explicit rerun."
         elif isinstance(exc, DomainError):
             code, text = exc.code, str(exc)
-        elif isinstance(exc, smtplib.SMTPRecipientsRefused):
-            code, text = "smtp_recipients_rejected", "SMTP rejected all recipients."
-        elif isinstance(exc, smtplib.SMTPDataError):
-            code, text = "smtp_message_rejected", "SMTP explicitly rejected the message data."
-        elif isinstance(exc, smtplib.SMTPAuthenticationError):
-            code, text = "smtp_authentication_failed", "SMTP authentication failed."
-        elif sending and emission["phase"] == "data_submitting" and isinstance(exc, (smtplib.SMTPServerDisconnected, OSError, TimeoutError)):
-            code, text = "smtp_delivery_ambiguous", "SMTP delivery outcome is unknown. Inspect the server before any explicit rerun."
         else:
-            code, text = "smtp_delivery_failed", "Mail delivery was not confirmed; inspect configuration and server availability."
-        if isinstance(exc, smtplib.SMTPResponseException):
-            emission["smtp_response_code"] = exc.smtp_code
+            code, text = "mail_preparation_failed", "Mail preparation failed before submission."
         error = {"code": code, "message": text}
-        emission.update(phase="ambiguous" if "ambiguous" in code else "failed", error=error, finished_at=now(), smtp_accepted=accepted)
+        emission.update(phase="ambiguous" if "ambiguous" in code else "failed", error=error, finished_at=now(), provider_accepted=accepted)
         logger.error("Mail job failed (%s): %s", type(exc).__name__, code)
         try:
             record_emission(db, job["id"], owner, emission)
@@ -207,13 +199,22 @@ def consume_once(db, settings, owner=None):
     return True
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Consume OA mail jobs using configured SMTP; no automatic retries.")
+def main(*, sender_factory: Callable[[], MailSender], argv: Sequence[str] | None = None):
+    parser = argparse.ArgumentParser(description="Consume OA mail jobs using an explicit company mail adapter; no automatic retries.")
     parser.add_argument("--once", action="store_true", help="Consume at most one pending job and exit")
     parser.add_argument("--poll-seconds", type=float, default=None, help="Polling interval (default from environment)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.poll_seconds is not None and args.poll_seconds <= 0:
         parser.error("--poll-seconds must be positive")
+    try:
+        sender = sender_factory()
+        if sender is None or not callable(getattr(sender, "send", None)):
+            raise MailNotConfigured
+    except MailNotConfigured:
+        parser.error("Company mail adapter is not configured. Connect oa/integration/corporate_mail.py; no jobs were claimed.")
+    except Exception as exc:
+        logger.error("Company mail adapter initialization failed (%s); no jobs were claimed", type(exc).__name__)
+        return 1
     settings = Settings.from_env()
     db = Database(settings)
     db.check_schema()
@@ -222,7 +223,7 @@ def main():
     logging.basicConfig(level=logging.INFO)
     while True:
         try:
-            handled = consume_once(db, settings, owner)
+            handled = consume_once(db, settings, sender, owner)
         except Exception as exc:
             logger.error("Mail polling failed (%s)", type(exc).__name__)
             if args.once:
@@ -235,4 +236,4 @@ def main():
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit("Use python -m oa.mail_app with the company mail adapter configured.")

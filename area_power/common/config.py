@@ -25,12 +25,6 @@ def _positive_float(name: str, default: float) -> float:
     return value
 
 
-def _bool(name: str, default: bool) -> bool:
-    value = os.environ.get(name, str(default)).strip().lower()
-    if value not in {"true", "false", "1", "0"}:
-        raise ConfigurationError(f"{name} must be true or false")
-    return value in {"true", "1"}
-
 
 @dataclass(frozen=True)
 class Settings:
@@ -43,15 +37,8 @@ class Settings:
     ai_api_key: str = field(default="", repr=False)
     ai_model: str = ""
     ai_timeout_seconds: float = 90.0
-    smtp_host: str = ""
-    smtp_port: int = 587
     ai_context_max_chars: int = 48000
-    smtp_from: str = ""
-    smtp_username: str = field(default="", repr=False)
-    smtp_password: str = field(default="", repr=False)
-    smtp_starttls: bool = True
-    smtp_ssl: bool = False
-    smtp_recipients: tuple[str, ...] = ()
+    mail_recipients: tuple[str, ...] = ()
     worker_poll_seconds: float = 2.0
 
     def __post_init__(self):
@@ -61,11 +48,6 @@ class Settings:
             raise ConfigurationError("AREA_POWER_DB_SCHEMA is invalid")
         if self.max_upload_bytes <= 0 or self.max_uncompressed_bytes <= 0:
             raise ConfigurationError("Upload limits must be positive")
-        if not 1 <= self.smtp_port <= 65535:
-            raise ConfigurationError("AREA_POWER_SMTP_PORT must be between 1 and 65535")
-        if self.smtp_ssl and self.smtp_starttls:
-            raise ConfigurationError("Choose AREA_POWER_SMTP_SSL or AREA_POWER_SMTP_STARTTLS, not both")
-
         if self.ai_context_max_chars < 4096:
             raise ConfigurationError("AREA_POWER_AI_CONTEXT_MAX_CHARS must be at least 4096")
     @classmethod
@@ -77,11 +59,7 @@ class Settings:
             max_uncompressed_bytes=_positive_int("AREA_POWER_MAX_UNCOMPRESSED_BYTES", 268435456),
             ai_base_url=os.environ.get("AREA_POWER_AI_BASE_URL", ""), ai_api_key=os.environ.get("AREA_POWER_AI_API_KEY", ""),
             ai_model=os.environ.get("AREA_POWER_AI_MODEL", ""), ai_timeout_seconds=_positive_float("AREA_POWER_AI_TIMEOUT_SECONDS", 90),
-            smtp_host=os.environ.get("AREA_POWER_SMTP_HOST", ""), smtp_port=_positive_int("AREA_POWER_SMTP_PORT", 587),
-            smtp_from=os.environ.get("AREA_POWER_SMTP_FROM", ""), smtp_username=os.environ.get("AREA_POWER_SMTP_USERNAME", ""),
-            smtp_password=os.environ.get("AREA_POWER_SMTP_PASSWORD", ""), smtp_starttls=_bool("AREA_POWER_SMTP_STARTTLS", True),
-            smtp_ssl=_bool("AREA_POWER_SMTP_SSL", False),
             ai_context_max_chars=_positive_int("AREA_POWER_AI_CONTEXT_MAX_CHARS", 48000),
-            smtp_recipients=tuple(item.strip() for item in os.environ.get("AREA_POWER_SMTP_RECIPIENTS", "").split(",") if item.strip()),
+            mail_recipients=tuple(item.strip() for item in os.environ.get("AREA_POWER_MAIL_RECIPIENTS", "").split(",") if item.strip()),
             worker_poll_seconds=_positive_float("AREA_POWER_WORKER_POLL_SECONDS", 2),
         )

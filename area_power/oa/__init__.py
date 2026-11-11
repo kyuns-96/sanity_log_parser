@@ -1,1 +1,1 @@
-"""OA dashboard, configuration API, and SMTP job consumer."""
+"""OA dashboard, configuration API, and company mail job consumer."""

@@ -47,7 +47,7 @@ npm --prefix oa/dashboard run build
 | 사용자 PC | `AREA_POWER_SERVER_URL`, `AREA_POWER_UPLOAD_TOKEN`, `AREA_POWER_ACTOR` — DB·AI 계정 불필요 |
 | 중앙 VWP 업로드 | `AREA_POWER_DB_DSN`, `AREA_POWER_DB_SCHEMA`, `AREA_POWER_UPLOAD_TOKEN`, 입력 한도 |
 | 중앙 VWP 분석 worker | 같은 Area DB와 `AREA_POWER_AI_*`, poll 설정 |
-| OA 메일 worker | 같은 Area DB와 `AREA_POWER_SMTP_*` |
+| OA 메일 worker | 같은 Area DB, `AREA_POWER_MAIL_RECIPIENTS`, 명시적으로 주입한 사내 `MailSender` 어댑터 |
 
 선택 기능을 끄면 Area API는 인증 후 `503 AREA_POWER_UNAVAILABLE`를 반환한다. 필수 설정이 없거나 DB 준비가 안 됐다고 demo·다른 DB·가짜 AI·가짜 발송으로 대체하지 않는다.
 
@@ -63,8 +63,8 @@ npm --prefix oa/dashboard run build
 .venv-integrated/bin/python -m uvicorn area_power.vwp_server.app:create_app --factory --host 127.0.0.1 --port 8010
 .venv-integrated/bin/python -m area_power.vwp_server.worker
 
-# OA: 메일 요청 소비는 별도 프로세스
-.venv-integrated/bin/python -m area_power.oa.mail
+# OA: 회사 메일 어댑터 연결 후 별도 프로세스로 요청 소비
+.venv-integrated/bin/python -m oa.mail_app
 ```
 
 업로드 경로는 `/api/area-power/uploads`, 상태는 `/api/area-power/uploads/{id}`다. VWP 업로드 API의 token·감사용 actor와 OA 사용자의 검증된 신원은 별개다. Worker의 `--once`는 한 건 처리에 사용할 수 있으며 최종 성공은 DB job·ai_run·coverage로 판단한다.
@@ -97,7 +97,7 @@ npm --prefix oa/dashboard run build
 - 임계값을 임의로 정하지 않는다. 요청 정책이 없으면 `policy_unconfigured`를 표시한다. 산출 문맥이 미확인인 지표도 정상으로 보증하지 않는다.
 - 수치 계산은 코드가 담당한다. AI는 OpenAI-compatible API로 사용자의 설명과 비교 조건을 대조하고 수치·매핑·비교 상태를 바꾸지 못한다. 방향 설명만으로 변화 규모까지 정상 처리하지 않는다.
 - AI 미설정·실패는 needs_review와 실패 사유로 남기며 수치 결과는 보존한다. 설명 변경은 새 AI 실행으로 연결하고 읽음·확인·해소는 유지한다.
-- 알림 event마다 mail job을 DB에 남긴다. 요청 수신자가 없으면 OA의 기본 수신자를 사용하고, 수신자·SMTP 미설정은 실패다. SMTP 수락은 수신자 전달·열람 보장이 아니다. 자동 재발송·정확히 한 번 전달을 보장하지 않는다.
+- 알림 event마다 mail job을 DB에 남긴다. OA는 [사내 메일 Protocol](../oa/MAIL_INTEGRATION.md)의 `MailSender`만 호출하며 회사 API/SDK는 사내 AI가 허용된 어댑터 지점에서 구현한다. 미연결은 DB 접속·job 점유 전에 실패한다. 요청 수신자가 없으면 `AREA_POWER_MAIL_RECIPIENTS`를 사용하며 수신자도 없으면 실패한다. 서비스 접수는 전달·열람 보장이 아니며 일부 거부·결과 불명·접수 후 DB 기록 실패를 보존한다. 자동 재발송·정확히 한 번 전달은 보장하지 않는다. SMTP 구현·`AREA_POWER_SMTP_*`는 제거했다.
 
 상세 계약: [제품 설계](../docs/area_power/design.md) · [DB와 적용 순서](../docs/area_power/database.md).
 
@@ -124,9 +124,9 @@ set -a && source .env.integrated.local && set +a
 
 ## 로컬 실행 검증
 
-이전 독립 구현에서는 전체 hierarchy 237개 지표, target 79개, 루트 이름 변경·split·삭제 395개 지표의 수치·coverage·재판정 상태 보존과 gzip 왕복·SMTP 수락을 확인했다. 이는 사내 실데이터·실제 AI 품질의 검증이 아니다. 통합 후 확인한 범위는 작업 인계와 최종 실행 결과에 별도로 기록한다.
+이전 독립 구현에서는 전체 hierarchy 237개 지표, target 79개, 루트 이름 변경·split·삭제 395개 지표의 수치·coverage·재판정 상태 보존과 gzip 왕복·SMTP 수락을 확인했다. 당시 SMTP 구현은 현재 제거됐으며 이 기록은 사내 메일 어댑터의 검증이 아니다. 통합 후 확인한 범위는 작업 인계와 최종 실행 결과에 별도로 기록한다.
 
-운영 전에는 실제 CSV의 인코딩·정밀도·area 포함 관계, 신청한 두 테이블의 설치·권한, SSO 프로젝트 binding, 사내 AI 프로토콜·허용 데이터, 메일 relay와 대규모 조회 비용을 확인해야 한다. Sanity의 기존 PostgreSQL 18 포털 catalog 이슈를 이 모듈 통합으로 해결했다고 표시하지 않는다.
+운영 전에는 실제 CSV의 인코딩·정밀도·area 포함 관계, 신청한 두 테이블의 설치·권한, SSO 프로젝트 binding, 사내 AI 프로토콜·허용 데이터, 사내 메일 어댑터와 대규모 조회 비용을 확인해야 한다. Sanity의 기존 PostgreSQL 18 포털 catalog 이슈를 이 모듈 통합으로 해결했다고 표시하지 않는다.
 
 ### 이전 엔진 통합 시점의 확인 기록
 
@@ -136,4 +136,4 @@ set -a && source .env.integrated.local && set +a
 
 Chromium에서 실제 code-server proxy 경유 공통 로그인, 재로그인 없는 Sanity↔Area 전환, 파란색 light/dark 화면, 390px drawer·수평 넘침 없음, 비교 수치·coverage·검색·needs_review 표시와 UI 원본 gzip 다운로드를 확인했다. 기존 명시적 Sanity 합성 demo는 유지됐고 자원 경로가 proxy 아래에서 200이었다. Frontend build와 canonical CLI 두 진입점의 help 실행이 성공했다.
 
-위 내용은 이전 엔진 통합 시점의 검증 기록이다. 현재 Design Atlas 공통 카탈로그·화면·실행 서비스·검증 상태는 [제품 인계](../HANDOFF.md)를 따른다. 사용자 DB·기존 수정 파일은 보존하며 새 테스트·fixture·mock·검증 스크립트 파일은 추가하지 않는다. 회사 DB·실데이터·AI 품질·SMTP relay·Docker 이미지·대규모 성능은 미검증이다.
+위 내용은 이전 엔진 통합 시점의 검증 기록이다. 현재 Design Atlas 공통 카탈로그·화면·실행 서비스·검증 상태는 [제품 인계](../HANDOFF.md)를 따른다. 사용자 DB·기존 수정 파일은 보존하며 새 테스트·fixture·mock·검증 스크립트 파일은 추가하지 않는다. 회사 DB·실데이터·AI 품질·사내 메일 서비스·Docker 이미지·대규모 성능은 미검증이다.

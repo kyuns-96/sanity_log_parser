@@ -64,6 +64,8 @@ OA는 사람의 검토·제어와 함께 **사례 검색·사내 OA AI 호출·�
 | `oa/integration/corporate_submission.py` | `CorporateSourceIdentity.resolve` 본문, 필요한 import·승인된 조회 client 주입 생성자. OA SSO와 같은 영속 `(issuer, subject) → user_id` 매핑 사용 | 임의 actor 문자열 신뢰, 사용자 자동 등록, importer/SSO 보호 코드 수정·해제 |
 | `oa/sso_app.py` | 승인된 회사 모듈 import와 `identity_provider`, `user_directory`, `auth_router` 주입 | `auth_mode="sso"` 제거, 외부 bind, proxy/Host/로그 설정 완화, 기존 API 교체 |
 | `oa/integration/company_sso/` — 신규 작업용 위치 | SSO/source 동일 계정 조회를 지원하는 SDK wrapper·인증 router·모의 SDK 테스트만 추가 | 업무 데이터 조회/수정 API, 프로젝트 권한 엔진, DB migration, 공통 모듈 monkey patch |
+| `oa/integration/corporate_mail.py` | `create_mail_sender` 본문·필요 import에서 확인된 사내 메일 어댑터를 명시적으로 생성 | 서명/Protocol 변경, SMTP·모의 성공 fallback, 공통 worker·SSO·DB 변경 |
+| `oa/integration/company_mail/` — 사내 메일 구현 위치 | 승인된 회사 API/SDK wrapper와 지원 설정 주입, 접수/거부/불명 응답 대응 | DB 직접 쓰기, 자체 worker/자동 재전송, 원문/비밀 하드코딩, 새 테스트/fixture/mock/검증 스크립트 파일 추가 |
 | `oa/requirements.txt` — 3.1절의 승인된 SSO 의존성만 | OA 담당이 `signxml==5.2.0`, `lxml==6.1.3`, `cryptography==50.0.2`를 없을 때 추가 | 다른 의존성 추가·삭제·버전 변경, 루트/VWP/VWP-bridge 의존성·lockfile·Docker 수정 |
 | `vwp/integration/corporate_plan.py` | `CorporatePlanProvider.get_plan` 본문, 필요한 import, 승인된 실행/예상 목록 조회 client 주입용 생성자 | 추상 서명/plan schema 변경, 목록 승인 자동 부여, report/설계 변경·sanity 실행·DB 쓰기·공통 CLI 수정 |
 | `vwp/integration/corporate_submission.py` | `CorporateSubmissionInput.prepare`, `CorporateSubmissionAuthority.current/inbox_owner/authorize/approval_valid` 본문, 필요한 import·승인 SDK 주입 생성자, `create_submission_adapters`의 명시적 주입 | 서명/모델·V2 schema 변경, 파일/DB 쓰기·실행, 자동 승인, 사용자명만으로 인증, CLI/상태/권한 우회 |
@@ -216,6 +218,15 @@ STALE로 처리하며 토큰을 다른 연결/사용자로 대체하지 않는�
 준비한다. 새 관리 이벤트를 DB에 직접 넣거나 공통 호출·암호화·권한·UI·SQL·기존 테스트를 수정하지 않는다.
 예상 밖 오류는 기존대로 수정·재시도를 멈추고 `WAITING_FOR_CODEX`로 인계한다.
 
+### 3.17. Area/Power 사내 메일 Protocol — 2026-11-11
+
+사용자는 SMTP 구현 대신 사내 메일 서비스를 내부 AI가 끼워 넣을 수 있도록 추상 계약만 제공하기로 정했다. [메일 연동 계약](oa/MAIL_INTEGRATION.md)의 `MailSender.send(MailMessage) -> MailReceipt`와 공통 job 소비를 사용한다. OA 담당자만 `corporate_mail.create_mail_sender`의 본문·필요 import와 `company_mail/`에 승인된 회사 어댑터를 구현한다. 미연결 factory는 명시적으로 실패하며 worker는 DB 접속·job 점유 전에 중단한다. 새 SDK 의존성/설정 키는 기존처럼 먼저 문의한다.
+
+회사 API·인증·발신자·SDK 인코딩은 사내에서 확인한다. 전체/일부 접수·명시 거부·결과 불명을 구분하고 수신/열람으로 표시하지 않는다. 외부 호출 중 DB 잠금을 유지하지 않으며 불명 요청·접수 후 DB 기록 실패는 자동 재발송하지 않는다. `AREA_POWER_MAIL_RECIPIENTS`만 공통 기본 수신자 설정이며 `AREA_POWER_SMTP_*`와 SMTP fallback은 제거했다. 실제 발송·배포는 사용자 승인 범위에서만 한다.
+
+공통 `area_power/common/mail.py`, `area_power/oa/mail.py`, `oa/mail_app.py`·설정·SQL·UI·SSO는 읽기 전용이다. 이번 메일 연동에는 새 테스트/fixture/mock/검증 스크립트 파일을 추가하지 않는다. 기존 역할 검증과 실제 사내 SDK/서비스 확인을 구분하고 오류 시 `WAITING_FOR_CODEX`로 중단한다. 이 추가 허용은 메일 어댑터에만 한정되며 다른 회사 지점의 소유권을 바꾸지 않는다.
+
+
 ## 4. 내부 AI가 절대 수정하지 않는 부분
 
 읽고 설명하거나 검토 요청을 만드는 것은 가능하지만, 수정·우회·테스트 완화는 금지한다. 허용 목록의 부분 변경 외에는 모두 보호 대상이다.
@@ -228,6 +239,7 @@ STALE로 처리하며 토큰을 다른 연결/사용자로 대체하지 않는�
 | V2 제출·원본 보관·source 수신 | `bin/sanity`, `common/sanity_submission*.py`, `vwp/submission_cli.py`, `vwp_bridge/submission_*.py`, `oa/submission_receiver.py`, `oa/sanity_workspace_sources.py`, 제출 JSON 예제 | 엄격한 설정·V2 schema·신원/범위·원본 hash·원자 인계·분할 staging/공개·receipt·중복/충돌·실행 순서 |
 | AI 호출·분류·규칙·작업자 | `vwp_bridge/sanity_ai.py`, `common/sanity_clustering.py`, `vwp_bridge/sanity_cluster_worker.py`, `oa/sanity_cluster_store.py`, `common/sanity_workers.py`, `vwp_bridge/worker.py`, `oa/worker.py` | strict JSON·근거 검증, scope, 전체 적용, 중단 복구, 불확실 호출 재시도 금지, 사람 확정 |
 | OA AI 판단·검색·작업·기준 | `oa/sanity_ai_*.py`, `oa/ai_worker.py`, `common/sanity_ai_*.py`, `oa/sanity_production_workspace.py`, workbench API | 완전한 모델 입력, schema 2·근거/기준/사례 참조, 현재 유효성·권한·개정, 불변 작업과 결과 불명 재호출 금지 |
+| 사내 메일 Protocol·작업 소비 | `area_power/common/mail.py`, `area_power/oa/mail.py`, `oa/mail_app.py` | 명시적 주입, 발송 전 시도 기록, 전체/일부 접수·거부·불명 구분, DB 잠금 경계와 자동 재발송 금지 |
 | 검토·보고서·인증·업무 API | `oa/sanity_oa_store.py`, `oa/sanity_auth.py`, `oa/main.py`, `oa/dashboard_api.py` | 검토 개정·불변 이력·서버 검토자, 신원/권한 검사, API 계약 |
 | 대시보드 전체 | `oa/dashboard/` | 로그인·권한·사용자 범위, 데모와 실데이터 분리, 분류/검토/PoR의 의미 |
 | 설정·의존성·기존 테스트 | `common/sanity_config.py`, 각 서버의 `.env.example`·`requirements.txt`, 루트 `requirements.txt`, 모든 기존 test/runner와 lockfile | 설정/실패 처리, 재현성, 기존 테스트 기대값과 skip 조건 |

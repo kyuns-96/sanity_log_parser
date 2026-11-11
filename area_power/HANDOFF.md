@@ -8,7 +8,7 @@
 - 기존 `inst_area_tracking`의 실행 코드·독립 UI·중복 SQL·배포 설정은 제거했다. 옛 Python import·entry point의 alias/shim은 없다. 원래 사용자 제공 `inst_area_tracking/docs/csv_structure`는 보존했다.
 - Area의 `di_area_power_csv`, `tracking_record` 두 테이블과 Sanity 네 테이블은 별도 계약이다. 이미 신청한 두 테이블을 다시 신청하지 않는다. 사내 실제 생성·제약·권한 적용은 미확인이다.
 - 실제 사내 스키마·DSN은 요구하거나 저장하지 않는다. SQL은 `db/area_power/`의 `<schema>.테이블` 템플릿이며 사내에서 치환한다. 앱 자동 DDL은 없다.
-- OA↔VWP 업무 전달은 DB만 사용한다. CLI 업로드·모델 API·SMTP는 각 외부 입력/제공자 경계다.
+- OA↔VWP 업무 전달은 DB만 사용한다. CLI 업로드·모델 API·사내 메일은 각 외부 입력/제공자 경계다. 메일은 [Protocol 계약](../oa/MAIL_INTEGRATION.md)과 명시적 회사 어댑터 주입만 제공하며 SMTP 구현은 제거했다.
 
 ## 실행·인증
 
@@ -33,7 +33,7 @@
 - 기존 SSO 회귀 1개가 통과했다. 기존 합성 SSO 어댑터와 실제 권한 DB로 현재·기준 양쪽 허용 200, 기준 권한 회수 후 비교/다운로드 404·지표 0행·공개 counts 제외, mutation intent 없는 쓰기 403을 확인했다. 회사 SSO 자체의 검증은 아니다.
 - 실제 code-server proxy에서 공통 로그인·업무 왕복·blue light/dark·390px 모바일·비교/검색·gzip 원본 다운로드를 확인했다. 기존 명시적 Sanity demo는 유지했고 runtime JS 오류는 없었다.
 - Frontend build, `python -m area_power.vwp --help`, venv interpreter로 `bin/area-power --help`가 성공했다. 추가 자동 테스트·fixture·mock·harness·검증 스크립트 파일은 만들지 않았다.
-- 위 검증의 폐기 DB/계정·서버·브라우저·다운로드는 정리했다. 최신 Design Atlas 검증·서비스 상태는 루트 인계를 따른다. 회사 DB·실데이터·AI 품질·SMTP relay·규모/성능은 미검증이다. Area 권한 목록은 완전 참조 검증을 위해 후보를 스캔하므로 큰 데이터의 비용은 실측이 필요하다.
+- 위 검증의 폐기 DB/계정·서버·브라우저·다운로드는 정리했다. 최신 Design Atlas 검증·서비스 상태는 루트 인계를 따른다. 회사 DB·실데이터·AI 품질·사내 메일 서비스·규모/성능은 미검증이다. Area 권한 목록은 완전 참조 검증을 위해 후보를 스캔하므로 큰 데이터의 비용은 실측이 필요하다.
 
 ## 보존할 사용자 작업과 규칙
 

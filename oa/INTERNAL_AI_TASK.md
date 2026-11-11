@@ -26,6 +26,8 @@ OA API·화면은 `oa/`, 회사 구현은 `oa/integration/`에 있다. Git 저�
 | `oa/integration/corporate_submission.py` | `CorporateSourceIdentity.resolve` 본문·필요 import·승인된 계정 조회 client 주입 생성자. SSO와 같은 영속 매핑 사용 |
 | `oa/sso_app.py` | 승인된 회사 모듈 import와 `identity_provider`, `user_directory`, 필요 `auth_router` 주입 |
 | `oa/integration/company_sso/` | 위 어댑터용 SDK wrapper·인증 router·전용 모의 테스트, 사용자/담당 원천 대응표 |
+| `oa/integration/corporate_mail.py` | `create_mail_sender` 본문·필요 import에서 승인된 사내 메일 client/어댑터를 명시적으로 생성 |
+| `oa/integration/company_mail/` | [메일 Protocol 계약](MAIL_INTEGRATION.md)의 회사 SDK wrapper·응답 대응. 새 테스트/fixture/mock/검증 스크립트 파일은 추가하지 않음 |
 | `oa/requirements.txt` | [가이드 3.1절](../INTERNAL_AI_GUIDE.md#31-oa-sso-고정-의존성-추가-승인--2026-10-20)에 승인된 `signxml==5.2.0`, `lxml==6.1.3`, `cryptography==50.0.2`만 없을 때 추가. 기존 다른 pin·설치 충돌은 변경하지 않고 문의 |
 | 해당 서버의 비공개 root `.env`/실행 환경 | 사용자가 허용한 OA 설정 키와 실제 값. [AI 실행 계약](AI_RUNTIME.md)의 `SANITY_OA_AI_*` 포함 |
 | `SANITY_OA_AI_CRITERIA_FILE`의 승인된 비공개 파일 | [고정 schema](AI_RUNTIME.md#3-최초-판정을-위한-확인된-점검-기준)로 담당자가 확인한 기준·개정·scope 작성. 실제 기준/정답은 사내 보관 |
@@ -61,6 +63,13 @@ OA API·화면은 `oa/`, 회사 구현은 `oa/integration/`에 있다. Git 저�
 Q1의 [분산 수집 설계](../vwp/SOURCE_COLLECTION_DESIGN.md)에 필요한 예상 범위 승인 주체/블록 권한의 원천도 확인한다. launcher의 PC 사용자명·REVISION 안의 이름·입력 `approved_by`는 인증 근거가 아니다. 선언 승인 API/저장과 workspace 논리 중복·PRE 참조 처리는 COMMON-01·02의 Codex 구현이며 SSO 어댑터에서 대신 구현하지 않는다.
 
 [제출 실행 안내](../vwp/SUBMISSION.md)에 따라 사용자는 VWP 터미널에서 제출하고 OA는 DB를 통해서만 수신한다. OA에는 VWP 제출/원본 보관 폴더를 마운트하지 않는다. `oa.submission_receiver`가 전체 조각 검증 후 `sanity_oa_data` 반영과 `sanity_oa_to_vwp` 접수 응답을 원자적으로 확정한다. 공통 운영 권한 연결은 제공했으며 실제 계정 매핑/담당·원천 어댑터·운영 환경의 검증은 사내에서 수행한다. 업로드 API·수신/응답 worker·VWP DB 계정·공통 SQL을 추가하지 않는다.
+
+### 사내 메일 연동 — 2026-11-11
+
+Area/Power 알림은 SMTP가 아닌 회사 메일 서비스에 연결한다. [MAIL_INTEGRATION.md](MAIL_INTEGRATION.md)를 읽고 `MailSender.send(MailMessage) -> MailReceipt`를 자기 회사 wrapper로 구현해 `create_mail_sender()`에서 반환한다. 실제 API·인증·발신 계정·접수/거부/불명 의미는 사내에서 확인한다. 기본 factory는 미연결 오류를 내며 공통 worker는 DB 접속·job 점유 전에 중단한다.
+
+실행 진입점은 `python -m oa.mail_app`이다. `AREA_POWER_MAIL_RECIPIENTS`와 Area DB 설정을 실행 환경에 export하며 기존 `AREA_POWER_SMTP_*`는 제거됐다. 공통 Protocol·worker·composition root·SSO·SQL·UI·의존성을 수정하지 않는다. 접수 성공은 수신/열람 보장이 아니며 결과 불명·접수 후 DB 기록 실패를 자동 재전송하지 않는다. 실제 발송·배포는 별도 사용자 승인 범위에서만 수행한다.
+
 
 ## 4. DB 연결
 
@@ -102,3 +111,5 @@ Q1의 [분산 수집 설계](../vwp/SOURCE_COLLECTION_DESIGN.md)에 필요한 �
 > 기본 검증은 저장소 루트의 `.venv/bin/python run_tests.py --role oa`로 자기 역할만 실행하라. 회사 검사 수가 0이면 어댑터 검증 미실시로 보고하고, DB 연결 동작 확인이 필요한 경우만 독립 개발 머신의 `db/tests/run_mock.py --role oa`를 추가하라.
 
 > 너는 OA 회사 연동 담당이다. AI_DECISION_DESIGN.md, AGENTS.md, INTERNAL_AI_GUIDE.md 전체와 oa/INTERNAL_AI_TASK.md를 읽어라. 최우선 목표는 AI 최초 분류·그룹 판정과 사람 확정 근거의 검색·피드백 순환이다. 우선 OA OpenAI 호환 API의 세부 요청/응답·인증·모델·JSON/도구 지원·입출력/동시성/timeout/조회·취소 한도와 item별 기준·정답/반례를 비공개 위치에 준비해 비식별 계약을 인계하라. oa/AI_RUNTIME.md와 oa/.env.example의 지원 설정 및 승인된 비공개 기준 catalog를 준비하고 제공된 공통 실행으로 첫 판단 순환을 검증하라. 모델 실행·검색·검증·worker/저장 공통 코드는 읽기 전용이다. 대량 모델 분할 공통 구현과 사내 실제 품질 검증 상태를 구분하라. 기존 SSO/source 작업이 필요하면 위 허용 파일/메서드만 사용하고 완료한 작업을 반복하지 말라. VWP 전용 자격증명·원본 파일과 외부 합성 모델 경로를 사용하지 않는다. 공통 코드·SQL·UI·기존 테스트·보호 장치를 수정하지 말고 예상 밖 오류는 WAITING_FOR_CODEX로 문의하라. API 접속·사례 준비·실제 판단 품질·운영 적용 완료를 구분해 보고하라.
+
+> 추가 사내 메일 작업은 MAIL_INTEGRATION.md를 읽고 corporate_mail.create_mail_sender의 본문·필요 import와 company_mail/의 승인 SDK wrapper만 구현하라. 공통 MailSender·worker·SSO·SQL·UI를 수정하거나 SMTP/모의 성공으로 대체하지 마라. 새 테스트/fixture/mock/검증 스크립트 파일은 추가하지 말고 실제 접수/거부/불명 계약·검증 상태를 비식별 보고하라.
