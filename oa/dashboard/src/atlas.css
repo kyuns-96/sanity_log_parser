@@ -85,6 +85,17 @@
 .atlas-shell .main-shell { margin-left:0; width:100%; }
 .atlas-shell .atlas-embedded { grid-template-columns:minmax(0,1fr); }
 .atlas-shell .ws-main { min-width:0; }
+/* Embedded desktop review fills the space below the actual application chrome. */
+@media (min-width:1101px) {
+  .atlas-shell[data-page='workbench']:has(.ws-main-reviewing) .atlas-body { height:100dvh; display:flex; flex-direction:column; }
+  .atlas-shell[data-page='workbench']:has(.ws-main-reviewing) .atlas-body > :not(.atlas-content) { flex-shrink:0; }
+  .atlas-shell[data-page='workbench']:has(.ws-main-reviewing) .atlas-content { flex:1; min-height:0; display:flex; flex-direction:column; }
+  .atlas-shell[data-page='workbench'] .dashboard-surface[data-dashboard-page='workbench'] { flex:1; min-height:0; display:flex; flex-direction:column; }
+  .atlas-shell[data-page='workbench'] .atlas-native-workspace.ws-studio-workbench-open { flex:1; min-height:0; display:flex; flex-direction:column; }
+  .atlas-shell[data-page='workbench'] .atlas-native-workspace.ws-studio-workbench-open .ws-main-shell { flex:1; min-height:0; display:flex; flex-direction:column; }
+  .atlas-shell[data-page='workbench'] .atlas-native-workspace .ws-main.ws-main-reviewing { flex:1; height:auto; min-height:min-content; }
+  .atlas-shell[data-page='workbench'] .ws-main-reviewing > button { flex-shrink:0; align-self:flex-start; }
+}
 @media(min-width:1450px) { .atlas-home { padding:40px 44px 60px; } }
 @media(max-width:1100px) { .atlas-sidebar { width:218px; padding-inline:10px; } .atlas-body { margin-left:218px; } .atlas-header,.atlas-scope { padding-inline:22px; } .atlas-home { padding-inline:22px; } .atlas-scope { gap:10px; } .atlas-scope-title { width:100%; } .atlas-section-heading { align-items:flex-start; flex-direction:column; } .atlas-summary-grid article { padding:18px; } }
 @media(max-width:760px) { .atlas-sidebar { width:268px; transform:translateX(-100%); transition:transform 180ms ease; } .atlas-sidebar.is-open { transform:translateX(0); } .atlas-mobile { display:inline-flex; align-items:center; } .atlas-body { margin-left:0; } .atlas-header { min-height:60px; padding:10px 14px; } .atlas-header > div { gap:8px; font-size:10px; } .atlas-header > div > span { display:none; } .atlas-header > div > b { display:none; } .atlas-scope { padding:12px 16px; gap:10px; } .atlas-scope-title { width:100%; } .atlas-scope label { min-width:calc(50% - 10px); } .atlas-scope label:last-of-type { flex-basis:100%; } .atlas-scope > .atlas-button { min-height:30px; margin-left:auto; } .atlas-home { padding:25px 16px 35px; } .atlas-home h1 { font-size:25px; } .atlas-home-heading { align-items:flex-start; } .atlas-home-heading > .atlas-button { padding:8px; font-size:0; } .atlas-home-heading > .atlas-button svg { width:17px; } .atlas-summary-grid { grid-template-columns:1fr; gap:10px; } .atlas-summary-grid article { padding:15px 18px; } .atlas-summary-grid strong { font-size:21px; margin:4px 0; } .atlas-panel { padding:18px; } .atlas-feature-grid { grid-template-columns:1fr; gap:0; } .atlas-project-grid { grid-template-columns:1fr; } .atlas-shell .area-power #area-power-main { padding:24px 16px; } .atlas-shell .am-main { padding:24px 16px; } .atlas-modal { padding:22px 18px; } .atlas-modal-backdrop { padding:12px; } .atlas-form-grid { grid-template-columns:1fr; gap:0; } .atlas-scrim { position:fixed; inset:0; z-index:39; border:0; background:#071a3566; backdrop-filter:blur(2px); } .atlas-body > .atlas-message { margin-inline:16px; } }

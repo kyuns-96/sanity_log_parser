@@ -126,8 +126,6 @@ body { text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; 
 .ws-studio-workspace .ws-pagination [data-slot='button'] { width: 30px; height: 30px; min-height: 30px; }
 .ws-studio-workspace .ws-footer { margin-top: 25px; font-size: 10px; }
 .ws-studio-workspace .ws-empty { padding: 48px 22px; }
-.ws-studio-workspace.ws-studio-workbench-open { --ws-sidebar-width: 0px; }
-.ws-studio-workbench-open .ws-main-shell { margin-left: 0; }
 .ws-studio-workbench-open .ws-main.ws-main-reviewing { max-width: none; padding: 0 20px 16px; }
 .ws-studio-workbench-open .ws-topbar { padding-inline: 24px; }
 .ws-studio-workbench-open .ws-studio-breadcrumb { margin-left: 20px; }
@@ -222,7 +220,7 @@ body { text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; 
 
 @media (min-width: 1600px) { .workspace { padding-inline: 34px; } .content-grid { grid-template-columns: 250px minmax(0, 1fr); } }
 @media (min-width: 721px) {
-  .ws-studio-workspace.ws-collapsed:not(.ws-studio-workbench-open) { --ws-sidebar-width: 78px; }
+  .ws-studio-workspace.ws-collapsed { --ws-sidebar-width: 78px; }
   .sidebar-is-collapsed .portal-sidebar-context, .sidebar-is-collapsed .portal-sidebar-note { display: none; }
   .ws-studio-workspace.ws-collapsed .ws-studio-project-blocks { margin-left: 0; padding: 0; border: 0; }
   .ws-studio-workspace.ws-collapsed .ws-studio-project-node > button > svg:last-child { display: none; }

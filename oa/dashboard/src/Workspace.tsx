@@ -74,6 +74,7 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
   const demo = session.environment === 'MEMORY_DEMO'
   const production = session.environment === 'PRODUCTION_SSO'
   const initial = useRef(new URLSearchParams(routeSearch ?? location.search))
+  const [appliedRouteSearch, setAppliedRouteSearch] = useState(routeSearch)
   const [overview, setOverview] = useState<WorkspaceOverview | null>(null)
   const [projectId, setProjectId] = useState(initial.current.get('project') || '')
   const [blockId, setBlockId] = useState(initial.current.get('block') || '')
@@ -105,7 +106,7 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
   const [saveError, setSaveError] = useState('')
   const [mobile, setMobile] = useState(false)
   const [collapsed, setCollapsed] = useDashboardSidebarState()
-  const sidebarLayout = useSidebarLayout(!atlas && !collapsed && !reviewing)
+  const sidebarLayout = useSidebarLayout(!atlas && !collapsed)
   const closeMobile = useCallback(() => setMobile(false), [])
   const { isMobile, sidebarRef, triggerRef } = useWorkspaceNavigation(mobile, closeMobile, !atlas && !reviewing)
   const requestId = useRef<string | null>(null)
@@ -140,6 +141,7 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
     const nextView = params.get('tab')
     setView(nextView && ['overview', 'reports', 'history', 'ai-jobs'].includes(nextView) ? nextView : params.has('block') ? 'reports' : 'overview')
     setWorkbenchId(params.get('review') || '')
+    setAppliedRouteSearch(routeSearch)
   }, [routeSearch])
 
   useEffect(() => {
@@ -211,6 +213,8 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
     return () => controller.abort()
   }, [blockId, refresh, !!block])
   useEffect(() => {
+    // Do not publish the previous render's selection while applying a new route.
+    if (appliedRouteSearch !== routeSearch) return
     if (atlas) {
       if (projectId !== atlas.scope.projectId || blockId !== atlas.scope.blockId || versionId !== atlas.scope.versionId) return
       const current = new URLSearchParams(location.search)
@@ -228,7 +232,7 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
     if (atlas) {
       if (href !== location.pathname + location.search) atlas.replaceRoute(href)
     } else history.replaceState(null, '', href)
-  }, [projectId, blockId, versionId, view, eco, itemId, !!version, workbenchId, routeSearch])
+  }, [projectId, blockId, versionId, view, eco, itemId, !!version, workbenchId, routeSearch, appliedRouteSearch])
 
   function resetSelection() {
     setWorkbenchId('')
@@ -307,10 +311,10 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
   }
   const totals = project?.blocks.reduce((total, block) => ({ total: total.total + block.total, fail: total.fail + (block.counts.FAIL || 0), unknown: total.unknown + (block.counts.UNKNOWN || 0), por: total.por + Number(!!block.por.version) }), { total: 0, fail: 0, unknown: 0, por: 0 })
 
-  return <div style={atlas ? { minHeight: 0 } : sidebarLayout.style} className={`ws-app ws-studio-workspace ${atlas ? 'atlas-native-workspace' : `sidebar-layout ${sidebarLayout.resizing ? 'sidebar-resizing' : ''} ${collapsed && !reviewing ? 'ws-collapsed' : ''}`}${reviewing ? ' ws-studio-workbench-open' : ''}${!atlas && production && session.is_admin === true ? ' ws-mode-enabled' : ''}`}>
+  return <div style={atlas ? { minHeight: 0 } : sidebarLayout.style} className={`ws-app ws-studio-workspace ${atlas ? 'atlas-native-workspace' : `sidebar-layout ${sidebarLayout.resizing ? 'sidebar-resizing' : ''} ${collapsed ? 'ws-collapsed' : ''}`}${reviewing ? ' ws-studio-workbench-open' : ''}${!atlas && production && session.is_admin === true ? ' ws-mode-enabled' : ''}`}>
     <a className="skip-link" href="#ws-main">본문으로 건너뛰기</a>
     {!atlas && !reviewing && mobile && isMobile && <button className="ws-backdrop" aria-label="메뉴 닫기" onClick={closeMobile} />}
-    {!atlas && !reviewing && <aside ref={sidebarRef} className={`ws-sidebar ${mobile ? 'ws-open' : ''}`} aria-label="워크스페이스 메뉴" role={mobile && isMobile ? 'dialog' : undefined} aria-modal={mobile && isMobile || undefined} inert={isMobile && !mobile}>
+    {!atlas && <aside ref={sidebarRef} className={`ws-sidebar ${mobile ? 'ws-open' : ''}`} aria-label="워크스페이스 메뉴" role={mobile && isMobile ? 'dialog' : undefined} aria-modal={mobile && isMobile || undefined} inert={isMobile && !mobile}>
       <div className="ws-studio-sidebar-header"><WorkspaceBrand /><button className="ws-mobile-close" aria-label="메뉴 닫기" onClick={closeMobile}><X size={19} /></button></div>
       {production && session.is_admin === true && <SidebarModeSwitch mode="user" onChange={mode => { closeMobile(); return navigateDashboard(modeUrl(mode, true), session.user.id) }} />}
       <span className="ws-sidebar-caption">워크스페이스</span>
@@ -335,7 +339,7 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
         <ModuleNavigation production={production} />
         <div className="ws-studio-header-user"><ColorModeControl />{production && <PersonalAiToken key={session.user.id} />}{reviewing && <Button variant="ghost" size="sm" aria-label="검사 대장으로 돌아가기" onClick={() => { setWorkbenchId(''); setRefresh(value => value + 1) }}><ArrowLeft size={14} /><span>검사 대장</span></Button>}<span className="ws-connected"><i />{production ? 'SSO 연결' : demo ? '데모 환경' : '테스트 환경'}</span><span className="ws-avatar ws-avatar-small">{session.user.name.slice(-2)}</span><span className="ws-studio-user-name">{session.user.name}</span></div>
       </header>}
-      <main id="ws-main" className={`ws-main${reviewing ? ' ws-main-reviewing' : ''}`} style={atlas && reviewing ? { height: 'auto', minHeight: 0 } : undefined} tabIndex={-1}>
+      <main id="ws-main" className={`ws-main${reviewing ? ' ws-main-reviewing' : ''}`} tabIndex={-1}>
         {demo && !atlas && <WorkspaceDemoBanner session={session} onAccount={onDemoAccount} />}
         {atlas && (reviewing ? <Button variant="ghost" size="sm" aria-label="검사 대장으로 돌아가기" onClick={() => { setWorkbenchId(''); setRefresh(value => value + 1) }}><ArrowLeft size={14} />검사 대장</Button> : <nav className="ws-block-strip" aria-label="로그 검토 기능">{[{ id: 'overview', label: '프로젝트 현황' }, { id: 'reports', label: '버전·검사 대장' }, { id: 'history', label: 'PoR 변경 이력' }, ...(production ? [{ id: 'ai-jobs', label: 'AI 작업 현황' }] : [])].map(item => <button key={item.id} aria-current={view === item.id ? 'page' : undefined} aria-pressed={view === item.id} onClick={() => setView(item.id)}>{item.label}</button>)}</nav>)}
         {!reviewing && <div className="ws-heading ws-studio-content-heading"><div><span className="eyebrow">{view === 'ai-jobs' ? 'AI 실행' : view === 'overview' ? '프로젝트' : view === 'history' ? '기준 버전 이력' : '검사 대장'}</span><h1>{view === 'ai-jobs' ? 'AI 작업 현황' : view === 'overview' ? `${project?.name || session.user.name} 프로젝트` : view === 'history' ? 'PoR 변경 이력' : `${block?.name || '블록'} · 버전과 검사 결과`}</h1><p>{view === 'ai-jobs' ? '내가 요청한 분류·판정 작업의 진행과 처리 시간을 확인합니다.' : view === 'overview' ? '담당 블록의 기준 버전과 검사 현황을 확인합니다.' : view === 'history' ? '기준 버전의 변경 사유와 확정자를 확인합니다.' : '버전과 sanity 항목을 선택하고 보고서 검토를 시작하세요.'}</p></div>{view !== 'ai-jobs' && <Button variant="outline" size="sm" onClick={() => { setError(''); setRefresh(value => value + 1) }}><RefreshCw size={14} />새로고침</Button>}</div>}
