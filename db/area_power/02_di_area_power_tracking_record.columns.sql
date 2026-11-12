@@ -1,4 +1,4 @@
--- COLUMN DEFINITIONS ONLY; paste into the tracking_record creation request, not the SQL runner.
+-- COLUMN DEFINITIONS ONLY; di_area_power_tracking_record already requested: reference only, do not resubmit or run standalone.
 -- No schema names, REFERENCES, FK/PK/UNIQUE/CHECK clauses, or cross-table dependencies.
 -- Initial fields/defaults are independent of di_area_power_csv creation order.
 id uuid NOT NULL,

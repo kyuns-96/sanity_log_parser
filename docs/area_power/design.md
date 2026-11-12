@@ -24,7 +24,7 @@ Block별 CSV를 gzip으로 압축해 DB에 보관하고 area, Vth ratio, drive s
 | 입력 대기 | Area 단위, 실제 값의 정밀도와 결측 표현, 일부 집계의 포함 관계 및 실행 메타데이터는 확인 후 확정한다. |
 | 입력 확인 | CSV에 `process_label`, `voltage_v`, `temp_c`, `pex`가 있으며 파일 하나에는 단일 corner만 포함한다. |
 | 저장 설계 | 현재 통합 CSV 원본은 한 번 저장하고 동일 구현의 구조 snapshot과 조건별 power 실행을 DB 안에서 분리한다. Exporter에 파일 분리를 요구하지 않는다. |
-| 운영 제약·설계 확정 | 업무 테이블은 `di_area_power_csv`, `tracking_record` 두 개다. 두 테이블 생성 신청은 완료했으며 초기 컬럼 정의와 생성 후 제약·인덱스 적용을 분리한다. Power 없는 cell usage 단독 업로드는 제외한다. |
+| 운영 제약·설계 확정 | 업무 테이블은 `di_area_power_csv`, `di_area_power_tracking_record` 두 개다. 두 테이블 생성 신청은 완료했으며 초기 컬럼 정의와 생성 후 제약·인덱스 적용을 분리한다. Power 없는 cell usage 단독 업로드는 제외한다. |
 
 제품명은 유지하되 추적 대상은 area에 한정하지 않는다. 추가 지표는 원본에서 계산할 수 있고 단위·집계 범위·비교 의미가 정의될 때 포함한다.
 
@@ -73,7 +73,7 @@ OA가 설정·분석 요청을 DB에 등록하면 vwp_server가 자기 대상의
 | 저장 단위 | 내용 |
 | --- | --- |
 | 원본 `di_area_power_csv` | 통합 CSV gzip, checksum, 프로젝트·버전·block·snapshot, 조건·검증 결과를 업로드별 한 행에 보관 |
-| 구조 snapshot | `tracking_record`의 snapshot 레코드로 구현 기준·구조 원본을 연결. Corner는 구조 키가 아님 |
+| 구조 snapshot | `di_area_power_tracking_record`의 snapshot 레코드로 구현 기준·구조 원본을 연결. Corner는 구조 키가 아님 |
 | Power 분석 실행 | `di_area_power_csv.id`로 구분하며 동일 snapshot의 다른 corner·같은 조건 재실행은 별도 행 |
 
 같은 netlist·cell 구성과 area 기준의 다른 corner 파일은 기존 snapshot을 명시적으로 선택해 연결한다. 원본의 전체 구조 행과 조건을 확인하고, 구조가 다르면 별도 snapshot으로 등록한다. 같은 버전·이름이거나 루트·target 수치가 같다는 이유로 자동 병합하지 않는다. 같은 조건의 power 재실행도 별도 분석 실행이다.
@@ -432,7 +432,7 @@ AI 호출 실패나 잘못된 응답은 성공으로 바꾸지 않는다. 후보
 | 테이블 | 저장 내용 |
 | --- | --- |
 | `di_area_power_csv` | 통합 CSV 원본 gzip, 업로드 실행·프로젝트·버전·block·snapshot, corner·보충 분석 조건, 루트 요약·검증 결과 |
-| `tracking_record` | 종류별 설정·원문 revision·매핑·파일 선택·계산 결과·AI 판정·알림·메일·작업. 객체·결과·작업별로 행을 분리하고 상세는 JSONB에 저장 |
+| `di_area_power_tracking_record` | 종류별 설정·원문 revision·매핑·파일 선택·계산 결과·AI 판정·알림·메일·작업. 객체·결과·작업별로 행을 분리하고 상세는 JSONB에 저장 |
 
 루트 요약은 `root_summary`, 분석한 hierarchy·target·매핑 그룹은 `metric_result`에 지표별 현재/기준 값·분자·분모·조건을 저장한다. 별도 `scope_result` 캐시는 생성하지 않는다. 원본 pct는 gzip에 남기고 비율은 검증한 분자·분모로 계산한다. 구조의 논리 키는 `(snapshot_id, hier_name)`, power는 `(upload_id, hier_name)`이며 업로드 시 원본 전체를 관계형 행으로 복제하지 않는다.
 
@@ -440,7 +440,7 @@ AI 호출 실패나 잘못된 응답은 성공으로 바꾸지 않는다. 후보
 
 조건별 현재 파일은 selection 레코드가 명시적으로 선택한다. 수정본 업로드로 자동 교체하지 않으며 완료 비교는 당시의 업로드·원문·매핑 revision을 고정한다. OA의 동시 선택 변경은 `row_version` 조건 갱신으로 충돌을 검출한다.
 
-작업도 `tracking_record`에 저장한다. 적재·비교·추출·판정은 vwp_server, 메일은 oa_server가 소비하며 자기 서버의 pending job만 짧은 트랜잭션에서 행 잠금으로 점유한다. AI·사내 메일 호출 중 DB 잠금을 유지하지 않는다. 전체 요청 범위를 처리하기 전에는 완료로 표시하지 않으며 실패 이유·명시 재실행 이력을 보존한다.
+작업도 `di_area_power_tracking_record`에 저장한다. 적재·비교·추출·판정은 vwp_server, 메일은 oa_server가 소비하며 자기 서버의 pending job만 짧은 트랜잭션에서 행 잠금으로 점유한다. AI·사내 메일 호출 중 DB 잠금을 유지하지 않는다. 전체 요청 범위를 처리하기 전에는 완료로 표시하지 않으며 실패 이유·명시 재실행 이력을 보존한다.
 
 ## 조회와 알림 흐름
 

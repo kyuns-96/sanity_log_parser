@@ -251,7 +251,7 @@ class Service:
             if not upload.get("snapshot_id") or not upload.get("condition_key"):
                 reject("Upload is missing snapshot or condition identity.")
             self.lock(conn, ["selection", body.selection_scope, upload["snapshot_id"], upload["condition_key"]])
-            row = conn.execute(sql.SQL("SELECT * FROM {} WHERE record_type='selection' AND selection_scope=%s AND snapshot_id=%s AND condition_key=%s FOR UPDATE").format(self.db.table("tracking_record")), (body.selection_scope, upload["snapshot_id"], upload["condition_key"])).fetchone()
+            row = conn.execute(sql.SQL("SELECT * FROM {} WHERE record_type='selection' AND selection_scope=%s AND snapshot_id=%s AND condition_key=%s FOR UPDATE").format(self.db.table("di_area_power_tracking_record")), (body.selection_scope, upload["snapshot_id"], upload["condition_key"])).fetchone()
             fields = {**self.scope(upload), "upload_id": upload["id"], "condition_key": upload["condition_key"], "selection_scope": body.selection_scope}
             if row:
                 if body.expected_row_version is None:
@@ -335,7 +335,7 @@ class Service:
         targets = self.explanation_targets(conn, scope_targets, changes, comparison)
         key = digest(["ai_run", comparison["id"], sorted(str(row["id"]) for row in changes), sorted(str(target["id"]) for target in targets), sorted(recipients), str(uuid4()) if fresh else None])
         self.lock(conn, ["ai_run", key])
-        old = conn.execute(sql.SQL("SELECT * FROM {} WHERE record_type='ai_run' AND dedupe_key=%s").format(self.db.table("tracking_record")), (key,)).fetchone()
+        old = conn.execute(sql.SQL("SELECT * FROM {} WHERE record_type='ai_run' AND dedupe_key=%s").format(self.db.table("di_area_power_tracking_record")), (key,)).fetchone()
         if old:
             old = self.authorize(conn, old)
             jobs = self.db.records(conn, "job", parent_id=old["id"], limit=1)
@@ -386,7 +386,7 @@ class Service:
             numeric["target_revisions"] = sorted(str(target["id"]) for target in targets)
             key = digest(numeric)
             self.lock(conn, ["comparison", key])
-            old = conn.execute(sql.SQL("SELECT * FROM {} WHERE record_type='comparison' AND dedupe_key=%s FOR UPDATE").format(self.db.table("tracking_record")), (key,)).fetchone()
+            old = conn.execute(sql.SQL("SELECT * FROM {} WHERE record_type='comparison' AND dedupe_key=%s FOR UPDATE").format(self.db.table("di_area_power_tracking_record")), (key,)).fetchone()
             if old:
                 old = self.authorize(conn, old)
                 original = old["payload"]["request"]
@@ -435,7 +435,7 @@ class Service:
             if body.expected_row_version is not None and body.expected_row_version != job["row_version"]:
                 reject("Job changed; reload before rerunning.", "conflict", 409)
             self.lock(conn, ["rerun", identifier])
-            existing = conn.execute(sql.SQL("SELECT id FROM {} WHERE record_type='job' AND previous_id=%s AND state IN ('pending','running')").format(self.db.table("tracking_record")), (identifier,)).fetchone()
+            existing = conn.execute(sql.SQL("SELECT id FROM {} WHERE record_type='job' AND previous_id=%s AND state IN ('pending','running')").format(self.db.table("di_area_power_tracking_record")), (identifier,)).fetchone()
             if existing:
                 reject("A rerun of this job is already pending or running.", "conflict", 409)
             parent = None
@@ -449,7 +449,7 @@ class Service:
                 if expected_kind in ("comparison", "ai_run"):
                     if parent["state"] != "failed":
                         reject("Subject is not failed; it cannot safely be reset.", "invalid_subject_state", 409)
-                    active = conn.execute(sql.SQL("SELECT id FROM {} WHERE record_type='job' AND parent_id=%s AND id<>%s AND state IN ('pending','running')").format(self.db.table("tracking_record")), (parent["id"], identifier)).fetchone()
+                    active = conn.execute(sql.SQL("SELECT id FROM {} WHERE record_type='job' AND parent_id=%s AND id<>%s AND state IN ('pending','running')").format(self.db.table("di_area_power_tracking_record")), (parent["id"], identifier)).fetchone()
                     if active:
                         reject("Another job already owns this subject.", "conflict", 409)
                     payload = dict(parent["payload"])
@@ -461,7 +461,7 @@ class Service:
                 upload = self.db.upload(conn, job["upload_id"], lock=True)
                 if upload["state"] != "failed":
                     reject("Upload is not failed; it cannot safely be reset.", "invalid_subject_state", 409)
-                active = conn.execute(sql.SQL("SELECT id FROM {} WHERE record_type='job' AND upload_id=%s AND job_kind='ingest' AND state IN ('pending','running')").format(self.db.table("tracking_record")), (upload["id"],)).fetchone()
+                active = conn.execute(sql.SQL("SELECT id FROM {} WHERE record_type='job' AND upload_id=%s AND job_kind='ingest' AND state IN ('pending','running')").format(self.db.table("di_area_power_tracking_record")), (upload["id"],)).fetchone()
                 if active:
                     reject("Another ingest job already owns this upload.", "conflict", 409)
                 subject_context = {"upload_error": upload.get("error_detail"), "validation_report": upload.get("validation_report")}

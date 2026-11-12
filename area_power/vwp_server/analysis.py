@@ -40,7 +40,7 @@ def all_records(db, conn, record_type: str, **filters) -> list[dict]:
 
 
 def existing_dedupe(db, conn, kind: str, key: bytes, *, lock=False):
-    return conn.execute(sql.SQL('SELECT * FROM {} WHERE record_type=%s AND dedupe_key=%s' + (' FOR UPDATE' if lock else '')).format(db.table('tracking_record')), (kind, key)).fetchone()
+    return conn.execute(sql.SQL('SELECT * FROM {} WHERE record_type=%s AND dedupe_key=%s' + (' FOR UPDATE' if lock else '')).format(db.table('di_area_power_tracking_record')), (kind, key)).fetchone()
 
 
 def advisory_lock(conn, key: bytes) -> None:

@@ -220,7 +220,7 @@ class AreaAdapters:
 
     def rows(self, conn):
         from psycopg import sql
-        return conn.execute(sql.SQL("SELECT * FROM {} WHERE record_type IN ('project','block','version') ORDER BY id").format(self.db.table("tracking_record"))).fetchall()
+        return conn.execute(sql.SQL("SELECT * FROM {} WHERE record_type IN ('project','block','version') ORDER BY id").format(self.db.table("di_area_power_tracking_record"))).fetchall()
 
     def bindings(self):
         rows = self.catalog.db.execute("SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s",

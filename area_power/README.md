@@ -16,7 +16,9 @@ Design Atlas의 수치 분석 엔진이다. 로그 분류·PASS/FAIL과 hierarch
 
 OA ↔ 중앙 VWP의 업무 전달은 DB 행으로만 수행한다. 브라우저가 VWP·AI에 직접 접속하거나 OA가 VWP API를 중계하지 않는다. 사용자 PC → VWP CSV 업로드는 별도 입력 경로다.
 
-Area 테이블은 **`di_area_power_csv`, `tracking_record` 두 개**다. Sanity의 기존 네 테이블을 변경하거나 여기에 CSV를 끼워 넣지 않는다. 두 테이블 신청은 완료됐지만 실제 사내 생성·제약·권한 적용을 가정하지 않는다. 실제 schema·DSN은 사내에서만 설정한다. SQL의 `<schema>`를 사내에서 일괄 치환하고, 앱은 DDL을 실행하지 않는다.
+Area 테이블은 **`di_area_power_csv`, `di_area_power_tracking_record` 두 개**다. Sanity의 기존 네 테이블을 변경하거나 여기에 CSV를 끼워 넣지 않는다. 두 테이블 신청은 완료됐지만 실제 사내 생성·제약·권한 적용을 가정하지 않는다. 실제 schema·DSN은 사내에서만 설정한다. SQL의 `<schema>`를 사내에서 일괄 치환하고, 앱은 DDL을 실행하지 않는다.
+
+2026-11-12 실제 이름 전환은 [DB backend 전환 안내](../docs/area_power/database.md#실제-테이블-이름으로의-backend-전환--2026-11-12)를 따른다. 기존 사용자 DB·서비스를 자동 rename/migrate/재시작하지 않는다. OA·중앙 VWP는 승인된 두 테이블/권한/readiness 확인 후 함께 전환하고, 동등한 기존 제약/인덱스 이름은 유지한다. PC config/API·UI는 그대로이므로 재-export·재-upload·의존성 변경·frontend build가 필요하지 않다.
 
 ## 인증·프로젝트 연결
 
