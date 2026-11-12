@@ -43,3 +43,13 @@
 - 실데이터·사내 비밀은 제공받지 않는다. Hierarchy 누적 집계·부모/자식 중복 합산 금지·LLP 분리·분모·power 포함 관계·파일별 단일 corner는 다시 질문하지 않는다.
 
 실행·수치·보존 계약은 [README](README.md), [제품 설계](../docs/area_power/design.md), [DB 계약](../docs/area_power/database.md)을 따른다.
+
+## PC별 Area/Power 업로드 prototype — 2026-11-12
+
+- 기존 `bin/area-power` / `python -m area_power.vwp`에 `--config /approved/pc/upload.json`을 추가했다. 공통 multipart 전송/API는 그대로 하나다. 제품 예제는 `area_power/vwp/upload.example.json`; 필수 `csv`, `metadata`, 선택 `report_export` 전체 argv 배열만 받는다. config 상대 입력·exporter cwd는 config 디렉터리 기준이고 기존 입력 옵션과 혼용하지 않는다. URL/token/actor는 기존 환경변수·옵션을 유지한다.
+- 사내 AI의 마무리는 비공개 PC 경로/설정·실제 dashboard의 준비된 Area UUID/실행 문맥·확인된 전체 exporter argv 또는 승인된 기존 wrapper·승인 endpoint/token 주입뿐이다. 공통 CLI/API/DB/SSO·새 회사 코드 수정 권한은 추가하지 않는다. 독점 exporter/라이선스·실제 회사 CSV·운영 TLS/방화벽·사용자별 인증은 미검증이다. 공유 Bearer + 감사 actor를 SSO로 표시하지 않는다.
+- 실제 검증: PostgreSQL 18.6의 별도 폐기 DB·비소유 제한 로그인에 기존 두 테이블/제약/인덱스와 합성 범위를 준비하고, 자체 loopback 서버로 canonical CLI를 실행했다. 다른 cwd에서 config plain/gzip/실제 `/bin/cp` exporter argv와 기존 명시적 CLI의 4건이 실제 적재됐다. DB의 gzip 내용·기존 gzip byte 보존·SHA·scope UUID·actor·새 upload/snapshot 4개·자동 selection 0개와 상태 GET 200을 확인했다. proprietary exporter 자체를 검증한 것은 아니다.
+- 잘못된 config/argv/경로·혼용·누락 metadata/CSV·export 실패 18건은 exit 2 및 exporter 부작용/HTTP 없음, 잘못된 token은 실제 HTTP 401/exit 1이었다. 두 canonical help에 `--config`가 표시됐다. 검증 데이터/DB/계정/자체 서버는 제거했고 기존 사용자 DB·서비스·broken `.venv`는 보존했다. 새 테스트/fixture/mock/harness/검증 스크립트 파일·모바일 검사는 추가/실행하지 않았다.
+- 후속 실제 Python exporter는 빈 문자열·공백 인자 `["", " ", "tail"]`의 원형 전달과 의도한 exit 7 → CLI exit 2/HTTP 없음, 잘못된 argv 경계 5건의 실행 전 거부를 확인했다.
+- 매 POST는 새 행이며 결과 불명은 commit됐을 수 있다. 접수 확인 전 무작정 재전송하지 않는다. 자동 retry/발견/스케줄러·PC DB/모델 접속은 없다.
+- 최종 실제 발행 SHA·push 상태는 비공개 `artifacts/internal-handoff/LATEST.md`와 각 역할의 `005_AREA_POWER_PC_UPLOAD.md`에 기록한다. 대상 feature 브랜치는 `codex/area-power-pc-upload`이며 main 병합은 별도 명시 요청 사항이다. 기존 main `ad5337c930c771ac2e68ef263a5200bc91f0f508`에는 이 prototype이 없다.

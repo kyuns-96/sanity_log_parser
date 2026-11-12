@@ -6,9 +6,10 @@ the corresponding command-line options.
 
 The proprietary report_export executable and its licensed execution environment
 must be installed by the user. Its command-line contract is not available here:
-provide the complete argv with --report-export (last option), including any real
-exporter options needed to write the explicitly supplied CSV path. No exporter
-flags are invented or appended. The output file must exist before upload.
+provide the complete argv with --report-export (last option) or in --config,
+including any real exporter options needed to write the explicitly supplied CSV
+path. No exporter flags are invented or appended. The output file must exist
+before upload. Config paths and exporter cwd are relative to its directory.
 """
 from __future__ import annotations
 
@@ -26,8 +27,9 @@ from area_power.common.jsonutil import dumps, loads
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="area-power", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("csv", type=Path, help="Existing CSV or gzip output path to upload (checked after optional export)")
-    parser.add_argument("--metadata", required=True, type=Path, help="UTF-8 JSON file containing UploadMetadata, including catalog IDs and hierarchy_separator")
+    parser.add_argument("csv", nargs="?", type=Path, help="Existing CSV or gzip output path to upload (checked after optional export)")
+    parser.add_argument("--metadata", type=Path, help="UTF-8 JSON file containing UploadMetadata, including catalog IDs and hierarchy_separator")
+    parser.add_argument("--config", type=Path, help="PC JSON configuration with csv, metadata and optional report_export argv; exclusive with explicit input options")
     parser.add_argument("--url", default=os.environ.get("AREA_POWER_SERVER_URL"), help="VWP service base URL (or AREA_POWER_SERVER_URL)")
     parser.add_argument("--token", default=os.environ.get("AREA_POWER_UPLOAD_TOKEN"), help="Bearer token (or AREA_POWER_UPLOAD_TOKEN; environment recommended)")
     parser.add_argument("--actor", default=os.environ.get("AREA_POWER_ACTOR"), help="Audit identity (or AREA_POWER_ACTOR)")
@@ -36,9 +38,38 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _config_inputs(path: Path) -> tuple[Path, Path, list[str] | None, Path]:
+    directory = path.resolve().parent
+    config = loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(config, dict) or config.keys() - {"csv", "metadata", "report_export"}:
+        raise ValueError("Invalid config object or keys")
+    for key in ("csv", "metadata"):
+        value = config.get(key)
+        if not isinstance(value, str) or not value.strip() or "\0" in value:
+            raise ValueError("Invalid input path")
+    exporter = config.get("report_export")
+    if "report_export" in config and (
+        not isinstance(exporter, list) or not exporter
+        or any(not isinstance(arg, str) or "\0" in arg for arg in exporter)
+        or not exporter[0].strip()
+    ):
+        raise ValueError("Invalid exporter argv")
+    return directory / config["csv"], directory / config["metadata"], exporter, directory
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
+    export_cwd = None
+    if args.config is not None:
+        if args.csv is not None or args.metadata is not None or args.report_export is not None:
+            parser.error("--config cannot be combined with csv, --metadata or --report-export")
+        try:
+            args.csv, args.metadata, args.report_export, export_cwd = _config_inputs(args.config)
+        except (OSError, UnicodeError, ValueError, TypeError, RuntimeError):
+            parser.error("Cannot read a valid config JSON object with csv, metadata and optional report_export argv")
+    elif args.csv is None or args.metadata is None:
+        parser.error("csv and --metadata are required unless --config is used")
     if not args.url or not args.token or not args.actor or not args.actor.strip():
         parser.error("--url, --token and --actor (or their environment variables) are required")
     try:
@@ -65,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.report_export:
             parser.error("--report-export requires the complete executable argv")
         try:
-            subprocess.run(args.report_export, shell=False, check=True, stdout=sys.stderr)
+            subprocess.run(args.report_export, shell=False, check=True, stdout=sys.stderr, cwd=export_cwd)
         except FileNotFoundError:
             print("Exporter executable is unavailable; install the proprietary report_export environment and provide its real argv.", file=sys.stderr)
             return 2
@@ -98,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         print(dumps(result))
         return 0
     except (OSError, httpx.HTTPError, ValueError, TypeError):
-        print("Upload failed or the VWP service returned an invalid response.", file=sys.stderr)
+        print("Upload failed or the VWP service returned an invalid response. It may have committed; confirm receipt before retrying.", file=sys.stderr)
         return 1
 
 
