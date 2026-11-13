@@ -2,10 +2,10 @@
 
 ## 확정 사항
 
-테이블별 결재 부담 때문에 Area/Power 업무 테이블은 **`di_area_power_csv`, `tracking_record` 두 개**로 제한한다. Sanity의 기존 네 테이블과는 별도 계약이다. 사용자가 두 테이블의 **생성 신청을 완료**했다. 승인·실제 생성·컬럼 일치·제약·권한 적용 완료는 아직 확인하지 않았다. 다시 생성 신청하거나 재생성하지 않는다. 앱·parser·worker·Dashboard·메일 발송기는 구현했고 로컬 실행을 확인했다. 사내 연결 확인과는 구분한다.
+테이블별 결재 부담 때문에 Area/Power 업무 테이블은 **`di_area_power_csv`, `di_area_power_tracking_record` 두 개**로 제한한다. Sanity의 기존 네 테이블과는 별도 계약이다. 사용자가 두 테이블의 **생성 신청을 완료**했다. 승인·실제 생성·컬럼 일치·제약·권한 적용 완료는 아직 확인하지 않았다. 다시 생성 신청하거나 재생성하지 않는다. 앱·parser·worker·Dashboard·메일 발송기는 구현했고 로컬 실행을 확인했다. 사내 연결 확인과는 구분한다.
 
 - DB는 사내 PostgreSQL 18.6 DBaaS이며 사용자에게 DBA 권한은 없다.
-- 실제 스키마명은 사내 비밀 정보다. 요구하거나 저장하지 않는다. 실행용 SQL의 테이블 참조는 `<schema>.di_area_power_csv`, `<schema>.tracking_record`로 표기하며 사내에서 **`<schema>` 문자열만 실제 이름으로 일괄 치환**한다. 점은 이미 있으므로 치환값에 점을 덧붙이지 않는다.
+- 실제 스키마명은 사내 비밀 정보다. 요구하거나 저장하지 않는다. 실행용 SQL의 테이블 참조는 `<schema>.di_area_power_csv`, `<schema>.di_area_power_tracking_record`로 표기하며 사내에서 **`<schema>` 문자열만 실제 이름으로 일괄 치환**한다. 점은 이미 있으므로 치환값에 점을 덧붙이지 않는다.
 - 치환 전 파일은 실행 가능한 SQL이 아닌 템플릿이다. 점검 SQL의 to_regclass 문자열·ALTER 대상·REFERENCES 대상·인덱스 ON 대상도 모두 치환한다. 컬럼 정의 파일은 표의 이름을 포함하지 않는 조각이므로 스키마를 붙이지 않는다. 제약·인덱스 이름은 테이블 참조가 아니므로 스키마를 붙이지 않는다. CREATE SCHEMA·SET search_path나 이전 문장의 세션 유지에 의존하지 않는다.
 - 초기에는 컬럼·자료형·NOT NULL·기본값만 신청한다. REFERENCES·PK·UNIQUE·CHECK·인덱스는 두 테이블이 실제 존재한 뒤 분리 적용한다. 기존 컬럼 신청 내용의 일치를 먼저 확인하고 임의로 바꾸지 않는다.
 - 초기 정의 파일은 **CREATE TABLE 전체 SQL이 아닌 컬럼 목록**이다. 웹페이지 컬럼 정의 입력란에 넣으며 SQL 실행란에 파일 그대로 실행하지 않는다.
@@ -19,7 +19,7 @@
 | --- | --- |
 | [00_inspect.sql](../../db/area_power/00_inspect.sql) | 사내에서 테이블 존재·컬럼·기존 제약·인덱스 확인. 아직 없어도 조회 가능. 결과를 외부에 공유할 필요 없음 |
 | [01_di_area_power_csv.columns.sql](../../db/area_power/01_di_area_power_csv.columns.sql) | 이미 생성 신청한 첫 테이블의 설계 참고본. 재신청용이 아니며 실제 신청 컬럼과 사내에서 대조 |
-| [02_tracking_record.columns.sql](../../db/area_power/02_tracking_record.columns.sql) | 신청 완료한 두 번째 테이블의 컬럼 참고본. 실제 신청 컬럼과 사내에서 대조 |
+| [02_di_area_power_tracking_record.columns.sql](../../db/area_power/02_di_area_power_tracking_record.columns.sql) | 신청 완료한 두 번째 테이블의 컬럼 참고본. 실제 신청 컬럼과 사내에서 대조 |
 | [03_constraints.sql](../../db/area_power/03_constraints.sql) | 두 테이블 생성·컬럼 일치 확인 후 PK·UNIQUE → CHECK → FK 순서로 미적용 정의 실행 |
 | [04_indexes.sql](../../db/area_power/04_indexes.sql) | 제약 적용 후 인덱스 생성. Selection UNIQUE 인덱스는 필수 정합성 제약 |
 
@@ -27,12 +27,20 @@
 
 이미 PK·동일 제약·인덱스가 생성돼 있으면 이름뿐 아니라 정의를 사내에서 비교해 일치하는 항목은 다시 실행하지 않는다. 후속 파일은 전체를 무조건 재실행하는 idempotent 스크립트가 아니다. 오류가 발생하면 중단해 원인을 확인하고 실제로 빠진 정의만 이어서 적용한다. 기존 데이터가 제약을 위반하면 추가가 실패하며 데이터 삭제·자동 보정·오류 숨김으로 우회하지 않는다.
 
+### 실제 테이블 이름으로의 backend 전환 — 2026-11-12
+
+물리 테이블 이름은 정확히 `di_area_power_tracking_record`, `di_area_power_csv`다. CSV 이름·업무 컬럼·record_type·UUID/API 계약은 바꾸지 않는다. 앱에는 이전 테이블 alias/fallback이나 자동 DDL·rename·migration이 없다. 기존 사용자 DB·사내 DB의 데이터를 자동 변환하지 않는다.
+
+사내에서 00으로 실제 두 테이블·컬럼·권한을 비공개 점검하고 승인된 누락 정의만 권한 있는 운영자가 적용한다. 03/04의 새 객체 이름은 신규 수동 DDL의 표준일 뿐이다. 기존 제약·인덱스가 다른 이름이어도 같은 대상/컬럼/참조/조건의 유효한 정의라면 이름 변경·중복 생성 없이 유지한다. readiness는 PK/UNIQUE/FK signature·selection 유일성·검증된 CHECK를 확인하며 객체 이름을 강제하지 않는다.
+
+준비 완료 후 OA·중앙 VWP 업로드·worker를 승인된 같은 소스로 함께 전환한다. PC transport/config/API와 UI는 그대로이므로 이 변경만으로 재-export·재-upload·의존성 변경·frontend build를 하지 않는다. 현재 로컬 사용자 DB/기존 OA 서비스도 자동 변경·재시작하지 않는다. 새 소스의 readiness가 실패하면 다른 DB/이전 테이블로 우회하지 말고 승인된 배포 준비를 중단한다.
+
 ## 서버 연결
 
 ```mermaid
 flowchart LR
     PC["vwp · 사용자 PC<br/>report_export"] -->|CSV 업로드| V["vwp_server<br/>검증·적재·비교·AI"]
-    V <-->|요청·설정 조회 / 결과 저장| DB[("PostgreSQL 18.6<br/>di_area_power_csv / tracking_record")]
+    V <-->|요청·설정 조회 / 결과 저장| DB[("PostgreSQL 18.6<br/>di_area_power_csv / di_area_power_tracking_record")]
     O["oa_server<br/>Dashboard·메일"] <-->|요청·설정 저장 / 결과 조회| DB
     O -->|메일| U[사용자]
 ```
@@ -68,7 +76,7 @@ flowchart LR
 
 Key가 같아도 조건이 불완전하면 `comparable`로 판단하지 않는다. `conditions_complete`는 앱이 검증하며 DB는 PVT·PEX의 일부 필수값만 확인할 수 있다. 같은 corner 이름만으로 같은 조건으로 취급하지 않는다.
 
-## 2. tracking_record — 설정·결과·알림·작업
+## 2. di_area_power_tracking_record — 설정·결과·알림·작업
 
 한 행은 한 업무 객체의 revision, 한 hierarchy 집계·비교 결과, 한 판정, 한 알림 또는 한 작업이다. 프로젝트 전체·전체 후보 목록을 하나의 거대한 JSON으로 갱신하지 않는다. 원본 bytes나 base64 CSV를 payload에 넣지 않는다.
 
@@ -117,7 +125,7 @@ Key가 같아도 조건이 불완전하면 `comparable`로 판단하지 않는�
 동시 변경은 다음 규칙을 사용한다. 실제 SQL은 고정 문자열 결합이 아니라 파라미터 바인딩으로 실행한다.
 
 ```sql
-UPDATE <schema>.tracking_record SET upload_id = $1, row_version = row_version + 1, updated_by = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 AND record_type = 'selection' AND row_version = $4 RETURNING id, row_version;
+UPDATE <schema>.di_area_power_tracking_record SET upload_id = $1, row_version = row_version + 1, updated_by = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 AND record_type = 'selection' AND row_version = $4 RETURNING id, row_version;
 ```
 
 갱신 0행이면 다른 사용자가 먼저 수정했거나 대상이 없어진 상태다. 무조건 다시 덮어쓰지 않고 최신 선택을 읽어 충돌을 표시한다. OA의 알림 사용자 상태 변경도 같은 원칙을 따른다.
@@ -159,7 +167,7 @@ stateDiagram-v2
 - 목록·조건 검색은 일반 컬럼과 인덱스를 사용하고 `csv_gzip`을 SELECT하지 않는다.
 - 현재 화면은 selection이 가리키는 upload를 읽고 과거 화면은 저장된 upload ID를 읽는다. 최신 업로드 시간으로 자동 대체하지 않는다.
 - 루트는 `root_summary`, 분석한 target·hierarchy는 `metric_result`를 읽는다. 별도 `scope_result` 캐시는 생성하지 않는다. 전체 hierarchy 비교는 선택한 원본을 압축 해제해 수행한다.
-- gzip 내부 값은 일반 SQL 검색 대상이 아니다. 임의 hierarchy 수치 검색이 자주 필요하면 같은 `tracking_record`에 조회용 행을 더 저장한다. 테이블 추가는 필요 없지만 인덱스·저장량·갱신 비용은 별도 검토한다.
+- gzip 내부 값은 일반 SQL 검색 대상이 아니다. 임의 hierarchy 수치 검색이 자주 필요하면 같은 `di_area_power_tracking_record`에 조회용 행을 더 저장한다. 테이블 추가는 필요 없지만 인덱스·저장량·갱신 비용은 별도 검토한다.
 - Payload의 지표·단위·분모·경로를 문서 schema에 맞춰 보존한다. JSONB 숫자와 Python Decimal을 손실 없이 직렬화하고 float로 우회하지 않는다. 결측을 0으로 만들지 않는다.
 - 전체 payload마다 무조건 GIN 인덱스를 두지 않는다. 운영 규모·실제 SQL이 확인되지 않았으므로 실데이터 성능을 보장하지 않는다.
 
@@ -184,7 +192,7 @@ stateDiagram-v2
 ## 다음 적용 순서
 
 1. 신청 완료한 `di_area_power_csv`의 실제 생성·컬럼·기존 PK를 사내에서 확인한다. 재신청하지 않는다.
-2. 신청 완료한 `tracking_record`의 실제 생성·컬럼을 사내에서 확인한다. 재신청하지 않는다.
+2. 신청 완료한 `di_area_power_tracking_record`의 실제 생성·컬럼을 사내에서 확인한다. 재신청하지 않는다.
 3. 두 테이블·컬럼이 맞는지 확인한 뒤 사내 권한 있는 실행자가 03의 미적용 제약을 PK·UNIQUE → CHECK → FK 순으로 적용한다.
 4. 04의 인덱스와 실제 권한·유효 상태를 확인한다. 특히 selection UNIQUE 누락 상태로 운영하지 않는다.
 5. [실행 안내](../../area_power/README.md)에 따라 구현된 vwp_server·OA·worker를 사내 환경변수로 연결하고 실제 CSV·AI·메일의 통합 동작을 확인한다. 공통 JSON 계약·상태 전이는 [공통 코드](../../area_power/common/models.py)와 각 서비스가 검증한다.
@@ -200,7 +208,7 @@ stateDiagram-v2
 2026-11-10, 사내와 독립된 로컬 PostgreSQL 18.6 전용 DB에서 확인했다.
 
 - 테이블이 하나도 없을 때 00 점검 SQL은 존재 여부 false와 빈 목록을 반환했다.
-- 원본 테이블 없이 tracking_record 컬럼 정의만 먼저 생성할 수 있었다. 이후 원본 컬럼을 별도로 생성했다. 초기에는 NOT NULL만 있고 PK·UNIQUE·CHECK·FK는 없음을 확인했다.
+- 원본 테이블과 독립적인 두 번째 테이블의 컬럼 정의를 먼저 생성할 수 있었다. 이후 원본 컬럼을 별도로 생성했다. 초기에는 NOT NULL만 있고 PK·UNIQUE·CHECK·FK는 없음을 확인했다.
 - 두 테이블 생성 후 03의 모든 ALTER TABLE과 04의 인덱스 생성이 성공했다. PK 2개·UNIQUE 3개·CHECK 19개·FK 5개가 검증된 상태였다.
 - 후속 적용 뒤 정상 파일·선택·비교·job 행을 저장하고 worker 행 잠금·점유를 확인했다.
 - 조건이 다른 파일 연결, 중복 selection, 잘못된 JSON 배열, 다른 선택 수치가 NULL인 상태의 NaN 전압, 참조 중 원본 삭제를 거부했다.
@@ -215,3 +223,10 @@ stateDiagram-v2
 실행 코드는 [공통 DB 계층](../../area_power/common/db.py), [VWP 적재](../../area_power/vwp_server/ingest.py), [분석 worker](../../area_power/vwp_server/worker.py), [OA 서비스](../../area_power/oa/service.py), [OA 메일](../../area_power/oa/mail.py)이다. 실제 스키마는 런타임 `AREA_POWER_DB_SCHEMA`로만 주입하며 Identifier로 인용한다. 앱은 컬럼·키·FK·필수 selection 유일성·CHECK 설치 상태를 읽기 전용으로 확인하고 DDL을 실행하지 않는다.
 
 이전 구현 당시 로컬 PostgreSQL 18.6의 USAGE/DML 전용 계정으로 업로드·gzip bytea 왕복·명시 선택·revision 충돌·전체/target/split 비교·새 AI 실행·사용자 상태 보존·SMTP 수락을 확인했다. SMTP 구현은 현재 제거됐으므로 이 기록이 사내 메일 어댑터 검증을 뜻하지 않는다. 실제 입력·결과와 검증 한계는 [README의 로컬 실행 검증](../../area_power/README.md#로컬-실행-검증)을 따른다. AI는 미설정 실패 경로만 확인했으며 사내 운영 연결·실데이터·성능 검증은 아니다.
+
+### 실제 이름 cutover 실행 결과 — 2026-11-12
+
+- 기존 사용자 DB와 분리한 폐기 PostgreSQL 18.6의 비소유 USAGE/DML 로그인에서 `di_area_power_tracking_record` 컬럼을 먼저 독립 생성하고 CSV 컬럼·03 제약·04 인덱스를 적용했다. 새 두 relation만 존재하고 readiness가 성공했으며 옛 relation은 DB helper 허용 목록에서 거부됐다.
+- 실제 catalog UUID를 DB에 등록하고 기존 canonical CLI `--config`를 다른 cwd에서 실행해 실제 FastAPI로 두 번 업로드했다. 두 새 upload/ready snapshot, gzip 원본·SHA·범위/actor·상태 GET 200·자동 selection 0개를 확인했다.
+- 실제 OA catalog/선택 CAS·비교/AI 실행 dedupe·job 점유/종료·명시 비교/ingest 재실행, VWP dedupe와 version 조회/AI 미설정 실패 저장이 성공했다. 회사 AI·메일·SSO 호출이나 실데이터 검증은 하지 않았다.
+- 자체 DB/로그인/서버/임시 CSV·metadata·config를 제거했다. 기존 사용자 DB/서비스/설정과 과거 비공개 인계는 유지했다. 새 테스트/fixture/mock/harness/검증 스크립트 파일·모바일 검사·UI build·광범위 suite는 추가/실행하지 않았다. 사내 실제 생성·컬럼·권한·배포 상태는 여전히 미검증이다.

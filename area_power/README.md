@@ -16,7 +16,9 @@ Design Atlas의 수치 분석 엔진이다. 로그 분류·PASS/FAIL과 hierarch
 
 OA ↔ 중앙 VWP의 업무 전달은 DB 행으로만 수행한다. 브라우저가 VWP·AI에 직접 접속하거나 OA가 VWP API를 중계하지 않는다. 사용자 PC → VWP CSV 업로드는 별도 입력 경로다.
 
-Area 테이블은 **`di_area_power_csv`, `tracking_record` 두 개**다. Sanity의 기존 네 테이블을 변경하거나 여기에 CSV를 끼워 넣지 않는다. 두 테이블 신청은 완료됐지만 실제 사내 생성·제약·권한 적용을 가정하지 않는다. 실제 schema·DSN은 사내에서만 설정한다. SQL의 `<schema>`를 사내에서 일괄 치환하고, 앱은 DDL을 실행하지 않는다.
+Area 테이블은 **`di_area_power_csv`, `di_area_power_tracking_record` 두 개**다. Sanity의 기존 네 테이블을 변경하거나 여기에 CSV를 끼워 넣지 않는다. 두 테이블 신청은 완료됐지만 실제 사내 생성·제약·권한 적용을 가정하지 않는다. 실제 schema·DSN은 사내에서만 설정한다. SQL의 `<schema>`를 사내에서 일괄 치환하고, 앱은 DDL을 실행하지 않는다.
+
+2026-11-12 실제 이름 전환은 [DB backend 전환 안내](../docs/area_power/database.md#실제-테이블-이름으로의-backend-전환--2026-11-12)를 따른다. 기존 사용자 DB·서비스를 자동 rename/migrate/재시작하지 않는다. OA·중앙 VWP는 승인된 두 테이블/권한/readiness 확인 후 함께 전환하고, 동등한 기존 제약/인덱스 이름은 유지한다. PC config/API·UI는 그대로이므로 재-export·재-upload·의존성 변경·frontend build가 필요하지 않다.
 
 ## 인증·프로젝트 연결
 
@@ -78,6 +80,27 @@ npm --prefix oa/dashboard run build
 # 또는 설치한 사용자 PC 의존성·Python 환경으로 bin/area-power 실행
 ```
 
+PC마다 비공개 JSON 하나를 준비하면 같은 실행기를 설정 파일로 실행할 수 있다. Python 3.11+ 환경에 `vwp/requirements.txt`의 PC 의존성만 설치한다(DB·모델·pydantic 불필요).
+
+```bash
+python -m pip install -r vwp/requirements.txt
+python -m area_power.vwp --config /approved/pc/upload.json
+# 또는 해당 Python 환경으로 /release/bin/area-power --config /approved/pc/upload.json
+```
+
+제품 설정 예제는 [`vwp/upload.example.json`](vwp/upload.example.json)이다:
+
+```json
+{
+  "csv": "reports/block.csv.gz",
+  "metadata": "metadata.json"
+}
+```
+
+필수 키는 `csv`, `metadata` 경로, 선택 키는 `report_export`의 **완전한 실제 argv 문자열 배열**뿐이다. 알 수 없는 키·빈 경로·잘못된 argv는 실행 전에 거부한다. 모든 상대 입력 경로와 exporter의 작업 디렉터리는 **설정 파일 디렉터리** 기준이다. 상대 실행 파일은 `./...`로 명시하고, argv의 상대 경로도 그 디렉터리에서 실행된다. Exporter 없는 설정은 기존 CSV/gzip을 그대로 전송한다. `--config`는 위치 인자 CSV·`--metadata`·`--report-export`와 함께 쓸 수 없으며 URL/token/actor/timeout 옵션과 기존 환경변수는 그대로 사용할 수 있다. 기존 명시적 CLI 모드의 경로·exporter cwd는 호출 디렉터리 기준을 유지한다.
+
+metadata에는 준비된 실제 Area `project_id`, `version_id`, `block_id` UUID와 `execution_name`, `design_stage`, `hierarchy_separator`가 필요하다. 승인된 공통 범위를 준비한 뒤 실제 dashboard에서 내보낸 JSON을 사용한다. 데모 UUID·이름으로 ID 추정·별도 최상위 NET_VER/REVISION/layout/ECO/corner 필드를 만들지 않는다. CSV는 81컬럼·필수 power 20필드·한 파일 한 corner다.
+
 `AREA_POWER_SERVER_URL`은 중앙 VWP의 기본 URL이다. CLI는 `/api/area-power/uploads`를 붙인다. 사내 report_export가 필요하면 마지막 옵션에 실제 executable·argv를 전달한다.
 
 ```bash
@@ -85,6 +108,14 @@ npm --prefix oa/dashboard run build
 ```
 
 실제 바이너리·라이선스·출력 옵션은 제공받지 않았으므로 임의 인자를 만들지 않는다. Exporter는 shell 없이 실행하고 출력 파일이 있을 때만 업로드한다. 사용자가 이미 만든 CSV는 exporter 없이 전달할 수 있다.
+
+### 사내 AI가 마무리할 범위
+
+공통 전송은 기존 CLI와 실제 업로드 API가 담당한다. 사내 AI의 Area 작업은 **비공개 데이터/설정 준비**다: PC별 경로·실제 metadata 실행 문맥, 필요한 경우 라이선스가 있는 `report_export`의 확인된 전체 argv(또는 승인된 기존 회사 wrapper), 승인된 endpoint·token 주입을 준비한다. SDK/인자·라이선스·실제 보고서는 여기서 확인하지 못했으며 구현 완료로 표시하지 않는다. 이 안내가 회사 AI에 공통 CLI/API/DB/SSO나 새 회사 코드의 수정 권한을 추가하지 않는다.
+
+현재 로컬 서버 `127.0.0.1:8010`은 다른 PC의 endpoint가 아니다. 회사 운영 담당자가 승인된 TLS/reverse proxy·방화벽·접근 경로를 제공해야 한다. 기존 서버를 외부 bind하거나 TLS·인증을 해제하지 않는다. PC에는 DB/AI 계정을 주지 않는다. 업로드 인증은 공유 Bearer token + 감사용 actor이며 사용자별 SSO 인증이 아니다. 자격증명은 설정 JSON이나 저장소에 넣지 말고 승인된 실행 환경에서 주입한다.
+
+각 POST는 새 upload 행이다. gzip append·기존 행 overwrite·자동 선택·중복 제거·자동 재시도는 없다. 네트워크 오류로 결과를 못 받았어도 서버에는 commit됐을 수 있으므로 무작정 재전송하지 말고 운영 담당자와 접수 여부를 확인한다.
 
 ## 조회·비교·판정
 

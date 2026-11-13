@@ -6,7 +6,7 @@
 
 - 제품은 Design Atlas다. 공통 홈·프로젝트/블록/버전 선택·인증·파란색 light/dark 사이드바를 사용한다. 로그와 수치 엔진은 분리하되 별도 Area 카탈로그 등록 UI·API는 제거했다.
 - 기존 `inst_area_tracking`의 실행 코드·독립 UI·중복 SQL·배포 설정은 제거했다. 옛 Python import·entry point의 alias/shim은 없다. 원래 사용자 제공 `inst_area_tracking/docs/csv_structure`는 보존했다.
-- Area의 `di_area_power_csv`, `tracking_record` 두 테이블과 Sanity 네 테이블은 별도 계약이다. 이미 신청한 두 테이블을 다시 신청하지 않는다. 사내 실제 생성·제약·권한 적용은 미확인이다.
+- Area의 `di_area_power_csv`, `di_area_power_tracking_record` 두 테이블과 Sanity 네 테이블은 별도 계약이다. 이미 신청한 두 테이블을 다시 신청하지 않는다. 사내 실제 생성·제약·권한 적용은 미확인이다.
 - 실제 사내 스키마·DSN은 요구하거나 저장하지 않는다. SQL은 `db/area_power/`의 `<schema>.테이블` 템플릿이며 사내에서 치환한다. 앱 자동 DDL은 없다.
 - OA↔VWP 업무 전달은 DB만 사용한다. CLI 업로드·모델 API·사내 메일은 각 외부 입력/제공자 경계다. 메일은 [Protocol 계약](../oa/MAIL_INTEGRATION.md)과 명시적 회사 어댑터 주입만 제공하며 SMTP 구현은 제거했다.
 
@@ -43,3 +43,20 @@
 - 실데이터·사내 비밀은 제공받지 않는다. Hierarchy 누적 집계·부모/자식 중복 합산 금지·LLP 분리·분모·power 포함 관계·파일별 단일 corner는 다시 질문하지 않는다.
 
 실행·수치·보존 계약은 [README](README.md), [제품 설계](../docs/area_power/design.md), [DB 계약](../docs/area_power/database.md)을 따른다.
+
+## PC별 Area/Power 업로드 prototype — 2026-11-12
+
+- 기존 `bin/area-power` / `python -m area_power.vwp`에 `--config /approved/pc/upload.json`을 추가했다. 공통 multipart 전송/API는 그대로 하나다. 제품 예제는 `area_power/vwp/upload.example.json`; 필수 `csv`, `metadata`, 선택 `report_export` 전체 argv 배열만 받는다. config 상대 입력·exporter cwd는 config 디렉터리 기준이고 기존 입력 옵션과 혼용하지 않는다. URL/token/actor는 기존 환경변수·옵션을 유지한다.
+- 사내 AI의 마무리는 비공개 PC 경로/설정·실제 dashboard의 준비된 Area UUID/실행 문맥·확인된 전체 exporter argv 또는 승인된 기존 wrapper·승인 endpoint/token 주입뿐이다. 공통 CLI/API/DB/SSO·새 회사 코드 수정 권한은 추가하지 않는다. 독점 exporter/라이선스·실제 회사 CSV·운영 TLS/방화벽·사용자별 인증은 미검증이다. 공유 Bearer + 감사 actor를 SSO로 표시하지 않는다.
+- 실제 검증: PostgreSQL 18.6의 별도 폐기 DB·비소유 제한 로그인에 기존 두 테이블/제약/인덱스와 합성 범위를 준비하고, 자체 loopback 서버로 canonical CLI를 실행했다. 다른 cwd에서 config plain/gzip/실제 `/bin/cp` exporter argv와 기존 명시적 CLI의 4건이 실제 적재됐다. DB의 gzip 내용·기존 gzip byte 보존·SHA·scope UUID·actor·새 upload/snapshot 4개·자동 selection 0개와 상태 GET 200을 확인했다. proprietary exporter 자체를 검증한 것은 아니다.
+- 잘못된 config/argv/경로·혼용·누락 metadata/CSV·export 실패 18건은 exit 2 및 exporter 부작용/HTTP 없음, 잘못된 token은 실제 HTTP 401/exit 1이었다. 두 canonical help에 `--config`가 표시됐다. 검증 데이터/DB/계정/자체 서버는 제거했고 기존 사용자 DB·서비스·broken `.venv`는 보존했다. 새 테스트/fixture/mock/harness/검증 스크립트 파일·모바일 검사는 추가/실행하지 않았다.
+- 후속 실제 Python exporter는 빈 문자열·공백 인자 `["", " ", "tail"]`의 원형 전달과 의도한 exit 7 → CLI exit 2/HTTP 없음, 잘못된 argv 경계 5건의 실행 전 거부를 확인했다.
+- 매 POST는 새 행이며 결과 불명은 commit됐을 수 있다. 접수 확인 전 무작정 재전송하지 않는다. 자동 retry/발견/스케줄러·PC DB/모델 접속은 없다.
+- 실제 발행 SHA·push/병합 상태와 배포 기준별 delta는 비공개 `artifacts/internal-handoff/LATEST.md`의 최신 독립 역할 인계를 따른다. 대상 feature 브랜치는 `codex/area-power-pc-upload`다. [자동 발행 정책](../AGENTS.md#설계-담당-codex의-자동-발행)에 따라 전용 검증 후 문제가 없는 통상 규모 변경은 추가 확인 없이 feature push와 main 병합·push까지 수행한다. 이전 main 기준 `ad5337c930c771ac2e68ef263a5200bc91f0f508`에는 이 prototype이 없으므로 feature 대비 delta와 기존 main 배포 대비 delta를 구분한다. Git 병합은 회사 배포 승인이 아니다.
+
+## 실제 테이블 이름 cutover — 2026-11-12
+
+- 실제 물리 테이블 `di_area_power_tracking_record`, `di_area_power_csv`를 모든 active DB 호출/readiness·OA 공통 catalog·SQL/문서에 반영했다. 두 번째 컬럼 참고본은 `02_di_area_power_tracking_record.columns.sql`이며 이전 파일은 제거했다. 컬럼·record_type·모델·ID/API·기존 PC transport/config는 바꾸지 않았다.
+- 폐기 PostgreSQL 18.6·비소유 제한 로그인에서 canonical config CLI→FastAPI 업로드 2건, 원본 gzip/SHA/실제 범위 UUID/actor·ready snapshot·상태 GET·자동 selection 0개를 확인했다. OA catalog/선택 CAS/비교·AI 실행 dedupe/job 점유·종료/명시 비교·ingest 재실행과 VWP dedupe·실제 version 조회/AI 미설정 실패 저장을 실행했다. 옛 relation 입력은 거부됐다. 실제 AI·메일·SSO 호출은 없었다.
+- [DB 전환 안내](../docs/area_power/database.md)에 따라 두 테이블/권한/필수 정의 준비 후 승인된 OA·중앙 VWP backend를 함께 반영한다. 기존 동등 제약/인덱스 이름은 유지하고 승인된 누락 정의만 운영자가 적용한다. 자동 DDL·사용자 DB rename/migration·alias/fallback은 없다.
+- 자체 폐기 DB/로그인/서버/CSV·metadata·config는 제거했다. 사용자 DB·기존 OA 서비스·설정은 보존하고 재시작하지 않았다. 새 테스트/fixture/mock/harness/검증 스크립트 파일·모바일 검사·UI build·광범위 suite는 추가/실행하지 않았다. 회사 DB·SSO·실제 배포는 미검증이다. 실제 feature/main SHA·병합 상태·담당별 delta는 비공개 최신 인계 007을 따른다(다음 008). 인계 006의 당시 미병합 기록은 역사로 보존한다.

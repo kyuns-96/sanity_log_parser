@@ -21,7 +21,7 @@
 
 ## 저장·권한 계약
 
-- 기존 Sanity 네 테이블과 신청한 **`di_area_power_csv`, `tracking_record` 두 테이블**을 유지한다. 새 테이블·앱 자동 DDL은 없다. Area 후속 SQL은 `db/area_power/`의 `<schema>`를 사내에서 치환하고 실제 생성/권한을 승인 후 적용한다. 사내 schema 실명·비밀은 요구하지 않는다.
+- 기존 Sanity 네 테이블과 신청한 **`di_area_power_csv`, `di_area_power_tracking_record` 두 테이블**을 유지한다. 새 테이블·앱 자동 DDL은 없다. Area 후속 SQL은 `db/area_power/`의 `<schema>`를 사내에서 치환하고 실제 생성/권한을 승인 후 적용한다. 사내 schema 실명·비밀은 요구하지 않는다.
 - 네이티브 `WS_PROJECT`, `WS_BLOCK`, `WS_VERSION`이 공통 카탈로그다. 선언/계보는 `atlas.version.*`, 요청 재생 기록은 `atlas.command.*`, 정확한 버전 연결은 `design-atlas-v1.binding.*` 전역 `WS_CONFIG` 키에 저장한다. `WS_CONFIG`에 프로젝트/블록 FK를 붙이지 않는다. 네이티브 원천 버전 payload는 기존 수신 계약을 유지한다.
 - 기존 Area UUID·원본 gzip·이력은 재작성하지 않는다. 과거 Area 버전은 프로젝트 공통일 수 있으므로 여러 네이티브 블록 버전을 같은 UUID에 연결할 수 있다. 로컬 운영자는 홈의 실제 기존 데이터 연결에서 UUID를 명시한다. 이름 자동 병합·사용자 자동 등록·권한 자동 부여는 없다.
 - 운영은 기존 SSO·관리자/프로젝트 권한·mutation intent·현재 권한 잠금을 사용한다. 권한 없는 현재/기준 프로젝트·중첩 참조·고정 입력·다운로드·총계는 계속 차단한다. 네이티브 관리자 변경의 트랜잭션은 응답 전에 끝낸다.
@@ -116,3 +116,10 @@ Hierarchy 누적 집계의 부모/자식 중복 합산 금지, logic_cells 분�
 - TypeScript 검사·production build 성공. 실제 Chromium 통합 데모의 1920×1080·5120×2160에서 대분류 제목과 메뉴 소속, 선택 메뉴 하나만 강조, 프로필과 메뉴의 비겹침, 가로 넘침 없음을 확인했다. 두 크기 모두 Area/Power 수치·AI 분석 왕복 후 동일 로그 보고서를 다시 열었으며 공통 범위의 접힘이 유지되고 JS 오류는 없었다.
 - 확인은 합성 자료를 사용하는 실제 UI 구성요소에서 수행했다. 실제 사내 SSO·실데이터 검증은 아니며 모바일 검증은 수행하지 않았다. SSO·DB·업무 API와 앞선 공통 범위 선택 기능은 변경하지 않았다. 새 테스트/fixture/mock/harness/검증 스크립트 파일은 추가하지 않았다.
 - 현재 실행용 정적 build에 반영했다. 발행 상태는 위 최신 인계의 확정 SHA로 확인한다. 기존 main `6ab6feb8273aec3bbe0d43c6ccae0acbf70efe82` 및 인계 003에는 이 대분류와 앞선 공통 범위 추가 기능이 없다. 수정 브랜치 push가 main 병합·사내 배포 완료를 뜻하지 않는다.
+
+## Area/Power 실제 테이블 이름 전환 — 2026-11-12
+
+- 물리 테이블은 정확히 `di_area_power_tracking_record`, `di_area_power_csv`다. 공통 DB/readiness·OA 서비스/공통 catalog·VWP 분석/AI 조회와 수동 SQL 템플릿을 함께 전환했다. 컬럼 참고본은 `db/area_power/02_di_area_power_tracking_record.columns.sql`이며 이전 파일은 제거했다. 업무 컬럼·record_type·UUID/API·PC config/전송 계약은 그대로다.
+- 독립 폐기 PostgreSQL 18.6·비소유 DML 로그인에서 새 두 테이블만 설치하고 readiness, canonical config CLI→실제 FastAPI 업로드 2건, gzip/SHA/범위/actor/ready snapshot·상태 GET·자동 선택 0개를 확인했다. 실제 OA catalog·선택 CAS·비교/AI 실행 dedupe·job 점유/종료·명시 비교/ingest 재실행과 VWP dedupe·version 조회/AI 미설정 실패 저장도 확인했다. 실제 AI·메일·SSO 호출은 하지 않았다.
+- 승인된 실제 테이블/권한/필수 정의 준비 후 OA·중앙 VWP backend를 함께 전환한다. 앱 자동 DDL·사용자 DB rename/migration·옛 테이블 fallback은 없다. 동등한 기존 제약/인덱스 이름은 유지하며 승인된 누락 정의만 운영자가 적용한다. [DB 전환 안내](docs/area_power/database.md)를 따른다.
+- 폐기 DB/로그인/자체 서버/임시 CSV·metadata·config는 제거했다. 사용자 DB·기존 OA 서비스·설정은 보존하고 재시작하지 않았다. 새 테스트/fixture/mock/harness/검증 스크립트 파일·모바일 검사·UI build·광범위 suite는 추가/실행하지 않았다. 회사 DB·SSO·실제 배포는 미검증이다. feature 발행과 main 병합은 별개이며 실제 SHA/담당 조치는 비공개 인계 006을 따른다.

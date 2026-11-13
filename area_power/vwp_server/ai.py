@@ -235,7 +235,7 @@ def extract_one(db, settings, change: dict, comparison: dict | None = None, run_
         with db.connect() as conn:
             versions = [str(row['id']) for row in all_records(db, conn, 'version', project_id=change.get('project_id'))]
     with db.connect() as conn:
-        known_versions = conn.execute(sql.SQL("SELECT id,payload FROM {} WHERE record_type='version' AND id=ANY(%s::uuid[])").format(db.table('tracking_record')), (versions,)).fetchall() if versions else []
+        known_versions = conn.execute(sql.SQL("SELECT id,payload FROM {} WHERE record_type='version' AND id=ANY(%s::uuid[])").format(db.table('di_area_power_tracking_record')), (versions,)).fetchall() if versions else []
     declared_versions = {str(p.get('applies_from_version_id')), str(p.get('applies_through_version_id')), str(comparison.get('version_id')) if comparison else ''}
     relevant_versions = [{'id': row['id'], 'name': row['payload'].get('name')} for row in known_versions if (row['payload'].get('name') and row['payload']['name'] in text) or str(row['id']) in declared_versions]
     targets = [t for t in frozen.get('targets', []) if str(t['entity_id']) in {str(v) for v in p.get('target_ids', [])} or (t['payload'].get('name') and t['payload']['name'] in text)]
