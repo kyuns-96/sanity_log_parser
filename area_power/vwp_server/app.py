@@ -1,6 +1,6 @@
 """VWP upload HTTP boundary; OA and VWP exchange work only through the DB.
 
-Run: uvicorn area_power.vwp_server.app:create_app --factory
+Run: python -m area_power.vwp_server
 Configuration uses AREA_POWER_ environment variables.
 """
 from __future__ import annotations
@@ -24,6 +24,7 @@ from area_power.common.errors import ConfigurationError, DomainError
 from area_power.common.jsonutil import loads, public
 from area_power.common.models import UploadMetadata
 from area_power.vwp_server.ingest import ingest_upload
+from area_power.vwp_server.worker import ProcessingWorker
 
 logger = logging.getLogger(__name__)
 _METADATA_LIMIT = 65536
@@ -101,11 +102,19 @@ def create_app(settings=None, db=None) -> FastAPI:
         except Exception as exc:
             logger.error("VWP readiness unavailable (%s)", type(exc).__name__)
             raise ConfigurationError("Service is not ready.") from None
-        yield
+        worker = ProcessingWorker(db, settings)
+        app.state.worker = worker
+        try:
+            await run_in_threadpool(worker.start)
+            yield
+        finally:
+            # Joining off-loop lets an already claimed CSV/HTTP job finish safely.
+            await run_in_threadpool(worker.stop)
 
     app = FastAPI(title="Design Atlas CSV ingestion", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.settings = settings
     app.state.db = db
+    app.state.worker = None
     app.add_middleware(_BoundedBody, maximum=settings.max_upload_bytes + _METADATA_LIMIT + 65536)
     app.add_middleware(_SafeErrors)
 
@@ -131,15 +140,21 @@ def create_app(settings=None, db=None) -> FastAPI:
 
     @app.get("/health")
     async def health():
+        if app.state.worker is None or not app.state.worker.ready:
+            return JSONResponse({"status": "unavailable"}, status_code=503)
         try:
             await run_in_threadpool(db.check_schema)
         except Exception as exc:
             logger.warning("VWP readiness unavailable (%s)", type(exc).__name__)
             return JSONResponse({"status": "unavailable"}, status_code=503)
+        if not app.state.worker.ready:
+            return JSONResponse({"status": "unavailable"}, status_code=503)
         return {"status": "ready"}
 
     @app.post("/api/area-power/uploads", status_code=201)
     async def upload(request: Request):
+        if app.state.worker is None or not app.state.worker.ready:
+            raise ConfigurationError("Service processing is not available.")
         async with request.form(max_files=1, max_fields=1, max_part_size=_METADATA_LIMIT) as form:
             if len(form.multi_items()) != 2 or set(form.keys()) != {"metadata", "file"}:
                 raise DomainError("Provide exactly one metadata field and one file.", code="invalid_request")

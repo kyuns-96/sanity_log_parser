@@ -6,10 +6,9 @@
 
 | 위치 | 역할 |
 | --- | --- |
-| `area_power/vwp/` | 사용자 PC report_export 실행 연계·CSV 업로드 CLI |
-| `area_power/vwp_server/` | 중앙 VWP의 CSV 검증·압축 적재·수치 비교·AI worker |
-| `area_power/oa/` | 공통 OA의 수치 API·권한 적용·메일 worker |
-| `area_power/common/` | 정밀 JSON·모델·DB·CAS·작업 점유 |
+| `area_power/vwp_server/` | 중앙 VWP 서버: CSV 접수·수치 비교·통합 AI 처리 |
+| `area_power/oa/` | 공통 OA 수치 API·권한 적용·메일 작업자 |
+| `area_power/common/` | 공유 설정·정밀 JSON/모델·DB·작업 조정 |
 | `oa/dashboard/src/areaPower/` | 같은 Dashboard 안의 Area/Power 화면 |
 | `db/area_power/` | 신청한 두 테이블의 컬럼·후속 제약·인덱스 SQL |
 | `docs/area_power/` | 원본 CSV 컬럼·수치·매핑·DB 계약 |
@@ -41,15 +40,15 @@ npm --prefix oa/dashboard ci
 npm --prefix oa/dashboard run build
 ```
 
-[환경변수 예제](.env.example)의 필요한 키를 해당 서버의 실행 환경에 **export**한다. `AREA_POWER_*`는 Sanity의 기존 `.env` 허용 키에 암묵적으로 추가하거나 다른 설정으로 fallback하지 않는다. Secret manager·관리 프로세스 또는 승인된 환경 파일에서 주입한다. `VITE_*`에는 비밀을 넣지 않는다.
+[환경변수 예제](.env.example)의 필요한 키를 해당 서버의 실행 환경에 **export**한다. 중앙 VWP는 회사에서 제공한 호환 endpoint와 그 endpoint에 맞는 모델을 설정해야 AI를 호출할 수 있다. API key는 해당 provider가 인증을 요구할 때만 실제 credential을 설정한다. `AREA_POWER_*`는 Sanity의 기존 `.env` 허용 키에 암묵적으로 추가하거나 다른 설정으로 fallback하지 않는다. Secret manager·관리 프로세스 또는 승인된 환경 파일에서 주입한다. `VITE_*`에는 비밀을 넣지 않는다.
 
 | 실행 위치 | 주요 설정 |
 | --- | --- |
-| OA 호스트 | 기존 `SANITY_AUTH_MODE`/SSO 설정, `AREA_POWER_ENABLED=true`, `AREA_POWER_DB_DSN`, `AREA_POWER_DB_SCHEMA` |
-| 사용자 PC | `AREA_POWER_SERVER_URL` 또는 `--url` — DB·AI 계정과 업로드 인증/사용자 식별 설정 불필요 |
-| 중앙 VWP 업로드 | `AREA_POWER_DB_DSN`, `AREA_POWER_DB_SCHEMA`, 입력 한도 — 업로드/상태 조회의 추가 인증 없음 |
-| 중앙 VWP 분석 worker | 같은 Area DB와 `AREA_POWER_AI_*`, poll 설정 |
-| OA 메일 worker | 같은 Area DB, `AREA_POWER_MAIL_RECIPIENTS`, 명시적으로 주입한 사내 `MailSender` 어댑터 |
+| OA 호스트 | 기존 `SANITY_AUTH_MODE`/SSO 설정, `AREA_POWER_ENABLED=true`, 공유 DB 설정 |
+| 중앙 VWP + OA | `AREA_POWER_DB_DSN`, `AREA_POWER_DB_SCHEMA` — 각 서버에서 같은 DB/schema를 가리키도록 설정 (기존 역할별 계정 사용 가능) |
+| 중앙 VWP | `AREA_POWER_AI_BASE_URL`, `AREA_POWER_AI_MODEL`; `AREA_POWER_AI_API_KEY`는 endpoint 인증에 필요할 때만 |
+| OA 메일 | `AREA_POWER_MAIL_RECIPIENTS`, 명시적으로 주입한 사내 `MailSender` 어댑터 |
+| 사용자 PC | `AREA_POWER_SERVER_URL` 또는 `--url` — DB·AI 계정과 업로드 신원 설정 불필요 |
 
 선택 기능을 끄면 Area API는 인증 후 `503 AREA_POWER_UNAVAILABLE`를 반환한다. 필수 설정이 없거나 DB 준비가 안 됐다고 demo·다른 DB·가짜 AI·가짜 발송으로 대체하지 않는다.
 
@@ -61,15 +60,16 @@ npm --prefix oa/dashboard run build
 # OA: Sanity 화면과 Area API를 한 앱으로 제공
 .venv-integrated/bin/python -m oa.sso_app
 
-# 중앙 VWP: 로컬 통합 환경에서는 OA와 포트 충돌을 피한다.
-.venv-integrated/bin/python -m uvicorn area_power.vwp_server.app:create_app --factory --host 127.0.0.1 --port 8010
-.venv-integrated/bin/python -m area_power.vwp_server.worker
+# 중앙 VWP: 업로드·수치·AI를 한 프로세스에서 처리한다. 로컬 OA가 8000을 쓰면 8010을 지정한다.
+.venv-integrated/bin/python -m area_power.vwp_server --port 8010
 
 # OA: 회사 메일 어댑터 연결 후 별도 프로세스로 요청 소비
 .venv-integrated/bin/python -m oa.mail_app
 ```
 
-중앙 VWP의 업로드 경로는 `/api/area-power/uploads`, 상태는 `/api/area-power/uploads/{id}`다. 두 경로에는 추가 인증을 두지 않고 사내 도달성을 신뢰한다. `uploaded_by`와 업로드가 만든 snapshot 작성자는 기술적 수신 서비스 `vwp_server`로 기록하며 인증된 사용자를 뜻하지 않는다. 요청의 임의 신원 헤더는 신뢰하지 않는다. **OA 호스트의 로그인·SSO·프로젝트 권한과 조회/다운로드/비교 API 보호는 그대로다.** Worker의 `--once`는 한 건 처리용이며 완료는 실제 DB 상태로 판단한다.
+중앙 VWP 서버 프로세스가 업로드와 수치/AI 작업을 함께 처리하며 별도 Area Power worker 명령은 없다. 업로드는 `/api/area-power/uploads`, 상태는 `/api/area-power/uploads/{id}`다. 두 경로에는 추가 인증을 두지 않고 사내 도달성을 신뢰한다. `uploaded_by`와 업로드가 만든 snapshot 작성자는 기술적 수신 서비스 `vwp_server`이며 인증된 사용자를 뜻하지 않는다. 요청의 임의 신원 헤더는 신뢰하지 않는다. **OA 호스트의 로그인·SSO·프로젝트 권한과 조회/다운로드/비교 API 보호는 그대로다.** 작업 완료 여부는 서버 프로세스 상태가 아니라 DB에 저장된 상태로 판단한다. 배포 전에 기존 별도 VWP API/worker unit을 중지하고, 새 server와 standalone worker를 함께 실행하지 않는다.
+
+VWP 서버는 schema와 첫 작업 조회/claim이 성공하면 ready가 된다(대기 작업이 없어도 준비 완료이며 AI 응답을 기다리지 않는다). 일반 AI 작업 실패는 해당 job을 `failed`로 저장하고 consumer는 계속 실행한다. 치명적인 claim/finish 실패만 consumer를 비정상으로 만들어 `/health`와 업로드가 503을 반환한다. 정상 SIGTERM은 claim한 작업을 마친 뒤 새 작업 없이 종료한다. 강제 종료나 fatal finish 실패는 불확실한 `running` 작업을 남길 수 있으며 자동 reclaim은 없다.
 
 ## CSV 업로드
 

@@ -81,7 +81,7 @@ baseline or inadequate magnitude evidence requires needs_review. No fictional ti
 
 
 def provider(settings, task: str, context: dict, schema: type[BaseModel]):
-    if not settings.ai_base_url or not settings.ai_model or not settings.ai_api_key:
+    if not settings.ai_base_url or not settings.ai_model:
         raise AIError('ai_unconfigured')
     data = dumps(context, canonical=True)
     instructions = task + '\nRequired JSON schema: ' + dumps(schema.model_json_schema())
@@ -89,9 +89,10 @@ def provider(settings, task: str, context: dict, schema: type[BaseModel]):
         raise AIError('ai_context_limit')
     base = settings.ai_base_url.rstrip('/')
     url = base if base.endswith('/chat/completions') else base + '/chat/completions'
+    headers = {'Authorization': 'Bearer ' + settings.ai_api_key} if settings.ai_api_key else {}
     try:
         with httpx.Client(timeout=settings.ai_timeout_seconds, follow_redirects=False) as client:
-            response = client.post(url, headers={'Authorization': 'Bearer ' + settings.ai_api_key}, json={'model': settings.ai_model, 'messages': [{'role': 'system', 'content': SYSTEM + '\n' + instructions}, {'role': 'user', 'content': data}], 'response_format': {'type': 'json_object'}})
+            response = client.post(url, headers=headers, json={'model': settings.ai_model, 'messages': [{'role': 'system', 'content': SYSTEM + '\n' + instructions}, {'role': 'user', 'content': data}], 'response_format': {'type': 'json_object'}})
             response.raise_for_status()
             if len(response.content) > settings.ai_context_max_chars * 8:
                 raise AIError('ai_response_limit')
@@ -496,14 +497,14 @@ def run_judgement(db, settings, comparison_id, run_id=None, *, extractions=None)
     with db.connect() as conn:
         locked = db.record(conn, run['id'], lock=True, kind='ai_run')
         payload = dict(locked['payload'])
-        payload.update({'prompt_version': PROMPT_VERSION, 'settings': {'model': settings.ai_model, 'configured': bool(settings.ai_base_url and settings.ai_api_key and settings.ai_model), 'context_max_chars': settings.ai_context_max_chars}})
+        payload.update({'prompt_version': PROMPT_VERSION, 'settings': {'model': settings.ai_model, 'configured': bool(settings.ai_base_url and settings.ai_model), 'context_max_chars': settings.ai_context_max_chars}})
         db.update_record(conn, run['id'], ACTOR, state='running', payload=payload, error_detail=None)
     extractions = extractions if extractions is not None else prepare_extractions(db, settings, comparison, run)
     with db.connect() as conn:
         results = all_records(db, conn, 'metric_result', parent_id=comparison_id)
     candidates = [r for r in results if r['payload']['is_candidate'] or range_violations(r, extractions)]
     failures = sum(int(e.get('failed', False)) for e in extractions)
-    if not settings.ai_base_url or not settings.ai_model or not settings.ai_api_key:
+    if not settings.ai_base_url or not settings.ai_model:
         failures = max(1, failures)
     recipients = run['payload'].get('recipients', comparison['payload']['request'].get('recipients', []))
     handled = 0

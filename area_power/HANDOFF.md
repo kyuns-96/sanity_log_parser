@@ -17,7 +17,7 @@
 - 비공개 Git 제외 `.env.integrated.local`(0600), `.venv-integrated`를 사용한다. 기존 Sanity `.venv`는 실행 불가능한 링크 상태여서 덮어쓰지 않았다. 토큰·DSN은 문서·응답·로그에 복사하지 않는다.
 - 현재 호스트는 명시적 `SANITY_AUTH_MODE=local_token`, 고정 서버 reviewer, 실제 로컬 DB다. 같은 인증으로 업무를 탐색한다. 사내 SSO 실패의 fallback이 아니며 회사 SDK/계정 연결은 별도로 필요하다.
 - 기존 Area DB `iat_dashboard_local`과 사용자 입력은 보존했다. 별도 Sanity 로컬 DB `sanity_dashboard_local`에는 원본 네 테이블·002/004~013을 적용했다. 앱 계정은 USAGE/DML이며 owner/DBA가 아니다. 이 두 사용자 접속용 DB를 검증용으로 오인해 삭제하지 않는다.
-- 현재 persistent 실행은 OA 한 개다. VWP 업로드·수치/AI worker·OA 메일은 실행 안내에 따라 별도로 구동한다. 재부팅 자동 시작 등록은 하지 않았다.
+- 현재 persistent 실행은 OA 한 개다. Area Power VWP의 업로드·수치·AI는 한 서버 프로세스에서 처리하고 OA 메일은 별도 프로세스다. 재부팅 자동 시작 등록은 하지 않았다.
 
 ## 운영 권한과 호환
 
@@ -75,3 +75,11 @@
 - 사내 도달성을 신뢰한다. 새 업로드와 snapshot은 기술적 수신 서비스 `vwp_server`를 출처로 기록하고 인증된 사람으로 표시하지 않는다. 클라이언트 신원 헤더를 신뢰하지 않으며 기존 두 테이블/NOT NULL 컬럼·과거 자료를 재작성하지 않는다. OA 로그인·SSO·프로젝트 권한·다운로드/비교 보호는 그대로다.
 - 별도 폐기 PG18.6·제한 로그인과 실제 loopback uvicorn에서 canonical CLI config/plain·명시적 gzip 업로드, 인증 설정 없는 health/상태 GET 200, gzip/SHA·명시적 snapshot 재사용, 잘못된 CSV 422와 임의 신원 헤더가 출처를 바꾸지 않음을 확인했다. 실제 OS 메모리 FD만 입력으로 사용해 새 fixture/스크립트 파일 없이 실행했고 자체 서버·DB·로그인은 정리했다. 기존 OA 미로그인 401·미설정 SSO 차단도 유지됐다.
 - UI 검증 build는 총 3회였고 최종 산출물은 별도 desktop proof의 1920×1080·5120×2160 전체 viewport에서 확인했다. 업로드 인증 제거는 frontend 변경이 아니므로 추가 UI build는 하지 않았다. 실제 발행 SHA·병합 상태·최신 역할별 조치는 비공개 `artifacts/internal-handoff/LATEST.md`를 따른다. 검증이 회사 배포 승인을 뜻하지 않는다.
+
+## VWP 통합 런타임 기능·수명주기 증거 — 2026-11-13
+
+- 중앙 `python -m area_power.vwp_server` 한 프로세스가 upload API와 shared Settings/DB factory를 쓰는 consumer 하나를 소유한다. schema 확인과 첫 작업 조회/claim 성공 후 ready이며, 대기 작업이 없어도 준비되고 queued AI 응답을 기다리지 않는다.
+- 자체 PostgreSQL 18.6·제한 비소유 계정·기존 두 테이블로 관찰했다. 첫 queued AI 요청이 막힌 동안 기동은 0.644초, key 없는 실제 CLI 업로드+상태 확인은 0.222초였고 upload는 인증 없이 동작했다. 실제 AI 요청 Authorization은 없었고, 명시적 key 설정 시 Bearer header가 관찰됐다. 의도적 HTTP 503은 숫자 작업 `completed`와 AI job `failed`로 저장됐으며 consumer는 계속 실행한다. 회사 endpoint/model 품질은 검증하지 않았고 AI 응답을 위조하지 않았다.
+- 치명적 claim/finish 오류는 health와 upload 503으로 관찰했고 초기 claim/schema 오류는 startup을 막았다. 정상 SIGTERM은 현재 claim을 drain하고 다음 작업을 claim하지 않아 `running` 0건·다음 job pending·worker thread 없음으로 끝났다. 강제 종료 및 fatal finish는 불확실한 `running` job을 남길 수 있고 자동 reclaim은 없다. Uvicorn의 clean shutdown 뒤 subprocess `-15`는 정상 SIGTERM 결과다.
+- 초기 proof runner의 일부 단언은 AI 오류 처리 및 신호 종료 코드를 잘못 기대해 실패했다. 이를 전체 통과로 보고하지 않는다. 뒤이은 lifecycle 경계 proof는 종료 코드 0으로 끝났고, 폐기 cluster·소유 프로세스는 정리했다. 실제 회사 AI/model 품질은 미검증이다.
+
