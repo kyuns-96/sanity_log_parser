@@ -1,6 +1,6 @@
-# inst_area_tracking 제품 설계
+# Design Atlas 프로젝트 비교 설계
 
-Block별 CSV를 gzip으로 압축해 DB에 보관하고 area, Vth ratio, drive strength 분포와 power를 추적한다. 수치 비교로 변화 후보를 찾고, AI는 사용자의 자연어 변경사항과 비교 조건을 대조해 예상된 변화인지 판정한다. 설명되지 않는 변화와 판단 근거가 부족한 항목은 알림으로 연결한다.
+주 업무는 **프로젝트 A→지정 기준 프로젝트 B의 Block·hierarchy instance별 Area/Power 비교**다. 단일 `프로젝트 비교` 화면에서 현재 프로젝트를 한 번 선택하고 저장된 기준을 사용하며, 양쪽 Block·NET_VER·REVISION·corner와 정확한 CSV 실행을 선택한다. 대응 경로와 업로드 이력도 같은 화면에 둔다. AI·작업·알림·target·변경 설명은 내부 분석 도구로 보존하되 독립 주 탐색이나 비교 필수 단계로 요구하지 않는다.
 
 ## 요구사항과 설계 제안
 
@@ -30,7 +30,7 @@ Block별 CSV를 gzip으로 압축해 DB에 보관하고 area, Vth ratio, drive s
 
 ## 현재 구현
 
-Design Atlas 저장소의 `area_power.vwp` CLI, `area_power.vwp_server` 업로드 API·분석/AI worker, `area_power.oa` DB API·추상 메일 worker와 호스트 Dashboard의 Area/Power 업무 모듈을 구현했다. 회사 메일 전송은 [MailSender Protocol](../../oa/MAIL_INTEGRATION.md)에 사내 AI가 어댑터를 연결하며 고정 SMTP 구현은 없다. Dashboard는 shadcnstudio 공식 무료 registry 컴포넌트를 사용하며 실행·설정 방법과 출처는 [README](../../area_power/README.md)에 있다. 매핑·target·변경 설명은 Dashboard의 JSON 편집 폼으로 입력하고 서버가 계약을 검증한다.
+Design Atlas 저장소의 `area_power.vwp` CLI, `area_power.vwp_server` 업로드 API·분석/AI worker, `area_power.oa` DB API·추상 메일 worker와 호스트 Dashboard의 프로젝트 비교를 제공한다. 기준은 기존 project payload의 `baseline_project_id` 하나로 저장하며 새 DDL·테이블·migration을 추가하지 않는다. 회사 메일 전송은 [MailSender Protocol](../../oa/MAIL_INTEGRATION.md)의 사내 어댑터 경계이고, 비교 자체에는 AI·메일 설정이 필요하지 않다. 경로 대응은 프로젝트 비교의 선택/입력 컨트롤로 기존 불변 mapping 계약을 사용한다. 실행·API 계약은 [README](../../area_power/README.md)를 따른다.
 
 로컬 PostgreSQL 18.6에서 실제 API·worker·화면과 이전 SMTP 구현의 수락을 확인한 기록이 있다. 현재 SMTP 구현은 제거됐으며 실제 사내 메일 연결 검증은 아니다. AI 미설정은 수치 결과를 보존한 채 needs_review로 남긴다. 실제 사내 DB·report_export·AI 제공자·메일 서비스·실데이터 연결을 완료했다고 간주하지 않는다. Area/Power API는 호스트의 인증 세션·서버 측 프로젝트 권한을 사용한다. 사내 SSO 어댑터 미설정 보호는 유지하며, 명시적인 local_token 개발 모드는 운영 SSO의 대체 경로가 아니다.
 
@@ -39,6 +39,8 @@ Design Atlas 저장소의 `area_power.vwp` CLI, `area_power.vwp_server` 업로�
 ### 서버 역할과 DB 연결
 
 사용자 PC의 vwp는 report_export로 통합 CSV를 생성해 vwp_server에 업로드한다. vwp_server가 검증·적재·수치 비교·AI 호출을 수행하고 oa_server가 Dashboard와 메일 발송을 담당한다. 두 서버는 PostgreSQL 18.6 DBaaS를 직접 사용하며 **oa_server ↔ vwp_server는 DB를 통한 요청·조회·결과 전달만 가능**하다. 서버 간 API를 전제로 하지 않는다. 주소·계정·연결 옵션과 스키마는 사내 환경에서 지정한다.
+
+2026-11-13 사용자 결정으로 **Area PC→VWP 업로드/상태 조회의 추가 인증은 제거**했다. 사내 도달성을 신뢰하고 수동 토큰·actor·신원 헤더를 요구/신뢰하지 않는다. 원본과 snapshot의 작성 출처는 고정 기술 서비스 `vwp_server`이며 인증된 사람으로 표시하지 않는다. 별도 인증 SDK/Protocol·새 테이블·DDL을 추가하지 않고 기존 OA 로그인·SSO·프로젝트 권한은 그대로 유지한다. 입력 scope·81컬럼·단일 corner·원본/gzip 검증은 계속 수행한다.
 
 DB 드라이버는 Psycopg 3을 사용한다. 로컬 PostgreSQL 18.6에서 Psycopg 3.3.8의 `bytea` 저장·복원과 트랜잭션을 확인했다. 사내 네트워크·인증서·계정 연결은 별도 확인이 필요하다. 의존 범위는 [requirements.txt](../../requirements.txt)을 따른다. [Psycopg 지원 범위](https://www.psycopg.org/psycopg3/docs/basic/install.html#supported-systems)
 
@@ -255,9 +257,13 @@ Area 증가, LVT 비중 증가, 강한 drive 비중 증가와 power 변화가 �
 
 ## 비교 기준과 대상 연결
 
-### 이전 버전과 이전 프로젝트
+### 프로젝트에 저장한 단방향 기준
 
-이전 버전 비교는 프로젝트의 명시적인 버전 연결을 따른다. 업로드 시각이나 버전명 문자열 정렬로 이전 버전을 결정하지 않는다. 서로 다른 branch의 최신 결과를 자동으로 섞지 않는다. 이전 프로젝트 비교는 사용자가 정한 기준 프로젝트·버전·block을 별도 연결한다.
+프로젝트 A의 기준 B는 하나이며 A→B가 B→A나 다른 프로젝트의 선택을 만들지 않는다. 여러 프로젝트가 같은 B를 사용할 수 있고 A→B→C 같은 관계를 연쇄 해석하지 않는다. 자기 자신은 기준이 될 수 없다. 프로젝트만 공통 카탈로그에서 준비하면 CSV·블록·버전 없이도 기준을 설정할 수 있다.
+
+기존 Area project 레코드의 `payload.baseline_project_id`와 `row_version` CAS로 저장/해제한다. 현재 프로젝트 권한과 새 기준 프로젝트 권한을 각각 검사하며, 기존 기준의 권한 회수로 현재 프로젝트 전체나 기준 해제/교체를 막지 않는다. 접근 불가 기준은 상태만 unavailable로 표시하고 식별자·이름을 공개하지 않는다.
+
+모든 새 `previous_project` 비교와 교차 프로젝트 mapping은 저장된 기준을 사용한다. 비교는 양쪽 upload·snapshot·mapping revision과 당시 기준 ID/row_version을 고정하고 후속 기준 변경으로 기존 결과를 재해석하지 않는다. 과거 결과 조회는 당시 실제 입력 양쪽의 현재 권한을 계속 검사한다. 이전 버전 분석은 필요한 내부 계약으로 유지하며 명시적 계보를 따른다. 업로드 시각·이름·동일 경로로 이전 실행/대응을 추정하지 않는다.
 
 양쪽 snapshot의 설계 단계, area 산출 기준과 단위, library와 분류 규칙, 관련 constraint 조건을 지표별로 확인한다. 공정·library가 달라도 물리적 면적 차이를 참고할 수는 있으나, 같은 조건의 설계 회귀나 drive 변화로 바로 판정하지 않는다. 근거 없는 공정 환산 계수를 적용하지 않는다.
 
@@ -283,7 +289,7 @@ Target에는 표시 이름, 현재 프로젝트·버전·block의 전체 경로,
 
 ### 사용자 매핑 입력
 
-사용자는 매핑 입력 화면에서 기준 프로젝트·버전·block과 현재 프로젝트·버전·block을 선택하고 대응 경로를 등록한다. 표에서 직접 입력하거나 같은 필드를 가진 CSV를 일괄 입력할 수 있게 한다. 원본 area CSV와 매핑 입력은 별도로 관리한다.
+사용자는 같은 프로젝트 비교 화면에서 저장된 기준의 Block·버전과 현재 Block·버전을 선택하고 양쪽 원본 hierarchy 경로를 대응한다. 일대일 노드/subtree와 기존 분할·병합·신규·삭제 계약을 사용하며 별도 JSON 편집이나 고급 업무를 선행 조건으로 요구하지 않는다. 원본 area CSV와 불변 매핑 revision은 별개다. 매핑이 없으면 design 루트나 동일 이름 경로도 자동 연결하지 않고 각 관측값을 별도 행에 보존한다. 대응 또는 데이터가 없으면 상대 값·Δ·%를 null/unavailable로 표시하며 0으로 채우지 않는다.
 
 | 입력 항목 | 의미 |
 | --- | --- |

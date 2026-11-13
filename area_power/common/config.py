@@ -30,7 +30,6 @@ def _positive_float(name: str, default: float) -> float:
 class Settings:
     database_url: str = field(repr=False)
     db_schema: str = field(repr=False)
-    upload_token: str = field(default="", repr=False)
     max_upload_bytes: int = 33554432
     max_uncompressed_bytes: int = 268435456
     ai_base_url: str = ""
@@ -54,7 +53,6 @@ class Settings:
     def from_env(cls):
         return cls(
             database_url=os.environ.get("AREA_POWER_DB_DSN", ""), db_schema=os.environ.get("AREA_POWER_DB_SCHEMA", ""),
-            upload_token=os.environ.get("AREA_POWER_UPLOAD_TOKEN", ""),
             max_upload_bytes=_positive_int("AREA_POWER_MAX_UPLOAD_BYTES", 33554432),
             max_uncompressed_bytes=_positive_int("AREA_POWER_MAX_UNCOMPRESSED_BYTES", 268435456),
             ai_base_url=os.environ.get("AREA_POWER_AI_BASE_URL", ""), ai_api_key=os.environ.get("AREA_POWER_AI_API_KEY", ""),

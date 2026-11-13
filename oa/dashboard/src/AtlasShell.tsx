@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Bell, BookOpen, Boxes, ChevronDown, ChevronUp, FileClock, FolderKanban, GitCompareArrows, Home, LogOut, Menu, Settings2, ShieldCheck, Target, UploadCloud, Workflow, X } from 'lucide-react'
+import { BookOpen, ChevronDown, ChevronUp, FolderKanban, GitCompareArrows, Home, LogOut, Menu, Settings2, ShieldCheck, X } from 'lucide-react'
 import { WorkspaceBrand } from './components/WorkspaceBrand'
 import { ColorModeControl } from './components/ColorModeControl'
 import PersonalAiToken from './PersonalAiToken'
@@ -10,7 +10,7 @@ import { useWorkspaceNavigation } from './useWorkspaceNavigation'
 import { DashboardLogin } from './DashboardLogin'
 import { useAtlas } from './atlasContext'
 
-type NavigationLink = { title: string; path: string; page: string; view?: string; icon: typeof Home }
+type NavigationLink = { title: string; path: string; page: string; icon: typeof Home }
 const navigationGroups: { id: string; title: string; links: NavigationLink[] }[] = [
   { id: 'home', title: '', links: [
     { title: '홈 · 프로젝트', path: '/', page: 'home', icon: Home },
@@ -20,13 +20,7 @@ const navigationGroups: { id: string; title: string; links: NavigationLink[] }[]
     { title: '수신 로그 대장', path: '/?page=review', page: 'review', icon: FolderKanban },
   ] },
   { id: 'area-power', title: 'Area/Power', links: [
-    { title: '구성·전력 개요', path: '/?page=area-power', page: 'area-power', view: 'overview', icon: Boxes },
-    { title: '업로드 · 실행', path: '/?page=area-power&view=uploads', page: 'area-power', view: 'uploads', icon: UploadCloud },
-    { title: '수치 · AI 분석', path: '/?page=area-power&view=comparisons', page: 'area-power', view: 'comparisons', icon: GitCompareArrows },
-    { title: '추적 대상 · 매핑', path: '/?page=area-power&view=targets', page: 'area-power', view: 'targets', icon: Target },
-    { title: '설계 변경', path: '/?page=area-power&view=changes', page: 'area-power', view: 'changes', icon: FileClock },
-    { title: '알림', path: '/?page=area-power&view=alerts', page: 'area-power', view: 'alerts', icon: Bell },
-    { title: '수치 작업', path: '/?page=area-power&view=jobs', page: 'area-power', view: 'jobs', icon: Workflow },
+    { title: '프로젝트 비교', path: '/?page=area-power', page: 'area-power', icon: GitCompareArrows },
   ] },
   { id: 'account', title: '', links: [
     { title: '내 계정 · 권한', path: '/?page=welcome', page: 'welcome', icon: ShieldCheck },
@@ -48,8 +42,7 @@ export default function AtlasShell({ children, demoToolbar }: { children: ReactN
   const isAdmin = auth.session.is_admin
   const params = new URLSearchParams(atlas.routeSearch)
   const page = params.get('page') || 'home'
-  const view = params.get('view') || 'overview'
-  const current = links.find(link => link.page === page && (!link.view || link.view === view))
+  const current = links.find(link => link.page === page)
   const netVer = atlas.version?.net_ver ?? (netSelection.blockId === atlas.block?.id ? netSelection.netVer : '')
   const netVersions = [...new Set(atlas.block?.versions.map(version => version.net_ver))]
   const revisions = atlas.block?.versions.filter(version => version.net_ver === netVer)
@@ -66,7 +59,7 @@ export default function AtlasShell({ children, demoToolbar }: { children: ReactN
       <p className="atlas-nav-label">DESIGN WORKSPACE</p>
       <nav aria-label="업무 메뉴">{navigationGroups.map(group => <section className="atlas-nav-group" key={group.id} aria-label={group.title ? `${group.title} 메뉴` : group.id === 'home' ? '공통 홈' : '계정 및 관리'}>
         {group.title && <h2 className="atlas-nav-heading">{group.title}</h2>}
-        {group.links.map(link => <a key={link.path} href={atlas.href(link.path)} aria-current={page === link.page && (!link.view || link.view === view) ? 'page' : undefined} onClick={event => { if (event.button || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return; event.preventDefault(); go(link.path) }}><link.icon size={18} />{link.title}</a>)}
+        {group.links.map(link => <a key={link.path} href={atlas.href(link.path)} aria-current={page === link.page ? 'page' : undefined} onClick={event => { if (event.button || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return; event.preventDefault(); go(link.path) }}><link.icon size={18} />{link.title}</a>)}
         {group.id === 'account' && isAdmin && <a href={atlas.href('/?page=admin')} aria-current={page === 'admin' ? 'page' : undefined} onClick={event => { if (event.button || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return; event.preventDefault(); go('/?page=admin') }}><Settings2 size={18} />서비스 · 권한 관리</a>}
       </section>)}</nav>
       <div className="atlas-profile"><span className="atlas-avatar">{auth.session.reviewer.slice(0, 2)}</span><div><strong>{auth.session.reviewer}</strong><small>{atlas.demo ? '합성 데모 · 탭 메모리' : auth.session.auth_method === 'local_token' ? '실제 로컬 모드 · 데모 아님' : '회사 SSO · 권한 적용'}</small></div><button disabled={auth.signingOut} onClick={() => void logout().catch(cause => setError(String(cause)))} aria-label={atlas.demo ? '데모 종료' : '로그아웃'}><LogOut size={17} /></button></div>

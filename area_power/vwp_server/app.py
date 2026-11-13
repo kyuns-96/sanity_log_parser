@@ -5,12 +5,11 @@ Configuration uses AREA_POWER_ environment variables.
 """
 from __future__ import annotations
 
-import hmac
 import logging
 from contextlib import asynccontextmanager
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
@@ -129,18 +128,6 @@ def create_app(settings=None, db=None) -> FastAPI:
     async def configuration_error(request, exc):
         return _error("service_unavailable", "Service is not configured or ready.", 503)
 
-    async def actor(request: Request) -> str:
-        configured = settings.upload_token
-        if not configured:
-            raise DomainError("Upload authentication is not configured.", code="service_unavailable", status_code=503)
-        authorization = request.headers.get("Authorization", "")
-        scheme, _, token = authorization.partition(" ")
-        if scheme.lower() != "bearer" or not token or not hmac.compare_digest(token.encode(), configured.encode()):
-            raise DomainError("Authentication required.", code="unauthorized", status_code=401)
-        identity = request.headers.get("X-Actor", "")
-        if not identity.strip() or len(identity) > 256 or any(ord(char) < 32 or ord(char) == 127 for char in identity):
-            raise DomainError("A nonempty X-Actor audit identity is required.", code="invalid_actor", status_code=422)
-        return identity
 
     @app.get("/health")
     async def health():
@@ -149,12 +136,10 @@ def create_app(settings=None, db=None) -> FastAPI:
         except Exception as exc:
             logger.warning("VWP readiness unavailable (%s)", type(exc).__name__)
             return JSONResponse({"status": "unavailable"}, status_code=503)
-        if not settings.upload_token:
-            return JSONResponse({"status": "unavailable"}, status_code=503)
         return {"status": "ready"}
 
     @app.post("/api/area-power/uploads", status_code=201)
-    async def upload(request: Request, uploaded_by: str = Depends(actor)):
+    async def upload(request: Request):
         async with request.form(max_files=1, max_fields=1, max_part_size=_METADATA_LIMIT) as form:
             if len(form.multi_items()) != 2 or set(form.keys()) != {"metadata", "file"}:
                 raise DomainError("Provide exactly one metadata field and one file.", code="invalid_request")
@@ -181,11 +166,11 @@ def create_app(settings=None, db=None) -> FastAPI:
                 if length > settings.max_upload_bytes:
                     raise DomainError("Upload exceeds the configured size limit.", code="file_too_large", status_code=413)
                 chunks.append(chunk)
-            result = await run_in_threadpool(ingest_upload, db, settings, b"".join(chunks), filename, metadata, uploaded_by)
+            result = await run_in_threadpool(ingest_upload, db, settings, b"".join(chunks), filename, metadata, "vwp_server")
         return JSONResponse(public(result), status_code=201)
 
     @app.get("/api/area-power/uploads/{upload_id}")
-    async def upload_metadata(upload_id: UUID, uploaded_by: str = Depends(actor)):
+    async def upload_metadata(upload_id: UUID):
         def read_upload():
             with db.connect() as conn:
                 return db.upload(conn, upload_id)

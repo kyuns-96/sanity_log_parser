@@ -1,10 +1,10 @@
 # Design Atlas 수치 엔진 인계
 
-기준일: 2026-11-10. Canonical 저장소: `/home/coder/workspace/design_atlas`. 제품 전체 최신 상태는 [루트 인계](../HANDOFF.md)를 따른다.
+기준일: 2026-11-13. Canonical 저장소: `/home/coder/workspace/design_atlas`. 제품 전체 최신 상태는 [루트 인계](../HANDOFF.md)를 따른다.
 
 ## 확정된 구성
 
-- 제품은 Design Atlas다. 공통 홈·프로젝트/블록/버전 선택·인증·파란색 light/dark 사이드바를 사용한다. 로그와 수치 엔진은 분리하되 별도 Area 카탈로그 등록 UI·API는 제거했다.
+- 제품은 Design Atlas다. 공통 프로젝트·인증·파란색 light/dark 사이드바를 사용하며 수치 주 화면은 **프로젝트 비교** 하나다. 경로 대응과 업로드 이력을 같은 화면에 두고 AI·작업·알림·target·변경 설명은 내부 엔진으로 보존한다. 별도 Area 카탈로그 재등록은 없다.
 - 기존 `inst_area_tracking`의 실행 코드·독립 UI·중복 SQL·배포 설정은 제거했다. 옛 Python import·entry point의 alias/shim은 없다. 원래 사용자 제공 `inst_area_tracking/docs/csv_structure`는 보존했다.
 - Area의 `di_area_power_csv`, `di_area_power_tracking_record` 두 테이블과 Sanity 네 테이블은 별도 계약이다. 이미 신청한 두 테이블을 다시 신청하지 않는다. 사내 실제 생성·제약·권한 적용은 미확인이다.
 - 실제 사내 스키마·DSN은 요구하거나 저장하지 않는다. SQL은 `db/area_power/`의 `<schema>.테이블` 템플릿이며 사내에서 치환한다. 앱 자동 DDL은 없다.
@@ -24,6 +24,7 @@
 - API는 `/api/area-power/*`, 설정은 export된 `AREA_POWER_*`다. 기존 unprefixed Area 환경변수·브라우저 `OA_API_TOKEN`·신뢰하는 X-Actor는 제거했다.
 - 운영 SSO는 현재 사용자·잠긴 프로젝트 권한 snapshot을 사용한다. 공통 API가 Area 프로젝트/블록의 정확한 binding과 기존 `WS_CONFIG`의 버전 binding을 준비한다. 과거 프로젝트 공통 버전 UUID는 재작성하지 않고 여러 네이티브 버전에 연결할 수 있다. 이름 기반 병합·사용자 자동 등록·권한 자동 부여는 없다.
 - 모든 목록·상세·원본·mutation·counts에서 기준/현재/고정/추가 참조를 검사한다. 기준 프로젝트 권한이 없으면 현재 프로젝트 권한만으로 결과를 볼 수 없다. 기존 미연결 Area catalog는 SSO에서 차단한다.
+- 프로젝트의 저장 기준은 기존 project payload의 `baseline_project_id` 하나다. 권한이 회수된 기준은 설정/프로젝트 목록에서 ID·이름을 가리되 현재 프로젝트와 기준 해제/교체는 유지한다. 포인터를 따라 다른 프로젝트의 기준까지 연쇄 검사하지 않는다. 비교/매핑 새 요청은 저장한 기준만 허용하며 과거 고정 결과를 후속 기준 변경으로 재해석하지 않는다.
 - 명시적 local_token만 `local_mode:true`인 미연결 실제 로컬 catalog를 허용한다. 임의 tool/constraint 관측값의 `version_id`·`project_id`는 실제 업무 FK로 오해하지 않는다.
 - 새로운 dependency는 역할 requirements에 반영했고, production Docker context/COPY에 Area OA/common을 추가했다. Docker build·사내 베이스 이미지·Nginx 배포는 미실행이다. Sanity의 기존 PG18 포털 catalog 문제를 수정한 작업은 아니다.
 
@@ -46,8 +47,8 @@
 
 ## PC별 Area/Power 업로드 prototype — 2026-11-12
 
-- 기존 `bin/area-power` / `python -m area_power.vwp`에 `--config /approved/pc/upload.json`을 추가했다. 공통 multipart 전송/API는 그대로 하나다. 제품 예제는 `area_power/vwp/upload.example.json`; 필수 `csv`, `metadata`, 선택 `report_export` 전체 argv 배열만 받는다. config 상대 입력·exporter cwd는 config 디렉터리 기준이고 기존 입력 옵션과 혼용하지 않는다. URL/token/actor는 기존 환경변수·옵션을 유지한다.
-- 사내 AI의 마무리는 비공개 PC 경로/설정·실제 dashboard의 준비된 Area UUID/실행 문맥·확인된 전체 exporter argv 또는 승인된 기존 wrapper·승인 endpoint/token 주입뿐이다. 공통 CLI/API/DB/SSO·새 회사 코드 수정 권한은 추가하지 않는다. 독점 exporter/라이선스·실제 회사 CSV·운영 TLS/방화벽·사용자별 인증은 미검증이다. 공유 Bearer + 감사 actor를 SSO로 표시하지 않는다.
+- 기존 `bin/area-power` / `python -m area_power.vwp`에 `--config /approved/pc/upload.json`을 추가했다. 공통 multipart 전송/API는 하나다. 예제는 `area_power/vwp/upload.example.json`; 필수 csv/metadata, 선택 report_export argv만 받으며 상대 입력/exporter cwd는 config 디렉터리 기준이다. 현재는 URL/timeout만 지정하며 과거의 업로드 토큰·수동 actor 옵션/환경변수는 제거했다.
+- 사내 AI는 PC 경로·실제 Area UUID/실행 문맥·확인된 exporter argv 또는 승인된 기존 wrapper·사내 도달 endpoint만 준비한다. 추가 업로드 인증 SDK/계정 입력은 필요 없다. 공통 CLI/API/DB/SSO 수정 권한은 늘리지 않는다. 아래 2026-11-12의 token 401 검증은 **추가 인증 제거 전의 역사 기록**이며 현재 요구/동작이 아니다.
 - 실제 검증: PostgreSQL 18.6의 별도 폐기 DB·비소유 제한 로그인에 기존 두 테이블/제약/인덱스와 합성 범위를 준비하고, 자체 loopback 서버로 canonical CLI를 실행했다. 다른 cwd에서 config plain/gzip/실제 `/bin/cp` exporter argv와 기존 명시적 CLI의 4건이 실제 적재됐다. DB의 gzip 내용·기존 gzip byte 보존·SHA·scope UUID·actor·새 upload/snapshot 4개·자동 selection 0개와 상태 GET 200을 확인했다. proprietary exporter 자체를 검증한 것은 아니다.
 - 잘못된 config/argv/경로·혼용·누락 metadata/CSV·export 실패 18건은 exit 2 및 exporter 부작용/HTTP 없음, 잘못된 token은 실제 HTTP 401/exit 1이었다. 두 canonical help에 `--config`가 표시됐다. 검증 데이터/DB/계정/자체 서버는 제거했고 기존 사용자 DB·서비스·broken `.venv`는 보존했다. 새 테스트/fixture/mock/harness/검증 스크립트 파일·모바일 검사는 추가/실행하지 않았다.
 - 후속 실제 Python exporter는 빈 문자열·공백 인자 `["", " ", "tail"]`의 원형 전달과 의도한 exit 7 → CLI exit 2/HTTP 없음, 잘못된 argv 경계 5건의 실행 전 거부를 확인했다.
@@ -59,4 +60,18 @@
 - 실제 물리 테이블 `di_area_power_tracking_record`, `di_area_power_csv`를 모든 active DB 호출/readiness·OA 공통 catalog·SQL/문서에 반영했다. 두 번째 컬럼 참고본은 `02_di_area_power_tracking_record.columns.sql`이며 이전 파일은 제거했다. 컬럼·record_type·모델·ID/API·기존 PC transport/config는 바꾸지 않았다.
 - 폐기 PostgreSQL 18.6·비소유 제한 로그인에서 canonical config CLI→FastAPI 업로드 2건, 원본 gzip/SHA/실제 범위 UUID/actor·ready snapshot·상태 GET·자동 selection 0개를 확인했다. OA catalog/선택 CAS/비교·AI 실행 dedupe/job 점유·종료/명시 비교·ingest 재실행과 VWP dedupe·실제 version 조회/AI 미설정 실패 저장을 실행했다. 옛 relation 입력은 거부됐다. 실제 AI·메일·SSO 호출은 없었다.
 - [DB 전환 안내](../docs/area_power/database.md)에 따라 두 테이블/권한/필수 정의 준비 후 승인된 OA·중앙 VWP backend를 함께 반영한다. 기존 동등 제약/인덱스 이름은 유지하고 승인된 누락 정의만 운영자가 적용한다. 자동 DDL·사용자 DB rename/migration·alias/fallback은 없다.
-- 자체 폐기 DB/로그인/서버/CSV·metadata·config는 제거했다. 사용자 DB·기존 OA 서비스·설정은 보존하고 재시작하지 않았다. 새 테스트/fixture/mock/harness/검증 스크립트 파일·모바일 검사·UI build·광범위 suite는 추가/실행하지 않았다. 회사 DB·SSO·실제 배포는 미검증이다. 실제 feature/main SHA·병합 상태·담당별 delta는 비공개 최신 인계 007을 따른다(다음 008). 인계 006의 당시 미병합 기록은 역사로 보존한다.
+- 자체 폐기 DB/로그인/서버/CSV·metadata·config는 제거했다. 사용자 DB·기존 OA 서비스·설정은 보존하고 재시작하지 않았다. 새 테스트/fixture/mock/harness/검증 스크립트 파일·모바일 검사·UI build·광범위 suite는 추가/실행하지 않았다. 회사 DB·SSO·실제 배포는 미검증이다. 실제 feature/main SHA·병합 상태·담당별 delta는 비공개 [최신 인계](../artifacts/internal-handoff/LATEST.md)를 따른다. 인계 006의 당시 미병합 기록은 역사로 보존한다.
+
+## 프로젝트 비교 단순화 — 2026-11-13
+
+- `GET`/`POST /api/area-power/projects/{Area UUID}/baseline`과 nullable `baseline_project_id`·필수 `expected_row_version`으로 단방향 기준을 조회/저장/해제한다. 저장은 기존 project payload/row_version만 갱신하며 추가 DDL·테이블·migration은 없다. 프로젝트만 준비해도 사용할 수 있다.
+- 양쪽 정확한 upload/snapshot·mapping revision과 당시 기준을 고정한다. `/uploads/{id}/hierarchy`는 실제 검증 원본의 경로/부모/깊이·area/power를 제공한다. 서로 다른 프로젝트의 루트·동일 경로도 자동 대응하지 않으며 대응/데이터 누락의 Δ/%는 null/unavailable이다.
+- 자체 폐기 PostgreSQL 18.6·제한 DML 로그인에서 실제 POST/CAS 경쟁·인증/오류·기존 plain/gzip 업로드 보존과 실제 큐 worker의 per-instance Area/Power·누락·과거 결과 불변을 확인했다. 권한 회수·기준 ID 가림·현재 프로젝트 유지·교체는 실제 권한 서비스에 명시적 메모리 grant context를 넣어 확인했으며 회사 SSO/권한 저장소 전체 검증은 아니다. 자세한 실행 증거/한계는 [루트 인계](../HANDOFF.md#프로젝트-비교-단순화--2026-11-13)를 따른다.
+- 자체 DB·로그인은 정리했다. 사용자 DB·설정·실행 서비스·기존 SSO는 유지했고 새 테스트/fixture/mock/harness/검증 스크립트 파일·모바일 검사는 추가/실행하지 않았다. 실제 회사 AI·메일·배포는 미검증이며 commit/push는 별도다.
+
+## Area 업로드 추가 인증 제거 — 2026-11-13
+
+- 사용자 결정으로 중앙 VWP의 CSV POST·상태 GET과 CLI의 추가 인증을 제거했다. PC launcher에서 `--token`, `--actor`, `AREA_POWER_UPLOAD_TOKEN`, `AREA_POWER_ACTOR`를 뺀다. 현재 설정은 URL·CSV/metadata·선택 exporter/timeout뿐이며 새 회사 인증 어댑터/Protocol은 없다.
+- 사내 도달성을 신뢰한다. 새 업로드와 snapshot은 기술적 수신 서비스 `vwp_server`를 출처로 기록하고 인증된 사람으로 표시하지 않는다. 클라이언트 신원 헤더를 신뢰하지 않으며 기존 두 테이블/NOT NULL 컬럼·과거 자료를 재작성하지 않는다. OA 로그인·SSO·프로젝트 권한·다운로드/비교 보호는 그대로다.
+- 별도 폐기 PG18.6·제한 로그인과 실제 loopback uvicorn에서 canonical CLI config/plain·명시적 gzip 업로드, 인증 설정 없는 health/상태 GET 200, gzip/SHA·명시적 snapshot 재사용, 잘못된 CSV 422와 임의 신원 헤더가 출처를 바꾸지 않음을 확인했다. 실제 OS 메모리 FD만 입력으로 사용해 새 fixture/스크립트 파일 없이 실행했고 자체 서버·DB·로그인은 정리했다. 기존 OA 미로그인 401·미설정 SSO 차단도 유지됐다.
+- UI 검증 build는 총 3회였고 최종 산출물은 별도 desktop proof의 1920×1080·5120×2160 전체 viewport에서 확인했다. 업로드 인증 제거는 frontend 변경이 아니므로 추가 UI build는 하지 않았다. 실제 발행 SHA·병합 상태·최신 역할별 조치는 비공개 `artifacts/internal-handoff/LATEST.md`를 따른다. 검증이 회사 배포 승인을 뜻하지 않는다.

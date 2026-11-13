@@ -191,6 +191,12 @@ class AreaAccess:
         elif value.get("record_type") == "version":
             self.version(db, conn, value.get("id"), value.get("project_id"))
         for name, item in value.items():
+            if value.get("record_type") == "project" and name == "payload":
+                # A saved preference is not a grant or a requirement to traverse
+                # an arbitrary chain of projects. Actual comparison inputs remain
+                # fully authorized through their own project/upload references.
+                self.value(db, conn, {k: v for k, v in item.items() if k != "baseline_project_id"}, seen)
+                continue
             if item is None or name in OPAQUE_FIELDS:
                 continue
             if name in PROJECT_REFERENCES:
@@ -225,6 +231,22 @@ class AuthorizedDatabase:
 
     def authorize(self, conn, row, *, upload=False):
         self.access.row(self.raw, conn, row, upload=upload)
+        if row.get("record_type") == "project":
+            payload = row.get("payload", {})
+            baseline_id = payload.get("baseline_project_id")
+            status = "unset"
+            if baseline_id:
+                try:
+                    baseline = self.raw.record(conn, identifier(baseline_id), kind="project")
+                    if not self.access.development:
+                        self.access.host_project(baseline["payload"].get("sanity_project_id"))
+                    status = "available"
+                except (ReviewError, DomainError) as exc:
+                    if exc.code not in {"RESOURCE_NOT_FOUND", "not_found"}:
+                        raise
+                    status = "unavailable"
+            return {**row, "payload": {**payload, "baseline_project_id": baseline_id if status == "available" else None},
+                    "baseline_status": status}
         return row
 
     def references(self, conn, value):
@@ -247,7 +269,7 @@ class AuthorizedDatabase:
             rows = loader(conn, *args, **filters, limit=500, offset=scanned)
             for row in rows:
                 try:
-                    self.authorize(conn, row, upload=upload)
+                    row = self.authorize(conn, row, upload=upload)
                 except ReviewError as exc:
                     if exc.code != "RESOURCE_NOT_FOUND":
                         raise

@@ -15,7 +15,7 @@ from area_power.common.jsonutil import public
 from area_power.common.models import ComparisonRequest
 from .access import AreaAccess
 from .service import (
-    AlertStateInput, ConfigInput, RejudgeInput, RerunInput,
+    AlertStateInput, BaselineInput, ConfigInput, RejudgeInput, RerunInput,
     SelectionInput, Service, CONFIG_TYPES,
 )
 
@@ -70,6 +70,14 @@ def create_area_power_router(authorized_dependency):
         context.db.raw.check_schema()
         return json({"ready": True})
 
+    @router.get("/projects/{identifier}/baseline")
+    def project_baseline(identifier: UUID, context=Depends(service)):
+        return json(context.project_baseline(identifier))
+
+    @router.post("/projects/{identifier}/baseline")
+    def set_project_baseline(identifier: UUID, body: BaselineInput, context=Depends(service)):
+        return json(context.project_baseline(identifier, body, context.access.actor.user_id))
+
     @router.get("/dashboard")
     def dashboard(scope=Depends(filters), context=Depends(service),
                   limit: int = Query(default=100, ge=1, le=500),
@@ -88,6 +96,10 @@ def create_area_power_router(authorized_dependency):
     def upload(identifier: UUID, context=Depends(service)):
         with context.db.connect() as conn:
             return json(context.db.upload(conn, identifier))
+
+    @router.get("/uploads/{identifier}/hierarchy")
+    def hierarchy(identifier: UUID, context=Depends(service)):
+        return json(context.upload_hierarchy(identifier))
 
     @router.get("/uploads/{identifier}/download")
     def download(identifier: UUID, context=Depends(service)):

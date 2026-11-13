@@ -1,21 +1,21 @@
 # Design Atlas 인계
 
-기준일: 2026-11-11. Canonical 저장소는 **`/home/coder/workspace/design_atlas`** 다.
+기준일: 2026-11-13. Canonical 저장소는 **`/home/coder/workspace/design_atlas`** 다.
 
 ## 제품과 접속
 
-- 사용자 확정 제품명은 **Design Atlas**다. 공통 홈·프로젝트/블록/버전·인증·사이드바로 통합했으며 별도 Area 프로젝트 등록 UI/API는 제거했다. 파란색 light/dark 테마와 모바일 drawer를 사용한다.
+- 사용자 확정 제품명은 **Design Atlas**다. 공통 프로젝트·인증·사이드바를 사용하며 수치 주 화면은 **프로젝트 비교** 하나다. 업로드 이력과 경로 대응은 화면 안에 두고 AI·작업·알림·target·변경 설명의 독립 주 탐색은 제거한다. 별도 Area 프로젝트 재등록은 없으며 파란색 light/dark 테마를 유지한다.
 - 사용자 접속 주소는 **http://127.0.0.1:8080/login?to=%2Fproxy%2F8000%2F** 다. code-server 로그인 후 공통 홈으로 돌아온다. localhost나 다른 SSH 로컬 포트로 안내하지 않는다. code-server 인증은 유지한다.
 - 앱 토큰은 Git 제외 **`.env.integrated.local`의 `SANITY_DASHBOARD_TOKEN`** 이다. 파일은 coder 소유·0600이며 토큰·DSN 값을 문서/응답/로그에 복사하지 않는다. 로컬 토큰은 브라우저 탭 메모리에만 보관하므로 문서 새로고침 후 다시 입력한다.
 - 현재는 명시적인 `local_token`과 실제 로컬 DB다. 회사 SSO 실패 fallback이나 합성 데이터 대체가 아니다. 회사 SSO 전용 로그 작업 화면과 로컬에서 조회 가능한 실제 수신 로그 대장을 구분한다.
 
 ## 하나의 업무 흐름
 
-1. 홈에서 공통 프로젝트·블록을 등록한다. 운영 SSO에서는 기존 관리자 권한이 필요하다.
-2. 버전을 선언하거나 실제 수신 버전을 선택한다. 선언 시 실제 `source_namespace`, NET_VER, REVISION, PRE/POST를 사용하며 서버의 원천 identity 함수를 재사용한다. 임의 이름으로 버전 ID를 생성하지 않는다.
-3. **수치 분석 준비**를 실행한다. 공통 범위를 내부 Area UUID에 정확히 연결하며 같은 요청의 동시 실행으로 중복 객체를 만들지 않는다.
-4. 공통 범위를 유지한 채 로그 검토·수신 대장·구성/전력·업로드·분석·추적·변경·알림을 탐색한다. URL 범위는 뒤로 가기와 새로고침에도 남는다. 수신 대장은 선택한 네이티브 버전으로 실제 DB를 조회한다.
-5. 업로드 화면의 metadata JSON을 사용자 PC CLI에 전달한다. JSON의 project/version/block은 공통 문자열 ID가 아니라 준비된 실제 Area UUID다. Corner는 CSV에서 읽으며 파일 하나에 단일 corner다.
+1. 홈에서 공통 프로젝트를 등록/선택한다. 운영 등록은 기존 관리자 권한을 따른다.
+2. 프로젝트만 선택해 **프로젝트 비교**에서 저장된 기준을 조회/설정한다. A→B는 단방향이고 한 프로젝트에 기준은 하나다. CSV나 버전이 없어도 현재 프로젝트와 설정 안내를 표시한다.
+3. 업로드할 블록을 등록하고 버전을 선언하거나 실제 수신 버전을 선택한다. 선언은 실제 `source_namespace`, NET_VER, REVISION, PRE/POST와 서버의 원천 identity 규칙을 사용한다. 기준 설정 때문에 임의 버전이나 보고서를 만들지 않는다.
+4. 실제 CSV 업로드 전에 블록·버전의 **수치 분석 준비**로 공통 범위를 정확한 Area UUID에 연결한다. 업로드 이력 안의 metadata JSON을 PC CLI에 전달하며 corner는 파일 하나에 하나다.
+5. 비교할 양쪽 Block·NET_VER·REVISION·corner·정확한 upload 실행을 선택한다. 같은 화면에서 다른 경로를 명시적으로 대응하고 hierarchy별 Area/Power·Δ·%를 읽는다. 기준·매핑·데이터가 없으면 unavailable이며 이름·최신 시각으로 추측하거나 0으로 채우지 않는다.
 
 등록/선언은 보고서·수신 ECO·AI 결과를 만들어내지 않는다. POST의 선언 ECO는 실제 수신 ECO와 별도다. 원천 PRE→POST의 `source_pre_id`와 수치 계보 `previous_version_id`를 혼용하지 않는다. 기존 수신 버전의 계보가 없으면 준비 시 이전 버전 없음 또는 실제 이전 버전을 명시한다. 이름·정렬·최신 시각으로 추측하지 않는다.
 
@@ -25,6 +25,7 @@
 - 네이티브 `WS_PROJECT`, `WS_BLOCK`, `WS_VERSION`이 공통 카탈로그다. 선언/계보는 `atlas.version.*`, 요청 재생 기록은 `atlas.command.*`, 정확한 버전 연결은 `design-atlas-v1.binding.*` 전역 `WS_CONFIG` 키에 저장한다. `WS_CONFIG`에 프로젝트/블록 FK를 붙이지 않는다. 네이티브 원천 버전 payload는 기존 수신 계약을 유지한다.
 - 기존 Area UUID·원본 gzip·이력은 재작성하지 않는다. 과거 Area 버전은 프로젝트 공통일 수 있으므로 여러 네이티브 블록 버전을 같은 UUID에 연결할 수 있다. 로컬 운영자는 홈의 실제 기존 데이터 연결에서 UUID를 명시한다. 이름 자동 병합·사용자 자동 등록·권한 자동 부여는 없다.
 - 운영은 기존 SSO·관리자/프로젝트 권한·mutation intent·현재 권한 잠금을 사용한다. 권한 없는 현재/기준 프로젝트·중첩 참조·고정 입력·다운로드·총계는 계속 차단한다. 네이티브 관리자 변경의 트랜잭션은 응답 전에 끝낸다.
+- 프로젝트 기준은 기존 Area project의 `payload.baseline_project_id`와 `row_version` CAS로 저장한다. 추가 테이블·DDL·migration은 없다. 권한을 잃은 기준의 ID·이름은 가리되 현재 프로젝트와 기준 해제/교체는 유지한다. 실제 비교·원본·고정 결과는 양쪽 현재 권한을 계속 요구하며 기준 변경으로 이전 결과를 재해석하지 않는다.
 - Area commit 후 호스트 연결 기록이 실패하면 `409 PARTIAL`과 실제 Area ID를 반환한다. 분산 rollback이 성공했다고 표시하지 않는다. 명시적으로 다시 준비하면 같은 UUID의 연결 기록을 복구한다. 자동 재시도는 없다.
 - OA↔VWP 업무 전달은 DB만 사용한다. CLI HTTPS 업로드·모델 API·사내 메일 어댑터는 별도의 외부 경계다. 로그와 수치 분석 엔진은 독립이며 `SANITY_*`, `AREA_POWER_*`, `bin/sanity`, `bin/area-power`의 수집 계약은 제품명 때문에 바꾸지 않는다.
 
@@ -123,3 +124,20 @@ Hierarchy 누적 집계의 부모/자식 중복 합산 금지, logic_cells 분�
 - 독립 폐기 PostgreSQL 18.6·비소유 DML 로그인에서 새 두 테이블만 설치하고 readiness, canonical config CLI→실제 FastAPI 업로드 2건, gzip/SHA/범위/actor/ready snapshot·상태 GET·자동 선택 0개를 확인했다. 실제 OA catalog·선택 CAS·비교/AI 실행 dedupe·job 점유/종료·명시 비교/ingest 재실행과 VWP dedupe·version 조회/AI 미설정 실패 저장도 확인했다. 실제 AI·메일·SSO 호출은 하지 않았다.
 - 승인된 실제 테이블/권한/필수 정의 준비 후 OA·중앙 VWP backend를 함께 전환한다. 앱 자동 DDL·사용자 DB rename/migration·옛 테이블 fallback은 없다. 동등한 기존 제약/인덱스 이름은 유지하며 승인된 누락 정의만 운영자가 적용한다. [DB 전환 안내](docs/area_power/database.md)를 따른다.
 - 폐기 DB/로그인/자체 서버/임시 CSV·metadata·config는 제거했다. 사용자 DB·기존 OA 서비스·설정은 보존하고 재시작하지 않았다. 새 테스트/fixture/mock/harness/검증 스크립트 파일·모바일 검사·UI build·광범위 suite는 추가/실행하지 않았다. 회사 DB·SSO·실제 배포는 미검증이다. feature 발행과 main 병합은 별개이며 실제 SHA/담당 조치는 비공개 인계 006을 따른다.
+
+## 프로젝트 비교 단순화 — 2026-11-13
+
+- 기준 API는 `GET`/`POST /api/area-power/projects/{Area UUID}/baseline`이다. POST는 nullable `baseline_project_id`와 필수 `expected_row_version`을 받는다. 기존 인증 클라이언트의 POST mutation 계약과 SSO·프로젝트 권한을 변경하지 않았다.
+- 모든 새 `previous_project` 비교와 교차 프로젝트 매핑은 저장한 기준을 검사한다. 당시 기준 ID/row_version·양쪽 upload/snapshot·mapping revision을 고정한다. 매핑 없는 루트/동일 이름 경로도 자동 연결하지 않는다. 정확한 upload의 hierarchy 조회 API로 같은 화면의 경로 선택을 지원한다.
+- 폐기 PostgreSQL 18.6·비소유 제한 DML 로그인·기존 두 테이블에서 실제 FastAPI ASGI 경로의 인증·POST 저장/오류·CAS 동시 경쟁 200/409와 기존 multipart plain/gzip·SHA·원본 byte 보존·재업로드 별도 행·자동 선택 없음을 확인했다. DB 큐의 실제 `consume_once`로 비교 3개를 처리해 hierarchy instance area 2→4, Δ2/+100%, power 8→16 mW, Δ8/+100%와 대응/기준 누락의 null/unavailable을 확인했다. AI 미설정에 따른 AIError는 예상된 실패이며 수치 completed는 보존됐다. 실제 AI·메일은 호출하지 않았다.
+- 권한 경계는 실제 `AreaAccess`/`AuthorizedDatabase`/서비스에 명시적인 메모리 grant context를 넣어 확인했다. 기준 권한 회수 후 기준 설정과 프로젝트 목록 모두 식별자를 가리고 현재 프로젝트는 유지했으며, 과거 결과·기준 원본·비교는 차단하고 해제/교체는 허용했다. 회사 SSO·실제 권한 저장소/HTTP 경로 전체의 회수 시나리오를 검증했다고 주장하지 않는다.
+- 기준 파일 없는 비교의 dedupe도 지정 기준 UUID를 포함한다(row_version은 제외). 별도 폐기 PG18.6에서 현재 CSV 하나로 A→B와 A→C의 서로 다른 비교/고정 기준, C 반복·C 재저장 시 재사용, B 복귀 시 원래 B 재사용, B 권한 회수 후 C 생성/재사용과 기존 B 결과 불변을 좁게 확인했다. 이 추가 확인은 기존 backend 증거를 반복 실행하지 않았으며 자체 DB·제한 로그인은 정리했다.
+- UI는 총 build 3회와 1920×1080·5120×2160 전체 viewport로 확인했다. 단일 표·sidebar·계층 펼침, 지정 기준의 방향성·고정 이력, 같은 corner 수치와 다른 corner의 Power contextual, 선택을 보존하는 갱신이 동작했다. %는 BigInt로 두 자리 표시하되 원래 전체 값은 title/접근성 설명에 보존했다. 십진수 corner 동일성·반올림 경계와 IEEE 범위를 넘는 정밀도도 실제 소스의 인라인 계산으로 확인했다. 브라우저 오류는 없었으며 모바일은 실행하지 않았다.
+- 자체 폐기 DB·로그인은 정리했고 사용자 DB·설정·기존 서비스는 보존했다. 새 테스트/fixture/mock/harness/검증 스크립트 파일·모바일 검사는 추가/실행하지 않았다. 실제 발행 SHA·feature/main 병합 상태·최신 역할별 조치는 비공개 `artifacts/internal-handoff/LATEST.md`의 현재 기록을 따른다. 검증 기록 자체가 회사 배포 완료를 뜻하지 않는다.
+
+## Area 업로드·상태 조회의 추가 인증 제거 — 2026-11-13
+
+- 사용자 결정은 Area PC→중앙 VWP CSV 입력에만 적용한다. 업로드/상태 GET의 추가 인증과 CLI `--token`/`--actor`, `AREA_POWER_UPLOAD_TOKEN`/`AREA_POWER_ACTOR`를 제거했으며 대체 인증 SDK/Protocol·새 gate는 추가하지 않았다. 기존 launcher에서 제거한 옵션/환경변수를 빼고 URL·CSV/metadata만 제공한다.
+- 사내 도달성을 신뢰하며 인증된 사용자별 업로드 추적은 제공하지 않는다. `uploaded_by`와 새 snapshot 작성자는 기술적 수신 서비스 `vwp_server`이고 임의 요청 헤더의 사용자명은 신뢰하지 않는다. 기존 OA 로그인·SSO·프로젝트 권한과 조회/다운로드/비교 보호는 유지한다. DB의 기존 두 테이블/NOT NULL 컬럼·이력은 바꾸지 않는다.
+- 별도 폐기 PG18.6·비소유 제한 로그인에서 실제 CLI→loopback uvicorn→DB의 config/plain·명시적 gzip 업로드를 토큰/actor 설정 없이 확인했다. health/상태 GET 200, 기술 출처 고정·명시적 snapshot 재사용·원본 gzip/SHA 보존·자동 선택 없음·잘못된 CSV 422와 제거 옵션의 CLI 거부가 확인됐다. 기존 OA 미로그인 401와 미설정 SSO 차단은 그대로였다. 새 입력/fixture/검증 스크립트 파일 대신 메모리 FD를 사용했고 자체 서버·DB·로그인은 정리했다.
+- 앞선 과거 업로드 token 401·수동 actor 검증은 당시 동작의 역사 기록이며 현재 설정 요구가 아니다. 이번 입력 경로 변경 때문에 UI build·기존 비교/DB 전수·모바일 검사는 반복하지 않았다. 실제 발행/역할 인계는 비공개 최신 LATEST 기록이 기준이고 사내 배포는 승인 운영자가 별도로 관리한다.

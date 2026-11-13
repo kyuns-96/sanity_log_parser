@@ -95,8 +95,35 @@ export function format(value: unknown): string {
   const match = /^([+-]?)(\d+)(\.\d+)?$/.exec(source)
   return match ? `${match[1]}${match[2].replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${match[3] || ''}` : source
 }
+export function formatPercent(value: unknown): string {
+  if (value === undefined || value === null || value === '') return '—'
+  const source = String(value)
+  const match = /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(source)
+  if (!match) return format(value)
+  const fractional = match[3] || ''
+  const coefficient = BigInt(match[2] + fractional)
+  const exponent = BigInt(match[4] || '0') - BigInt(fractional.length) + 2n
+  const divisor = exponent < 0n ? 10n ** -exponent : 1n
+  const scaled = exponent < 0n ? (coefficient * 2n + divisor) / (divisor * 2n) : coefficient * 10n ** exponent
+  return format(`${match[1] === '-' && scaled ? '-' : ''}${scaled / 100n}.${(scaled % 100n).toString().padStart(2, '0')}`)
+}
 export const nameOf = (record: TrackingRecord) => text(record.payload.name || record.payload.text || record.id)
 export const uploadName = (upload: Upload) => `${upload.execution_name || upload.original_filename || upload.filename || upload.id} · ${upload.process_label ?? '?'} / ${upload.voltage_v ?? '?'} V / ${upload.temp_c ?? '?'} °C / ${upload.pex ?? '?'} · ${upload.id.slice(0, 8)}`
+// Match the backend's Decimal identity without converting PVT values to Number.
+function cornerDecimal(value: string | null | undefined) {
+  if (value == null) return null
+  const match = /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(value)
+  if (!match) return value
+  const fractional = match[3] || ''
+  const digits = (match[2] + fractional).replace(/^0+/, '')
+  if (!digits) return '0'
+  const coefficient = digits.replace(/0+$/, '')
+  const exponent = BigInt(match[4] || '0') - BigInt(fractional.length) + BigInt(digits.length - coefficient.length)
+  return `${match[1] === '-' ? '-' : ''}${coefficient}e${exponent}`
+}
+export function cornerKey(upload: Pick<Upload, 'process_label' | 'voltage_v' | 'temp_c' | 'pex'>) {
+  return JSON.stringify([upload.process_label ?? null, cornerDecimal(upload.voltage_v), cornerDecimal(upload.temp_c), upload.pex ?? null])
+}
 export const date = (value?: string | null) => value ? new Date(value).toLocaleString('ko-KR', { hour12: false }) : '—'
 
 export const accessSchema = z.object({

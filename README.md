@@ -25,7 +25,7 @@ Design Atlas는 공통 프로젝트·블록·버전을 기준으로 로그 검�
 | 검토 워크스페이스 | 공통 프로젝트·블록·NET_VER / REVISION을 유지하면서 로그와 수치를 탐색합니다. ECO·PoR·검토 이력, 파란색 light/dark 테마와 반응형 공통 사이드바를 제공합니다. |
 | 프로젝트 멤버 | 프로젝트 권한 하나로 모든 등록 블록을 조회·검토·수정합니다. 관리자는 사용자별 참여 프로젝트를 승인·회수하며, 블록 화면에 전체 담당자 명단을 표시하지 않습니다. |
 | 원본·근거 보존 | HTTPS 제출, 원본의 VWP private DB 보관, item별 파싱, 원문 위치·해시 검증을 연결합니다. 선택형 무손실 압축·근거 페이지·공유 본문 저장을 지원합니다. |
-| Area/Power 추적 | CSV gzip 보관·corner별 실행·명시 snapshot/기준·전체 또는 target 비교·매핑·변경 설명·AI 검토·알림을 같은 업무 화면에서 제공합니다. 운영 SSO는 현재와 기준 프로젝트 권한을 모두 검사합니다. |
+| 프로젝트 비교 | 프로젝트 A에 저장한 단일 기준 B를 사용해 양쪽 Block·NET_VER·REVISION·corner와 정확한 CSV 실행을 선택하고 hierarchy instance별 Area/Power·Δ·%를 표시합니다. 경로 대응과 업로드 이력은 같은 화면에 있으며 현재·기준 양쪽 권한을 검사합니다. |
 
 AI 제안은 사람이 확정한 결과와 구분합니다. 과거 사례가 없는 첫 report도 현재 로그와 확인된 기준으로 판단할 수 있어야 하며, 모델 호출 성공만으로 판단 품질 검증을 대신하지 않습니다.
 
@@ -207,7 +207,7 @@ mock 실행기는 CPU 가용량에 맞춰 최대 4개의 작업자 DB를 만들�
 
 ## Design Atlas 실행과 공통 카탈로그
 
-기본 홈은 `/`다. 프로젝트·블록·버전을 한 번 선택하고 같은 사이드바에서 로그 검토와 구성·전력 분석을 연다. 공통 API는 `/api/atlas/*`, 수치 엔진 API는 `/api/area-power/*`다. 회사 배포는 기존 SSO entry point·관리자/프로젝트 권한 계약과 `AREA_POWER_ENABLED=true`를 사용한다. 별도 Area 로그인·프로젝트 재등록·OA↔VWP HTTP 중계는 없다. 현재·기준 양쪽 권한을 검사한다.
+기본 홈은 `/`다. 프로젝트를 한 번 선택하고 같은 사이드바에서 로그 검토와 **프로젝트 비교**를 연다. 비교는 프로젝트에 저장한 단방향 기준을 사용하며 Block·버전·corner·실행은 양쪽에서 명시적으로 고른다. 공통 API는 `/api/atlas/*`, 수치 엔진 API는 `/api/area-power/*`다. 회사 배포는 기존 SSO entry point·관리자/프로젝트 권한 계약과 `AREA_POWER_ENABLED=true`를 사용한다. 별도 Area 로그인·프로젝트 재등록·OA↔VWP HTTP 중계는 없다. 기준 저장은 기존 project payload를 사용하며 추가 DDL은 없다.
 
 현재 개발 호스트는 `.env.integrated.local`의 명시적 local_token 모드와 실제 로컬 DB로 실행한다. 기존 Area DB와 사용자 데이터는 보존했다. 접속·토큰은 비공개 설정 파일에서 확인하며, 사내 SSO 실패를 이 모드로 대체하지 않는다. 기존 `.venv`를 수정하지 않고 `.venv-integrated`를 사용했다.
 
@@ -216,7 +216,9 @@ set -a && source .env.integrated.local && set +a
 .venv-integrated/bin/python -m uvicorn oa.dashboard_api:app --host 127.0.0.1 --port 8000 --no-proxy-headers --no-access-log
 ```
 
-현재 저장소는 `/home/coder/workspace/design_atlas`다. code-server 접속 주소는 **http://127.0.0.1:8080/login?to=%2Fproxy%2F8000%2F** 이며 로그인 후 공통 홈으로 복귀한다. code-server 인증은 해제하지 않는다. 홈에서 공통 프로젝트·블록·네이티브 버전을 등록하고 **수치 범위 준비**를 실행하면 내부 UUID가 명시적으로 연결된다. 기존 Area 데이터는 이름으로 합치지 않고 로컬 운영자가 UUID를 지정해 연결한다. 상세 worker·환경변수·두 테이블 적용은 [Area/Power 안내](area_power/README.md)를 따른다.
+현재 저장소는 `/home/coder/workspace/design_atlas`다. code-server 접속 주소는 **http://127.0.0.1:8080/login?to=%2Fproxy%2F8000%2F** 이며 로그인 후 공통 홈으로 복귀한다. code-server 인증은 해제하지 않는다. 기준 설정에는 프로젝트만 필요하고, CSV 업로드에는 공통 블록·네이티브 버전의 **수치 범위 준비**로 연결한 실제 Area UUID가 필요하다. 기존 데이터는 이름으로 합치지 않고 로컬 운영자가 정확한 UUID를 지정해 연결한다. 상세 API·worker·환경변수·두 테이블 계약은 [프로젝트 비교 안내](area_power/README.md)를 따른다.
+
+사용자 PC→중앙 VWP의 Area CSV 업로드/상태 조회는 추가 인증 없이 사내 도달성을 신뢰한다. 업로드 토큰·수동 actor 옵션/환경변수는 제거했으며 출처는 기술적 수신 서비스 `vwp_server`로 기록한다(인증된 사용자 귀속 아님). OA 호스트의 로그인·SSO·프로젝트 권한과 비교/다운로드 보호는 유지한다. 기존 PC launcher의 제거 대상과 실행법은 [업로드 안내](area_power/README.md#csv-업로드)를 따른다.
 
 ### 통합 합성 데모
 

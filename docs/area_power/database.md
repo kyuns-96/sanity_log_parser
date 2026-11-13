@@ -47,6 +47,8 @@ flowchart LR
 
 **oa_server와 vwp_server 사이에는 API·파일 전달·메시지 브로커를 두지 않는다. 두 서버의 요청·응답은 DB 행으로 전달한다.** 사용자 PC에서 vwp_server로 전달하는 업로드 경로는 이 제약과 별개다.
 
+중앙 VWP의 Area CSV 업로드와 상태 GET은 추가 인증 없이 사내 도달성을 신뢰한다. 요청의 사용자명/신원 헤더는 저장 출처로 신뢰하지 않는다. 새 업로드의 `uploaded_by`와 해당 snapshot의 `created_by`/`updated_by`는 기술적 서비스 `vwp_server`이며 사람의 인증 신원이 아니다. 기존 NOT NULL 컬럼·두 테이블·과거 행은 그대로 두고 추가 DDL/인증 테이블을 만들지 않는다. OA API의 로그인·SSO·양쪽 프로젝트 권한과 기존 worker의 실제 프로세스 소유권은 유지한다.
+
 ## 1. di_area_power_csv — 업로드 한 건당 원본 한 개
 
 한 행은 특정 구조 snapshot을 특정 분석 조건에서 실행한 통합 CSV 한 파일이다. 수정본이나 같은 조건 재실행도 새 UUID의 행으로 저장하고 원본을 덮어쓰지 않는다.
@@ -54,7 +56,7 @@ flowchart LR
 | 컬럼 묶음 | 주요 컬럼 | 의미 |
 | --- | --- | --- |
 | 식별·범위 | `id`, `project_id`, `version_id`, `block_id`, `snapshot_id` | 업로드 실행과 명시적인 프로젝트·버전·구조 구분 |
-| 실행·사용자 | `execution_name`, `original_filename`, `uploaded_by` | 표시용 이름과 업로드 주체. 이름만으로 조건을 추정하지 않음 |
+| 실행·출처 | `execution_name`, `original_filename`, `uploaded_by` | 표시용 이름과 수신 서비스 출처(`vwp_server`, 인증된 사람 아님). 이름만으로 조건을 추정하지 않음 |
 | CSV 조건 | `process_label`, `voltage_v`, `temp_c`, `pex` | 모든 행이 동일한 조건인지 검증 후 저장 |
 | 전체 분석 조건 | `analysis_conditions`, `condition_key`, `conditions_complete` | Mode·clock·activity·RC·도구·전압 영역 등과 조건 식별 key |
 | 구조·입력 계약 | `structure_digest`, `input_contract` | 전체 구조 및 파싱·단위·분류·정밀도 계약 |
@@ -115,6 +117,17 @@ Key가 같아도 조건이 불완전하면 `comparable`로 판단하지 않는�
 | `job` | 적재·비교·추출·판정·메일 요청 | 요청한 서버가 등록, 지정 소비 서버가 점유·결과 갱신 |
 
 공개 매핑·원문 revision·완료 결과는 새 행을 추가해 이력을 남기고 덮어쓰지 않는다. 변경 설명만 바뀌면 기존 수치 결과에 새 AI 실행을 연결한다. 알림은 안정적인 dedupe key의 같은 행을 유지하며 재판정으로 읽음·해소 컬럼을 초기화하지 않는다.
+
+### 프로젝트의 단일 지정 기준
+
+주 화면의 A→B 기준은 기존 `record_type='project'` 행의 `payload.baseline_project_id`에 UUID 또는 null로 저장한다. 한 현재 프로젝트에 하나만 저장하며 반대쪽/다른 프로젝트는 갱신하지 않는다. 같은 기준을 여러 프로젝트가 사용할 수 있고 자기 자신은 거부한다. 새 record_type·컬럼·테이블·DDL·migration은 없다.
+
+`POST /api/area-power/projects/{id}/baseline`은 필수 `expected_row_version`으로 project 행을 잠그고 CAS 갱신한다. 현재 프로젝트 권한과 새 기준 프로젝트 권한을 각각 검사한다. 이전 기준 권한이 사라져도 현재 프로젝트와 해제/교체는 막지 않으며 응답/목록에서는 이전 기준 ID·이름을 가린다. 기준 프로젝트의 다른 기준으로 연쇄 탐색하지 않는다.
+
+모든 새 교차 프로젝트 비교/매핑은 이 저장 기준을 검사한다. 비교는 기존 `frozen` payload에 당시 `baseline_designation={project_id,baseline_project_id,row_version}`과 정확한 upload/snapshot·mapping revision을 고정한다. 후속 설정 변경은 완료 결과를 수정하거나 다른 입력으로 재해석하지 않는다. 조회 권한은 실제 고정된 양쪽 프로젝트/원본을 계속 검사한다. 매핑 또는 상대 데이터가 없으면 값을 0으로 보완하지 않고 해당 비교의 Δ/%를 null/unavailable로 남긴다.
+
+교차 프로젝트 비교의 수치 dedupe 입력에는 지정 기준의 `baseline_project_id`도 포함한다. 기준 upload가 없는 현재 관측 비교라도 A→B와 A→C는 별개다. 같은 C를 재저장해 project `row_version`만 달라지면 기존 C 비교를 재사용할 수 있으며, 과거 B 결과나 B의 권한 조회가 새 C 요청을 가로막지 않는다. 당시 row_version은 frozen 감사 정보로만 보존하고 수치 동일성 키에는 넣지 않는다.
+
 
 ## 현재 파일 선택과 과거 결과
 
