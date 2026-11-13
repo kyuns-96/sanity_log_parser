@@ -1,22 +1,16 @@
-"""Database-only VWP consumer. Claims commit before CSV/HTTP work starts.
+"""Internal DB consumer owned by the VWP API lifespan.
 
-Run: python -m area_power.vwp_server.worker
-Configuration uses AREA_POWER_ environment variables.
+Claims commit before CSV/HTTP work starts. Graceful shutdown drains a claim
+already underway and its job; forced termination does not recover running jobs.
 """
 from __future__ import annotations
 
-import argparse
 import logging
-import socket
-import time
+import threading
 from uuid import uuid4
 
 from psycopg import sql
 from psycopg.types.json import Jsonb
-from math import isfinite
-
-from area_power.common.config import Settings
-from area_power.common.db import Database
 from area_power.common.errors import DomainError
 from area_power.common.jsonutil import dumps
 from area_power.vwp_server.analysis import all_records, compute_comparison, parse_upload
@@ -114,7 +108,7 @@ def dispatch(db, settings, job):
         with db.connect() as conn:
             upload = db.upload(conn, job['upload_id'], include_blob=True)
         # HTTP ingestion is synchronous. Legacy/manual jobs revalidate the actual ready original;
-        # a pending/failed upload needs a new authenticated upload, not invented success.
+        # a pending/failed upload needs a new upload, not invented success.
         parsed, metadata = parse_upload(upload, settings)
         with db.connect() as conn:
             snapshot = db.record(conn, upload['snapshot_id'], kind='snapshot')
@@ -158,8 +152,8 @@ def persist_failure(db, job, error):
             db.update_record(conn, comparison['id'], ACTOR, payload=payload)
 
 
-def consume_once(db, settings, owner):
-    job = db.claim_job('vwp_server', owner)
+def consume_once(db, settings, owner, *, claim_job=None):
+    job = claim_job() if claim_job is not None else db.claim_job('vwp_server', owner)
     if job is None:
         return False
     try:
@@ -179,32 +173,55 @@ def consume_once(db, settings, owner):
     return True
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description='Consume DB jobs for numerical comparison and AI judgement')
-    parser.add_argument('--once', action='store_true', help='Claim at most one pending job and exit')
-    parser.add_argument('--poll-seconds', type=float, default=None, help='Idle polling interval; positive seconds')
-    args = parser.parse_args(argv)
-    if args.poll_seconds is not None and (not isfinite(args.poll_seconds) or args.poll_seconds <= 0):
-        parser.error('--poll-seconds must be positive')
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s %(name)s %(message)s')
-    try:
-        settings = Settings.from_env()
-        db = Database(settings)
-        db.check_schema()
-        owner = socket.gethostname() + ':' + str(uuid4())
-        interval = args.poll_seconds if args.poll_seconds is not None else settings.worker_poll_seconds
-        while True:
-            consumed = consume_once(db, settings, owner)
-            if args.once:
-                return 0
-            if not consumed:
-                time.sleep(interval)
-    except KeyboardInterrupt:
-        return 130
-    except Exception as exc:
-        LOG.error('Worker stopped: %s', type(exc).__name__)
-        return 1
+class ProcessingWorker:
+    """One non-daemon consumer; fatal claim/finish failures make readiness false."""
 
+    def __init__(self, db, settings):
+        self.db = db
+        self.settings = settings
+        self.owner = 'vwp-server:' + str(uuid4())
+        self._stopping = threading.Event()
+        self._started = threading.Event()
+        self._failed = threading.Event()
+        self._claim_lock = threading.Lock()
+        self._thread = threading.Thread(target=self._run, name='area-power-processing', daemon=False)
 
-if __name__ == '__main__':
-    raise SystemExit(main())
+    @property
+    def ready(self):
+        return self._started.is_set() and not self._stopping.is_set() and not self._failed.is_set() and self._thread.is_alive()
+
+    def _claim_job(self):
+        # stop() linearizes with claiming. A claim already in progress is drained,
+        # never abandoned in the committed running state during graceful shutdown.
+        with self._claim_lock:
+            if self._stopping.is_set():
+                return None
+            job = self.db.claim_job('vwp_server', self.owner)
+            self._started.set()
+            return job
+
+    def _run(self):
+        try:
+            while not self._stopping.is_set():
+                consumed = consume_once(self.db, self.settings, self.owner, claim_job=self._claim_job)
+                if not consumed:
+                    self._stopping.wait(self.settings.worker_poll_seconds)
+        except BaseException as exc:
+            self._failed.set()
+            LOG.error('Processing stopped: %s', type(exc).__name__)
+        finally:
+            self._started.set()
+
+    def start(self):
+        self._thread.start()
+        self._started.wait()
+        if not self.ready:
+            raise RuntimeError('VWP processing could not start')
+
+    def stop(self):
+        self._stopping.set()
+        # Synchronize with a claim already underway before joining its processing.
+        with self._claim_lock:
+            pass
+        if self._thread.ident is not None:
+            self._thread.join()

@@ -34,7 +34,7 @@
 - `DesignAtlas`: 새 루트, coder 사용자, loopback 8000, persistent. 원래 `SanityIntegrated`는 종료했다.
 - 기존 Vite 개발 프로세스는 같은 `/absproxy/5173/` base로 새 루트에서 `DesignAtlasDevServer`로 복원했다. 사용자 접속은 위 code-server 8080 → proxy 8000 주소를 안내한다.
 - `.venv-integrated`는 새 경로에서 다시 만들고 root requirements를 설치했다. 기존 사용자 `.venv`의 불완전한 링크는 덮어쓰지 않았다.
-- 재부팅 자동 시작은 등록하지 않았다. VWP 업로드·수치/AI worker·OA 메일은 별도 프로세스이며 현재 상시 실행하지 않는다. 역할별 실행은 [수치 엔진 README](area_power/README.md)와 [배포 안내](DEPLOYMENT.md)를 따른다.
+- 재부팅 자동 시작은 등록하지 않았다. Area Power VWP는 업로드·수치·AI를 단일 서버 프로세스로 처리하며 OA 메일만 별도 프로세스다. 현재 상시 실행하지 않는다. 역할별 실행은 [수치 엔진 README](area_power/README.md)와 [배포 안내](DEPLOYMENT.md)를 따른다.
 - 사용자 DB **`iat_dashboard_local`, `sanity_dashboard_local`은 보존 대상**이다. 검증 DB로 오인해 삭제하지 않는다. 실제 로컬 PostgreSQL 18.6에서 사용하며 앱 계정은 USAGE/DML만 가진다.
 - 저장소 디렉터리를 이동하고 Git의 연결 worktree 8개를 native `git worktree repair`로 복구했다. 각 worktree의 경로·브랜치·내용은 이동하지 않았고 커밋/리셋하지 않았다. 옛 canonical 디렉터리의 runtime alias는 없다.
 
