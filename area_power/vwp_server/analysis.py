@@ -187,9 +187,9 @@ def resolve_groups(current, baseline, cm, bm, mapping: dict | None, mapping_reas
             g = Group([path], [path])
         else:
             reason = mapping_reason or ('baseline_missing' if baseline is None else 'mapping_unresolved')
-            # A renamed root is an unresolved correspondence, never two declarations of addition/deletion.
-            bp = [baseline.root_path] if baseline and path == current.root_path and baseline.root_path not in consumed_b else []
-            g = Group(bp, [path], reason)
+            # Missing correspondence is not an implicit pairing of design roots.
+            # Keep each side's observed value, without inventing a counterpart.
+            g = Group([], [path], reason)
         groups.append(g)
         consumed_c.add(path)
         consumed_b.update(g.baseline_paths)
@@ -376,6 +376,8 @@ def evaluate_metric(metric, group, current, baseline, cm, bm, cu, bu, policy, pa
         state, reason = 'unavailable', reason or ('zero_or_missing_denominator' if metric.endswith('_pct') else 'metric_or_path_missing')
     if metric in DISTRIBUTIONS and c is None:
         state, reason = 'unavailable', reason or 'zero_or_missing_denominator'
+    if state == 'unavailable':
+        delta = relative = pp = None
     evidence = {'mapping_ids': group.mapping_ids, 'declared_kind': group.declared_kind, 'threshold_exceeded': [], 'operating_limit_exceeded': [], 'expected_range_exceeded': [], 'policy_unconfigured': not bool(policy.metrics or policy.operating_limits)}
     evidence['hierarchy_separator'] = cm.hierarchy_separator
     threshold = policy.metrics.get(metric)

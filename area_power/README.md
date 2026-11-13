@@ -1,6 +1,6 @@
-# Design Atlas · 구성·면적·전력 분석
+# Design Atlas · 프로젝트 비교
 
-Design Atlas의 수치 분석 엔진이다. 로그 분류·PASS/FAIL과 hierarchy 수치 비교는 분리하되 제품·홈·공통 프로젝트/블록/버전·인증·탐색은 하나다. 공식 shadcnstudio 컴포넌트와 공통 파란색 light/dark 테마를 사용한다.
+프로젝트 A가 지정한 기준 프로젝트 B와 Block·hierarchy instance별 Area/Power를 비교하는 수치 엔진이다. 주 화면은 **프로젝트 비교** 하나이며 업로드 이력과 경로 대응도 같은 화면에서 다룬다. 로그 분류·PASS/FAIL과 수치 엔진은 분리하되 공통 프로젝트/블록/버전·인증·탐색은 하나다.
 
 ## 코드와 데이터 경계
 
@@ -46,8 +46,8 @@ npm --prefix oa/dashboard run build
 | 실행 위치 | 주요 설정 |
 | --- | --- |
 | OA 호스트 | 기존 `SANITY_AUTH_MODE`/SSO 설정, `AREA_POWER_ENABLED=true`, `AREA_POWER_DB_DSN`, `AREA_POWER_DB_SCHEMA` |
-| 사용자 PC | `AREA_POWER_SERVER_URL`, `AREA_POWER_UPLOAD_TOKEN`, `AREA_POWER_ACTOR` — DB·AI 계정 불필요 |
-| 중앙 VWP 업로드 | `AREA_POWER_DB_DSN`, `AREA_POWER_DB_SCHEMA`, `AREA_POWER_UPLOAD_TOKEN`, 입력 한도 |
+| 사용자 PC | `AREA_POWER_SERVER_URL` 또는 `--url` — DB·AI 계정과 업로드 인증/사용자 식별 설정 불필요 |
+| 중앙 VWP 업로드 | `AREA_POWER_DB_DSN`, `AREA_POWER_DB_SCHEMA`, 입력 한도 — 업로드/상태 조회의 추가 인증 없음 |
 | 중앙 VWP 분석 worker | 같은 Area DB와 `AREA_POWER_AI_*`, poll 설정 |
 | OA 메일 worker | 같은 Area DB, `AREA_POWER_MAIL_RECIPIENTS`, 명시적으로 주입한 사내 `MailSender` 어댑터 |
 
@@ -69,7 +69,7 @@ npm --prefix oa/dashboard run build
 .venv-integrated/bin/python -m oa.mail_app
 ```
 
-업로드 경로는 `/api/area-power/uploads`, 상태는 `/api/area-power/uploads/{id}`다. VWP 업로드 API의 token·감사용 actor와 OA 사용자의 검증된 신원은 별개다. Worker의 `--once`는 한 건 처리에 사용할 수 있으며 최종 성공은 DB job·ai_run·coverage로 판단한다.
+중앙 VWP의 업로드 경로는 `/api/area-power/uploads`, 상태는 `/api/area-power/uploads/{id}`다. 두 경로에는 추가 인증을 두지 않고 사내 도달성을 신뢰한다. `uploaded_by`와 업로드가 만든 snapshot 작성자는 기술적 수신 서비스 `vwp_server`로 기록하며 인증된 사용자를 뜻하지 않는다. 요청의 임의 신원 헤더는 신뢰하지 않는다. **OA 호스트의 로그인·SSO·프로젝트 권한과 조회/다운로드/비교 API 보호는 그대로다.** Worker의 `--once`는 한 건 처리용이며 완료는 실제 DB 상태로 판단한다.
 
 ## CSV 업로드
 
@@ -97,7 +97,7 @@ python -m area_power.vwp --config /approved/pc/upload.json
 }
 ```
 
-필수 키는 `csv`, `metadata` 경로, 선택 키는 `report_export`의 **완전한 실제 argv 문자열 배열**뿐이다. 알 수 없는 키·빈 경로·잘못된 argv는 실행 전에 거부한다. 모든 상대 입력 경로와 exporter의 작업 디렉터리는 **설정 파일 디렉터리** 기준이다. 상대 실행 파일은 `./...`로 명시하고, argv의 상대 경로도 그 디렉터리에서 실행된다. Exporter 없는 설정은 기존 CSV/gzip을 그대로 전송한다. `--config`는 위치 인자 CSV·`--metadata`·`--report-export`와 함께 쓸 수 없으며 URL/token/actor/timeout 옵션과 기존 환경변수는 그대로 사용할 수 있다. 기존 명시적 CLI 모드의 경로·exporter cwd는 호출 디렉터리 기준을 유지한다.
+필수 키는 `csv`, `metadata` 경로, 선택 키는 `report_export`의 **완전한 실제 argv 문자열 배열**뿐이다. 알 수 없는 키·빈 경로·잘못된 argv는 실행 전에 거부한다. 모든 상대 입력 경로와 exporter의 작업 디렉터리는 **설정 파일 디렉터리** 기준이다. 상대 실행 파일은 `./...`로 명시하고, argv의 상대 경로도 그 디렉터리에서 실행된다. Exporter 없는 설정은 기존 CSV/gzip을 그대로 전송한다. `--config`는 위치 인자 CSV·`--metadata`·`--report-export`와 함께 쓸 수 없으며 `--url`·`AREA_POWER_SERVER_URL`과 `--timeout`을 사용할 수 있다. 기존 명시적 CLI 모드의 경로·exporter cwd는 호출 디렉터리 기준을 유지한다.
 
 metadata에는 준비된 실제 Area `project_id`, `version_id`, `block_id` UUID와 `execution_name`, `design_stage`, `hierarchy_separator`가 필요하다. 승인된 공통 범위를 준비한 뒤 실제 dashboard에서 내보낸 JSON을 사용한다. 데모 UUID·이름으로 ID 추정·별도 최상위 NET_VER/REVISION/layout/ECO/corner 필드를 만들지 않는다. CSV는 81컬럼·필수 power 20필드·한 파일 한 corner다.
 
@@ -111,13 +111,32 @@ metadata에는 준비된 실제 Area `project_id`, `version_id`, `block_id` UUID
 
 ### 사내 AI가 마무리할 범위
 
-공통 전송은 기존 CLI와 실제 업로드 API가 담당한다. 사내 AI의 Area 작업은 **비공개 데이터/설정 준비**다: PC별 경로·실제 metadata 실행 문맥, 필요한 경우 라이선스가 있는 `report_export`의 확인된 전체 argv(또는 승인된 기존 회사 wrapper), 승인된 endpoint·token 주입을 준비한다. SDK/인자·라이선스·실제 보고서는 여기서 확인하지 못했으며 구현 완료로 표시하지 않는다. 이 안내가 회사 AI에 공통 CLI/API/DB/SSO나 새 회사 코드의 수정 권한을 추가하지 않는다.
+공통 전송은 기존 CLI와 실제 업로드 API가 담당한다. 사내 AI의 Area 작업은 **비공개 데이터/설정 준비**다: PC별 경로·실제 metadata 실행 문맥, 필요한 경우 라이선스가 있는 `report_export`의 확인된 전체 argv(또는 승인된 기존 회사 wrapper), 사내에서 도달 가능한 endpoint를 준비한다. 업로드용 인증 SDK·토큰·수동 사용자명은 추가하지 않는다. SDK/인자·라이선스·실제 보고서는 여기서 확인하지 못했으며 구현 완료로 표시하지 않는다. 이 안내가 회사 AI에 공통 CLI/API/DB/SSO나 새 회사 코드의 수정 권한을 추가하지 않는다.
 
-현재 로컬 서버 `127.0.0.1:8010`은 다른 PC의 endpoint가 아니다. 회사 운영 담당자가 승인된 TLS/reverse proxy·방화벽·접근 경로를 제공해야 한다. 기존 서버를 외부 bind하거나 TLS·인증을 해제하지 않는다. PC에는 DB/AI 계정을 주지 않는다. 업로드 인증은 공유 Bearer token + 감사용 actor이며 사용자별 SSO 인증이 아니다. 자격증명은 설정 JSON이나 저장소에 넣지 말고 승인된 실행 환경에서 주입한다.
+현재 로컬 서버 `127.0.0.1:8010`은 다른 PC의 endpoint가 아니다. 회사 운영 담당자가 실제 사내 도달 경로를 제공해야 하며 기존 서비스의 bind·네트워크·TLS 설정을 이 코드 변경으로 자동 수정하지 않는다. PC에는 DB/AI 계정을 주지 않는다. 2026-11-13 사용자 결정으로 업로드의 추가 인증·수동 actor를 제거했다. 기존 launcher의 `--token`, `--actor`, `AREA_POWER_UPLOAD_TOKEN`, `AREA_POWER_ACTOR`를 제거한다. 인증된 업로드 사용자 추적은 제공하지 않으며 대신 기술적 수신 서비스 출처만 남긴다.
 
 각 POST는 새 upload 행이다. gzip append·기존 행 overwrite·자동 선택·중복 제거·자동 재시도는 없다. 네트워크 오류로 결과를 못 받았어도 서버에는 commit됐을 수 있으므로 무작정 재전송하지 말고 운영 담당자와 접수 여부를 확인한다.
 
 ## 조회·비교·판정
+
+- 프로젝트는 한 번 선택하고 그 프로젝트에 저장한 기준을 사용한다. A→B는 단방향이며 B의 기준이나 다른 프로젝트의 선택을 바꾸지 않는다. 한 프로젝트에 기준은 하나이고 자기 자신은 기준으로 지정할 수 없다.
+- 기준은 기존 project 레코드의 `payload.baseline_project_id`에 저장한다. 새 테이블·DDL·migration은 없다. 프로젝트만 준비해도 설정할 수 있으며 CSV·블록·버전 준비를 선행 조건으로 요구하지 않는다.
+- 양쪽 Block·NET_VER·REVISION·corner와 정확한 upload 실행을 명시적으로 선택한다. Corner 하나가 CSV 한 파일이다. 이름·최신 시각·동일 경로로 기준 실행이나 프로젝트 간 대응을 자동 선택하지 않는다.
+- 서로 다른 Block·경로는 같은 화면의 명시적 대응으로 연결한다. 매핑 없는 행은 한쪽의 관측값만 보여 주며 상대 값·Δ·%는 unavailable이다. 부모 수치와 자식을 다시 합산하지 않는다.
+- AI·작업·알림·target·변경 설명의 내부 엔진은 보존하지만 독립 주 탐색이나 비교의 선행 입력이 아니다.
+
+### 프로젝트 기준 API
+
+| 요청 | 계약 |
+| --- | --- |
+| `GET /api/area-power/projects/{Area UUID}/baseline` | `{project_id,row_version,baseline_project_id,baseline_project,status}`. status는 `unset`, `available`, `unavailable` |
+| `POST` 같은 경로 | `{baseline_project_id: UUID 또는 null, expected_row_version: 양의 정수}`. null은 해제, stale은 `409 CONFLICT`, 자기 지정은 `422 INVALID_BASELINE` |
+| `POST /api/area-power/comparisons` | 기존 명시적 upload·mapping 계약. `comparison_kind=previous_project`의 새 요청은 저장된 기준을 검사하며 다른 프로젝트를 임의로 넘길 수 없음 |
+| `GET /api/area-power/uploads/{id}/hierarchy` | 검증된 정확한 upload의 `{upload_id,snapshot_id,hierarchy_separator,items:[{path,parent_path,depth,area,power_mw}]}`. 경로 선택·트리용이며 새 저장 구조 없음 |
+
+기준 선택에는 현재 프로젝트 수정 권한과 대상 조회 권한이 필요하다. 기준 권한이 회수되어도 현재 프로젝트와 기준 해제/교체는 사용할 수 있다. 응답의 기준 ID·이름은 null, 상태는 unavailable이며 기존 비교·원본·결과는 실제 양쪽 권한을 계속 요구한다. 프로젝트의 기준을 연쇄 탐색하거나 순환 관계를 해석하지 않는다. 공통 `/api/atlas/area-scope`는 `{project_id: native ID}`만으로 정확한 Area mirror를 준비하며 별도 project를 만들거나 native ID를 UUID로 재해석하지 않는다.
+
+새 교차 프로젝트 매핑도 저장된 기준을 검사한다. 비교는 선택한 upload·snapshot·mapping revision과 당시 기준의 프로젝트 ID/row_version을 고정한다. 기준이나 매핑의 후속 변경은 완료 결과를 재해석/수정하지 않는다. 기존 이전 버전·AI 분석 계약은 내부 소비자를 위해 유지한다.
 
 - [81컬럼 통합 CSV](../docs/area_power/csv_structure), 한 파일 한 corner, 필수 20개 power 필드를 사용한다. Power 없는 cell usage 단독 업로드는 제외한다.
 - 수정본·재실행·추가 corner는 각각 새 upload 행이다. 기존 gzip에 append하거나 과거 원본을 덮어쓰지 않는다. Snapshot 재사용은 명시적으로 선택하고 전체 구조·산출 조건을 검증한다.

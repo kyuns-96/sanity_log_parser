@@ -28,6 +28,7 @@ function destination(href: string, demo = false): Destination {
     || !demo && url.searchParams.has('demo')
     || demo && url.searchParams.has('demo') && url.searchParams.get('demo') !== '1') throw new Error('이동할 화면을 확인해 주세요.')
   if (demo) url.searchParams.set('demo', '1')
+  if (page === 'area-power') url.searchParams.delete('view')
   return { page, href: url.pathname + url.search }
 }
 
@@ -125,7 +126,7 @@ export default function DashboardNavigation({ demo = false, demoToolbar, demoAcc
     current.current = next
     setError('')
     setState(previous => ({ route: next, visited: discard ? [next.page] : Array.from(new Set([...previous.visited, next.page])), epoch: previous.epoch + (discard ? 1 : 0), initialWorkspace: initialWorkspace ?? (discard ? undefined : previous.initialWorkspace) }))
-    document.title = `${demo ? '합성 데모 · ' : ''}${next.page === 'home' ? '홈 · 프로젝트' : next.page === 'area-power' ? '구성·전력 분석' : next.page === 'admin' ? '서비스 · 권한 관리' : next.page === 'workbench' ? '로그 워크스페이스' : next.page === 'welcome' ? '내 계정 · 권한' : '수신 로그 대장'} | Design Atlas`
+    document.title = `${demo ? '합성 데모 · ' : ''}${next.page === 'home' ? '홈 · 프로젝트' : next.page === 'area-power' ? '프로젝트 비교' : next.page === 'admin' ? '서비스 · 권한 관리' : next.page === 'workbench' ? '로그 워크스페이스' : next.page === 'welcome' ? '내 계정 · 권한' : '수신 로그 대장'} | Design Atlas`
   }, [auth.request, auth.config, demo])
   const navigate = useCallback<DashboardNavigate>((href, sourceUser, reset) => change(href, sourceUser, 'push', reset), [change])
   const replaceRoute = useCallback((href: string) => {
@@ -139,6 +140,10 @@ export default function DashboardNavigation({ demo = false, demoToolbar, demoAcc
   }, [demo])
 
   useEffect(() => {
+    if (new URL(location.href).searchParams.get('page') === 'area-power') {
+      const canonical = destination(location.href, demo)
+      history.replaceState(null, '', canonical.href)
+    }
     const restoration = history.scrollRestoration
     history.scrollRestoration = 'manual'
     const pop = () => { void change(location.href, undefined, 'pop').catch(error => {

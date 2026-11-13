@@ -57,9 +57,13 @@ const magnitude = (a: Fraction) => fraction(abs(a.n), a.d)
 // half-up at 30 fractional places; exact numerator/denominator remain in evidence.
 function display(value: Fraction | null): string | null {
   if (value === null) return null
-  const scale = 10n ** 30n
+  let denominator = value.d, twos = 0, fives = 0
+  while (denominator % 2n === 0n) { denominator /= 2n; twos++ }
+  while (denominator % 5n === 0n) { denominator /= 5n; fives++ }
+  const places = denominator === 1n ? Math.max(twos, fives) : 30
+  const scale = 10n ** BigInt(places)
   const scaled = (abs(value.n) * scale * 2n + value.d) / (2n * value.d)
-  const digits = (scaled % scale).toString().padStart(30, '0').replace(/0+$/, '')
+  const digits = (scaled % scale).toString().padStart(places, '0').replace(/0+$/, '')
   return `${value.n < 0n && scaled ? '-' : ''}${scaled / scale}${digits ? `.${digits}` : ''}`
 }
 const exactEvidence = (value: Fraction | null) => value && ({ numerator: String(value.n), denominator: String(value.d) })
@@ -148,12 +152,27 @@ async function original(upload: DemoUpload): Promise<Blob> {
   }
   return value
 }
+function publicProject(row: TrackingRecord, visible: Set<string>): TrackingRecord {
+  const target = text(row.payload.baseline_project_id)
+  const status = !target ? 'unset' : visible.has(target) && records.get(target)?.record_type === 'project' ? 'available' : 'unavailable'
+  return { ...row, payload: { ...row.payload, baseline_project_id: status === 'available' ? target : null }, baseline_status: status }
+}
+function designatedBaseline(projectId: string, visible: Set<string>, selected?: string) {
+  const project = scopedRecord(projectId, 'project', visible)
+  const target = text(project.payload.baseline_project_id)
+  if (!target) fail('BASELINE_NOT_CONFIGURED · 현재 프로젝트의 기준을 먼저 저장하세요.')
+  scopedRecord(target, 'project', visible)
+  if (target === projectId || selected && selected !== target) fail('INVALID_BASELINE · 저장된 프로젝트 기준과 선택한 실행이 다릅니다.')
+  return { project_id: projectId, baseline_project_id: target, row_version: project.row_version }
+}
 function readable(row: TrackingRecord, visible: Set<string>): boolean {
   if (!visible.has(text(row.project_id))) return false
   if (row.record_type === 'mapping' && !visible.has(text(row.payload.baseline_project_id))) return false
   if (row.record_type === 'comparison') {
     const baselineId = text(object(row.payload.request).baseline_upload_id)
     if (baselineId && !visible.has(uploads.get(baselineId)?.project_id || '')) return false
+    const designation = object(object(row.payload.frozen).baseline_designation)
+    if (designation.baseline_project_id && !visible.has(text(designation.baseline_project_id))) return false
   }
   const parent = row.parent_id ? records.get(row.parent_id) : undefined
   return !parent || readable(parent, visible)
@@ -226,7 +245,7 @@ function metricValue(upload: DemoUpload | null, paths: string[], metric: string)
   }
   return { value: total(metric), numerator: null, denominator: null }
 }
-type Group = { current: string[]; baseline: string[]; metrics: string[]; target_id?: string; reason?: string }
+type Group = { current: string[]; baseline: string[]; metrics: string[]; target_id?: string; reason?: string; declared_kind?: string }
 function comparisonGroups(input: Payload, current: DemoUpload, baseline: DemoUpload | null, visible: Set<string>): Group[] {
   const scope = object(input.scope)
   const mapping = input.mapping_id ? scopedRecord(text(input.mapping_id), 'mapping', visible) : null
@@ -234,40 +253,68 @@ function comparisonGroups(input: Payload, current: DemoUpload, baseline: DemoUpl
     const p = mapping.payload
     if (p.current_project_id !== current.project_id || p.current_version_id !== current.version_id || p.current_block_id !== current.block_id || !baseline || p.baseline_project_id !== baseline.project_id || p.baseline_version_id !== baseline.version_id || p.baseline_block_id !== baseline.block_id) fail('매핑 revision의 명시적 양쪽 UUID가 비교 입력과 다릅니다.')
   }
-  const mapPaths = (paths: string[]): string[] => {
-    if (!mapping) return baseline ? paths : []
-    return [...new Set(paths.flatMap(path => {
-      const rule = list(mapping.payload.rules).map(object).find(row => strings(row.current_paths).includes(path) || row.scope === 'subtree' && strings(row.current_paths).some(parent => descends(path, parent)))
-      if (!rule) return baseline?.rows[path] ? [path] : []
-      const before = strings(rule.baseline_paths), after = strings(rule.current_paths)
-      if (rule.scope === 'subtree' && before.length === 1 && after.length === 1) return [before[0] + path.slice(after[0].length)]
-      return before
-    }))]
+  const rules = list(mapping?.payload.rules).map(object)
+  const exactCurrent = new Map<string, Group[]>(), exactBaseline = new Map<string, Group[]>()
+  const subtreeCurrent = new Map<string, Payload[]>(), subtreeBaseline = new Map<string, Payload[]>()
+  const groups: Group[] = [], consumedCurrent = new Set<string>(), consumedBaseline = new Set<string>()
+  for (const rule of rules) {
+    const before = strings(rule.baseline_paths), after = strings(rule.current_paths)
+    const group: Group = { baseline: before, current: after, metrics: metricKeys, declared_kind: text(rule.kind) }
+    if (before.some(path => !baseline?.rows[path]) || after.some(path => !current.rows[path])) group.reason = 'mapping_path_missing'
+    if (rule.scope === 'subtree' && before.length === 1 && after.length === 1 && !group.reason) {
+      subtreeCurrent.set(after[0], [...(subtreeCurrent.get(after[0]) || []), rule])
+      subtreeBaseline.set(before[0], [...(subtreeBaseline.get(before[0]) || []), rule])
+    } else {
+      groups.push(group)
+      for (const path of after) exactCurrent.set(path, [...(exactCurrent.get(path) || []), group])
+      for (const path of before) exactBaseline.set(path, [...(exactBaseline.get(path) || []), group])
+    }
+  }
+  for (const group of groups) {
+    if (group.current.some(path => (exactCurrent.get(path)?.length || 0) > 1) || group.baseline.some(path => (exactBaseline.get(path)?.length || 0) > 1)) group.reason = 'mapping_equal_precedence_conflict'
+    group.current.forEach(path => consumedCurrent.add(path)); group.baseline.forEach(path => consumedBaseline.add(path))
+  }
+  const nearest = (index: Map<string, Payload[]>, path: string) => {
+    let candidate = path
+    while (candidate) { const found = index.get(candidate); if (found) return found; const offset = candidate.lastIndexOf('/'); candidate = offset < 0 ? '' : candidate.slice(0, offset) }
+    return []
+  }
+  for (const path of Object.keys(current.rows)) {
+    if (consumedCurrent.has(path)) continue
+    const matches = nearest(subtreeCurrent, path)
+    let group: Group
+    if (matches.length) {
+      const rule = matches[0], source = strings(rule.current_paths)[0], before = strings(rule.baseline_paths)[0] + path.slice(source.length)
+      const inverse = nearest(subtreeBaseline, before)
+      const inverseRule = inverse[0]
+      const destination = inverseRule ? strings(inverseRule.current_paths)[0] + before.slice(strings(inverseRule.baseline_paths)[0].length) : ''
+      const conflict = matches.length !== 1 || inverse.length !== 1 || destination !== path || exactBaseline.has(before) || consumedBaseline.has(before)
+      group = { current: [path], baseline: [before], metrics: metricKeys, reason: conflict ? 'mapping_equal_precedence_conflict' : !baseline?.rows[before] ? 'mapping_path_missing' : undefined }
+    } else if (baseline?.project_id === current.project_id && baseline.rows[path] && !exactBaseline.has(path) && !consumedBaseline.has(path) && !nearest(subtreeBaseline, path).length) {
+      group = { current: [path], baseline: [path], metrics: metricKeys }
+    } else group = { current: [path], baseline: [], metrics: metricKeys, reason: baseline ? 'mapping_unresolved' : 'baseline_missing' }
+    groups.push(group); consumedCurrent.add(path); group.baseline.forEach(value => consumedBaseline.add(value))
+  }
+  for (const path of Object.keys(baseline?.rows || {})) if (!consumedBaseline.has(path)) groups.push({ current: [], baseline: [path], metrics: metricKeys, reason: 'mapping_unresolved' })
+  for (const group of [...groups]) {
+    if (group.current.length > 1) for (const path of group.current) groups.push({ current: [path], baseline: [], metrics: metricKeys, reason: 'individual_group_baseline_unavailable' })
+    if (group.baseline.length > 1) for (const path of group.baseline) groups.push({ current: [], baseline: [path], metrics: metricKeys, reason: 'individual_group_current_unavailable' })
   }
   if (scope.kind === 'targets') {
-    const targets = strings(scope.target_ids)
-    if (!targets.length) fail('Target 범위는 하나 이상의 정확한 revision이 필요합니다.')
-    return targets.flatMap(id => {
+    const ids = strings(scope.target_ids)
+    if (!ids.length) fail('Target 범위는 하나 이상의 정확한 revision이 필요합니다.')
+    const byCurrentPath = new Map(groups.filter(group => group.current.length === 1).map(group => [group.current[0], group]))
+    return ids.flatMap(id => {
       const target = scopedRecord(id, 'target', visible)
-      if (target.project_id !== current.project_id || target.block_id && target.block_id !== current.block_id || target.version_id && target.version_id !== current.version_id) fail('Target revision이 현재 범위에 속하지 않습니다.')
+      if (target.project_id !== current.project_id || target.block_id && target.block_id !== current.block_id) fail('Target revision이 현재 범위에 속하지 않습니다.')
       const binding = list(target.payload.bindings).map(object).find(value => value.snapshot_id === current.snapshot_id)
-      const paths = strings(binding?.paths || target.payload.paths)
-      checkedPaths(paths)
-      const resolved = scope.include_descendants ? [...new Set(paths.flatMap(path => [path, ...Object.keys(current.rows).filter(value => descends(value, path))]))].map(path => [path]) : [paths]
-      return resolved.map(currentPaths => ({ current: currentPaths, baseline: mapPaths(currentPaths), target_id: id, metrics: requestedMetrics(target.payload.metrics) }))
+      const paths = checkedPaths(binding?.paths || target.payload.paths)
+      const selected = scope.include_descendants ? groups.filter(group => group.current.some(path => paths.some(parent => path === parent || descends(path, parent)))) : [{ current: paths, baseline: paths.flatMap(path => byCurrentPath.get(path)?.baseline || []), metrics: metricKeys, reason: paths.some(path => byCurrentPath.get(path)?.reason || !byCurrentPath.has(path)) ? 'mapping_unresolved' : undefined }]
+      return selected.map(group => ({ ...group, target_id: id, metrics: requestedMetrics(target.payload.metrics) }))
     })
   }
   if (scope.kind && scope.kind !== 'all') fail('지원하지 않는 비교 범위입니다.')
-  if (mapping) {
-    const mapped = list(mapping.payload.rules).map(object).flatMap(rule => {
-      const paths = strings(rule.current_paths)
-      if (rule.scope === 'subtree' && paths.length === 1) return Object.keys(current.rows).filter(path => path === paths[0] || descends(path, paths[0])).map(path => ({ current: [path], baseline: mapPaths([path]), metrics: metricKeys }))
-      return [{ current: paths, baseline: strings(rule.baseline_paths), metrics: metricKeys, reason: rule.kind === 'added' || rule.kind === 'removed' ? `declared_${text(rule.kind)}` : undefined }]
-    })
-    const accounted = new Set(mapped.flatMap(group => group.current))
-    return [...mapped, ...Object.keys(current.rows).filter(path => !accounted.has(path)).map(path => ({ current: [path], baseline: mapPaths([path]), metrics: metricKeys }))]
-  }
-  return [...new Set([...Object.keys(current.rows), ...Object.keys(baseline?.rows || {})])].map(path => ({ current: current.rows[path] ? [path] : [], baseline: baseline?.rows[path] ? [path] : [], metrics: metricKeys }))
+  return groups
 }
 function resultPayload(metric: string, group: Group, current: DemoUpload, baseline: DemoUpload | null, policy: Payload, pair: Payload | null): Payload {
   const invalidOverlap = nonoverlap(group.current).length !== group.current.length || nonoverlap(group.baseline).length !== group.baseline.length
@@ -275,11 +322,14 @@ function resultPayload(metric: string, group: Group, current: DemoUpload, baseli
   let comparability = 'comparable', reason = ''
   if (!baseline || !b.value || !c.value || group.reason || invalidOverlap) { comparability = 'unavailable'; reason = invalidOverlap ? 'overlapping_cumulative_paths' : group.reason || (!baseline ? 'baseline_missing' : 'metric_or_path_missing') }
   else {
-    const checks = ['design_stage', 'constraint_context', 'library', 'classification', ...(metric.endsWith('_area') ? ['area_unit', 'area_basis'] : [])]
-    if (checks.some(key => JSON.stringify(current.metadata[key]) !== JSON.stringify(baseline.metadata[key]))) { comparability = 'contextual'; reason = 'structural_metadata_different' }
-    if (current.condition_key !== baseline.condition_key) { comparability = 'contextual'; reason = powerKeys.includes(metric) ? 'power_conditions_different' : 'corner_different_context_only' }
+    if (powerKeys.includes(metric)) {
+      if (current.condition_key !== baseline.condition_key) { comparability = 'contextual'; reason = 'power_conditions_different' }
+    } else {
+      const checks = ['design_stage', 'constraint_context', 'library', 'classification', ...(metric.endsWith('_area') ? ['area_unit', 'area_basis'] : [])]
+      if (checks.some(key => JSON.stringify(current.metadata[key]) !== JSON.stringify(baseline.metadata[key]))) { comparability = 'contextual'; reason = 'structural_metadata_different' }
+    }
   }
-  const delta = c.value && b.value ? subtract(c.value, b.value) : null
+  const delta = comparability !== 'unavailable' && c.value && b.value ? subtract(c.value, b.value) : null
   const relative = delta && b.value?.n ? multiply(divide(delta, b.value), fraction(100n)) : null
   const pp = metric.endsWith('_pct') ? delta : null
   const threshold = object(object(policy.metrics)[metric]), limits = object(object(policy.operating_limits)[metric])
@@ -310,7 +360,7 @@ function rejudge(comparison: TrackingRecord, changeIds: string[], recipients: st
   return run
 }
 function scopeFromRecord(row: TrackingRecord): Payload { return { project_id: row.project_id, block_id: row.block_id, version_id: row.version_id, snapshot_id: row.snapshot_id } }
-function calculate(comparison: TrackingRecord, visible: Set<string>) {
+function calculate(comparison: TrackingRecord, visible: Set<string>, job?: TrackingRecord) {
   const input = object(comparison.payload.request)
   const current = scopedUpload(text(input.current_upload_id), visible)
   const baseline = input.baseline_upload_id ? scopedUpload(text(input.baseline_upload_id), visible) : null
@@ -319,7 +369,7 @@ function calculate(comparison: TrackingRecord, visible: Set<string>) {
   let count = 0
   const write = (group: Group, metric: string, cu: DemoUpload, bu: DemoUpload | null, pair: Payload | null) => {
     const payload = resultPayload(metric, group, cu, bu, policy, pair)
-    record('metric_result', { ...scoped(current), parent_id: comparison.id }, payload, text(payload.comparability)); count++
+    record('metric_result', { ...scoped(cu), upload_id: cu.id, baseline_upload_id: bu?.id || null, parent_id: comparison.id }, { ...payload, group_id: JSON.stringify([group.baseline, group.current, group.target_id || null]), power_pair: powerKeys.includes(metric) ? { current_upload_id: cu.id, baseline_upload_id: bu?.id || null } : null }, text(payload.comparability)); count++
   }
   for (const group of selectedGroups) for (const metric of group.metrics) write(group, metric, current, baseline, null)
   for (const pairValue of list(input.power_pairs)) {
@@ -329,13 +379,15 @@ function calculate(comparison: TrackingRecord, visible: Set<string>) {
   comparison.payload.coverage = { expected_scopes: String(selectedGroups.length), processed_scopes: String(selectedGroups.length), expected_metrics: String(count), processed_metrics: String(count), missing: [], aggregate_hierarchy_total: 'not_computed; cumulative rows remain independent' }
   comparison.payload.policy_unconfigured = !Object.keys(object(policy.metrics)).length && !Object.keys(object(policy.operating_limits)).length
   comparison.state = 'completed'; comparison.payload.numeric_state = 'completed'; touch(comparison)
-  return record('job', { ...scoped(current), parent_id: comparison.id, job_kind: 'numeric', consumer_server: 'browser_memory', claim_owner: 'synthetic_inline_worker' }, { source: 'synthetic_memory_demo', notice, input: structuredClone(input), calculation: 'exact rational BigInt', result_count: String(count), real_queue: false }, 'completed')
+  if (job) { job.state = 'completed'; job.payload.result_count = String(count); touch(job); return job }
+  return record('job', { ...scoped(current), parent_id: comparison.id, job_kind: 'compare', consumer_server: 'browser_memory', claim_owner: 'synthetic_memory_worker' }, { source: 'synthetic_memory_demo', notice, input: structuredClone(input), calculation: 'exact rational BigInt', result_count: String(count), real_queue: false }, 'completed')
 }
 function createComparison(input: Payload, visible: Set<string>) {
   const current = scopedUpload(text(input.current_upload_id), visible)
   const baseline = input.baseline_upload_id ? scopedUpload(text(input.baseline_upload_id), visible) : null
   if (baseline) ancestry(current, baseline, text(input.comparison_kind))
   else if (!['previous_version', 'previous_project'].includes(text(input.comparison_kind))) fail('지원하지 않는 비교 종류입니다.')
+  const designation = input.comparison_kind === 'previous_project' ? designatedBaseline(current.project_id, visible, baseline?.project_id) : null
   policyChecked(input.policy)
   comparisonGroups(input, current, baseline, visible)
   for (const id of strings(input.change_ids)) scopedRecord(id, 'change', visible)
@@ -344,15 +396,26 @@ function createComparison(input: Payload, visible: Set<string>) {
     if (cu.snapshot_id !== current.snapshot_id || bu && (!baseline || bu.snapshot_id !== baseline.snapshot_id)) fail('Power pair의 실행은 비교 양쪽의 명시적 snapshot에 속해야 합니다.')
   }
   const frozen = structuredClone(input)
-  const comparison = record('comparison', { ...scoped(current), upload_id: current.id, baseline_upload_id: baseline?.id || null }, { request: frozen, source: 'synthetic_memory_demo', notice, input_revisions: { current_upload_id: current.id, baseline_upload_id: baseline?.id || null, mapping_id: input.mapping_id || null, target_ids: strings(object(input.scope).target_ids), change_ids: strings(input.change_ids) }, model_called: false, mail_called: false }, 'pending')
-  const job = calculate(comparison, visible)
-  rejudge(comparison, strings(input.change_ids), strings(input.recipients), visible)
+  const comparison = record('comparison', { ...scoped(current), upload_id: current.id, baseline_upload_id: baseline?.id || null }, { request: frozen, frozen: { current_upload: publicUpload(current), baseline_upload: baseline ? publicUpload(baseline) : null, mapping: input.mapping_id ? structuredClone(scopedRecord(text(input.mapping_id), 'mapping', visible)) : null, baseline_designation: designation }, source: 'synthetic_memory_demo', notice, input_revisions: { current_upload_id: current.id, baseline_upload_id: baseline?.id || null, mapping_id: input.mapping_id || null, target_ids: strings(object(input.scope).target_ids), change_ids: strings(input.change_ids) }, model_called: false, mail_called: false }, 'pending')
+  comparison.state = 'queued'
+  const job = record('job', { ...scoped(current), parent_id: comparison.id, job_kind: 'compare', consumer_server: 'browser_memory' }, { source: 'synthetic_memory_demo', notice, real_queue: false, model_called: false }, 'pending')
+  window.setTimeout(() => {
+    try {
+      job.state = 'running'; comparison.state = 'running'
+      calculate(comparison, visible, job)
+      rejudge(comparison, strings(input.change_ids), strings(input.recipients), visible)
+    } catch (cause) {
+      job.state = 'failed'; job.payload.error = { code: 'SYNTHETIC_CALCULATION_FAILED', message: cause instanceof Error ? cause.message : '합성 수치 계산에 실패했습니다.' }; touch(job)
+      if (comparison.state !== 'completed') comparison.state = 'failed'
+    }
+  }, 0)
   return { comparison, job, reused: false }
 }
 async function synchronize(): Promise<{ catalog: AtlasCatalog; visible: Set<string>; actor: string }> {
   const [catalog, session] = await Promise.all([workspaceDemoRequest<AtlasCatalog>('/atlas/catalog'), workspaceDemoRequest<{ user: { username: string; id: string } }>('/session')])
   const visible = new Set<string>()
   for (const project of catalog.projects) {
+    if (!project.can_write) continue
     if (!project.area_id) continue
     visible.add(project.area_id)
     if (!records.has(project.area_id)) record('project', { project_id: project.area_id }, { name: project.name, sanity_project_id: project.id, source: 'synthetic_memory_demo' }, 'active', project.area_id)
@@ -405,6 +468,7 @@ function config(body: Payload, visible: Set<string>) {
   if (type === 'mapping') {
     for (const side of ['baseline', 'current']) validateScope({ project_id: payload[`${side}_project_id`], block_id: payload[`${side}_block_id`], version_id: payload[`${side}_version_id`] }, visible)
     if (payload.current_project_id !== body.project_id || body.block_id && payload.current_block_id !== body.block_id || body.version_id && payload.current_version_id !== body.version_id) fail('매핑 current UUID는 등록 범위와 일치해야 합니다.')
+    if (payload.baseline_project_id !== payload.current_project_id) designatedBaseline(text(payload.current_project_id), visible, text(payload.baseline_project_id))
     if (!list(payload.rules).length) fail('하나 이상의 매핑 규칙이 필요합니다.')
     for (const ruleValue of list(payload.rules)) {
       const rule = object(ruleValue), before = checkedPaths(rule.baseline_paths), after = checkedPaths(rule.current_paths)
@@ -438,7 +502,30 @@ async function dispatch(path: string, body: Payload | undefined, plain: boolean 
     const row = records.get(params.get(key)!)
     if (!row || !visible.has(text(row.project_id))) fail('선택 범위가 없거나 현재 계정에서 접근할 수 없습니다.')
   }
-  if (route === '/access' && !body) return { actor, is_admin: false, local_mode: false, source: 'synthetic_memory_demo', notice, projects: catalog.projects.map(project => ({ id: project.id, name: project.name, blocks: project.blocks.map(block => ({ id: block.id, name: block.name })) })) }
+  const baselineRoute = /^\/projects\/([^/]+)\/baseline$/.exec(route)
+  if (baselineRoute) {
+    const project = scopedRecord(decodeURIComponent(baselineRoute[1]), 'project', visible)
+    if (body) {
+      if (Object.keys(body).some(key => !['baseline_project_id', 'expected_row_version'].includes(key)) || !Object.hasOwn(body, 'baseline_project_id')) fail('INVALID_REQUEST · 기준 ID 또는 null과 row_version이 필요합니다.')
+      cas(project, body.expected_row_version)
+      if (body.baseline_project_id !== null) {
+        const target = scopedRecord(text(body.baseline_project_id), 'project', visible)
+        if (target.id === project.id) fail('INVALID_BASELINE · 현재 프로젝트 자체는 기준이 될 수 없습니다.')
+      }
+      project.payload.baseline_project_id = body.baseline_project_id
+      touch(project)
+    }
+    const value = publicProject(project, visible)
+    const target = value.payload.baseline_project_id ? scopedRecord(text(value.payload.baseline_project_id), 'project', visible) : null
+    return { project_id: value.id, row_version: value.row_version, baseline_project_id: target?.id || null, baseline_project: target ? publicProject(target, visible) : null, status: value.baseline_status }
+  }
+  const hierarchy = /^\/uploads\/([^/]+)\/hierarchy$/.exec(route)
+  if (hierarchy && !body) {
+    const upload = scopedUpload(decodeURIComponent(hierarchy[1]), visible)
+    const separator = text(upload.metadata.hierarchy_separator)
+    return { upload_id: upload.id, snapshot_id: upload.snapshot_id, hierarchy_separator: separator, items: Object.entries(upload.rows).map(([path, metrics]) => ({ path, parent_path: path.includes(separator) ? path.slice(0, path.lastIndexOf(separator)) : null, depth: String(path.split(separator).length - 1), area: metrics.total_area ?? null, power_mw: metrics.pwr_all_total_mw ?? null })) }
+  }
+  if (route === '/access' && !body) return { actor, is_admin: false, local_mode: false, source: 'synthetic_memory_demo', notice, projects: catalog.projects.filter(project => visible.has(project.area_id || '')).map(project => ({ id: project.id, name: project.name, blocks: project.blocks.map(block => ({ id: block.id, name: block.name })) })) }
   if (route === '/uploads' && !body) return { items: page(filterRows([...uploads.values()].filter(upload => visible.has(upload.project_id)).map(publicUpload), params), params) }
   const download = /^\/uploads\/([^/]+)\/download$/.exec(route)
   if (download && !body) { if (plain !== 'blob') fail('원본 다운로드는 blob 형식으로 요청하세요.'); return original(scopedUpload(decodeURIComponent(download[1]), visible)) }
@@ -448,7 +535,7 @@ async function dispatch(path: string, body: Payload | undefined, plain: boolean 
     if (type && !supported.includes(type)) fail(`지원하지 않는 record_type: ${type}`)
     let rows = accessible().filter(row => !type || row.record_type === type)
     if (params.get('latest') !== 'false') rows = latest(rows)
-    return { items: page(filterRows(rows, params), params) }
+    return { items: page(filterRows(rows.map(row => row.record_type === 'project' ? publicProject(row, visible) : row), params), params) }
   }
   if (route === '/dashboard' && !body) {
     const rows = filterRows(accessible(), params)
@@ -456,7 +543,7 @@ async function dispatch(path: string, body: Payload | undefined, plain: boolean 
     const selections = rows.filter(row => row.record_type === 'selection' && row.selection_scope === 'shared')
     const chosen = selections.length === 1 ? uploads.get(text(selections[0].upload_id)) : undefined
     const byType = (type: string) => rows.filter(row => row.record_type === type)
-    return { uploads: scopedUploads, records: latest(rows), jobs: byType('job'), alerts: byType('alert'), comparisons: byType('comparison'), counts: { uploads: String(scopedUploads.length), comparisons: String(byType('comparison').length), open_alerts: String(byType('alert').filter(row => !row.resolved_at).length), pending_jobs: String(byType('job').filter(row => row.state === 'pending').length) }, root_metrics: chosen?.root_summary || null, source: 'synthetic_memory_demo', notice }
+    return { uploads: scopedUploads, records: latest(rows).map(row => row.record_type === 'project' ? publicProject(row, visible) : row), jobs: byType('job'), alerts: byType('alert'), comparisons: byType('comparison'), counts: { uploads: String(scopedUploads.length), comparisons: String(byType('comparison').length), open_alerts: String(byType('alert').filter(row => !row.resolved_at).length), pending_jobs: String(byType('job').filter(row => row.state === 'pending').length) }, root_metrics: chosen?.root_summary || null, source: 'synthetic_memory_demo', notice }
   }
   if (route === '/config' && body) return config(body, visible)
   if (route === '/selections' && body) {
@@ -498,7 +585,7 @@ async function dispatch(path: string, body: Payload | undefined, plain: boolean 
   const rerun = /^\/jobs\/([^/]+)\/rerun$/.exec(route)
   if (rerun && body) {
     const old = scopedRecord(decodeURIComponent(rerun[1]), 'job', visible); cas(old, body.expected_row_version)
-    if (old.state !== 'failed' || old.job_kind !== 'numeric') fail('실패한 브라우저 수치 작업만 재실행할 수 있습니다. 외부 AI/메일은 실행하지 않습니다.')
+    if (old.state !== 'failed' || !['numeric', 'compare'].includes(text(old.job_kind))) fail('실패한 브라우저 수치 작업만 재실행할 수 있습니다. 외부 AI/메일은 실행하지 않습니다.')
     const previousComparison = scopedRecord(text(old.parent_id), 'comparison', visible)
     const created = createComparison(structuredClone(object(previousComparison.payload.request)), visible)
     created.job.previous_id = old.id; old.payload.rerun_job_id = created.job.id; touch(old)

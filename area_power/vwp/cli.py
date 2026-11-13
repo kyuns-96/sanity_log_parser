@@ -1,8 +1,7 @@
 """Upload an actual report_export CSV to VWP, never directly to a database.
 
 Run from the host release with bin/area-power or python -m area_power.vwp.
-Set AREA_POWER_SERVER_URL, AREA_POWER_UPLOAD_TOKEN and AREA_POWER_ACTOR, or use
-the corresponding command-line options.
+Set AREA_POWER_SERVER_URL or use --url for the internal VWP service.
 
 The proprietary report_export executable and its licensed execution environment
 must be installed by the user. Its command-line contract is not available here:
@@ -31,8 +30,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--metadata", type=Path, help="UTF-8 JSON file containing UploadMetadata, including catalog IDs and hierarchy_separator")
     parser.add_argument("--config", type=Path, help="PC JSON configuration with csv, metadata and optional report_export argv; exclusive with explicit input options")
     parser.add_argument("--url", default=os.environ.get("AREA_POWER_SERVER_URL"), help="VWP service base URL (or AREA_POWER_SERVER_URL)")
-    parser.add_argument("--token", default=os.environ.get("AREA_POWER_UPLOAD_TOKEN"), help="Bearer token (or AREA_POWER_UPLOAD_TOKEN; environment recommended)")
-    parser.add_argument("--actor", default=os.environ.get("AREA_POWER_ACTOR"), help="Audit identity (or AREA_POWER_ACTOR)")
     parser.add_argument("--timeout", type=float, default=300, help="HTTP request timeout in seconds (default: 300)")
     parser.add_argument("--report-export", nargs=argparse.REMAINDER, metavar="ARGV", help="Execute user-supplied exporter argv with shell=False before upload; must be last")
     return parser
@@ -70,8 +67,8 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("Cannot read a valid config JSON object with csv, metadata and optional report_export argv")
     elif args.csv is None or args.metadata is None:
         parser.error("csv and --metadata are required unless --config is used")
-    if not args.url or not args.token or not args.actor or not args.actor.strip():
-        parser.error("--url, --token and --actor (or their environment variables) are required")
+    if not args.url:
+        parser.error("--url (or AREA_POWER_SERVER_URL) is required")
     try:
         url = httpx.URL(args.url)
     except Exception:
@@ -80,10 +77,6 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--url must be an HTTP(S) service URL without credentials, query or fragment")
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("--timeout must be finite and positive")
-    if any(ord(char) < 32 or ord(char) == 127 for char in args.actor) or len(args.actor) > 256:
-        parser.error("--actor must be a valid audit identity of at most 256 characters")
-    if any(ord(char) < 32 or ord(char) == 127 for char in args.token):
-        parser.error("--token contains invalid header characters")
     try:
         metadata = loads(args.metadata.read_text(encoding="utf-8-sig"))
         if not isinstance(metadata, dict):
@@ -106,11 +99,10 @@ def main(argv: list[str] | None = None) -> int:
     if not args.csv.is_file():
         print("The explicitly supplied CSV output file does not exist or is not a regular file.", file=sys.stderr)
         return 2
-    headers = {"Authorization": f"Bearer {args.token}", "X-Actor": args.actor}
     try:
         with args.csv.open("rb") as stream, httpx.Client(timeout=args.timeout, follow_redirects=False) as client:
             response = client.post(
-                str(url).rstrip("/") + "/api/area-power/uploads", headers=headers,
+                str(url).rstrip("/") + "/api/area-power/uploads",
                 data={"metadata": metadata_json},
                 files={"file": (args.csv.name, stream, "application/octet-stream")},
             )

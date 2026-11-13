@@ -85,6 +85,11 @@ class ChangePayload(Input):
     extraction_evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class BaselineInput(Input):
+    baseline_project_id: UUID | None
+    expected_row_version: int = Field(ge=1)
+
+
 class SelectionInput(Input):
     upload_id: UUID
     selection_scope: Literal["shared"] = "shared"
@@ -171,6 +176,60 @@ class Service:
         row = self.db.record(conn, value, kind=kind)
         return self.db.latest_record(conn, kind, row["entity_id"])
 
+    def baseline_setting(self, conn, project):
+        baseline_id = project["payload"].get("baseline_project_id")
+        baseline = self.db.record(conn, UUID(str(baseline_id)), kind="project") if baseline_id else None
+        status = project.get("baseline_status", "available" if baseline else "unset")
+        return {"project_id": project["id"], "row_version": project["row_version"],
+                "baseline_project_id": baseline["id"] if baseline else None,
+                "baseline_project": baseline, "status": status}
+
+    def project_baseline(self, identifier, body=None, actor=None):
+        with self.db.connect() as conn:
+            project = self.db.record(conn, identifier, kind="project", lock=body is not None)
+            if body is None:
+                return self.baseline_setting(conn, project)
+            if project["row_version"] != body.expected_row_version:
+                reject("Project baseline was changed; reload before editing.", "conflict", 409)
+            if body.baseline_project_id == project["id"]:
+                reject("A project cannot designate itself as baseline.", "invalid_baseline")
+            if body.baseline_project_id:
+                self.db.record(conn, body.baseline_project_id, kind="project")
+            payload = {**project["payload"], "baseline_project_id": body.baseline_project_id}
+            # The current-project grant and target grant were checked separately.
+            # Do not require access to the old target to replace/clear a pointer.
+            raw = self.db.raw if self.access is not None else self.db
+            updated = raw.update_record(conn, project["id"], actor,
+                expected_row_version=body.expected_row_version, payload=payload)
+            return self.baseline_setting(conn, self.authorize(conn, updated))
+
+    def designated_baseline(self, conn, current_project_id, baseline_project_id=None):
+        project = self.db.record(conn, current_project_id, kind="project", lock=True)
+        setting = self.baseline_setting(conn, project)
+        if setting["status"] != "available":
+            code = "baseline_unavailable" if setting["status"] == "unavailable" else "baseline_not_configured"
+            reject("Designate an accessible baseline project before comparing.", code, 409)
+        if baseline_project_id is not None and setting["baseline_project_id"] != baseline_project_id:
+            reject("The selected baseline is not this project's designated baseline.", "invalid_baseline")
+        return {"project_id": project["id"], "baseline_project_id": setting["baseline_project_id"],
+                "row_version": project["row_version"]}
+
+    def upload_hierarchy(self, identifier):
+        from area_power.vwp_server.analysis import parse_upload
+        with self.db.connect() as conn:
+            upload = self.ready_upload(conn, identifier)
+            upload = self.db.upload(conn, upload["id"], include_blob=True)
+        raw = self.db.raw if self.access is not None else self.db
+        parsed, metadata = parse_upload(upload, raw.settings)
+        separator = metadata.hierarchy_separator
+        items = []
+        for path, row in parsed.rows.items():
+            parent = path.rsplit(separator, 1)[0] if path != parsed.root_path else None
+            items.append({"path": path, "parent_path": parent, "depth": row["level"],
+                          "area": row.get("total_area"), "power_mw": row.get("pwr_all_total_mw")})
+        return {"upload_id": upload["id"], "snapshot_id": upload["snapshot_id"],
+                "hierarchy_separator": separator, "items": items}
+
     def config(self, body, actor):
         with self.db.connect() as conn:
             scope = {key: getattr(body, key) for key in SCOPE_FIELDS}
@@ -202,6 +261,8 @@ class Service:
                     if any(snapshot.get(key) != payload[f"current_{key}"] for key in ("version_id", "block_id")):
                         reject("Mapping snapshot differs from its current side.", "scope_mismatch")
                 self.version_range(conn, payload.get("valid_from_version_id"), payload.get("valid_through_version_id"), scope["project_id"])
+                if payload["baseline_project_id"] != payload["current_project_id"]:
+                    self.designated_baseline(conn, payload["current_project_id"], payload["baseline_project_id"])
                 for rule in payload["rules"]:
                     if rule.get("target_id"):
                         target = self.entity(conn, rule["target_id"], "target")
@@ -349,6 +410,10 @@ class Service:
         with self.db.connect() as conn:
             current = self.ready_upload(conn, body.current_upload_id)
             baseline = self.ready_upload(conn, body.baseline_upload_id) if body.baseline_upload_id else None
+            designation = None
+            if body.comparison_kind == "previous_project":
+                designation = self.designated_baseline(conn, current["project_id"],
+                    baseline["project_id"] if baseline else None)
             if baseline:
                 if baseline["id"] == current["id"]:
                     reject("Baseline and current must be different uploads.")
@@ -384,6 +449,8 @@ class Service:
             request["recipients"] = recipients
             numeric = {key: value for key, value in request.items() if key not in ("change_ids", "recipients")}
             numeric["target_revisions"] = sorted(str(target["id"]) for target in targets)
+            if designation is not None:
+                numeric["baseline_project_id"] = designation["baseline_project_id"]
             key = digest(numeric)
             self.lock(conn, ["comparison", key])
             old = conn.execute(sql.SQL("SELECT * FROM {} WHERE record_type='comparison' AND dedupe_key=%s FOR UPDATE").format(self.db.table("di_area_power_tracking_record")), (key,)).fetchone()
@@ -397,6 +464,8 @@ class Service:
                 return {"comparison": old, "job": job, "reused": True}
             explanation_targets = self.explanation_targets(conn, targets, changes, current)
             payload = {"request": request, "frozen": {"current_upload": current, "baseline_upload": baseline, "mapping": mapping, "scope_targets": targets, "targets": explanation_targets, "changes": changes, "power_uploads": power_uploads}, "coverage": {}, "policy_unconfigured": not bool(body.policy.metrics or body.policy.operating_limits), "ai_state": "pending"}
+            if designation is not None:
+                payload["frozen"]["baseline_designation"] = designation
             comparison = self.db.insert_record(conn, "comparison", payload, actor, state="queued", upload_id=current["id"], baseline_upload_id=baseline["id"] if baseline else None, dedupe_key=key, **self.scope(current))
             job = self.db.enqueue(conn, "compare", actor=actor, parent_id=comparison["id"], payload={}, **self.scope(current))
             return {"comparison": comparison, "job": job, "reused": False}
