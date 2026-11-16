@@ -141,3 +141,10 @@ Hierarchy 누적 집계의 부모/자식 중복 합산 금지, logic_cells 분�
 - 사내 도달성을 신뢰하며 인증된 사용자별 업로드 추적은 제공하지 않는다. `uploaded_by`와 새 snapshot 작성자는 기술적 수신 서비스 `vwp_server`이고 임의 요청 헤더의 사용자명은 신뢰하지 않는다. 기존 OA 로그인·SSO·프로젝트 권한과 조회/다운로드/비교 보호는 유지한다. DB의 기존 두 테이블/NOT NULL 컬럼·이력은 바꾸지 않는다.
 - 별도 폐기 PG18.6·비소유 제한 로그인에서 실제 CLI→loopback uvicorn→DB의 config/plain·명시적 gzip 업로드를 토큰/actor 설정 없이 확인했다. health/상태 GET 200, 기술 출처 고정·명시적 snapshot 재사용·원본 gzip/SHA 보존·자동 선택 없음·잘못된 CSV 422와 제거 옵션의 CLI 거부가 확인됐다. 기존 OA 미로그인 401와 미설정 SSO 차단은 그대로였다. 새 입력/fixture/검증 스크립트 파일 대신 메모리 FD를 사용했고 자체 서버·DB·로그인은 정리했다.
 - 앞선 과거 업로드 token 401·수동 actor 검증은 당시 동작의 역사 기록이며 현재 설정 요구가 아니다. 이번 입력 경로 변경 때문에 UI build·기존 비교/DB 전수·모바일 검사는 반복하지 않았다. 실제 발행/역할 인계는 비공개 최신 LATEST 기록이 기준이고 사내 배포는 승인 운영자가 별도로 관리한다.
+
+## 프로젝트 비교 현재 NET_VER·REVISION 동기화 — 2026-11-16
+
+- 프로젝트 비교에서 현재 NET_VER·REVISION을 편집하면 상단 공통 범위와 양방향 동기화한다. 현재 Block은 비교 화면에서 읽기 전용이며 기준 쪽 Block·NET_VER·REVISION 선택은 독립적으로 유지한다.
+- NET_VER 변경은 현재 REVISION을 명시적 미선택으로 비우고 해당 NET_VER의 유효한 후보만 제공한다. 현재 corner·upload·mapping/path 선택을 초기화하되 저장된 baseline 및 기준 쪽 선택은 유지한다. pending NET_VER는 접힌 공통 범위 요약에도 보인다.
+- TypeScript 검사와 frontend production build가 통과했다. 실제 Chromium 통합 합성 데모 UI에서 1920×1080·5120×2160 두 데스크톱 viewport를 확인했다. local/top NET_VER·REVISION 양방향 선택, 후보 필터·미선택 상태, 현재 종속 선택 reset, baseline 선택 유지, collapsed summary를 확인했고 브라우저 오류는 없었다.
+- 합성 카탈로그의 기존 multi-version·실행 파일을 사용했으며 baseline과 mapping 변경은 명시적 demo UI의 탭 메모리 내에서만 수행했다. 실제 사용자 DB·회사 SSO/실데이터 검증이 아니다. 모바일 검증이나 새 테스트/fixture/mock/harness/검증 스크립트 파일은 추가하지 않았다.
