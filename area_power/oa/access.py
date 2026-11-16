@@ -27,7 +27,7 @@ UPLOAD_REFERENCES = {
 }
 PROJECT_REFERENCES = {"project_id", "baseline_project_id", "current_project_id"}
 # mapping_ids in metric evidence are mapping-rule UUIDs, not record references.
-RECORD_REFERENCE_LISTS = {"target_ids", "change_ids", "extraction_ids"}
+RECORD_REFERENCE_LISTS = {"target_ids", "scope_target_ids", "change_ids", "extraction_ids"}
 # These contract fields are observations, not links into the application graph.
 # Their arbitrary tool/constraint keys may legitimately be named "version_id".
 OPAQUE_FIELDS = {
@@ -275,7 +275,6 @@ class AuthorizedDatabase:
         return self.authorize(conn, self.raw.upload(conn, value, **kwargs), upload=True)
 
     def _visible(self, conn, loader, args, filters, limit, offset, *, upload=False):
-        self.raw._page(limit, offset)
         self.references(conn, filters)
         items, skipped, scanned = [], 0, 0
         while True:
@@ -302,9 +301,16 @@ class AuthorizedDatabase:
             scanned += len(rows)
 
     def records(self, conn, record_type=None, *, limit=100, offset=0, **filters):
+        self.raw._page(limit, offset)
         return self._visible(conn, self.raw.records, (record_type,), filters, limit, offset)
 
+    def all_records(self, conn, record_type, **filters):
+        # One scan retains authorization filtering without rescanning every
+        # earlier visible page for each successive offset.
+        return self._visible(conn, self.raw.records, (record_type,), filters, None, 0)
+
     def uploads(self, conn, *, limit=100, offset=0, **filters):
+        self.raw._page(limit, offset)
         return self._visible(conn, self.raw.uploads, (), filters, limit, offset, upload=True)
 
     def insert_record(self, conn, record_type, payload, actor, **fields):

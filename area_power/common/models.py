@@ -5,6 +5,10 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+COMPARISON_FORMAT = 'hierarchy-reference-v1'
+CALCULATION_CONTRACT = 'logic-area-v1'
+
+
 class ContractModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

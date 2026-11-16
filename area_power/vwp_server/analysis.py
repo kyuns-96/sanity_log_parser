@@ -10,7 +10,7 @@ from psycopg import sql
 
 from area_power.common.errors import DomainError
 from area_power.common.jsonutil import digest
-from area_power.common.models import ComparisonRequest, MappingPayload, UploadMetadata
+from area_power.common.models import CALCULATION_CONTRACT, COMPARISON_FORMAT, ComparisonRequest, MappingPayload, UploadMetadata
 from area_power.vwp_server.csv_input import parse_csv
 
 D = Decimal
@@ -413,6 +413,22 @@ def evaluate_metric(metric, group, current, baseline, cm, bm, cu, bu, policy, pa
     return {'group_id': group.id, 'target_id': group.target_id, 'baseline_paths': group.baseline_paths, 'current_paths': group.current_paths, 'hier_name': ' + '.join(group.current_paths or group.baseline_paths) or 'Unresolved target', 'metric': metric, 'unit': unit, 'baseline': b, 'current': c, 'delta': delta, 'relative_change_pct': relative, 'pct_point_change': pp, 'baseline_numerator': bn, 'baseline_denominator': bd, 'current_numerator': cn, 'current_denominator': cd, 'comparability': state, 'reason': reason, 'is_candidate': bool(candidate), 'evidence': evidence, 'power_pair': pair}
 
 
+def _validate_frozen_upload(snapshot, selected):
+    if snapshot is None or selected is None:
+        if snapshot is not None or selected is not None:
+            raise DomainError('Selected upload differs from frozen comparison input', code='frozen_input_mismatch')
+        return
+    required = ('id', 'project_id', 'version_id', 'block_id', 'snapshot_id', 'condition_key', 'structure_digest', 'original_sha256')
+    if (not isinstance(snapshot, dict) or any(key not in snapshot for key in required)
+            or ('input_contract' not in snapshot and snapshot.get('input_contract_sha256') is None)):
+        raise DomainError('Frozen upload identity or contract is incomplete', code='frozen_input_mismatch')
+    keys = ('id', 'project_id', 'version_id', 'block_id', 'snapshot_id', 'condition_key', 'structure_digest', 'original_sha256', 'input_contract', 'analysis_conditions')
+    if any(key in snapshot and digest(snapshot[key]) != digest(selected[key]) for key in keys):
+        raise DomainError('Selected upload metadata differs from frozen comparison input', code='frozen_input_mismatch')
+    if snapshot.get('input_contract_sha256') is not None and snapshot['input_contract_sha256'] != digest(selected['input_contract']).hex():
+        raise DomainError('Selected upload contract differs from frozen comparison input', code='frozen_input_mismatch')
+
+
 def load_inputs(db, settings, comparison):
     request = ComparisonRequest.model_validate(comparison['payload']['request'])
     unknown_policy = (set(request.policy.metrics) | set(request.policy.operating_limits)) - set(METRICS)
@@ -430,13 +446,13 @@ def load_inputs(db, settings, comparison):
         mapping = frozen.get('mapping')
         if request.mapping_id and mapping is None:
             mapping = db.record(conn, request.mapping_id, kind='mapping')
-        targets = frozen.get('scope_targets', frozen.get('targets', []))
+        if 'scope_target_ids' in frozen:
+            targets = [db.record(conn, identifier, kind='target') for identifier in frozen['scope_target_ids']]
+        else:
+            targets = frozen.get('scope_targets', frozen.get('targets', []))
         for name, selected in (('current_upload', cu), ('baseline_upload', bu)):
-            snapshot = frozen.get(name)
-            if snapshot and selected:
-                keys = ('id', 'project_id', 'version_id', 'block_id', 'snapshot_id', 'condition_key', 'structure_digest', 'original_sha256', 'input_contract', 'analysis_conditions')
-                if any(key in snapshot and digest(snapshot[key]) != digest(selected[key]) for key in keys):
-                    raise DomainError('Selected upload metadata differs from frozen comparison input', code='frozen_input_mismatch')
+            if name in frozen:
+                _validate_frozen_upload(frozen[name], selected)
     current, cm = parse_upload(cu, settings)
     baseline, bm = parse_upload(bu, settings) if bu else (None, None)
     mapping_reason = None
@@ -463,20 +479,25 @@ def load_inputs(db, settings, comparison):
     return request, cu, bu, current, baseline, cm, bm, groups, chain, full_groups
 
 
-def compute_comparison(db, settings, comparison_id):
-    with db.connect() as conn:
-        comparison = db.record(conn, comparison_id, lock=True, kind='comparison')
-        if comparison['state'] == 'completed':
-            return comparison
-        payload = dict(comparison['payload'])
-        db.update_record(conn, comparison_id, 'vwp-worker', state='running', payload=payload, error_detail=None)
-    request, cu, bu, current, baseline, cm, bm, groups, chain, full_groups = load_inputs(db, settings, comparison)
+def _reference_contract(comparison):
+    if comparison['payload'].get('result_format') != COMPARISON_FORMAT:
+        raise DomainError('Create a new comparison to use the current result format.', code='comparison_format_upgrade_required')
+    if comparison['payload'].get('calculation_contract') != CALCULATION_CONTRACT:
+        raise DomainError('This comparison calculation contract is unsupported.', code='comparison_contract_unsupported')
+
+
+def _power_pairs(db, settings, comparison, request, cu, bu, current, baseline, cm, bm):
     pairs = [(cu, bu, current, baseline, cm, bm, None)]
     pair_ids = {(str(cu['id']), str(bu['id']) if bu else None)}
-    for spec in request.power_pairs:
+    frozen = comparison['payload'].get('frozen', {}).get('power_uploads', [])
+    if len(frozen) != len(request.power_pairs):
+        raise DomainError('Power uploads differ from frozen comparison input', code='frozen_input_mismatch')
+    for index, spec in enumerate(request.power_pairs):
         with db.connect() as conn:
             pc = db.upload(conn, spec['current_upload_id'], include_blob=True)
             pb = db.upload(conn, spec['baseline_upload_id'], include_blob=True) if spec.get('baseline_upload_id') else None
+        _validate_frozen_upload(frozen[index].get('current_upload'), pc)
+        _validate_frozen_upload(frozen[index].get('baseline_upload'), pb)
         pair_id = (str(pc['id']), str(pb['id']) if pb else None)
         if pair_id in pair_ids:
             raise DomainError('The same power execution pair was requested more than once', code='duplicate_power_pair')
@@ -486,48 +507,84 @@ def compute_comparison(db, settings, comparison_id):
         cp, cmeta = parse_upload(pc, settings)
         bp, bmeta = parse_upload(pb, settings) if pb else (None, None)
         pairs.append((pc, pb, cp, bp, cmeta, bmeta, spec))
-    expected = sum(len(g.metrics) + sum(1 for _ in pairs[1:] for m in g.metrics if m in POWER) for g in groups)
-    processed = candidates = 0
+    return pairs
+
+
+def _pair_precision(current, baseline):
+    highest, lowest = 0, 0
+    for parsed in (current, baseline):
+        if parsed:
+            for row in parsed.rows.values():
+                for value in row.values():
+                    if isinstance(value, (D, int)):
+                        decimal = D(value)
+                        highest = max(highest, decimal.adjusted())
+                        lowest = min(lowest, decimal.as_tuple().exponent)
+    return max(80, highest - lowest + len(str(max(len(current.rows), len(baseline.rows) if baseline else 0))) + 40)
+
+
+def _power_pair(pc, pb, current, baseline, spec):
+    return {'current_upload_id': pc['id'], 'baseline_upload_id': pb['id'] if pb else None,
+            'current_conditions': current.conditions, 'baseline_conditions': baseline.conditions if baseline else None,
+            'label': spec.get('label') if spec else None}
+
+
+def compute_comparison(db, settings, comparison_id):
+    with db.connect() as conn:
+        comparison = db.record(conn, comparison_id, lock=True, kind='comparison')
+        if comparison['state'] == 'completed':
+            return comparison
+        _reference_contract(comparison)
+        db.update_record(conn, comparison_id, 'vwp-worker', state='running', error_detail=None)
+    request, cu, bu, current, baseline, cm, bm, groups, chain, full_groups = load_inputs(db, settings, comparison)
+    pairs = _power_pairs(db, settings, comparison, request, cu, bu, current, baseline, cm, bm)
+    expected = sum(len(group.metrics) + sum(1 for _ in pairs[1:] for metric in group.metrics if metric in POWER) for group in groups)
+    coverage = {'scope_validation': 'complete', 'metric_evaluation': 'on_demand',
+                'expected_scopes': len(groups), 'processed_scopes': len(groups),
+                'unresolved_scopes': sum(group.reason is not None for group in groups),
+                'expected_metrics': expected, 'processed_metrics': 0, 'stored_result_rows': 0,
+                'power_pairs': len(pairs)}
+    with db.connect() as conn:
+        row = db.record(conn, comparison_id, lock=True, kind='comparison')
+        if row['state'] == 'completed':
+            return row
+        _reference_contract(row)
+        payload = {**row['payload'], 'coverage': coverage}
+        return db.update_record(conn, comparison_id, 'vwp-worker', state='completed', payload=payload, error_detail=None)
+
+
+def iter_comparison_metrics(db, settings, comparison):
+    _reference_contract(comparison)
+    request, cu, bu, current, baseline, cm, bm, groups, chain, full_groups = load_inputs(db, settings, comparison)
+    pairs = _power_pairs(db, settings, comparison, request, cu, bu, current, baseline, cm, bm)
     for index, (pc, pb, cp, bp, cmeta, bmeta, spec) in enumerate(pairs):
-        pair = {'current_upload_id': pc['id'], 'baseline_upload_id': pb['id'] if pb else None, 'current_conditions': cp.conditions, 'baseline_conditions': bp.conditions if bp else None, 'label': spec.get('label') if spec else None}
-        highest, lowest = 0, 0
-        for parsed in (cp, bp):
-            if parsed:
-                for row in parsed.rows.values():
-                    for value in row.values():
-                        if isinstance(value, (D, int)):
-                            decimal = D(value)
-                            highest = max(highest, decimal.adjusted())
-                            lowest = min(lowest, decimal.as_tuple().exponent)
-        precision = max(80, highest - lowest + len(str(max(len(cp.rows), len(bp.rows) if bp else 0))) + 40)
+        pair = _power_pair(pc, pb, cp, bp, spec)
+        precision = _pair_precision(cp, bp)
         for group in groups:
-            results = []
             for metric in group.metrics:
                 if index and metric not in POWER:
                     continue
                 with localcontext() as context:
                     context.prec = precision
                     result = evaluate_metric(metric, group, cp, bp, cmeta, bmeta, pc, pb, request.policy, pair if metric in POWER else None)
-                key = digest({'comparison': comparison_id, 'group': group.id, 'metric': metric, 'power_pair': {'current': pc['id'], 'baseline': pb['id'] if pb else None} if metric in POWER else None})
-                results.append((key, result))
-            with db.connect() as conn:
-                for key, result in results:
-                    advisory_lock(conn, key)
-                    old = existing_dedupe(db, conn, 'metric_result', key)
-                    if old is None:
-                        db.insert_record(conn, 'metric_result', result, 'vwp-worker', parent_id=comparison_id, upload_id=pc['id'], baseline_upload_id=pb['id'] if pb else None, state=result['comparability'], dedupe_key=key, **scope_fields(pc))
-                    elif digest(old['payload']) != digest(result):
-                        raise DomainError('Immutable comparison inputs produced different metrics', code='immutable_result_conflict')
-                    processed += 1
-                    candidates += int(result['is_candidate'])
-    if processed != expected:
-        raise DomainError('Comparison metric coverage mismatch', code='coverage_mismatch')
-    with db.connect() as conn:
-        row = db.record(conn, comparison_id, lock=True, kind='comparison')
-        payload = dict(row['payload'])
-        payload['selected_inputs'] = {'current_upload': {k: v for k, v in cu.items() if k != 'csv_gzip'}, 'baseline_upload': {k: v for k, v in bu.items() if k != 'csv_gzip'} if bu else None,
-                                      'power_pairs': [{'current_upload': {k: v for k, v in pc.items() if k != 'csv_gzip'}, 'baseline_upload': {k: v for k, v in pb.items() if k != 'csv_gzip'} if pb else None} for pc, pb, *_ in pairs]}
-        if request.scope.kind == 'targets':
-            payload['mapping_context'] = [{'baseline_paths': g.baseline_paths, 'current_paths': g.current_paths, 'reason': g.reason, 'mapping_ids': g.mapping_ids} for g in full_groups]
-        payload.update({'coverage': {'expected_scopes': len(groups), 'processed_scopes': len(groups), 'expected_metrics': expected, 'processed_metrics': processed, 'candidate_metrics': candidates, 'power_pairs': len(pairs)}, 'policy_unconfigured': not bool(request.policy.metrics or request.policy.operating_limits), 'resolved_mapping': [{'group_id': g.id, 'baseline_paths': g.baseline_paths, 'current_paths': g.current_paths, 'target_id': g.target_id, 'reason': g.reason, 'mapping_ids': g.mapping_ids} for g in groups], 'version_ancestry': chain, 'ai_state': payload.get('ai_state', 'pending')})
-        return db.update_record(conn, comparison_id, 'vwp-worker', state='completed', payload=payload, error_detail=None)
+                yield pc, pb, result
+
+
+def comparison_observations(db, settings, comparison, offset=0, limit=200, search=''):
+    _reference_contract(comparison)
+    if not isinstance(offset, int) or not isinstance(limit, int) or offset < 0 or limit < 1 or limit > 500:
+        raise DomainError('Observation pagination requires offset >= 0 and limit 1..500.', code='invalid_pagination')
+    request, cu, bu, current, baseline, cm, bm, groups, chain, full_groups = load_inputs(db, settings, comparison)
+    needle = search.strip().casefold()
+    if needle:
+        groups = [group for group in groups if any(needle in path.casefold() for path in group.baseline_paths + group.current_paths)]
+    total = len(groups)
+    pair = _power_pair(cu, bu, current, baseline, None)
+    precision = _pair_precision(current, baseline)
+    items = []
+    with localcontext() as context:
+        context.prec = precision
+        for group in groups[offset:offset + limit]:
+            for metric in ('total_area', 'pwr_all_total_mw'):
+                items.append(evaluate_metric(metric, group, current, baseline, cm, bm, cu, bu, request.policy, pair if metric in POWER else None))
+    return {'items': items, 'total_groups': total, 'offset': offset, 'limit': limit, 'search': search}

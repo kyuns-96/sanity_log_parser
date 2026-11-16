@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from area_power.common.errors import DomainError
 from area_power.common.jsonutil import digest
-from area_power.common.models import ComparisonRequest, MappingPayload
+from area_power.common.models import CALCULATION_CONTRACT, COMPARISON_FORMAT, ComparisonRequest, MappingPayload
 
 CONFIG_TYPES = {"project", "version", "block", "target", "mapping", "change"}
 SCOPE_FIELDS = ("project_id", "version_id", "block_id", "snapshot_id")
@@ -397,6 +397,8 @@ class Service:
     def new_run(self, conn, comparison, changes, recipients, actor, *, fresh=False, ai_context=None, previous_run_id=None):
         frozen = comparison["payload"].get("frozen", {})
         scope_targets = frozen.get("scope_targets", frozen.get("targets", []))
+        if "scope_target_ids" in frozen:
+            scope_targets = [self.db.record(conn, UUID(str(identifier)), kind="target") for identifier in frozen["scope_target_ids"]]
         targets = self.explanation_targets(conn, scope_targets, changes, comparison)
         ai_context = self.ai_context() if ai_context is None else ai_context
         key = digest(["ai_run", comparison["id"], sorted(str(row["id"]) for row in changes), sorted(str(target["id"]) for target in targets), sorted(recipients), ai_context, previous_run_id, str(uuid4()) if fresh else None])
@@ -454,38 +456,49 @@ class Service:
             request = body.model_dump(mode="python")
             request["recipients"] = recipients
             numeric = {key: value for key, value in request.items() if key not in ("change_ids", "recipients")}
+            numeric["result_format"] = COMPARISON_FORMAT
+            numeric["calculation_contract"] = CALCULATION_CONTRACT
             numeric["target_revisions"] = sorted(str(target["id"]) for target in targets)
             if designation is not None:
                 numeric["baseline_project_id"] = designation["baseline_project_id"]
             key = digest(numeric)
             self.lock(conn, ["comparison", key])
             old = conn.execute(sql.SQL("SELECT * FROM {} WHERE record_type='comparison' AND dedupe_key=%s FOR UPDATE").format(self.db.table("di_area_power_tracking_record")), (key,)).fetchone()
-            ai_context = self.ai_context()
             if old:
-                old = self.authorize(conn, old)
-                runs = self.db.records(conn, "ai_run", parent_id=old["id"], limit=10000)
-                latest = max(runs, key=lambda row: (row["created_at"], str(row["id"]))) if runs else old
-                original = latest["payload"] if runs else old["payload"]["request"]
-                explanation_changed = set(map(str, original.get("change_ids", []))) != set(map(str, body.change_ids)) or set(original.get("recipients", [])) != set(recipients)
-                explanation_changed |= latest["payload"].get("ai_context") != ai_context
-                job = None
-                if explanation_changed:
-                    _, job = self.new_run(conn, old, changes, recipients, actor, ai_context=ai_context, previous_run_id=latest["id"] if runs else None)
-                return {"comparison": old, "job": job, "reused": True}
-            explanation_targets = self.explanation_targets(conn, targets, changes, current)
-            payload = {"request": request, "frozen": {"current_upload": current, "baseline_upload": baseline, "mapping": mapping, "scope_targets": targets, "targets": explanation_targets, "changes": changes, "power_uploads": power_uploads}, "coverage": {}, "policy_unconfigured": not bool(body.policy.metrics or body.policy.operating_limits), "ai_state": "pending"}
-            payload["ai_context"] = ai_context
-            if designation is not None:
-                payload["frozen"]["baseline_designation"] = designation
-            comparison = self.db.insert_record(conn, "comparison", payload, actor, state="queued", upload_id=current["id"], baseline_upload_id=baseline["id"] if baseline else None, dedupe_key=key, **self.scope(current))
-            job = self.db.enqueue(conn, "compare", actor=actor, parent_id=comparison["id"], payload={}, **self.scope(current))
-            return {"comparison": comparison, "job": job, "reused": False}
+                comparison = self.authorize(conn, old)
+            else:
+                def reference(upload):
+                    if upload is None:
+                        return None
+                    fields = ('id', 'project_id', 'block_id', 'version_id', 'snapshot_id', 'condition_key', 'structure_digest', 'original_sha256')
+                    return {**{field: upload[field] for field in fields}, 'input_contract_sha256': digest(upload['input_contract']).hex()}
+                payload = {"request": request, "result_format": COMPARISON_FORMAT, "calculation_contract": CALCULATION_CONTRACT,
+                           "frozen": {"current_upload": reference(current), "baseline_upload": reference(baseline),
+                                      "scope_target_ids": [target['id'] for target in targets],
+                                      "power_uploads": [{side: reference(upload) for side, upload in pair.items()} for pair in power_uploads]},
+                           "coverage": {}, "policy_unconfigured": not bool(body.policy.metrics or body.policy.operating_limits), "ai_state": "not_requested"}
+                if designation is not None:
+                    payload["frozen"]["baseline_designation"] = designation
+                comparison = self.db.insert_record(conn, "comparison", payload, actor, state="queued", upload_id=current["id"], baseline_upload_id=baseline["id"] if baseline else None, dedupe_key=key, **self.scope(current))
+        if comparison["state"] != "completed":
+            from area_power.vwp_server.analysis import compute_comparison
+            raw = self.db.raw if self.access is not None else self.db
+            try:
+                comparison = compute_comparison(self.db, raw.settings, comparison['id'])
+            except Exception as exc:
+                error = {"code": exc.code if isinstance(exc, DomainError) else "comparison_preparation_failed"}
+                with self.db.connect() as conn:
+                    row = self.db.record(conn, comparison['id'], lock=True, kind='comparison')
+                    if row['state'] != 'completed':
+                        self.db.update_record(conn, row['id'], actor, state='failed', error_detail=error)
+                raise
+        return {"comparison": comparison, "job": None, "reused": old is not None}
 
     def rejudge(self, identifier, body, actor):
         with self.db.connect() as conn:
             comparison = self.db.record(conn, identifier, kind="comparison", lock=True)
             if comparison["state"] != "completed":
-                reject("Only completed numerical comparisons can be explicitly rejudged.", "comparison_not_ready", 409)
+                reject("Only prepared comparisons can be explicitly analyzed.", "comparison_not_ready", 409)
             current = self.db.upload(conn, comparison["upload_id"])
             baseline = self.db.upload(conn, comparison["baseline_upload_id"]) if comparison.get("baseline_upload_id") else None
             changes = self.changes(conn, body.change_ids, current, baseline)
@@ -556,6 +569,8 @@ class Service:
             return self.db.enqueue(conn, job["job_kind"], actor=actor, parent_id=job.get("parent_id"), upload_id=job.get("upload_id"), payload=payload, dedupe_key=digest(["explicit_rerun", uuid4()]), previous_id=identifier, **self.scope(job))
 
     def all_records(self, conn, kind, **filters):
+        if self.access is not None:
+            return self.db.all_records(conn, kind, **filters)
         rows = []
         offset = 0
         while True:
@@ -565,9 +580,26 @@ class Service:
                 return rows
             offset += len(page)
 
-    def comparison_detail(self, identifier):
+    def comparison_detail(self, identifier, *, view="full", offset=0, limit=200, search=""):
         with self.db.connect() as conn:
             comparison = self.db.record(conn, identifier, kind="comparison")
+            if view == "summary":
+                return {"comparison": comparison, "results": [], "judgements": [], "ai_runs": []}
+            if comparison['payload'].get('result_format') == COMPARISON_FORMAT:
+                runs = self.all_records(conn, 'ai_run', parent_id=identifier) if view == 'full' else []
+                judgements = [result for run in runs for result in self.all_records(conn, 'judgement', parent_id=run['id'])]
+                if comparison['state'] != 'completed':
+                    return {'comparison': comparison, 'results': [], 'judgements': judgements, 'ai_runs': runs}
+                from area_power.vwp_server.analysis import comparison_observations
+                raw = self.db.raw if self.access is not None else self.db
+                observations = comparison_observations(self.db, raw.settings, comparison, offset=offset, limit=limit, search=search)
+                return {'comparison': comparison, 'results': [], 'judgements': judgements, 'ai_runs': runs,
+                        'observations': observations['items'],
+                        'result_page': {key: value for key, value in observations.items() if key != 'items'}}
+            if view == "hierarchy":
+                metrics = ("total_area", "pwr_all_total_mw")
+                results = self.all_records(conn, "metric_result", parent_id=identifier, metrics=metrics)
+                return {"comparison": comparison, "results": results, "judgements": [], "ai_runs": []}
             results = self.all_records(conn, "metric_result", parent_id=identifier)
             runs = self.all_records(conn, "ai_run", parent_id=identifier)
             judgements = []

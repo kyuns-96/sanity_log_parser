@@ -104,6 +104,19 @@ class Runtime:
             require(pin['credential_pin'] is None, 'AI_CREDENTIAL_CHANGED')
         return advisor if token else None
 
+    def validate(self):
+        """Check pinned authority and credentials before processing observations."""
+        for task in ('CLUSTER', 'REVIEW'):
+            pin = self.context.get(task, {})
+            require(isinstance(pin, dict), 'AI_CONFIG_CHANGED')
+            if pin.get('error'):
+                raise ReviewError(pin['error'], 'The selected AI connection is unavailable')
+            require(bool(pin), 'AI_NOT_CONFIGURED')
+        with executing_on('vwp'):
+            with Database('oa') as host_db, host_db.transaction():
+                for task in ('CLUSTER', 'REVIEW'):
+                    self._resolve(host_db, task)
+
     def infer(self, task, context, instruction, prompt_version):
         pin = self.context.get(task, {})
         if pin.get('error'):

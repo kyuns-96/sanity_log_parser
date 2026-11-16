@@ -79,9 +79,14 @@ class Database:
             raise DomainError("Record not found", "not_found", 404)
         return row
 
-    def records(self, conn, record_type=None, *, project_id=None, version_id=None, block_id=None, snapshot_id=None, parent_id=None, state=None, limit=100, offset=0, latest=False):
+    def records(self, conn, record_type=None, *, project_id=None, version_id=None, block_id=None, snapshot_id=None, parent_id=None, state=None, limit=100, offset=0, latest=False, metrics=None):
         limit, offset = self._page(limit, offset)
         condition, params = _where(dict(record_type=record_type, project_id=project_id, version_id=version_id, block_id=block_id, snapshot_id=snapshot_id, parent_id=parent_id, state=state))
+        if metrics is not None:
+            if record_type != 'metric_result':
+                raise ValueError('Metric selection requires metric results')
+            condition += sql.SQL(" AND payload->>'metric' = ANY(%s)")
+            params.append(list(metrics))
         if latest:
             query = sql.SQL("SELECT * FROM (SELECT DISTINCT ON (record_type, entity_id) * FROM {} ORDER BY record_type, entity_id, revision DESC) AS current_records WHERE {} ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s").format(self.table("di_area_power_tracking_record"), condition)
         else:

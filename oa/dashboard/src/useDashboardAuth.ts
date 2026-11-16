@@ -21,6 +21,8 @@ export class DashboardRequestError extends Error {
       RESOURCE_NOT_FOUND: '현재 권한으로 이 검사 결과를 열 수 없습니다. 담당 범위를 확인해 주세요.',
       REQUEST_CONFLICT: '이미 처리되었거나 같은 요청 번호의 내용이 다릅니다. 최신 상태를 확인해 주세요.',
       AREA_POWER_UNAVAILABLE: '구성·전력 분석 서비스가 설정되지 않았거나 현재 사용할 수 없습니다. 운영 담당자에게 문의해 주세요.',
+      INTERNAL_ERROR: '서버 내부 오류가 발생했습니다. 운영 담당자에게 오류가 발생한 작업과 시각을 전달해 주세요.',
+      STORED_UPLOAD_MISMATCH: '저장된 원본과 검증 정보가 일치하지 않습니다. 서비스 버전과 업로드 상태를 확인해 주세요.',
       AREA_BINDING_NOT_RECORDED: '부분 저장: 수치 DB에는 저장되었지만 공통 카탈로그 연결 기록은 완료되지 않았습니다. 범위를 새로고침해 상태를 확인한 후 필요한 경우 직접 다시 연결하세요.',
       AREA_BINDING_CONFLICT: '명시적 연결이 충돌하거나 여러 기존 ID가 모호하게 연결되어 있습니다. 로컬 운영자 또는 관리자에게 실제 연결 ID를 확인하세요.',
       AREA_PREVIOUS_NOT_PREPARED: '명시적으로 선택한 이전 수치 버전을 먼저 준비하세요. 이전 범위 선택 → 수치 분석 준비 후 이 범위로 돌아오세요.',

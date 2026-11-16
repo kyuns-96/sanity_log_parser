@@ -34,7 +34,16 @@ export const dashboardSchema = z.object({
   root_metrics: z.record(z.string(), z.unknown()).nullable(),
 })
 export type Dashboard = z.infer<typeof dashboardSchema>
-export const detailSchema = z.object({ comparison: recordSchema, results: z.array(recordSchema), judgements: z.array(recordSchema), ai_runs: z.array(recordSchema) })
+export const detailSchema = z.object({
+  comparison: recordSchema, results: z.array(recordSchema), judgements: z.array(recordSchema), ai_runs: z.array(recordSchema),
+  observations: z.array(z.record(z.string(), z.unknown())).optional(),
+  result_page: z.object({
+    offset: z.string().transform(Number).refine(value => Number.isSafeInteger(value) && value >= 0),
+    limit: z.string().transform(Number).refine(value => Number.isSafeInteger(value) && value > 0),
+    total_groups: z.string().transform(Number).refine(value => Number.isSafeInteger(value) && value >= 0),
+    search: z.string(),
+  }).optional(),
+})
 export type ComparisonDetail = z.infer<typeof detailSchema>
 export const comparisonCreatedSchema = z.object({ comparison: recordSchema, job: recordSchema.nullable(), reused: z.boolean() })
 export const unknownSchema = z.unknown()

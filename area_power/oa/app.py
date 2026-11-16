@@ -1,6 +1,9 @@
 """Area/Power routes for the authenticated Sanity host; no standalone app/login."""
 from __future__ import annotations
 
+import logging
+import traceback
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -19,6 +22,8 @@ from .service import (
     SelectionInput, Service, CONFIG_TYPES,
 )
 
+LOG = logging.getLogger('area_power.oa')
+
 
 class SafeAreaRoute(APIRoute):
     """Use the host's fixed-code error contract without exposing domain inputs."""
@@ -34,6 +39,13 @@ class SafeAreaRoute(APIRoute):
                 return JSONResponse({"code": exc.code.upper()}, exc.status_code)
             except ValidationError:
                 return JSONResponse({"code": "INVALID_REQUEST"}, 400)
+            except Exception as exc:
+                # Diagnostics contain code locations only, never exception
+                # messages, request values, SQL, credentials or CSV contents.
+                frames = [f'{frame.filename.rsplit("/", 1)[-1]}:{frame.name}:{frame.lineno}'
+                          for frame in traceback.extract_tb(exc.__traceback__)]
+                LOG.error('Unhandled Area API error: %s (%s)', type(exc).__name__, '; '.join(frames))
+                raise
         return safe
 
 
@@ -142,8 +154,10 @@ def create_area_power_router(authorized_dependency):
         return json(context.compare(body, context.access.actor.user_id))
 
     @router.get("/comparisons/{identifier}")
-    def comparison(identifier: UUID, context=Depends(service)):
-        return json(context.comparison_detail(identifier))
+    def comparison(identifier: UUID, context=Depends(service), view: Literal["full", "summary", "hierarchy"] = "full",
+                   offset: int = Query(default=0, ge=0), limit: int = Query(default=200, ge=1, le=500),
+                   search: str = Query(default="", max_length=1000)):
+        return json(context.comparison_detail(identifier, view=view, offset=offset, limit=limit, search=search))
 
     @router.post("/comparisons/{identifier}/rejudge")
     def rejudge(identifier: UUID, body: RejudgeInput, context=Depends(service)):

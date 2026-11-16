@@ -147,7 +147,7 @@ metadata에는 준비된 실제 Area `project_id`, `version_id`, `block_id` UUID
 - 임계값을 임의로 정하지 않는다. 요청 정책이 없으면 `policy_unconfigured`를 표시한다. 산출 문맥이 미확인인 지표도 정상으로 보증하지 않는다.
 - 수치 계산은 코드가 담당한다. Area AI는 OA 인증 actor의 기존 Log AI `CLUSTER`/`REVIEW` 선택과 기본값을 그대로 사용한다. 유효한 managed 연결이 없고 작업별 기본값도 설정되지 않은 경우에만 기존 no-connection Log AI 설정(`SANITY_OA_AI_*`)을 사용한다. 선택된 managed 연결/default가 유효하지 않거나 인증에 실패하면 별도 AI 경로로 전환하지 않고 숫자 결과와 비교 상태는 보존한다. 기존 provider가 요구하는 actor 개인 token 또는 기존 server credential을 사용하며, 수치·매핑·비교 상태는 바꾸지 못한다.
 - 익명 VWP 업로드는 AI 사용자의 신원이 아니며 AI 인증으로 승격되지 않는다. OA 비교 actor가 없으면 AI 작업은 인증 오류로 남고 숫자 비교는 계속 처리한다.
-- 같은 숫자 비교 요청을 다시 제출하면 수치 비교와 고정 입력은 재사용한다. 요청 actor, `CLUSTER`/`REVIEW` 기본 연결, 연결 설정 또는 credential revision/scope가 달라졌으면 별도 AI 실행 문맥으로 새 run을 만들며 기존 수치·고정 문맥·이력은 바꾸지 않는다. 실패한 AI job의 명시적 재실행은 원래 actor와 저장된 pins를 사용한다. credential 변경 후에는 새 비교 AI run 또는 rejudge를 사용하고 재실행 중 다른 사용자나 credential로 바꾸지 않는다.
+- 같은 비교 요청은 고정된 참조를 재사용하며 AI run을 자동 생성하지 않는다. 명시적 rejudge가 요청 actor의 현재 `CLUSTER`/`REVIEW` 선택·연결 설정·credential revision/scope를 새 run에 고정하고 기존 비교·이력은 보존한다. 실패한 AI job의 명시적 재실행은 원래 actor와 저장된 pins를 사용한다. credential 변경 후에는 새 rejudge를 사용하고 재실행 중 다른 사용자나 credential로 바꾸지 않는다.
 - 알림 event마다 mail job을 DB에 남긴다. OA는 [사내 메일 Protocol](../oa/MAIL_INTEGRATION.md)의 `MailSender`만 호출하며 회사 API/SDK는 사내 AI가 허용된 어댑터 지점에서 구현한다. 미연결은 DB 접속·job 점유 전에 실패한다. 요청 수신자가 없으면 `AREA_POWER_MAIL_RECIPIENTS`를 사용하며 수신자도 없으면 실패한다. 서비스 접수는 전달·열람 보장이 아니며 일부 거부·결과 불명·접수 후 DB 기록 실패를 보존한다. 자동 재발송·정확히 한 번 전달은 보장하지 않는다. SMTP 구현·`AREA_POWER_SMTP_*`는 제거했다.
 
 상세 계약: [제품 설계](../docs/area_power/design.md) · [DB와 적용 순서](../docs/area_power/database.md).
@@ -190,3 +190,7 @@ Chromium에서 실제 code-server proxy 경유 공통 로그인, 재로그인 �
 위 내용은 이전 엔진 통합 시점의 검증 기록이다. 현재 Design Atlas 공통 카탈로그·화면·실행 서비스·검증 상태는 [제품 인계](../HANDOFF.md)를 따른다. 사용자 DB·기존 수정 파일은 보존하며 새 테스트·fixture·mock·검증 스크립트 파일은 추가하지 않는다. 회사 DB·실데이터·AI 품질·사내 메일 서비스·Docker 이미지·대규모 성능은 미검증이다.
 
 2026-11-16 비율 기준 수정: Vth/DRV `*_pct`는 CSV의 logic area 기준 면적 비율이다. Count로 재계산하지 않으며 그룹 비교는 `Σ(logic_area × pct) / Σ(logic_area)`를 사용한다. 범주 면적 분자는 보고 비율로 환산한 값이다. 면적 비율도 구조 동일성에 포함하므로 이전 계약으로 저장한 upload/snapshot은 원본으로 새 snapshot에 재업로드하고 비교를 재실행한다. 과거 결과를 자동 변경하지 않는다.
+
+기본 비교는 `hierarchy-reference-v1`을 사용한다. OA가 원본·scope·매핑을 검증하고 압축 원본의 정확한 참조·계산 계약·작은 coverage만 저장한다. 비교마다 79개 지표를 관계형 행으로 복제하거나 전체 매핑 목록·입력 사본을 저장하지 않으며, 자동 worker/AI job도 만들지 않는다. `completed`는 조회 준비 완료이고 coverage의 `metric_evaluation=on_demand`, `processed_metrics=0`, `stored_result_rows=0`으로 전체 지표 분석과 구분한다. AI는 별도 명시적 재판정 요청에서만 실행하며 실제 판단 대상의 수치 근거를 저장한다. 기존 단일 지표 결과는 조회·재판정·메일에서 계속 읽는다. 새 비교의 중복 키에는 저장 형식과 계산 계약을 포함한다. 과거 기록을 현재 계산으로 몰래 재해석하지 않고 지원하지 않는 계약은 명시적으로 실패한다. 기존 job·부분 결과·원본의 자동 삭제/변환과 DB 공간 회수는 수행하지 않는다. DDL 변경은 없다.
+
+비교 상세 API의 `view=summary`는 상태·coverage만 반환한다. 새 참조 비교의 `view=hierarchy`는 `offset`·`limit`(기본 200그룹, 최대 500)·`search`로 선택한 경로의 total area·total power만 계산하고 `observations`·`result_page`에 반환한다. 가상의 결과 행 UUID는 만들지 않는다. 기본 `view=full`은 같은 페이지와 AI 이력을 반환한다. 기존 비교는 저장된 scalar 결과를 읽는다. 화면은 실행 중 summary만 조회하고 종료 후 경로를 검색·페이지 조회한다. AI 설정·권한·인증값이 준비되지 않은 명시적 run은 작업 단위로 실패하며 후보 지표마다 실패 판정을 반복 저장하지 않는다. 기본 비교의 수초·원본 대비 저장량 목표는 실제 시간과 원본/비교/인덱스의 추가 물리 점유를 확인하기 전 달성했다고 표시하지 않는다.

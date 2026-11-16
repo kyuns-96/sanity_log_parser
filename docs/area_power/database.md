@@ -110,7 +110,7 @@ Key가 같아도 조건이 불완전하면 `comparable`로 판단하지 않는�
 | `selection` | 조건별로 현재 사용할 upload ID | OA |
 | `change_extraction` | 변경 원문 해석·근거·불명확한 항목·실패 | vwp_server |
 | `comparison` | 범위·양쪽 업로드·매핑·정책·조건의 고정 입력과 처리 범위 | OA 등록, vwp_server 계산 |
-| `metric_result` | hierarchy·그룹·지표별 값·분모·비교 상태·후보. 현재 앱의 target 조회도 이 결과 사용 | vwp_server |
+| `metric_result` | 기존 계산 결과와 명시적 AI 분석이 사용하는 hierarchy·그룹·지표별 사실. 기본 참조 비교는 생성하지 않음 | vwp_server |
 | `ai_run`, `judgement` | 고정한 원문·추출물·후보·AI 설정과 개별 판정·실패 | vwp_server |
 | `alert` | 알림 내용·관측 연결, 별도 사용자 처리 상태 | 내용은 vwp_server, 읽음·확인·해소 컬럼은 OA |
 | `alert_event` | 판정 변경·사용자 처리의 추가 이력 | 각 변경을 수행한 서버 |
@@ -179,7 +179,7 @@ stateDiagram-v2
 
 - 목록·조건 검색은 일반 컬럼과 인덱스를 사용하고 `csv_gzip`을 SELECT하지 않는다.
 - 현재 화면은 selection이 가리키는 upload를 읽고 과거 화면은 저장된 upload ID를 읽는다. 최신 업로드 시간으로 자동 대체하지 않는다.
-- 루트는 `root_summary`, 분석한 target·hierarchy는 `metric_result`를 읽는다. 별도 `scope_result` 캐시는 생성하지 않는다. 전체 hierarchy 비교는 선택한 원본을 압축 해제해 수행한다.
+- 루트는 `root_summary`, 기존 분석은 `metric_result`를 읽는다. 기본 `hierarchy-reference-v1` 비교는 압축 원본·정확한 revision·계산 계약의 참조만 저장하고 선택한 경로 페이지의 Area/Power를 조회 시 계산한다. 전체 결과 행·매핑 목록을 반복 저장하거나 기본 비교의 AI/job을 자동 생성하지 않는다. 별도 `scope_result` 캐시는 생성하지 않는다. 원본 검증 완료와 전체 지표 분석 완료를 coverage에서 구분한다.
 - gzip 내부 값은 일반 SQL 검색 대상이 아니다. 임의 hierarchy 수치 검색이 자주 필요하면 같은 `di_area_power_tracking_record`에 조회용 행을 더 저장한다. 테이블 추가는 필요 없지만 인덱스·저장량·갱신 비용은 별도 검토한다.
 - Payload의 지표·단위·분모·경로를 문서 schema에 맞춰 보존한다. JSONB 숫자와 Python Decimal을 손실 없이 직렬화하고 float로 우회하지 않는다. 결측을 0으로 만들지 않는다.
 - 전체 payload마다 무조건 GIN 인덱스를 두지 않는다. 운영 규모·실제 SQL이 확인되지 않았으므로 실데이터 성능을 보장하지 않는다.

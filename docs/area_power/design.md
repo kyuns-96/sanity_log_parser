@@ -440,13 +440,13 @@ AI 호출 실패나 잘못된 응답은 성공으로 바꾸지 않는다. 후보
 | `di_area_power_csv` | 통합 CSV 원본 gzip, 업로드 실행·프로젝트·버전·block·snapshot, corner·보충 분석 조건, 루트 요약·검증 결과 |
 | `di_area_power_tracking_record` | 종류별 설정·원문 revision·매핑·파일 선택·계산 결과·AI 판정·알림·메일·작업. 객체·결과·작업별로 행을 분리하고 상세는 JSONB에 저장 |
 
-루트 요약은 `root_summary`, 분석한 hierarchy·target·매핑 그룹은 `metric_result`에 지표별 현재/기준 값·분자·분모·조건을 저장한다. 별도 `scope_result` 캐시는 생성하지 않는다. 원본 pct는 gzip에 남기고 Vth/DRV 그룹 비율은 logic_area로 가중한다. 면적 비율도 구조 snapshot 동일성 검사에 포함한다. 구조의 논리 키는 `(snapshot_id, hier_name)`, power는 `(upload_id, hier_name)`이며 업로드 시 원본 전체를 관계형 행으로 복제하지 않는다.
+루트 요약은 `root_summary`에 보존한다. 기본 비교는 압축 원본·정확한 upload/snapshot·mapping revision·계산 계약을 참조하고 경로 수에 비례하는 결과 행을 생성하지 않는다. 입력·범위 검증 후 조회 준비를 완료하며 수치는 선택한 경로 페이지에서 계산한다. 완료 coverage는 `metric_evaluation=on_demand`로 전체 지표 분석과 구분한다. 명시적 AI 분석이 사용하는 사실만 기존 `metric_result`에 저장해 실제 UUID로 판정·알림·메일을 연결한다. 별도 `scope_result` 캐시는 생성하지 않는다. 원본 pct는 gzip에 남기고 Vth/DRV 그룹 비율은 logic_area로 가중한다. 면적 비율도 구조 snapshot 동일성 검사에 포함한다. 구조의 논리 키는 `(snapshot_id, hier_name)`, power는 `(upload_id, hier_name)`이며 업로드 시 원본 전체를 관계형 행으로 복제하지 않는다.
 
-수치 비교 key는 양쪽 업로드·조건·범위·지표·검출 정책·매핑 revision과 실제 대응을 정규화해 산출하고 종류별 dedupe UNIQUE로 중복을 막는다. 설명만 수정하면 기존 수치 결과에 새 AI 실행을 연결한다. JSON 내부 참조·수치·범위 검증과 완료 데이터 불변성은 공통 모델과 각 서비스가 검증한다.
+수치 비교 key는 양쪽 업로드·조건·범위·지표·검출 정책·매핑 revision·저장 형식·계산 계약을 포함한다. 기존 단일 지표 행은 저장값을 유지하고 참조 비교는 지원하는 고정 계산 계약에서만 조회한다. 실제 AI 근거의 key는 comparison·실제 대응·metric·power 실행 쌍을 구분하며 재판정에서도 같은 사실을 재사용한다. payload 일치와 종류별 dedupe UNIQUE로 불변 충돌을 확인한다. 설명이 바뀐 AI 분석은 명시적으로 새 run을 요청한다. JSON 내부 참조·수치·범위 검증과 완료 데이터 불변성은 공통 모델과 각 서비스가 검증한다. 진행 중 화면은 작은 상태/coverage만 읽으며 새 참조 결과는 경로 검색·페이지별로 계산한다.
 
 조건별 현재 파일은 selection 레코드가 명시적으로 선택한다. 수정본 업로드로 자동 교체하지 않으며 완료 비교는 당시의 업로드·원문·매핑 revision을 고정한다. OA의 동시 선택 변경은 `row_version` 조건 갱신으로 충돌을 검출한다.
 
-작업도 `di_area_power_tracking_record`에 저장한다. 적재·비교·추출·판정은 vwp_server, 메일은 oa_server가 소비하며 자기 서버의 pending job만 짧은 트랜잭션에서 행 잠금으로 점유한다. AI·사내 메일 호출 중 DB 잠금을 유지하지 않는다. 전체 요청 범위를 처리하기 전에는 완료로 표시하지 않으며 실패 이유·명시 재실행 이력을 보존한다.
+작업도 `di_area_power_tracking_record`에 저장한다. 기본 참조 비교는 OA 요청에서 검증해 준비하고 worker 대기열에 넣지 않는다. 기존 적재·비교 작업 및 명시적 추출·판정은 vwp_server, 메일은 oa_server가 소비하며 자기 서버의 pending job만 짧은 트랜잭션에서 행 잠금으로 점유한다. AI·사내 메일 호출 중 DB 잠금을 유지하지 않는다. 전체 요청 범위를 처리하기 전에는 완료로 표시하지 않으며 실패 이유·명시 재실행 이력을 보존한다.
 
 ## 조회와 알림 흐름
 

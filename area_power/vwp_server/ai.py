@@ -10,14 +10,23 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from common.sanity_common import ReviewError
 from area_power.common.ai import runtime_for
-from area_power.common.errors import DomainError
+from area_power.common.errors import ConfigurationError, DomainError
 from area_power.common.jsonutil import digest, dumps
-from area_power.vwp_server.analysis import (METRICS, Group, expected_bounds, all_records, advisory_lock,
-                                 existing_dedupe, interval_reason, scope_fields, version_chain)
+from area_power.common.models import COMPARISON_FORMAT
+from area_power.vwp_server.analysis import (METRICS, POWER, Group, expected_bounds, all_records, advisory_lock,
+                                 existing_dedupe, interval_reason, iter_comparison_metrics, scope_fields, version_chain)
 from psycopg import sql
 
 PROMPT_VERSION = 'hierarchy-evidence-2'
 ACTOR = 'vwp-worker'
+AI_CONTEXT_ERRORS = frozenset({
+    'AI_AUTHENTICATED_REQUEST_REQUIRED', 'AI_NOT_CONFIGURED', 'AI_CONFIG', 'AI_BATCH_CONFIG', 'AI_CONFIG_CHANGED',
+    'AI_CONNECTION_CONFIG', 'AI_CONNECTION_CORRUPT', 'AI_CONNECTION_UNAVAILABLE',
+    'AI_MODEL_NOT_ALLOWED', 'AI_CREDENTIAL_CHANGED', 'AI_CREDENTIAL_SCOPE_CHANGED',
+    'AI_USER_TOKEN_REQUIRED', 'AI_USER_TOKEN_EXPIRED', 'AI_TOKEN_STORE_NOT_CONFIGURED',
+    'AI_TOKEN_UNAVAILABLE', 'AI_AUTH_FAILED', 'AI_VWP_PROFILE_UNAVAILABLE',
+    'FORBIDDEN', 'RESOURCE_NOT_FOUND',
+})
 
 
 class AIError(Exception):
@@ -88,6 +97,8 @@ def provider(runtime, task: str, context: dict, schema: type[BaseModel]):
         task_kind = 'CLUSTER' if schema is Extraction else 'REVIEW'
         return schema.model_validate(runtime.infer(task_kind, context, instructions, PROMPT_VERSION))
     except ReviewError as exc:
+        if exc.code in AI_CONTEXT_ERRORS or exc.code.startswith(('AUTHORIZATION_', 'DATABASE_', 'DBAAS_')):
+            raise
         raise AIError('ai_context_limit' if exc.code == 'AI_INPUT_LIMIT' else exc.code) from None
     except (ValueError, KeyError, IndexError, TypeError):
         raise AIError('ai_invalid_response') from None
@@ -160,7 +171,8 @@ def judgement_provider(settings, context):
 
 
 def failure_detail(exc: Exception) -> dict:
-    return {'code': str(exc) if isinstance(exc, AIError) else 'analysis_failure', 'error_class': type(exc).__name__}
+    code = exc.code if isinstance(exc, ReviewError) else str(exc) if isinstance(exc, AIError) else 'analysis_failure'
+    return {'code': code, 'error_class': type(exc).__name__}
 
 
 def ensure_run(db, comparison: dict, *, run_id=None, change_ids=None, recipients=None):
@@ -279,6 +291,9 @@ def extract_one(db, settings, change: dict, comparison: dict | None = None, run_
         data['original_text'] = text
         data['actual_source_interval'] = {k: data.get(k) for k in ('applies_from_version_id', 'applies_through_version_id', 'baseline_project_id')}
     except Exception as exc:
+        if (isinstance(exc, ConfigurationError) or isinstance(exc, ReviewError)
+                and (exc.code in AI_CONTEXT_ERRORS or exc.code.startswith(('AUTHORIZATION_', 'DATABASE_', 'DBAAS_')))):
+            raise
         error = failure_detail(exc)
         data = {'change_id': change['id'], 'original_text': text, 'evidence': [], 'unresolved': ['Extraction unavailable; original source has not been interpreted'], 'expected': [], 'paths': p.get('paths', []), 'target_ids': p.get('target_ids', []), 'metrics': p.get('metrics', []), 'actual_source_interval': {k: p.get(k) for k in ('applies_from_version_id', 'applies_through_version_id', 'baseline_project_id')}, 'failure': error}
     data.update({'prompt_version': PROMPT_VERSION, 'ai_run_id': run_id, 'provider_metadata': runtime.receipts})
@@ -295,6 +310,8 @@ def prepare_extractions(db, settings, comparison, run, *, attempt_id=None):
     if changes is None:
         with db.connect() as conn:
             changes = [db.record(conn, cid, kind='change') for cid in run['payload'].get('change_ids', [])]
+    if not changes:
+        return []
     extracted = [extract_one(db, settings, change, comparison, run['id'], attempt_id=attempt_id) for change in changes]
     with db.connect() as conn:
         cu = db.upload(conn, comparison['upload_id'])
@@ -378,12 +395,14 @@ def write_alert(db, conn, comparison, result, kind, reason, recipients, judgemen
     if old is None and not create:
         return
     payload = {'kind': kind, 'metric_result_id': result['id'], 'judgement_id': judgement['id'] if judgement else None, 'summary': p['hier_name'] + ': ' + p['metric'], 'hier_name': p['hier_name'], 'metric': p['metric'], 'baseline': p['baseline'], 'current': p['current'], 'delta': p['delta'], 'pct_point_change': p['pct_point_change'], 'baseline_paths': p['baseline_paths'], 'current_paths': p['current_paths'], 'target_id': p.get('target_id'), 'power_pair': pair, 'comparability': p['comparability'], 'reason': reason, 'recipients': recipients, 'latest_verdict': judgement['payload']['verdict'] if judgement else None}
-    if old and digest(old['payload']) == digest(payload):
+    fields = {'parent_id': comparison['id'], 'upload_id': result['upload_id'],
+              'baseline_upload_id': result.get('baseline_upload_id'), **scope_fields(result)}
+    if old and digest(old['payload']) == digest(payload) and all(old.get(key) == value for key, value in fields.items()):
         return
     if old:
-        alert = db.update_record(conn, old['id'], ACTOR, payload=payload)  # Typed user acknowledgement/resolution fields and state are untouched.
+        alert = db.update_record(conn, old['id'], ACTOR, payload=payload, **fields)  # Typed user acknowledgement/resolution fields and state are untouched.
     else:
-        alert = db.insert_record(conn, 'alert', payload, ACTOR, parent_id=comparison['id'], upload_id=result['upload_id'], baseline_upload_id=result.get('baseline_upload_id'), state='open', dedupe_key=key, **{k: result[k] for k in ('project_id', 'version_id', 'block_id', 'snapshot_id', 'condition_key') if result.get(k) is not None})
+        alert = db.insert_record(conn, 'alert', payload, ACTOR, state='open', dedupe_key=key, **fields)
     event = db.insert_record(conn, 'alert_event', {'action': 'judgement_updated' if old else 'created', 'alert_id': alert['id'], 'previous_payload': old['payload'] if old else None, 'payload': payload}, ACTOR, parent_id=alert['id'], state='recorded')
     db.enqueue(conn, 'mail', actor=ACTOR, parent_id=event['id'], payload={'alert_id': alert['id'], 'recipients': recipients}, dedupe_key=digest({'event': event['id'], 'recipients': sorted(set(recipients))}))
 
@@ -480,26 +499,86 @@ def judge_candidate(settings, candidate, extractions):
 def run_judgement(db, settings, comparison_id, run_id=None, *, extractions=None):
     with db.connect() as conn:
         comparison = db.record(conn, comparison_id, kind='comparison')
+    if comparison['payload'].get('result_format') not in (None, COMPARISON_FORMAT):
+        raise DomainError('Stored comparison format is unsupported.', code='unsupported_result_format')
     run = ensure_run(db, comparison, run_id=run_id)
-    runtime = runtime_for(db, run, comparison)
     if run['state'] in ('completed', 'failed'):
         return run
-    with db.connect() as conn:
-        locked = db.record(conn, run['id'], lock=True, kind='ai_run')
-        payload = dict(locked['payload'])
-        payload.update({'prompt_version': PROMPT_VERSION, 'settings': runtime.context})
-        db.update_record(conn, run['id'], ACTOR, state='running', payload=payload, error_detail=None)
-    extractions = extractions if extractions is not None else prepare_extractions(db, settings, comparison, run)
-    with db.connect() as conn:
-        results = all_records(db, conn, 'metric_result', parent_id=comparison_id)
-    candidates = [r for r in results if r['payload']['is_candidate'] or range_violations(r, extractions)]
+    runtime = runtime_for(db, run, comparison)
+    context_error = None
+    try:
+        runtime.validate()
+    except Exception as exc:
+        context_error = failure_detail(exc)
+    if context_error is None:
+        with db.connect() as conn:
+            locked = db.record(conn, run['id'], lock=True, kind='ai_run')
+            if locked['state'] in ('completed', 'failed'):
+                return locked
+            payload = dict(locked['payload'])
+            payload.update({'prompt_version': PROMPT_VERSION, 'settings': runtime.context})
+            db.update_record(conn, run['id'], ACTOR, state='running', payload=payload, error_detail=None)
+        try:
+            extractions = extractions if extractions is not None else prepare_extractions(db, settings, comparison, run)
+        except ReviewError as exc:
+            if exc.code not in AI_CONTEXT_ERRORS and not exc.code.startswith('AUTHORIZATION_'):
+                raise
+            context_error = failure_detail(exc)
+    if context_error is not None:
+        with db.connect() as conn:
+            locked = db.record(conn, run['id'], lock=True, kind='ai_run')
+            if locked['state'] in ('completed', 'failed'):
+                return locked
+            payload = dict(locked['payload'])
+            payload.update({'prompt_version': PROMPT_VERSION, 'settings': runtime.context,
+                            'coverage': {'expected_candidates': None, 'processed_candidates': 0,
+                                         'failed_operations': 1, 'candidate_selection_complete': False}})
+            final = db.update_record(conn, run['id'], ACTOR, state='failed', payload=payload, error_detail=context_error)
+            comparison = db.record(conn, comparison_id, lock=True, kind='comparison')
+            cp = dict(comparison['payload'])
+            cp.update({'ai_state': 'failed', 'latest_ai_run_id': run['id']})
+            db.update_record(conn, comparison_id, ACTOR, payload=cp)
+        return final
+    reference = comparison['payload'].get('result_format') == COMPARISON_FORMAT
+    if reference:
+        observations = ((pc, pb, payload, None) for pc, pb, payload in iter_comparison_metrics(db, settings, comparison))
+    else:
+        with db.connect() as conn:
+            results = all_records(db, conn, 'metric_result', parent_id=comparison_id)
+        observations = ((None, None, result['payload'], result) for result in results)
     failures = sum(int(e.get('failed', False)) for e in extractions)
-    configuration_errors = [pin.get('error', 'AI_NOT_CONFIGURED') for pin in runtime.context.values() if not pin or pin.get('error')]
-    if not runtime.context or configuration_errors:
-        failures = max(1, failures)
     recipients = run['payload'].get('recipients', comparison['payload']['request'].get('recipients', []))
-    handled = 0
-    for candidate in candidates:
+    expected_candidates = handled = 0
+    context_error = None
+    for pc, pb, observation, candidate in observations:
+        violations = range_violations({'payload': observation}, extractions)
+        needs_judgement = observation['is_candidate'] or bool(violations)
+        evidence = observation['evidence']
+        numeric_alert = reference and (evidence.get('operating_limit_exceeded') or evidence.get('data_quality'))
+        if not needs_judgement and not numeric_alert:
+            continue
+        if candidate is None:
+            key = digest({'comparison': comparison_id, 'group': observation['group_id'], 'metric': observation['metric'],
+                          'power_pair': {'current': pc['id'], 'baseline': pb['id'] if pb else None}
+                          if observation['metric'] in POWER else None})
+            with db.connect() as conn:
+                advisory_lock(conn, key)
+                candidate = existing_dedupe(db, conn, 'metric_result', key)
+                if candidate is None:
+                    candidate = db.insert_record(conn, 'metric_result', observation, ACTOR, parent_id=comparison_id,
+                        upload_id=pc['id'], baseline_upload_id=pb['id'] if pb else None,
+                        state=observation['comparability'], dedupe_key=key, **scope_fields(pc))
+                elif digest(candidate['payload']) != digest(observation):
+                    raise DomainError('Immutable comparison inputs produced different metrics', code='immutable_result_conflict')
+        if numeric_alert:
+            with db.connect() as conn:
+                if evidence.get('operating_limit_exceeded'):
+                    write_alert(db, conn, comparison, candidate, 'operating_limit', 'Configured operating limit exceeded', recipients)
+                if evidence.get('data_quality'):
+                    write_alert(db, conn, comparison, candidate, 'data_quality', 'Unclassified logic cells require review', recipients)
+        if not needs_judgement:
+            continue
+        expected_candidates += 1
         key = digest({'run': run['id'], 'candidate': candidate['id']})
         with db.connect() as conn:
             old = existing_dedupe(db, conn, 'judgement', key)
@@ -513,12 +592,20 @@ def run_judgement(db, settings, comparison_id, run_id=None, *, extractions=None)
             result = judge_candidate(runtime, candidate, extractions)
             result['provider_metadata'] = runtime.receipts[receipt_start:]
             result['failed'] = False
+        except ReviewError as exc:
+            if exc.code not in AI_CONTEXT_ERRORS and not exc.code.startswith('AUTHORIZATION_'):
+                raise
+            context_error = failure_detail(exc)
+            failures += 1
+            break
+        except ConfigurationError:
+            raise
         except Exception as exc:
             error = failure_detail(exc)
             result = {'candidate_id': candidate['id'], 'verdict': 'needs_review', 'reason': 'AI judgement unavailable: ' + error['code'], 'explained_parts': [], 'unexplained_parts': ['Candidate has not received a valid AI judgement'], 'requested_information': ['Restore AI configuration/service or review this observation manually'], 'applied_change_ids': [], 'failed': True, 'failure': error}
             failures += 1
         result['metric_result_id'] = candidate['id']
-        result['candidate_reasons'] = {'numerical': candidate['payload']['is_candidate'], 'expected_range_violations': range_violations(candidate, extractions)}
+        result['candidate_reasons'] = {'numerical': candidate['payload']['is_candidate'], 'expected_range_violations': violations}
         result['extraction_ids'] = [e['extraction_id'] for e in extractions]
         with db.connect() as conn:
             advisory_lock(conn, key)
@@ -538,14 +625,19 @@ def run_judgement(db, settings, comparison_id, run_id=None, *, extractions=None)
                 if other != kind or result['verdict'] == 'expected':
                     write_alert(db, conn, comparison, candidate, other, result['reason'], recipients, judgement, create=False)
         handled += 1
-    if handled != len(candidates):
+    if context_error is None and handled != expected_candidates:
         raise DomainError('AI candidate coverage mismatch', code='coverage_mismatch')
     with db.connect() as conn:
         row = db.record(conn, run['id'], lock=True, kind='ai_run')
         payload = dict(row['payload'])
-        payload.update({'coverage': {'expected_candidates': len(candidates), 'processed_candidates': handled, 'failed_operations': failures}, 'extraction_ids': [e['extraction_id'] for e in extractions]})
+        payload.update({'coverage': {'expected_candidates': expected_candidates if context_error is None else None,
+                                    'processed_candidates': handled, 'failed_operations': failures,
+                                    'candidate_selection_complete': context_error is None},
+                        'extraction_ids': [e['extraction_id'] for e in extractions]})
         payload['extraction_resolutions'] = [{k: e.get(k) for k in ('extraction_id', 'change_id', 'actual_source_interval', 'applicability_reason', 'resolved_paths', 'unresolved', 'failed')} for e in extractions]
-        final = db.update_record(conn, run['id'], ACTOR, state='failed' if failures else 'completed', payload=payload, error_detail={'code': configuration_errors[0] if configuration_errors else ('AI_NOT_CONFIGURED' if not runtime.context else 'ai_incomplete'), 'failed_operations': failures} if failures else None)
+        error = {**(context_error or {'code': 'ai_incomplete'}), 'failed_operations': failures} if failures else None
+        final = db.update_record(conn, run['id'], ACTOR, state='failed' if failures else 'completed', payload=payload,
+                                 error_detail=error)
         comparison = db.record(conn, comparison_id, lock=True, kind='comparison')
         cp = dict(comparison['payload'])
         cp.update({'ai_state': final['state'], 'latest_ai_run_id': run['id']})

@@ -13,6 +13,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 from area_power.common.errors import DomainError
 from area_power.common.jsonutil import dumps
+from area_power.common.models import COMPARISON_FORMAT
 from area_power.vwp_server.analysis import all_records, compute_comparison, parse_upload
 from area_power.vwp_server.ai import (AIError, ensure_run, extract_one, failure_detail,
                            prepare_extractions, publish_numeric_alerts, run_judgement, new_attempt, mirror_attempt)
@@ -25,11 +26,12 @@ def compare(db, settings, comparison_id, requested_run=None, attempt_key=None):
     with db.connect() as conn:
         comparison = db.record(conn, comparison_id, kind='comparison')
     comparison = compute_comparison(db, settings, comparison_id)
+    if comparison['payload'].get('result_format') == COMPARISON_FORMAT:
+        return
     publish_numeric_alerts(db, comparison)
     run = ensure_run(db, comparison, run_id=requested_run)
     if attempt_key:
         run = new_attempt(db, comparison, run, attempt_key)
-    extractions = prepare_extractions(db, settings, comparison, run)
     if requested_run or attempt_key:
         runs = [run]
     else:
@@ -39,7 +41,7 @@ def compare(db, settings, comparison_id, requested_run=None, attempt_key=None):
     for pending in runs:
         if pending['state'] in ('completed', 'failed'):
             continue
-        result = run_judgement(db, settings, comparison_id, pending['id'], extractions=extractions if str(pending['id']) == str(run['id']) else None)
+        result = run_judgement(db, settings, comparison_id, pending['id'])
         failure |= result['state'] == 'failed'
     if failure:
         raise AIError('ai_incomplete')
