@@ -34,7 +34,7 @@ export default function AtlasHome() {
 function CatalogForm({ kind, onClose, onCreated }: { kind: 'project' | 'block' | 'version'; onClose: () => void; onCreated: (message: string) => void }) {
   const atlas = useAtlas()!
   const auth = useDashboardAuth(true)
-  const [fields, setFields] = useState({ id: '', name: '', description: '', source_namespace: '', net_ver: '', revision: '', layout: 'PRE', ecos: '', source_pre_id: '', previous_version_id: '' })
+  const [fields, setFields] = useState({ name: '', description: '', source_namespace: '', net_ver: '', revision: '', layout: 'PRE', ecos: '', source_pre_id: '', previous_version_id: '' })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [requestId] = useState(() => crypto.randomUUID())
@@ -43,8 +43,8 @@ function CatalogForm({ kind, onClose, onCreated }: { kind: 'project' | 'block' |
     event.preventDefault(); setBusy(true); setError('')
     try {
       let path: string; let body: Record<string, unknown>
-      if (kind === 'project') { path = '/api/atlas/projects'; body = { request_id: requestId, project_id: fields.id, name: fields.name, description: fields.description } }
-      else if (kind === 'block') { path = '/api/atlas/blocks'; body = { request_id: requestId, project_id: atlas.scope.projectId, block_id: fields.id, name: fields.name } }
+      if (kind === 'project') { path = '/api/atlas/projects'; body = { request_id: requestId, name: fields.name, description: fields.description } }
+      else if (kind === 'block') { path = '/api/atlas/blocks'; body = { request_id: requestId, project_id: atlas.scope.projectId, name: fields.name } }
       else {
         const identity = { project_id: atlas.scope.projectId, block_id: atlas.scope.blockId, source_namespace: fields.source_namespace, net_ver: fields.net_ver, revision: fields.revision, layout: fields.layout }
         const result = await auth.request<{ version_id: string }>('/api/atlas/version-identity', identity)
@@ -59,8 +59,8 @@ function CatalogForm({ kind, onClose, onCreated }: { kind: 'project' | 'block' |
   }
   return <Dialog open onOpenChange={open => { if (!open && !busy) onClose() }}><DialogContent className="atlas-modal" showCloseButton={!busy}><DialogHeader><DialogTitle>{kind === 'project' ? '공통 프로젝트 등록' : kind === 'block' ? '공통 블록 등록' : '네이티브 버전 선언'}</DialogTitle><DialogDescription>{atlas.demo ? '현재 탭의 합성 카탈로그에 저장합니다. 실제 DB나 권한에는 반영하지 않으며 새로고침 시 초기화됩니다.' : '실제 공통 카탈로그에 저장합니다. 기존 분석 데이터와 인증 권한은 유지됩니다.'}</DialogDescription></DialogHeader><form onSubmit={submit}>
     {kind !== 'version' ? <>
-      <label>{kind === 'project' ? '프로젝트' : '블록'} ID<input autoFocus required maxLength={100} value={fields.id} onChange={event => field('id', event.target.value)} /><small>수집 도구와 공유하는 명시적 ID입니다. 이름에서 생성하지 않습니다.</small></label>
-      <label>표시 이름<input required maxLength={100} value={fields.name} onChange={event => field('name', event.target.value)} /></label>
+      {kind === 'block' && <p>프로젝트: {atlas.project?.name}</p>}
+      <label>{kind === 'project' ? '프로젝트 이름' : '블록 이름'}<input autoFocus required maxLength={100} value={fields.name} onChange={event => field('name', event.target.value)} /><small>이름으로 ID를 자동 생성합니다. 같은 프로젝트 이름은 같은 프로젝트이며, 같은 프로젝트의 같은 블록 이름은 기존 블록을 사용합니다. 앞뒤 공백만 제거하고 대소문자와 내부 공백은 구분합니다.</small></label>
       {kind === 'project' && <label>설명<textarea value={fields.description} onChange={event => field('description', event.target.value)} /></label>}
     </> : <>
       <p>소속: {atlas.project?.name} / {atlas.block?.name}</p>

@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from common.sanity_config import load_environment
 from common.sanity_common import ReviewError
@@ -15,6 +15,7 @@ from oa.sanity_auth import Actor
 from oa.sanity_access import AccessStore, access_lock, administrator_id, require_mutation_request
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")]
+Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100, pattern=r"^[^\x00-\x1f\x7f]+$")]
 
 
 class AccessCommand(BaseModel):
@@ -24,15 +25,13 @@ class AccessCommand(BaseModel):
 
 class ProjectCommand(AccessCommand):
     request_id: UUID
-    project_id: Identifier
-    name: str = Field(min_length=1, max_length=100)
-    description: str = Field(default="", max_length=1000)
+    name: Name
+    description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
 
 
 class BlockCommand(AccessCommand):
     request_id: UUID
-    block_id: Identifier
-    name: str = Field(min_length=1, max_length=100)
+    name: Name
 
 
 class PermissionCommand(AccessCommand):

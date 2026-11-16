@@ -14,7 +14,7 @@ const controls = /[\x00-\x1f\x7f]/
 function text(value: unknown, maximum = 100, trim = true, empty = false): string {
   if (typeof value !== 'string') return fail()
   const result = trim ? value.trim() : value
-  if ((!empty && !result.trim()) || result.length > maximum || controls.test(result)) return fail()
+  if ((!empty && !result.trim()) || [...result].length > maximum || controls.test(result)) return fail()
   return result
 }
 function id(value: unknown): string { return typeof value === 'string' && idPattern.test(value) ? value : fail() }
@@ -76,6 +76,11 @@ export function makeWorkspaceDemoCatalog(state: {
     const digest = await crypto.subtle.digest('SHA-256', bytes)
     return 'sv-' + Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
   }
+  async function nameId(prefix: string, parts: string[]) {
+    const bytes = new TextEncoder().encode(JSON.stringify(parts))
+    const digest = await crypto.subtle.digest('SHA-256', bytes)
+    return prefix + Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
+  }
   async function request(url: URL, body?: unknown): Promise<unknown> {
     const path = url.pathname
     if (path === '/atlas/session' && body === undefined) return { user_id: state.user().id, reviewer: state.user().name,
@@ -100,23 +105,36 @@ export function makeWorkspaceDemoCatalog(state: {
       return { items: rows.slice(offset, offset + limit), total: rows.length, offset, limit }
     }
     if (path === '/atlas/projects') {
-      const bodyFields = input(body, ['request_id', 'project_id', 'name', 'description'])
-      const data = { project_id: id(bodyFields.project_id), name: text(bodyFields.name), description: text(bodyFields.description ?? '', 1000, true, true) }
+      const bodyFields = input(body, ['request_id', 'name', 'description'])
+      const data = { name: text(bodyFields.name), description: text(bodyFields.description ?? '', 1000, true, true) }
+      const projectId = await nameId('project-', ['atlas-project-v1', data.name])
       return command(bodyFields, 'PROJECT', data, () => {
-        if (projects.some(project => project.id === data.project_id)) return fail('REQUEST_CONFLICT')
-        projects.push({ id: data.project_id, name: data.name, description: data.description, tops: [state.user()], area_id: null })
-        return { status: 'CREATED', project_id: data.project_id }
+        const existing = projects.filter(project => project.name === data.name)
+        if (existing.length > 1) return fail('REQUEST_CONFLICT')
+        if (existing.length) {
+          const project = existing[0]
+          scope(project.id)
+          if (data.description && data.description !== project.description) return fail('REQUEST_CONFLICT')
+          return { status: 'ALREADY_CREATED', project_id: project.id }
+        }
+        if (projects.some(project => project.id === projectId)) return fail('REQUEST_CONFLICT')
+        projects.push({ id: projectId, name: data.name, description: data.description, tops: [state.user()], area_id: null })
+        return { status: 'CREATED', project_id: projectId }
       })
     }
     if (path === '/atlas/blocks') {
-      const bodyFields = input(body, ['request_id', 'project_id', 'block_id', 'name'])
-      const data = { project_id: id(bodyFields.project_id), block_id: id(bodyFields.block_id), name: text(bodyFields.name) }
+      const bodyFields = input(body, ['request_id', 'project_id', 'name'])
+      const data = { project_id: id(bodyFields.project_id), name: text(bodyFields.name) }
       scope(data.project_id)
+      const blockId = await nameId('block-', ['atlas-block-v1', data.project_id, data.name])
       return command(bodyFields, 'BLOCK', data, () => {
-        if (blocks.some(block => block.id === data.block_id)) return fail('REQUEST_CONFLICT')
-        blocks.push({ id: data.block_id, project_id: data.project_id, name: data.name, owner: state.user(), versions: [],
+        const existing = blocks.filter(block => block.project_id === data.project_id && block.name === data.name)
+        if (existing.length > 1) return fail('REQUEST_CONFLICT')
+        if (existing.length) return { status: 'ALREADY_CREATED', project_id: data.project_id, block_id: existing[0].id }
+        if (blocks.some(block => block.id === blockId)) return fail('REQUEST_CONFLICT')
+        blocks.push({ id: blockId, project_id: data.project_id, name: data.name, owner: state.user(), versions: [],
           por: { revision: 0, version: null, assigned_by: null, assigned_at: null }, events: [], area_id: null })
-        return { status: 'CREATED', project_id: data.project_id, block_id: data.block_id }
+        return { status: 'CREATED', project_id: data.project_id, block_id: blockId }
       })
     }
     if (path === '/atlas/version-identity') {

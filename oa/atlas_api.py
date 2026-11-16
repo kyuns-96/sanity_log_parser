@@ -25,7 +25,6 @@ class Input(BaseModel):
 
 class Project(Input):
     request_id: UUID
-    project_id: ID
     name: Text
     description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
 
@@ -33,7 +32,6 @@ class Project(Input):
 class Block(Input):
     request_id: UUID
     project_id: ID
-    block_id: ID
     name: Text
 
 
