@@ -11,6 +11,7 @@ from contextlib import contextmanager
 import hashlib
 import os
 from pathlib import Path
+import re
 import shutil
 import tempfile
 
@@ -24,6 +25,27 @@ from common.sanity_submission_intake import PENDING_BLOCKER, unverified
 RAW_PROTOCOL = 'raw-source-v1'
 CHUNK_BYTES = 1024 * 1024
 KINDS = ('RAW_SUBMISSION','RAW_FILE','RAW_CHUNK')
+
+
+def _raw_key_predicate_matches(predicate):
+    # pg_get_expr can cast the varchar array or each element to text.
+    # Recognize only this column/ANY expression and unbounded string casts;
+    # stripping arbitrary casts or parentheses could accept a different filter.
+    match = re.fullmatch(
+        r"\(\(record_type\)::text = ANY \((?:"
+        r"\(ARRAY\[(?P<array_cast>.+)\]\)::text\[\]|"
+        r"ARRAY\[(?P<element_cast>.+)\])\)\)", predicate or "")
+    if not match:
+        return False
+    kinds = set()
+    for item in (match['array_cast'] or match['element_cast']).split(','):
+        literal = re.fullmatch(
+            r"(?:'([A-Z_]+)'::(?:character varying|text)|"
+            r"\('([A-Z_]+)'::character varying\)::text)", item.strip())
+        if not literal:
+            return False
+        kinds.add(literal[1] or literal[2])
+    return kinds == set(KINDS)
 
 
 def require_raw_schema(db):
@@ -49,9 +71,9 @@ def require_raw_schema(db):
         "JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.attnum ORDER BY k.position) AS columns "
         "FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace "
         "WHERE n.nspname=%s AND t.relname='sanity_vwp_data' AND i.indexprs IS NULL",(db.schema,)).fetchall()
-    predicate = "((record_type)::text = ANY ((ARRAY['RAW_SUBMISSION'::character varying, 'RAW_FILE'::character varying, 'RAW_CHUNK'::character varying])::text[]))"
     check(any(all(r[k] for k in ('indisunique','indisvalid','indisready','indislive','indimmediate'))
-              and tuple(r['columns']) == ('record_type','entity_key') and r['predicate'] == predicate for r in rows),
+              and tuple(r['columns']) == ('record_type','entity_key')
+              and _raw_key_predicate_matches(r['predicate']) for r in rows),
           'RAW_SOURCE_SCHEMA_REQUIRED')
 
 

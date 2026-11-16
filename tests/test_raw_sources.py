@@ -9,10 +9,10 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from common.sanity_common import digest
+from common.sanity_common import ReviewError, digest
 from common.sanity_db import Database
 from common.sanity_parsers import ParserRegistry
-from common.sanity_raw_sources import DatabaseUploadStore
+from common.sanity_raw_sources import DatabaseUploadStore, require_raw_schema
 from common.sanity_submission_files import snapshot, verify_bundle, write_json_file
 from devtools.sanity_submission_fixture import FixtureIdentity, fixture
 from oa.sanity_workspace import seed_workspace
@@ -81,6 +81,32 @@ class RawSourcesDatabaseTests(PgTestCase):
                 pass
 
     def test_real_tls_db_originals_reach_oa_and_receipts_survive_without_server_files(self):
+        kinds = "'RAW_SUBMISSION','RAW_FILE','RAW_CHUNK'"
+        # Leave the reported per-element cast form installed for the complete
+        # upload/worker/receipt path below, not just the catalog check.
+        for predicate, accepted in (
+            (f"record_type = ANY (ARRAY[{kinds}]::text[])", True),
+            ("record_type = ANY (ARRAY['RAW_CHUNK','RAW_FILE','RAW_SUBMISSION']::text[])", True),
+            ("record_type IN ('RAW_SUBMISSION','RAW_FILE')", False),
+            (f"record_type IN ({kinds},'RUN')", False),
+            (f"record_type IN ({kinds}) AND entity_key IS NOT NULL", False),
+            (f"record_type NOT IN ({kinds})", False),
+            (f"record_type::varchar(3) IN ({kinds})", False),
+            ("record_type IN ('RAW_SUBMISSION','RAW_FILE','RAW_CHUNK ')", False),
+            ("record_type = ANY (ARRAY['RAW_SUBMISSION'::varchar::text,"
+             "'RAW_FILE'::varchar::text,'RAW_CHUNK'::varchar::text])", True),
+        ):
+            with self.subTest(predicate=predicate):
+                self.admin.execute(f'DROP INDEX {self.schema}.sanity_vwp_raw_key_uq')
+                self.admin_query("CREATE UNIQUE INDEX sanity_vwp_raw_key_uq ON {vwp}(record_type,entity_key) "
+                                 "WHERE " + predicate)
+                with Database('vwp') as db:
+                    if accepted:
+                        require_raw_schema(db)
+                    else:
+                        with self.assertRaises(ReviewError) as raised:
+                            require_raw_schema(db)
+                        self.assertEqual('RAW_SOURCE_SCHEMA_REQUIRED', raised.exception.code)
         for name in ('011_payload_storage.sql', '012_source_evidence_pages.sql', '013_shared_source_packets.sql'):
             self.admin.execute((ROOT/'db'/name).read_text().replace('public.', self.schema+'.'))
         with tls_server(self.app,self.root) as (endpoint,ca_file),patch.dict(os.environ,{'SANITY_VWP_SUBMIT_TOKEN':TOKEN}):
