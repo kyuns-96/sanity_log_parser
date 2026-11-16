@@ -98,8 +98,6 @@ class ProductionWorkspaceStore(WorkspaceStore):
         readable_blocks = {scope["block_id"] for scope in readable}
         writable_blocks = {scope["block_id"] for scope in self.authorization._scopes(user_id, write=True)}
         registry = self.authorization._state()
-        member_projects = {grant["project_id"] for grant in registry["grants"].values()
-                           if grant["user_id"] == user_id}
 
         projects = []
         for project in sorted(registry["projects"].values(), key=lambda value: value["id"]):
@@ -127,8 +125,7 @@ class ProductionWorkspaceStore(WorkspaceStore):
                 blocks.append({**value, "owners": [],
                                "can_assign_por": block_id in writable_blocks, "por": por,
                                "report_version": report_version, "counts": counts, "total": sum(counts.values())})
-            if project["id"] in member_projects:
-                projects.append({**project, "tops": [], "blocks": blocks})
+            projects.append({**project, "tops": [], "blocks": blocks})
         return {"user": user, "projects": projects, "data_origin": "PRODUCTION_SSO"}
 
     def assign_por(self, user_id, block_id, version_id, expected_revision, request_id, reason):

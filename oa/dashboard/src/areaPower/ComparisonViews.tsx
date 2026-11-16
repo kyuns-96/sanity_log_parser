@@ -44,8 +44,7 @@ export function Comparisons(props: ComparisonProps) {
   const projectRecords = useMemo(() => new Map(props.records.filter(row => row.record_type === 'project').map(row => [text(row.payload.sanity_project_id), row])), [props.records])
   const currentAreaId = project.area_id || projectRecords.get(project.id)?.id || ''
   const candidates = atlas.catalog?.projects || []
-  const grantedProjects = new Set(props.access.projects.map(row => row.id))
-  const baselineCandidates = candidates.filter(row => row.id !== project.id && (row.can_write || grantedProjects.has(row.id)))
+  const baselineCandidates = candidates.filter(row => row.id !== project.id)
   const savedProject = candidates.find(row => (row.area_id || projectRecords.get(row.id)?.id) === baseline?.baseline_project_id)
   const choiceProject = baselineCandidates.find(row => row.id === baselineChoice)
   const choiceAreaId = choiceProject?.area_id || (choiceProject ? projectRecords.get(choiceProject.id)?.id : '') || ''
@@ -71,7 +70,7 @@ export function Comparisons(props: ComparisonProps) {
   const treeRows = useMemo(() => mergeHierarchy(currentHierarchy.data?.items || [], beforeHierarchy.data?.items || [], results), [currentHierarchy.data, beforeHierarchy.data, results])
   const displayedCurrent = props.uploads.find(row => row.id === displayedCurrentId)
   const displayedBefore = props.uploads.find(row => row.id === displayedBaselineId)
-  const canCompare = !!selectedCurrent && !!baseline?.baseline_project_id && (!before.upload || !!selectedBefore) && (!mappingId || mappings.some(row => row.id === mappingId))
+  const canCompare = project.can_write && !!selectedCurrent && !!baseline?.baseline_project_id && (!before.upload || !!selectedBefore) && (!mappingId || mappings.some(row => row.id === mappingId))
 
   useEffect(() => {
     setCurrentRun({ versionId: '', corner: '', upload: '' })
@@ -158,13 +157,14 @@ export function Comparisons(props: ComparisonProps) {
 
   return <>
     {action.feedback}
+    {!project.can_write && <p className="notice">조회 전용 · 기준 설정, 비교 실행과 구조 대응 변경에는 프로젝트 멤버 권한이 필요합니다.</p>}
     <section className="panel project-baseline" aria-label="프로젝트 기준 설정">
-      <div className="baseline-summary"><div><h2>{project.name} <span aria-hidden="true">→</span> {baseline?.status === 'available' ? text(baseline.baseline_project?.payload.name) || savedProject?.name : baseline?.status === 'unavailable' ? '기준 조회 불가' : '기준 미설정'}</h2></div><Button variant="outline" disabled={baselineLoading} onClick={() => setBaselineEditing(value => !value)}>{baselineEditing ? '설정 접기' : '기준 변경'}</Button></div>
+      <div className="baseline-summary"><div><h2>{project.name} <span aria-hidden="true">→</span> {baseline?.status === 'available' ? text(baseline.baseline_project?.payload.name) || savedProject?.name : baseline?.status === 'unavailable' ? '기준 조회 불가' : '기준 미설정'}</h2></div><Button variant="outline" disabled={baselineLoading || !project.can_write} onClick={() => setBaselineEditing(value => !value)}>{baselineEditing ? '설정 접기' : '기준 변경'}</Button></div>
       {baselineError && <div className="notice error" role="alert">{baselineError}</div>}
       {!currentAreaId ? <div className="notice"><p>프로젝트만 연결하면 CSV·블록·버전 없이 기준을 설정할 수 있습니다.</p><Button disabled={action.busy || !project.can_write} onClick={() => action.run(() => prepare(project))}>현재 프로젝트 연결</Button></div> : baselineEditing && <div className="baseline-editor">
         {baseline?.status === 'unavailable' && <p className="notice warning">저장된 기준은 현재 권한으로 조회할 수 없습니다. 다른 기준으로 교체하거나 해제할 수 있습니다.</p>}
         <Field label="기준 프로젝트"><select value={baselineChoice} onChange={event => setBaselineChoice(event.target.value)}><option value="">기준 프로젝트 선택</option>{baselineCandidates.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field>
-        {choiceProject && !choiceAreaId && <Button disabled={action.busy} onClick={() => action.run(() => prepare(choiceProject))}>선택한 기준 프로젝트 연결</Button>}
+        {choiceProject && !choiceAreaId && <Button disabled={action.busy || !choiceProject.can_write} onClick={() => action.run(() => prepare(choiceProject))}>선택한 기준 프로젝트 연결</Button>}
         <Button disabled={action.busy || baselineLoading || !baseline || !choiceAreaId || !project.can_write} onClick={() => action.run(() => saveBaseline(choiceAreaId))}>기준 저장</Button>
         <Button variant="outline" disabled={action.busy || !baseline || baseline.status === 'unset' || !project.can_write} onClick={() => action.run(() => saveBaseline(null))}>기준 해제</Button>
         <small>A→B는 현재 프로젝트에만 저장됩니다. 다른 프로젝트의 기준을 바꾸지 않습니다.</small>
@@ -186,8 +186,8 @@ export function Comparisons(props: ComparisonProps) {
       {(currentHierarchy.loading || beforeHierarchy.loading) && <p role="status"><LoaderCircle size={16} className="spin" />선택한 실행의 hierarchy 조회 중…</p>}
       {treeRows.length ? <HierarchyTable rows={treeRows} expanded={expanded} onExpanded={setExpanded} hasResult={!!detail} /> : !currentHierarchy.loading && !beforeHierarchy.loading && !pending && <Empty title={comparisonId ? '표시할 hierarchy 결과가 없습니다' : '현재 실행을 선택하세요'}>Block → NET_VER → REVISION → corner → 실행 파일을 명시적으로 선택하세요. 최신 실행이나 같은 경로를 자동 연결하지 않습니다.</Empty>}
       {!comparisonId && selectedCurrent && selectedBefore && <details className="correspondence-settings"><summary>구조 대응 설정 · 다른 Block / hierarchy 연결</summary><p className="muted">명시적 root↔root subtree 규칙으로 전체 트리를 연결하거나 node 규칙을 여러 개 저장하세요. 이름이 같아도 자동 대응하지 않습니다.</p>
-        <div className="mapping-controls"><Field label="기준 경로"><select value={baselinePath} onChange={event => setBaselinePath(event.target.value)}><option value="">경로 선택</option>{beforeHierarchy.data?.items.map(row => <option key={row.path}>{row.path}</option>)}</select></Field><Field label="현재 경로"><select value={currentPath} onChange={event => setCurrentPath(event.target.value)}><option value="">경로 선택</option>{currentHierarchy.data?.items.map(row => <option key={row.path}>{row.path}</option>)}</select></Field><Field label="대응 범위"><select value={mappingScope} onChange={event => setMappingScope(event.target.value as 'node' | 'subtree')}><option value="subtree">하위 트리 전체</option><option value="node">선택한 instance만</option></select></Field><Button variant="outline" disabled={!baselinePath || !currentPath} onClick={() => { setMappingDraft(rows => [...rows, { baselinePath, currentPath, scope: mappingScope }]); setBaselinePath(''); setCurrentPath('') }}><Plus size={15} />대응 추가</Button></div>
-        {mappingDraft.length > 0 && <div className="draft-mappings">{mappingDraft.map((row, index) => <div key={index}><span>{row.baselinePath} → {row.currentPath} · {row.scope}</span><Button variant="ghost" aria-label={`${index + 1}번 대응 삭제`} onClick={() => setMappingDraft(rows => rows.filter((_, position) => position !== index))}><Trash2 size={15} /></Button></div>)}<Button disabled={action.busy} onClick={() => action.run(saveMapping)}>대응 {mappingDraft.length}개 저장</Button></div>}
+        <div className="mapping-controls"><Field label="기준 경로"><select value={baselinePath} onChange={event => setBaselinePath(event.target.value)}><option value="">경로 선택</option>{beforeHierarchy.data?.items.map(row => <option key={row.path}>{row.path}</option>)}</select></Field><Field label="현재 경로"><select value={currentPath} onChange={event => setCurrentPath(event.target.value)}><option value="">경로 선택</option>{currentHierarchy.data?.items.map(row => <option key={row.path}>{row.path}</option>)}</select></Field><Field label="대응 범위"><select value={mappingScope} onChange={event => setMappingScope(event.target.value as 'node' | 'subtree')}><option value="subtree">하위 트리 전체</option><option value="node">선택한 instance만</option></select></Field><Button variant="outline" disabled={!project.can_write || !baselinePath || !currentPath} onClick={() => { setMappingDraft(rows => [...rows, { baselinePath, currentPath, scope: mappingScope }]); setBaselinePath(''); setCurrentPath('') }}><Plus size={15} />대응 추가</Button></div>
+        {mappingDraft.length > 0 && <div className="draft-mappings">{mappingDraft.map((row, index) => <div key={index}><span>{row.baselinePath} → {row.currentPath} · {row.scope}</span><Button variant="ghost" disabled={!project.can_write} aria-label={`${index + 1}번 대응 삭제`} onClick={() => setMappingDraft(rows => rows.filter((_, position) => position !== index))}><Trash2 size={15} /></Button></div>)}<Button disabled={action.busy || !project.can_write} onClick={() => action.run(saveMapping)}>대응 {mappingDraft.length}개 저장</Button></div>}
         <Field label="저장된 구조 대응"><select value={mappingId} onChange={event => setMappingId(event.target.value)}><option value="">대응 미선택 · 비교 불가</option>{mappings.map(row => <option key={row.id} value={row.id}>{date(row.created_at)} · 규칙 {Array.isArray(row.payload.rules) ? row.payload.rules.length : 0}개 · r{row.revision}</option>)}</select></Field>
       </details>}
     </section>

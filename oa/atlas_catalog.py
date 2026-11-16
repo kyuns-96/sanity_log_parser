@@ -42,10 +42,10 @@ class AtlasCatalog:
             registry = self.access.catalog()
             if project_id not in {p["id"] for p in registry["projects"]}:
                 fail("RESOURCE_NOT_FOUND")
-            if not (manage and self.can_manage):
+            if write and not (manage and self.can_manage):
                 snapshot = self.access.snapshot(self.actor.user_id)
                 if project_id not in {g["project_id"] for g in snapshot["grants"]}:
-                    fail("RESOURCE_NOT_FOUND")
+                    fail("FORBIDDEN")
         return row
 
     def scope(self, project_id, block_id=None, version_id=None, *, write=False):
@@ -192,18 +192,15 @@ class AtlasCatalog:
             value = project["payload"]
             item = {"id": pid, "name": value["name"], "description": value.get("description", ""),
                     "can_write": writable is None or pid in writable, "blocks": []}
-            # Registry names remain discoverable for requesting project access;
-            # protected versions and bindings require the current held grant.
-            if item["can_write"]:
-                for block in blocks:
-                    if block["workspace_project_ref"] != project["record_id"]:
-                        continue
-                    bid = block["workspace_key"]
-                    child = {"id": bid, "name": block["payload"]["name"], "versions": []}
-                    for version in versions:
-                        if version["workspace_block_ref"] == block["record_id"]:
-                            child["versions"].append({**self.ws.version_ecos(version), **self.metadata(version["workspace_key"])})
-                    item["blocks"].append(child)
+            for block in blocks:
+                if block["workspace_project_ref"] != project["record_id"]:
+                    continue
+                bid = block["workspace_key"]
+                child = {"id": bid, "name": block["payload"]["name"], "versions": []}
+                for version in versions:
+                    if version["workspace_block_ref"] == block["record_id"]:
+                        child["versions"].append({**self.ws.version_ecos(version), **self.metadata(version["workspace_key"])})
+                item["blocks"].append(child)
             result.append(item)
         return result
 
@@ -272,8 +269,6 @@ class AreaAdapters:
             conn.execute("SET TRANSACTION READ ONLY")
             rows = self.rows(conn)
             for project in projects:
-                if not project["can_write"]:
-                    continue
                 p = self.match(rows, "project", project["id"])
                 project["area_id"] = str(p["id"]) if p else None
                 for block in project["blocks"]:

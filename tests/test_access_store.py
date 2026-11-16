@@ -83,7 +83,8 @@ class AccessStoreTests(PgTestCase):
                      {"schema_version": 1.0, "project_id": self.project_a, "block_id": self.block_a1}]
         for scope, suffix in zip(malformed, "def01"):
             self.bundle(scope, suffix)
-        for actor, expected in ((OWNER, [a1, a2]), (TOP, [a1, a2]), (OTHER, []), (ADMIN, [])):
+        for actor in (OWNER, TOP, OTHER, ADMIN):
+            expected = [a1, a2, b1]
             with self.store() as store:
                 predicate, params = store.read_predicate(actor.user_id)
                 rows = store.db.execute("SELECT r.bundle_id FROM {oa} r WHERE r.record_type='RECEIVED_BUNDLE' AND "
@@ -96,8 +97,8 @@ class AccessStoreTests(PgTestCase):
         self.assertEqual(self.block_a2, self.call("require_bundle", TOP.user_id, a2)["block_id"])
         self.assertEqual(self.block_a2, self.call("require_bundle", TOP.user_id, a2, write=True)["block_id"])
         self.assertEqual(self.block_a2, self.call("require_bundle", OWNER.user_id, a2, write=True)["block_id"])
-        self.assert_code("RESOURCE_NOT_FOUND", lambda: self.call("require_bundle", OWNER.user_id, b1, write=True))
-        self.assert_code("RESOURCE_NOT_FOUND", lambda: self.call("require_bundle", TOP.user_id, b1))
+        self.assert_code("FORBIDDEN", lambda: self.call("require_bundle", OWNER.user_id, b1, write=True))
+        self.assertEqual(self.block_b1, self.call("require_bundle", TOP.user_id, b1)["block_id"])
         self.assert_code("RESOURCE_NOT_FOUND", lambda: self.call("require_bundle", OWNER.user_id, "b-" + "d" * 64))
         self.assert_code("AUTHORIZATION_CONFIG", lambda: self.call("read_predicate", OWNER.user_id, "r);DROP"))
 
@@ -113,7 +114,8 @@ class AccessStoreTests(PgTestCase):
         self.assertTrue(self.call("can_write_business", ADMIN.user_id))
         self.assert_code("REQUEST_CONFLICT", lambda: self.call("decide", ADMIN, request_id, command_id, "REJECT", "변경", requested["revision"], exclusive=True))
         self.call("revoke", ADMIN, request_id, uuid4(), "업무 종료", approved["revision"], exclusive=True)
-        self.assertFalse(self.call("can_read_business", ADMIN.user_id))
+        self.assertEqual((True, False), (self.call("can_read_business", ADMIN.user_id),
+                                        self.call("can_write_business", ADMIN.user_id)))
         history = self.call("snapshot", ADMIN.user_id)
         self.assertEqual("APPROVED", history["requests"][0]["status"])
         self.assertEqual([], history["grants"])

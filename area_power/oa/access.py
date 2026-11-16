@@ -57,6 +57,7 @@ class AreaAccess:
             # Parent host explicitly selected token development mode. Keep the
             # original unbound Area catalog usable without inventing host grants.
             projects, blocks = [], []
+            self.writable_projects = set()
             self.is_admin = False
         else:
             # authorized_actor holds the host shared access lock for the request.
@@ -64,10 +65,9 @@ class AreaAccess:
             if store is None:
                 raise ReviewError("AUTHORIZATION_NOT_IMPLEMENTED", "Area access is not configured")
             snapshot = store.snapshot(actor.user_id)
-            allowed = {grant["project_id"] for grant in snapshot["grants"]}
+            self.writable_projects = {grant["project_id"] for grant in snapshot["grants"]}
             catalog = store.catalog()
-            projects = [row for row in catalog["projects"] if row["id"] in allowed]
-            blocks = [row for row in catalog["blocks"] if row["project_id"] in allowed]
+            projects, blocks = catalog["projects"], catalog["blocks"]
             self.is_admin = snapshot["is_admin"]
         self.projects = {row["id"]: {"id": row["id"], "name": row["name"], "blocks": []}
                          for row in projects}
@@ -141,20 +141,33 @@ class AreaAccess:
                     return
         hidden()
 
-    def row(self, db, conn, row, seen=None, *, upload=False):
+    def row(self, db, conn, row, seen=None, *, upload=False, write=False):
         if self.development:
             return
         seen = set() if seen is None else seen
         key = ("upload" if upload else "record", str(row.get("id")))
         if key in seen:
+            if write:
+                hidden()
             return
         seen.add(key)
+        host_project = None
         if not upload and row.get("record_type") == "project":
-            self.host_project(row.get("payload", {}).get("sanity_project_id"))
+            host_project = self.host_project(row.get("payload", {}).get("sanity_project_id"))
         elif row.get("project_id") is not None:
-            self.project(db, conn, row["project_id"])
+            host_project = self.project(db, conn, row["project_id"])
         elif not row.get("parent_id") and not row.get("upload_id"):
             hidden()
+        if write:
+            if host_project is None:
+                if row.get("upload_id"):
+                    owner = db.upload(conn, row["upload_id"])
+                    self.row(db, conn, owner, seen, upload=True, write=True)
+                else:
+                    owner = db.record(conn, row["parent_id"])
+                    self.row(db, conn, owner, seen, write=True)
+            elif host_project not in self.writable_projects:
+                raise ReviewError("FORBIDDEN", "Project membership is required")
         if (row.get("block_id") is not None
                 and not (row.get("record_type") == "block" and row.get("id") == row["block_id"])):
             self.block(db, conn, row["block_id"], row.get("project_id"))
@@ -229,8 +242,8 @@ class AuthorizedDatabase:
     def table(self, name):
         return self.raw.table(name)
 
-    def authorize(self, conn, row, *, upload=False):
-        self.access.row(self.raw, conn, row, upload=upload)
+    def authorize(self, conn, row, *, upload=False, write=False):
+        self.access.row(self.raw, conn, row, upload=upload, write=write)
         if row.get("record_type") == "project":
             payload = row.get("payload", {})
             baseline_id = payload.get("baseline_project_id")
@@ -296,15 +309,15 @@ class AuthorizedDatabase:
 
     def insert_record(self, conn, record_type, payload, actor, **fields):
         row = {**fields, "record_type": record_type, "payload": payload}
-        self.authorize(conn, row)
+        self.authorize(conn, row, write=True)
         return self.raw.insert_record(conn, record_type, payload, actor, **fields)
 
     def update_record(self, conn, value, actor, **fields):
-        previous = self.record(conn, value)
-        self.authorize(conn, {**previous, **fields})
+        previous = self.authorize(conn, self.raw.record(conn, value), write=True)
+        self.authorize(conn, {**previous, **fields}, write=True)
         return self.raw.update_record(conn, value, actor, **fields)
 
     def enqueue(self, conn, job_kind, **fields):
-        self.authorize(conn, {"record_type": "job", **fields})
+        self.authorize(conn, {"record_type": "job", **fields}, write=True)
         row = self.raw.enqueue(conn, job_kind, **fields)
         return self.authorize(conn, row)

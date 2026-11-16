@@ -52,6 +52,9 @@ async function mockOA(page: Page, options: MockOptions = {}) {
       state.writes.push({ path, body, marker: req.headers()['x-sanity-request'] })
       if (options.readOnly) return route.fulfill({ status: 403, json: { code: 'FORBIDDEN' } })
     }
+    if (path === '/api/auth-config') return route.fulfill({ json: { mode: 'sso', login_url: '/auth/login', logout_url: '/auth/logout', logout_method: 'POST' } })
+    if (path === '/api/session') return route.fulfill({ json: { user_id: actor.id, reviewer: actor.name, auth_method: 'sso', authorization_ready: true, is_admin: false, can_read_business: true, can_receive: false, writable: !options.readOnly, access_mode: 'postgresql', notice: '' } })
+    if (path === '/api/atlas/catalog') return route.fulfill({ json: { local_mode: false, can_manage_catalog: false, area_enabled: false, projects: [{ id: 'p1', name: '합성 프로젝트', description: '', can_write: !options.readOnly, blocks: [{ id: 'b1', project_id: 'p1', name: '합성 블록', versions: [version] }] }] } })
     if (path.startsWith('/workspace/api/')) { state.unexpected.push(path); return route.fulfill({ status: 404, json: { code: 'NOT_FOUND' } }) }
     if (path === '/api/ai/connections') return route.fulfill({ json: { items: connections().map(value => ({ ...value, auth_mode: 'bearer', issuance_url: null, credential: { registered: false, revision: 0 }, credential_error: null })) } })
     if (path === '/api/workbench/session') return route.fulfill({ json: { user: actor, csrf: '', expires_at: '', environment: 'PRODUCTION_SSO' } })
@@ -182,7 +185,7 @@ test('pending jobs resume with GET only and unknown outcomes never auto-submit',
 })
 
 test('read only server capabilities allow inspection without granting mutations', async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.setViewportSize({ width: 1920, height: 1080 })
   const state = await mockOA(page, { readOnly: true, initialRevision: 1, confirmed: true })
   await page.goto(url)
   await expect(page.locator('.ws-record-original pre')).toContainText('Full source evidence for node-1')

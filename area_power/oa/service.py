@@ -123,8 +123,8 @@ class Service:
         from area_power.common.ai import capture_context
         return capture_context(self.access)
 
-    def authorize(self, conn, row):
-        return self.db.authorize(conn, row) if self.access is not None else row
+    def authorize(self, conn, row, *, write=False):
+        return self.db.authorize(conn, row, write=write) if self.access is not None else row
 
     def lock(self, conn, identity):
         # Transaction-scoped lock also covers entities that do not have a row yet.
@@ -193,6 +193,7 @@ class Service:
             project = self.db.record(conn, identifier, kind="project", lock=body is not None)
             if body is None:
                 return self.baseline_setting(conn, project)
+            self.authorize(conn, project, write=True)
             if project["row_version"] != body.expected_row_version:
                 reject("Project baseline was changed; reload before editing.", "conflict", 409)
             if body.baseline_project_id == project["id"]:
@@ -200,8 +201,7 @@ class Service:
             if body.baseline_project_id:
                 self.db.record(conn, body.baseline_project_id, kind="project")
             payload = {**project["payload"], "baseline_project_id": body.baseline_project_id}
-            # The current-project grant and target grant were checked separately.
-            # Do not require access to the old target to replace/clear a pointer.
+            # Only the current project is modified; the baseline is a read reference.
             raw = self.db.raw if self.access is not None else self.db
             updated = raw.update_record(conn, project["id"], actor,
                 expected_row_version=body.expected_row_version, payload=payload)
@@ -414,6 +414,7 @@ class Service:
         recipients = addresses(body.recipients)
         with self.db.connect() as conn:
             current = self.ready_upload(conn, body.current_upload_id)
+            self.authorize(conn, current, write=True)
             baseline = self.ready_upload(conn, body.baseline_upload_id) if body.baseline_upload_id else None
             designation = None
             if body.comparison_kind == "previous_project":
@@ -509,6 +510,7 @@ class Service:
     def rerun(self, identifier, body, actor):
         with self.db.connect() as conn:
             job = self.db.record(conn, identifier, kind="job", lock=True)
+            self.authorize(conn, job, write=True)
             if job["state"] != "failed" or not job.get("finished_at"):
                 reject("Only failed terminal jobs can be explicitly rerun.", "invalid_job_state", 409)
             if body.expected_row_version is not None and body.expected_row_version != job["row_version"]:

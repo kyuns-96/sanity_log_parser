@@ -56,13 +56,13 @@ class PreservedTextOwnerTests(unittest.TestCase):
                 sid=c.submit()
                 c.assertEqual('AWAITING_CONFIRMATION',c.detail(sid)['delivery_state'])
                 c.assertEqual(0,c.report_count())
-                c.assertEqual(404,c.decide(sid,user=OTHER).status_code)
+                c.assertEqual(403,c.decide(sid,user=OTHER).status_code)
                 c.success(c.decide(sid));c.bridge()
                 c.assertEqual('READY',c.client.status(sid)['review_readiness'])
                 original=c.collection_report()
                 c.assertEqual(('COMPLETE','UNKNOWN',2,True),
                     (original['parse_status'],original['check_status'],original['not_evaluated_count'],original['analysis_ready']))
-                base='/api/workbench/blocks/block-a1/versions/'+original['version_id']+'/reports/'+original['id']
+                base='/api/workbench/blocks/'+original['block_id']+'/versions/'+original['version_id']+'/reports/'+original['id']
                 records=c.success(c.clients[OWNER].get(base+'/clustering/records?expected_revision=0'))['items']
                 c.assertEqual(2,len(records))
                 c.assertTrue(all(r['evaluation_status']=='NOT_PERFORMED' and not r['reasons'] for r in records))
@@ -134,14 +134,14 @@ class PreservedTextOwnerTests(unittest.TestCase):
                 c.assertEqual([record['source_raw_sha256'] for record in records],[row['raw_sha256'] for row in private])
             self.assertEqual(2, len(observed)); self.assertEqual(observed[0], observed[1])
             report = c.collection_report(); source = report['preserved_sources'][1]
-            base = '/api/workbench/blocks/block-a1/versions/'+report['version_id']+'/reports/'+report['id']
+            base = '/api/workbench/blocks/'+report['block_id']+'/versions/'+report['version_id']+'/reports/'+report['id']
             endpoint = base+'/preserved/'+source['id']
             value = c.success(c.clients[OWNER].get(endpoint))
             self.assertTrue(value['complete']); self.assertNotIn('synthetic-private-value', str(value))
             download = c.clients[OWNER].get(endpoint+'?download=true')
             self.assertEqual(200, download.status_code); self.assertIn('create_clock', download.text)
             self.assertNotIn('synthetic-private-value', download.text)
-            self.assertIn(c.clients[OTHER].get(endpoint).status_code, (403, 404))
+            self.assertEqual(200, c.clients[OTHER].get(endpoint).status_code)
             self.assertIn(c.clients[OWNER].get(base+'/preserved/pf-'+'0'*64).status_code, (403, 404))
         finally:
             c.doCleanups()

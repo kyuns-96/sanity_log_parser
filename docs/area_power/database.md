@@ -122,9 +122,9 @@ Key가 같아도 조건이 불완전하면 `comparable`로 판단하지 않는�
 
 주 화면의 A→B 기준은 기존 `record_type='project'` 행의 `payload.baseline_project_id`에 UUID 또는 null로 저장한다. 한 현재 프로젝트에 하나만 저장하며 반대쪽/다른 프로젝트는 갱신하지 않는다. 같은 기준을 여러 프로젝트가 사용할 수 있고 자기 자신은 거부한다. 새 record_type·컬럼·테이블·DDL·migration은 없다.
 
-`POST /api/area-power/projects/{id}/baseline`은 필수 `expected_row_version`으로 project 행을 잠그고 CAS 갱신한다. 현재 프로젝트 권한과 새 기준 프로젝트 권한을 각각 검사한다. 이전 기준 권한이 사라져도 현재 프로젝트와 해제/교체는 막지 않으며 응답/목록에서는 이전 기준 ID·이름을 가린다. 기준 프로젝트의 다른 기준으로 연쇄 탐색하지 않는다.
+`POST /api/area-power/projects/{id}/baseline`은 필수 `expected_row_version`으로 project 행을 잠그고 CAS 갱신한다. 현재 프로젝트 수정 권한과 새 기준의 유효한 공통 binding을 검사한다. 2026-11-16 조회 정책에 따라 활성 SSO 사용자는 배정 없이 등록된 기준을 조회하고, 배정 회수 후에는 현재 프로젝트의 기준 변경·해제가 차단된다. 기준 프로젝트의 다른 기준으로 연쇄 탐색하지 않는다.
 
-모든 새 교차 프로젝트 비교/매핑은 이 저장 기준을 검사한다. 비교는 기존 `frozen` payload에 당시 `baseline_designation={project_id,baseline_project_id,row_version}`과 정확한 upload/snapshot·mapping revision을 고정한다. 후속 설정 변경은 완료 결과를 수정하거나 다른 입력으로 재해석하지 않는다. 조회 권한은 실제 고정된 양쪽 프로젝트/원본을 계속 검사한다. 매핑 또는 상대 데이터가 없으면 값을 0으로 보완하지 않고 해당 비교의 Δ/%를 null/unavailable로 남긴다.
+모든 새 교차 프로젝트 비교/매핑은 이 저장 기준과 현재 프로젝트 수정 권한을 검사한다. 비교는 기존 `frozen` payload에 당시 `baseline_designation={project_id,baseline_project_id,row_version}`과 정확한 upload/snapshot·mapping revision을 고정한다. 후속 설정 변경은 완료 결과를 수정하거나 다른 입력으로 재해석하지 않는다. 활성 SSO 사용자는 실제 고정된 양쪽 프로젝트/원본을 배정 없이 조회하되 scope·binding과 참조 무결성을 계속 검사한다. 매핑 또는 상대 데이터가 없으면 값을 0으로 보완하지 않고 해당 비교의 Δ/%를 null/unavailable로 남긴다.
 
 교차 프로젝트 비교의 수치 dedupe 입력에는 지정 기준의 `baseline_project_id`도 포함한다. 기준 upload가 없는 현재 관측 비교라도 A→B와 A→C는 별개다. 같은 C를 재저장해 project `row_version`만 달라지면 기존 C 비교를 재사용할 수 있으며, 과거 B 결과나 B의 권한 조회가 새 C 요청을 가로막지 않는다. 당시 row_version은 frozen 감사 정보로만 보존하고 수치 동일성 키에는 넣지 않는다.
 

@@ -22,10 +22,10 @@ Area 테이블은 **`di_area_power_csv`, `di_area_power_tracking_record` 두 개
 ## 인증·프로젝트 연결
 
 - `/`의 공통 홈에서 프로젝트·블록·버전을 선택한다. 수치 화면은 `/?page=area-power`, 엔진 API는 `/api/area-power/*`다. 별도 Area 로그인·브라우저용 `OA_API_TOKEN`·신뢰하는 `X-Actor`는 없다.
-- 기존 인증·현재 사용자·관리자/프로젝트 권한·mutation 보호를 사용한다. 회사 SSO 미설정과 `AUTHORIZATION_NOT_IMPLEMENTED` 차단은 유지한다.
+- 로그인한 활성 SSO 사용자는 프로젝트 배정 없이 모든 등록 프로젝트의 수치 자료를 조회한다. 관리자 기능·프로젝트별 수정 권한·mutation 보호와 회사 SSO 미설정·`AUTHORIZATION_NOT_IMPLEMENTED` 차단은 유지한다.
 - 공통 등록·선언·준비는 `/api/atlas/*`만 사용한다. 기존 Area 전용 등록 API는 제거했다. 수치 범위 준비가 네이티브 프로젝트·블록·버전을 실제 내부 UUID에 정확히 연결하므로 이중 등록하지 않는다.
 - 기존 프로젝트 공통 Area 버전 UUID는 그대로 보존하며 여러 네이티브 블록 버전에 연결할 수 있다. 버전별 binding·선언·수치 계보는 기존 `WS_CONFIG`의 전역 namespace에 저장한다. 별도 테이블·scope FK·자동 DDL을 만들지 않는다.
-- `/api/area-power/access`는 현재 사용자에게 허용된 프로젝트·block을 제공한다. 목록·상세·다운로드·분석 요청은 서버에서 검사하며, 기준 프로젝트 권한 없이 현재 프로젝트 권한만으로 교차 프로젝트 비교·고정 입력·총계를 조회할 수 없다.
+- `/api/area-power/access`는 전체 등록 프로젝트·block을 제공한다. 목록·상세·다운로드·현재/기준 비교·고정 입력·총계는 프로젝트 배정 없이 조회한다. 새 분석 요청과 기준·매핑·사람 상태 변경은 기존 프로젝트 수정 권한을 검사한다.
 - 기존 데이터의 binding을 임의 추정하지 않는다. 미연결 데이터는 운영 SSO에서 차단한다.
 - 호스트가 **명시적으로 `local_token`**을 선택한 개발 환경만 미연결 로컬 catalog를 허용한다. `access.local_mode=true`로 표시하며 회사 SSO 실패 시 이 모드로 전환하지 않는다.
 
@@ -67,7 +67,7 @@ npm --prefix oa/dashboard run build
 .venv-integrated/bin/python -m oa.mail_app
 ```
 
-중앙 VWP 서버 프로세스가 업로드와 수치/AI 작업을 함께 처리하며 별도 Area Power worker 명령은 없다. 업로드는 `/api/area-power/uploads`, 상태는 `/api/area-power/uploads/{id}`다. 두 경로에는 추가 인증을 두지 않고 사내 도달성을 신뢰한다. `uploaded_by`와 업로드가 만든 snapshot 작성자는 기술적 수신 서비스 `vwp_server`이며 인증된 사용자를 뜻하지 않는다. 요청의 임의 신원 헤더는 신뢰하지 않는다. **OA 호스트의 로그인·SSO·프로젝트 권한과 조회/다운로드/비교 API 보호는 그대로다.** 작업 완료 여부는 서버 프로세스 상태가 아니라 DB에 저장된 상태로 판단한다. 배포 전에 기존 별도 VWP API/worker unit을 중지하고, 새 server와 standalone worker를 함께 실행하지 않는다.
+중앙 VWP 서버 프로세스가 업로드와 수치/AI 작업을 함께 처리하며 별도 Area Power worker 명령은 없다. 업로드는 `/api/area-power/uploads`, 상태는 `/api/area-power/uploads/{id}`다. 두 경로에는 추가 인증을 두지 않고 사내 도달성을 신뢰한다. `uploaded_by`와 업로드가 만든 snapshot 작성자는 기술적 수신 서비스 `vwp_server`이며 인증된 사용자를 뜻하지 않는다. 요청의 임의 신원 헤더는 신뢰하지 않는다. **OA 조회·다운로드는 활성 로그인과 유효한 scope/binding을 검사하며, 쓰기는 프로젝트 배정을 요구한다.** 작업 완료 여부는 서버 프로세스 상태가 아니라 DB에 저장된 상태로 판단한다. 배포 전에 기존 별도 VWP API/worker unit을 중지하고, 새 server와 standalone worker를 함께 실행하지 않는다.
 
 VWP 서버는 schema와 첫 작업 조회/claim이 성공하면 ready가 된다(대기 작업이 없어도 준비 완료이며 AI 응답을 기다리지 않는다). 일반 AI 작업 실패는 해당 job을 `failed`로 저장하고 consumer는 계속 실행한다. 치명적인 claim/finish 실패만 consumer를 비정상으로 만들어 `/health`와 업로드가 503을 반환한다. 정상 SIGTERM은 claim한 작업을 마친 뒤 새 작업 없이 종료한다. 강제 종료나 fatal finish 실패는 불확실한 `running` 작업을 남길 수 있으며 자동 reclaim은 없다.
 
@@ -134,7 +134,7 @@ metadata에는 준비된 실제 Area `project_id`, `version_id`, `block_id` UUID
 | `POST /api/area-power/comparisons` | 기존 명시적 upload·mapping 계약. `comparison_kind=previous_project`의 새 요청은 저장된 기준을 검사하며 다른 프로젝트를 임의로 넘길 수 없음 |
 | `GET /api/area-power/uploads/{id}/hierarchy` | 검증된 정확한 upload의 `{upload_id,snapshot_id,hierarchy_separator,items:[{path,parent_path,depth,area,power_mw}]}`. 경로 선택·트리용이며 새 저장 구조 없음 |
 
-기준 선택에는 현재 프로젝트 수정 권한과 대상 조회 권한이 필요하다. 기준 권한이 회수되어도 현재 프로젝트와 기준 해제/교체는 사용할 수 있다. 응답의 기준 ID·이름은 null, 상태는 unavailable이며 기존 비교·원본·결과는 실제 양쪽 권한을 계속 요구한다. 프로젝트의 기준을 연쇄 탐색하거나 순환 관계를 해석하지 않는다. 공통 `/api/atlas/area-scope`는 `{project_id: native ID}`만으로 정확한 Area mirror를 준비하며 별도 project를 만들거나 native ID를 UUID로 재해석하지 않는다.
+기준 선택·해제·교체에는 현재 프로젝트 수정 권한이 필요하며 대상은 유효한 공통 프로젝트 binding을 가져야 한다. 로그인한 활성 사용자는 양쪽 기준·원본·고정 결과를 배정 없이 조회한다. 배정 회수는 현재 프로젝트 수정 권한만 해제하며 등록된 기준의 조회를 숨기지 않는다. 미등록·미연결 입력은 계속 차단한다. 프로젝트의 기준을 연쇄 탐색하거나 순환 관계를 해석하지 않는다. 공통 `/api/atlas/area-scope`는 `{project_id: native ID}`만으로 정확한 Area mirror를 준비하며 별도 project를 만들거나 native ID를 UUID로 재해석하지 않는다.
 
 새 교차 프로젝트 매핑도 저장된 기준을 검사한다. 비교는 선택한 upload·snapshot·mapping revision과 당시 기준의 프로젝트 ID/row_version을 고정한다. 기준이나 매핑의 후속 변경은 완료 결과를 재해석/수정하지 않는다. 기존 이전 버전·AI 분석 계약은 내부 소비자를 위해 유지한다.
 

@@ -1,6 +1,6 @@
 # Design Atlas 인계
 
-기준일: 2026-11-13. Canonical 저장소는 **`/home/coder/workspace/design_atlas`** 다.
+Canonical 저장소는 **`/home/coder/workspace/design_atlas`** 다. 현재 조회 정책은 2026-11-16 사용자 결정을 따르며 아래 날짜별 검증은 당시 동작의 기록이다.
 
 ## 제품과 접속
 
@@ -24,8 +24,8 @@
 - 기존 Sanity 네 테이블과 신청한 **`di_area_power_csv`, `di_area_power_tracking_record` 두 테이블**을 유지한다. 새 테이블·앱 자동 DDL은 없다. Area 후속 SQL은 `db/area_power/`의 `<schema>`를 사내에서 치환하고 실제 생성/권한을 승인 후 적용한다. 사내 schema 실명·비밀은 요구하지 않는다.
 - 네이티브 `WS_PROJECT`, `WS_BLOCK`, `WS_VERSION`이 공통 카탈로그다. 선언/계보는 `atlas.version.*`, 요청 재생 기록은 `atlas.command.*`, 정확한 버전 연결은 `design-atlas-v1.binding.*` 전역 `WS_CONFIG` 키에 저장한다. `WS_CONFIG`에 프로젝트/블록 FK를 붙이지 않는다. 네이티브 원천 버전 payload는 기존 수신 계약을 유지한다.
 - 기존 Area UUID·원본 gzip·이력은 재작성하지 않는다. 과거 Area 버전은 프로젝트 공통일 수 있으므로 여러 네이티브 블록 버전을 같은 UUID에 연결할 수 있다. 로컬 운영자는 홈의 실제 기존 데이터 연결에서 UUID를 명시한다. 이름 자동 병합·사용자 자동 등록·권한 자동 부여는 없다.
-- 운영은 기존 SSO·관리자/프로젝트 권한·mutation intent·현재 권한 잠금을 사용한다. 권한 없는 현재/기준 프로젝트·중첩 참조·고정 입력·다운로드·총계는 계속 차단한다. 네이티브 관리자 변경의 트랜잭션은 응답 전에 끝낸다.
-- 프로젝트 기준은 기존 Area project의 `payload.baseline_project_id`와 `row_version` CAS로 저장한다. 추가 테이블·DDL·migration은 없다. 권한을 잃은 기준의 ID·이름은 가리되 현재 프로젝트와 기준 해제/교체는 유지한다. 실제 비교·원본·고정 결과는 양쪽 현재 권한을 계속 요구하며 기준 변경으로 이전 결과를 재해석하지 않는다.
+- 운영은 로그인한 활성 SSO 사용자에게 모든 등록 프로젝트·블록의 로그·원문·Area 현재/기준 자료·고정 결과·다운로드·총계를 공개한다. 조회에 프로젝트 배정은 필요하지 않으며, 판정·분류·기준·매핑 변경과 새 AI/분석 요청은 기존 프로젝트 수정 권한을 따른다. 미인증·비활성 계정, 미등록 scope·binding과 비공개 인증값은 계속 차단한다. 관리자/프로젝트 배정·mutation intent·현재 권한 잠금은 유지하며 관리자 변경의 트랜잭션은 응답 전에 끝낸다.
+- 프로젝트 기준은 기존 Area project의 `payload.baseline_project_id`와 `row_version` CAS로 저장한다. 추가 테이블·DDL·migration은 없다. 배정 회수는 수정 권한을 해제하고 등록된 기준·원본·고정 결과의 조회는 유지한다. 기준 변경으로 이전 결과를 재해석하지 않는다.
 - Area commit 후 호스트 연결 기록이 실패하면 `409 PARTIAL`과 실제 Area ID를 반환한다. 분산 rollback이 성공했다고 표시하지 않는다. 명시적으로 다시 준비하면 같은 UUID의 연결 기록을 복구한다. 자동 재시도는 없다.
 - OA↔VWP 업무 전달은 DB만 사용한다. CLI HTTPS 업로드·모델 API·사내 메일 어댑터는 별도의 외부 경계다. 로그와 수치 분석 엔진은 독립이며 `SANITY_*`, `AREA_POWER_*`, `bin/sanity`, `bin/area-power`의 수집 계약은 제품명 때문에 바꾸지 않는다.
 
