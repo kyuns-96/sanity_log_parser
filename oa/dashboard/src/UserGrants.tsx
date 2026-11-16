@@ -43,12 +43,12 @@ export default function UserGrants({ access, catalog, busy, onRevoke }: { access
   const { projects, grants } = useMemo(() => {
     const projectNames = new Map(catalog.projects.map(project => [project.id, project.name]))
     const grants = (byUser.get(selectedId) || []).map(grant => {
-      const project = projectNames.get(grant.project_id) || grant.project_id
+      const project = projectNames.get(grant.project_id) || '프로젝트 정보 없음'
       return { grant, scope: project,
-        search: normalize(`${project} ${grant.project_id} ${roleLabel(grant.role)}`) }
+        search: normalize(`${project} ${roleLabel(grant.role)}`) }
     }).sort((a, b) => a.scope.localeCompare(b.scope, 'ko') || a.grant.grant_id.localeCompare(b.grant.grant_id))
     const projects = [...new Set(grants.map(item => item.grant.project_id))]
-      .map(id => ({ id, name: projectNames.get(id) || id }))
+      .map(id => ({ id, name: projectNames.get(id) || '프로젝트 정보 없음' }))
       .sort((a, b) => a.name.localeCompare(b.name, 'ko') || a.id.localeCompare(b.id))
     return { grants, projects }
   }, [byUser, selectedId, catalog])
@@ -78,10 +78,10 @@ export default function UserGrants({ access, catalog, busy, onRevoke }: { access
           <div className="ug-person"><div><span className="ug-eyebrow">선택한 사용자</span><h3>{selectedName}</h3><code>{selectedId}</code></div><Badge variant="secondary">프로젝트 {grants.length}개</Badge></div>
           <div className="ug-role-counts"><span><ShieldCheck size={14} />참여 프로젝트의 모든 블록 조회·검토·수정</span></div>
           <div className="ug-filters">
-            <label>권한 검색<Input aria-label="권한 검색" placeholder="프로젝트 이름 또는 ID" value={grantQuery} onChange={event => { setGrantQuery(event.target.value); setGrantOffset(0) }} /></label>
-            <label>프로젝트<select className="studio-native-select" aria-label="권한 프로젝트" value={projectId} onChange={event => { setProjectId(event.target.value); setGrantOffset(0) }}><option value="">전체 프로젝트</option>{projects.map(project => <option value={project.id} key={project.id}>{project.name}</option>)}{projectId && !projects.some(project => project.id === projectId) && <option value={projectId}>{catalog.projects.find(project => project.id === projectId)?.name || projectId}</option>}</select></label>
+            <label>권한 검색<Input aria-label="권한 검색" placeholder="프로젝트 이름" value={grantQuery} onChange={event => { setGrantQuery(event.target.value); setGrantOffset(0) }} /></label>
+            <label>프로젝트<select className="studio-native-select" aria-label="권한 프로젝트" value={projectId} onChange={event => { setProjectId(event.target.value); setGrantOffset(0) }}><option value="">전체 프로젝트</option>{projects.map(project => <option value={project.id} key={project.id}>{project.name}</option>)}{projectId && !projects.some(project => project.id === projectId) && <option value={projectId}>{catalog.projects.find(project => project.id === projectId)?.name || '프로젝트 정보 없음'}</option>}</select></label>
           </div>
-          <ul className="am-list ug-grants" aria-label="선택한 사용자의 권한">{filteredGrants.slice(grantsStart, grantsStart + pageSize).map(({ grant, scope }) => <li key={grant.grant_id}><div><strong>{scope}</strong><span>{roleLabel(grant.role)}</span><code>{grant.project_id}</code></div><Button size="sm" variant="outline" disabled={busy} onClick={() => onRevoke(grant)}>권한 회수</Button></li>)}</ul>
+          <ul className="am-list ug-grants" aria-label="선택한 사용자의 권한">{filteredGrants.slice(grantsStart, grantsStart + pageSize).map(({ grant, scope }) => <li key={grant.grant_id}><div><strong>{scope}</strong><span>{roleLabel(grant.role)}</span></div><Button size="sm" variant="outline" disabled={busy} onClick={() => onRevoke(grant)}>권한 회수</Button></li>)}</ul>
           {!filteredGrants.length && <div className="am-empty"><ShieldCheck size={25} /><p>{grants.length ? '조건에 맞는 권한이 없습니다.' : '이 사용자에게 부여된 권한이 없습니다.'}</p></div>}
           <Pagination offset={grantsStart} total={filteredGrants.length} label="권한" onChange={setGrantOffset} />
         </> : <div className="am-empty ug-placeholder"><ShieldCheck size={30} /><h3>사용자별 참여 프로젝트</h3><p>{people.length ? '왼쪽에서 사용자를 선택하세요.' : '승인된 권한이 여기에 표시됩니다.'}</p></div>}

@@ -13,5 +13,5 @@ export const roleLabel = (_role: AccessRole) => '프로젝트 멤버 · 조회·
 export const requestStatus = { PENDING: '승인 대기', APPROVED: '승인됨', REJECTED: '거절됨' }
 export const accessError = (error: unknown) => error instanceof Error ? error.message : '연결 상태를 확인하고 다시 시도해 주세요.'
 export function scopeName(catalog: AccessCatalog, value: { project_id: string; block_id: string | null }): string {
-  return catalog.projects.find(item => item.id === value.project_id)?.name || value.project_id
+  return catalog.projects.find(item => item.id === value.project_id)?.name || '프로젝트 정보 없음'
 }
