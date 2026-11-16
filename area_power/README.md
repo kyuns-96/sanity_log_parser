@@ -40,13 +40,13 @@ npm --prefix oa/dashboard ci
 npm --prefix oa/dashboard run build
 ```
 
-[환경변수 예제](.env.example)의 필요한 키를 해당 서버의 실행 환경에 **export**한다. 중앙 VWP는 회사에서 제공한 호환 endpoint와 그 endpoint에 맞는 모델을 설정해야 AI를 호출할 수 있다. API key는 해당 provider가 인증을 요구할 때만 실제 credential을 설정한다. `AREA_POWER_*`는 Sanity의 기존 `.env` 허용 키에 암묵적으로 추가하거나 다른 설정으로 fallback하지 않는다. Secret manager·관리 프로세스 또는 승인된 환경 파일에서 주입한다. `VITE_*`에는 비밀을 넣지 않는다.
+[환경변수 예제](.env.example)의 필요한 Area 키를 해당 서버 실행 환경에 export한다. `AREA_POWER_*`는 Area 기능·DB·메일·사용자 PC 업로드 설정이며 별도 AI endpoint, model, token 설정은 없다. 로그 AI와 동일하게 OA 인증 actor의 `CLUSTER` 설명 추출·`REVIEW` 판정 task selection/default를 사용한다. 사용할 managed connection이 없고 해당 task default도 설정되지 않은 경우에만 기존 no-connection Log AI 기본 설정을 사용한다. 선택된 managed connection/default 또는 credential이 유효하지 않으면 그 오류를 유지하고 legacy 설정으로 전환하지 않는다. 사용자별 인증 방식이면 managed connection 또는 기존 Log AI의 사용자 토큰 저장소를 사용하고, 기존 server 인증 방식이면 Log AI 서버 설정을 사용한다. 개인 token은 Area DB에 저장하지 않는다. 기존 VWP 로그 작업자가 사용하는 DB 설정을 그대로 쓰며 VWP 관리 연결을 선택할 때만 [VWP 프로필](../vwp_bridge/AI_WORKER.md)이 VWP에 있어야 한다. 프로필·endpoint·비밀을 OA/Area 설정으로 복사하지 않는다. OA↔VWP 작업 전달은 기존 DB 경계를 사용하며 새 HTTP 중계나 비밀 전달 경로를 추가하지 않는다. 연결·legacy AI 설정은 [OA 로그 AI 실행 안내](../oa/AI_RUNTIME.md)를 따른다. PC에는 DB·AI 계정을 주지 않고 `VITE_*`에 비밀을 넣지 않는다.
 
 | 실행 위치 | 주요 설정 |
 | --- | --- |
 | OA 호스트 | 기존 `SANITY_AUTH_MODE`/SSO 설정, `AREA_POWER_ENABLED=true`, 공유 DB 설정 |
 | 중앙 VWP + OA | `AREA_POWER_DB_DSN`, `AREA_POWER_DB_SCHEMA` — 각 서버에서 같은 DB/schema를 가리키도록 설정 (기존 역할별 계정 사용 가능) |
-| 중앙 VWP | `AREA_POWER_AI_BASE_URL`, `AREA_POWER_AI_MODEL`; `AREA_POWER_AI_API_KEY`는 endpoint 인증에 필요할 때만 |
+| 중앙 VWP | Area AI용 별도 endpoint/model/token 키 없음. OA 로그 AI와 같은 `CLUSTER`/`REVIEW` 선택·task-default 및 no-connection legacy 기본 경로를 사용하며, 선택된 경로의 기존 model/auth/limits를 그대로 적용 |
 | OA 메일 | `AREA_POWER_MAIL_RECIPIENTS`, 명시적으로 주입한 사내 `MailSender` 어댑터 |
 | 사용자 PC | `AREA_POWER_SERVER_URL` 또는 `--url` — DB·AI 계정과 업로드 신원 설정 불필요 |
 
@@ -111,7 +111,7 @@ metadata에는 준비된 실제 Area `project_id`, `version_id`, `block_id` UUID
 
 ### 사내 AI가 마무리할 범위
 
-공통 전송은 기존 CLI와 실제 업로드 API가 담당한다. 사내 AI의 Area 작업은 **비공개 데이터/설정 준비**다: PC별 경로·실제 metadata 실행 문맥, 필요한 경우 라이선스가 있는 `report_export`의 확인된 전체 argv(또는 승인된 기존 회사 wrapper), 사내에서 도달 가능한 endpoint를 준비한다. 업로드용 인증 SDK·토큰·수동 사용자명은 추가하지 않는다. SDK/인자·라이선스·실제 보고서는 여기서 확인하지 못했으며 구현 완료로 표시하지 않는다. 이 안내가 회사 AI에 공통 CLI/API/DB/SSO나 새 회사 코드의 수정 권한을 추가하지 않는다.
+공통 전송은 기존 CLI와 실제 업로드 API가 담당한다. 사내 AI의 Area 작업은 **비공개 데이터/설정 준비**다: PC별 경로·실제 metadata 실행 문맥, 필요한 경우 라이선스가 있는 `report_export`의 확인된 전체 argv(또는 승인된 기존 회사 wrapper), PC에서 도달 가능한 VWP upload endpoint를 준비한다. AI 연결 endpoint/model/token은 기존 로그 AI 연결을 사용하며 별도 Area 설정을 추가하지 않는다. 업로드용 인증 SDK·토큰·수동 사용자명은 추가하지 않는다. SDK/인자·라이선스·실제 보고서는 여기서 확인하지 못했으며 구현 완료로 표시하지 않는다. 이 안내가 회사 AI에 공통 CLI/API/DB/SSO나 새 회사 코드의 수정 권한을 추가하지 않는다.
 
 현재 로컬 서버 `127.0.0.1:8010`은 다른 PC의 endpoint가 아니다. 회사 운영 담당자가 실제 사내 도달 경로를 제공해야 하며 기존 서비스의 bind·네트워크·TLS 설정을 이 코드 변경으로 자동 수정하지 않는다. PC에는 DB/AI 계정을 주지 않는다. 2026-11-13 사용자 결정으로 업로드의 추가 인증·수동 actor를 제거했다. 기존 launcher의 `--token`, `--actor`, `AREA_POWER_UPLOAD_TOKEN`, `AREA_POWER_ACTOR`를 제거한다. 인증된 업로드 사용자 추적은 제공하지 않으며 대신 기술적 수신 서비스 출처만 남긴다.
 
@@ -145,8 +145,9 @@ metadata에는 준비된 실제 Area `project_id`, `version_id`, `block_id` UUID
 - 일반 Vth·LLP·drive 분류를 구분하고 분류 누락을 표시한다. 비율 변화는 %p, 기준 0의 상대 변화율과 0분모 비율은 계산 불가로 둔다. 결측을 0으로 바꾸지 않는다.
 - Power 단위는 mW이며 logic에 CTS가 포함된다. 실제 PVT·mode·activity·도구 등 조건이 같아야 comparable이다. 미확인·다른 조건은 contextual, 기준 누락은 unavailable이다.
 - 임계값을 임의로 정하지 않는다. 요청 정책이 없으면 `policy_unconfigured`를 표시한다. 산출 문맥이 미확인인 지표도 정상으로 보증하지 않는다.
-- 수치 계산은 코드가 담당한다. AI는 OpenAI-compatible API로 사용자의 설명과 비교 조건을 대조하고 수치·매핑·비교 상태를 바꾸지 못한다. 방향 설명만으로 변화 규모까지 정상 처리하지 않는다.
-- AI 미설정·실패는 needs_review와 실패 사유로 남기며 수치 결과는 보존한다. 설명 변경은 새 AI 실행으로 연결하고 읽음·확인·해소는 유지한다.
+- 수치 계산은 코드가 담당한다. Area AI는 OA 인증 actor의 기존 Log AI `CLUSTER`/`REVIEW` 선택과 기본값을 그대로 사용한다. 유효한 managed 연결이 없고 작업별 기본값도 설정되지 않은 경우에만 기존 no-connection Log AI 설정(`SANITY_OA_AI_*`)을 사용한다. 선택된 managed 연결/default가 유효하지 않거나 인증에 실패하면 별도 AI 경로로 전환하지 않고 숫자 결과와 비교 상태는 보존한다. 기존 provider가 요구하는 actor 개인 token 또는 기존 server credential을 사용하며, 수치·매핑·비교 상태는 바꾸지 못한다.
+- 익명 VWP 업로드는 AI 사용자의 신원이 아니며 AI 인증으로 승격되지 않는다. OA 비교 actor가 없으면 AI 작업은 인증 오류로 남고 숫자 비교는 계속 처리한다.
+- 같은 숫자 비교 요청을 다시 제출하면 수치 비교와 고정 입력은 재사용한다. 요청 actor, `CLUSTER`/`REVIEW` 기본 연결, 연결 설정 또는 credential revision/scope가 달라졌으면 별도 AI 실행 문맥으로 새 run을 만들며 기존 수치·고정 문맥·이력은 바꾸지 않는다. 실패한 AI job의 명시적 재실행은 원래 actor와 저장된 pins를 사용한다. credential 변경 후에는 새 비교 AI run 또는 rejudge를 사용하고 재실행 중 다른 사용자나 credential로 바꾸지 않는다.
 - 알림 event마다 mail job을 DB에 남긴다. OA는 [사내 메일 Protocol](../oa/MAIL_INTEGRATION.md)의 `MailSender`만 호출하며 회사 API/SDK는 사내 AI가 허용된 어댑터 지점에서 구현한다. 미연결은 DB 접속·job 점유 전에 실패한다. 요청 수신자가 없으면 `AREA_POWER_MAIL_RECIPIENTS`를 사용하며 수신자도 없으면 실패한다. 서비스 접수는 전달·열람 보장이 아니며 일부 거부·결과 불명·접수 후 DB 기록 실패를 보존한다. 자동 재발송·정확히 한 번 전달은 보장하지 않는다. SMTP 구현·`AREA_POWER_SMTP_*`는 제거했다.
 
 상세 계약: [제품 설계](../docs/area_power/design.md) · [DB와 적용 순서](../docs/area_power/database.md).

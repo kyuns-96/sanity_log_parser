@@ -462,6 +462,23 @@ class OAAdvisor:
         observer=getattr(self,"observer",None)
         if observer is not None:observer(phase)
 
+    def infer_json(self, packet, instruction, prompt_version, *, decoder=None):
+        """Use the same bounded provider with a caller-owned domain schema."""
+        from copy import copy
+        advisor = copy(self)
+        advisor._json_decoder = decoder
+        budget = None
+        if self.settings.batch.enabled:
+            from oa.sanity_ai_budget import TokenBudget
+            budget = TokenBudget(self.settings.batch)
+        attempt = {"model_called": False}
+        try:
+            return advisor._call(packet, instruction, prompt_version, attempt, budget=budget)
+        except ReviewError as error:
+            from oa.sanity_ai_retry import annotate
+            annotate(error, attempt)
+            raise
+
     def cluster(self, context, cases, identity_fields):
         attempt = {"model_called": False}
         try:
@@ -674,4 +691,5 @@ class OAAdvisor:
                 'tokenizer_sha256': budget.settings.tokenizer_sha256}
         self._guard.ensure_public(value)
         self._guard.ensure_public(metadata)
-        return value, metadata
+        decoder = getattr(self, "_json_decoder", None)
+        return (decoder(content) if decoder is not None else value), metadata

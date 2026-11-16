@@ -236,6 +236,34 @@ class ConnectionStore:
                            "credential_ready":error is None, "credential_error":error})
         return result
 
+    def default_advisor(self, model_id=None):
+        """The existing no-connection log route, without managed failover."""
+        settings = OASettings.from_env(self.settings)
+        if not settings.enabled:
+            return None
+        advisor = OAAdvisor(settings)
+        return advisor.for_model(model_id) if model_id is not None else advisor
+
+    def task_selection(self, user_id, task):
+        """The shared log/Area initial connection and model selection."""
+        from oa.sanity_ai_task_defaults import TaskDefaults, TASKS
+        check(task in TASKS, "INVALID_REQUEST")
+        connections = self.user_connections(user_id)
+        first = connections[0] if connections else {}
+        default = TaskDefaults(self.db).current()['defaults'][task]
+        task_default = None
+        if default is not None:
+            selected = next((connection for connection in connections if connection['id'] == default['connection_id']), None)
+            if selected is None:
+                task_default = {**default, 'applied': False, 'reason': 'AI_CONNECTION_UNAVAILABLE'}
+            elif default['model_id'] not in selected['models']:
+                task_default = {**default, 'applied': False, 'reason': 'AI_MODEL_NOT_ALLOWED'}
+            else:
+                selected['model'] = default['model_id']
+                first = selected
+                task_default = {**default, 'applied': True}
+        return connections, first, task_default
+
     def advisor(self, connection_id, model_id=None, *, transport=None):
         value = self.get(connection_id)
         config = value["config"]
