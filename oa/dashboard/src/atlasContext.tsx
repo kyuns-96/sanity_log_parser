@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useDashboardAuth } from './useDashboardAuth'
 import { useDashboardNavigation } from './dashboardMode'
@@ -29,15 +29,27 @@ export function AtlasProvider({ routeSearch, replaceRoute, children, demo = fals
   const [error, setError] = useState('')
   const [preparing, setPreparing] = useState(false)
   const [netSelection, setNetSelection] = useState({ projectId: '', blockId: '', netVer: '' })
-  const sessionKey = auth.session ? `${auth.session.auth_method}:${auth.session.user_id}` : ''
+  const catalogRequest = useRef<AbortController | null>(null)
+  const sessionKey = auth.session && (auth.session.auth_method === 'local_token' || auth.session.authorization_ready === true)
+    ? `${auth.session.auth_method}:${auth.session.user_id}` : ''
   const reload = useCallback(async () => {
-    if (!sessionKey) { setCatalog(null); return }
+    catalogRequest.current?.abort()
+    if (!sessionKey) { setCatalog(null); setLoading(false); setError(''); return }
+    const controller = new AbortController()
+    catalogRequest.current = controller
     setLoading(true)
-    try { setCatalog(await auth.request<AtlasCatalog>('/api/atlas/catalog')); setError('') }
-    catch (cause) { setCatalog(null); setError(cause instanceof Error ? cause.message : '공통 카탈로그를 불러오지 못했습니다.'); throw cause }
-    finally { setLoading(false) }
+    try {
+      const value = await auth.request<AtlasCatalog>('/api/atlas/catalog', undefined, false, controller.signal)
+      if (!controller.signal.aborted) { setCatalog(value); setError('') }
+    } catch (cause) {
+      if (!controller.signal.aborted) { setCatalog(null); setError(cause instanceof Error ? cause.message : '공통 카탈로그를 불러오지 못했습니다.'); throw cause }
+    } finally { if (!controller.signal.aborted) setLoading(false) }
   }, [auth.request, sessionKey])
-  useEffect(() => { setCatalog(null); void reload().catch(() => undefined) }, [reload])
+  useEffect(() => {
+    setCatalog(null)
+    void reload().catch(() => undefined)
+    return () => catalogRequest.current?.abort()
+  }, [reload])
   const params = new URLSearchParams(routeSearch)
   const scope = { projectId: params.get('project') || '', blockId: params.get('block') || '', versionId: params.get('version') || '' }
   const project = catalog?.projects.find(item => item.id === scope.projectId)

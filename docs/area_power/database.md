@@ -35,6 +35,8 @@
 
 준비 완료 후 OA·중앙 VWP 업로드·worker를 승인된 같은 소스로 함께 전환한다. PC transport/config/API와 UI는 그대로이므로 이 변경만으로 재-export·재-upload·의존성 변경·frontend build를 하지 않는다. 현재 로컬 사용자 DB/기존 OA 서비스도 자동 변경·재시작하지 않는다. 새 소스의 readiness가 실패하면 다른 DB/이전 테이블로 우회하지 말고 승인된 배포 준비를 중단한다.
 
+CSV 목록 조회 성공만으로 tracking 테이블 준비를 판단하지 않는다. 카탈로그의 `area_status=unavailable` 또는 레코드 API의 `503 AREA_POWER_UNAVAILABLE`이면 같은 DSN/schema에서 00의 두 relation 존재 여부부터 확인한다. 구형 `tracking_record`만 남은 경우 새 빈 테이블을 만들거나 03/04를 전체 재실행하지 않는다. 운영자가 기존 컬럼·제약과 동시 실행 서비스를 확인한 뒤 승인된 전환으로 `ALTER TABLE <schema>.tracking_record RENAME TO di_area_power_tracking_record;`를 적용한다. 이름 전환은 기존 행·OID·키·참조를 보존하며 이후 기존 readiness로 확인한다. 앱은 이 SQL을 자동 실행하지 않는다.
+
 ## 서버 연결
 
 ```mermaid

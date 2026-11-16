@@ -74,7 +74,6 @@ export default function DashboardNavigation({ demo = false, demoToolbar, demoAcc
   const workbenchSearch = useRef(state.route.page === 'workbench' ? new URL(state.route.href, location.origin).search : '')
   const verified = useRef<string | null>(null)
   const pending = useRef<AbortController | null>(null)
-  const prepared = useRef(new Set(state.visited))
   const positions = useRef(new Map<DashboardPage, { x: number; y: number }>())
   const [error, setError] = useState('')
   const sidebar = useState(false)
@@ -84,50 +83,54 @@ export default function DashboardNavigation({ demo = false, demoToolbar, demoAcc
     pending.current?.abort()
     const controller = new AbortController()
     pending.current = controller
-    let discard = reset
-    let initialWorkspace: WorkspaceSession | undefined
-    if (!reset && next.page !== current.current.page) {
-      // Crossing tasks never grants permissions, even when restoring retained drafts.
-      let session: Session | null = null
-      try { session = await auth.request<Session>('/api/session', undefined, false, controller.signal) }
-      catch (cause) {
-        if (!(cause instanceof DashboardRequestError) || cause.status !== 401 && cause.status !== 403) throw cause
-        next = destination('/?page=welcome', demo); discard = true; verified.current = null
-      }
-      if (session) {
-        if (demo ? session.access_mode !== 'memory_demo' : session.auth_method !== auth.config?.mode) throw new Error('현재 로그인 방식을 다시 확인해 주세요.')
-        const ready = session.auth_method === 'sso' && session.authorization_ready === true
-        const local = session.auth_method === 'local_token'
-        const memory = demo && session.access_mode === 'memory_demo'
-        const signature = JSON.stringify([session.user_id, session.auth_method, session.is_admin === true, session.can_read_business === true, ready])
-        discard = (!!sourceUser && sourceUser !== session.user_id) || (verified.current !== null && verified.current !== signature)
-        verified.current = signature
-        if ((!ready && !local && !memory) || next.page === 'admin' && (!ready || session.is_admin !== true)
-          || next.page === 'workbench' && !local && !memory && (!ready || session.can_read_business !== true)) {
-          next = destination('/?page=welcome', demo); discard = true
+    try {
+      let discard = reset
+      let initialWorkspace: WorkspaceSession | undefined
+      if (!reset && next.page !== current.current.page) {
+        // Crossing tasks never grants permissions, even when restoring retained drafts.
+        let session: Session | null = null
+        try { session = await auth.refreshSession(controller.signal) }
+        catch (cause) {
+          if (!(cause instanceof DashboardRequestError) || cause.status !== 401 && cause.status !== 403) throw cause
+          next = destination('/?page=welcome', demo); discard = true; verified.current = null
         }
-        if (current.current.page === 'admin' && session.is_admin !== true) discard = true
-        if (ready && ['review', 'workbench', 'area-power'].includes(current.current.page) && session.can_read_business !== true) discard = true
-        if (next.page === 'workbench' && ready && (discard || !prepared.current.has(next.page))) {
-          const value = await auth.request<WorkspaceSession>('/api/workbench/session', undefined, false, controller.signal)
-          if (value.environment !== 'PRODUCTION_SSO' || value.user.id !== session.user_id) throw new Error('현재 계정을 다시 확인해 주세요.')
-          initialWorkspace = value
+        if (session) {
+          if (demo ? session.access_mode !== 'memory_demo' : session.auth_method !== auth.config?.mode) throw new Error('현재 로그인 방식을 다시 확인해 주세요.')
+          const ready = session.auth_method === 'sso' && session.authorization_ready === true
+          const local = session.auth_method === 'local_token'
+          const memory = demo && session.access_mode === 'memory_demo'
+          const signature = JSON.stringify([session.user_id, session.auth_method, session.is_admin === true, session.can_read_business === true, ready])
+          discard = (!!sourceUser && sourceUser !== session.user_id) || (verified.current !== null && verified.current !== signature)
+          verified.current = signature
+          if ((!ready && !local && !memory) || next.page === 'admin' && (!ready || session.is_admin !== true)
+            || next.page === 'workbench' && !local && !memory && (!ready || session.can_read_business !== true)) {
+            next = destination('/?page=welcome', demo); discard = true
+          }
+          if (current.current.page === 'admin' && session.is_admin !== true) discard = true
+          if (ready && ['review', 'workbench', 'area-power'].includes(current.current.page) && session.can_read_business !== true) discard = true
+          if (next.page === 'workbench' && ready) {
+            const value = await auth.request<WorkspaceSession>('/api/workbench/session', undefined, false, controller.signal)
+            if (value.environment !== 'PRODUCTION_SSO' || value.user.id !== session.user_id) throw new Error('현재 계정을 다시 확인해 주세요.')
+            initialWorkspace = value
+          }
         }
       }
+      controller.signal.throwIfAborted()
+      positions.current.set(current.current.page, { x: window.scrollX, y: window.scrollY })
+      if (discard) positions.current.clear()
+      if (historyMode === 'push') history.pushState(null, '', next.href)
+      else if (next.href !== location.pathname + location.search) history.replaceState(null, '', next.href)
+      if (next.page === 'workbench') workbenchSearch.current = new URL(next.href, location.origin).search
+      current.current = next
+      setError('')
+      setState(previous => ({ route: next, visited: discard ? [next.page] : Array.from(new Set([...previous.visited, next.page])), epoch: previous.epoch + (discard ? 1 : 0), initialWorkspace: initialWorkspace ?? (discard ? undefined : previous.initialWorkspace) }))
+      document.title = `${demo ? '합성 데모 · ' : ''}${next.page === 'home' ? '홈 · 프로젝트' : next.page === 'area-power' ? '프로젝트 비교' : next.page === 'admin' ? '서비스 · 권한 관리' : next.page === 'workbench' ? '로그 워크스페이스' : next.page === 'welcome' ? '내 계정 · 권한' : '수신 로그 대장'} | Design Atlas`
+    } catch (cause) {
+      if (!controller.signal.aborted) throw cause
+    } finally {
+      if (pending.current === controller) pending.current = null
     }
-    controller.signal.throwIfAborted()
-    positions.current.set(current.current.page, { x: window.scrollX, y: window.scrollY })
-    if (discard) positions.current.clear()
-    if (discard) prepared.current.clear()
-    prepared.current.add(next.page)
-    if (historyMode === 'push') history.pushState(null, '', next.href)
-    else if (next.href !== location.pathname + location.search) history.replaceState(null, '', next.href)
-    if (next.page === 'workbench') workbenchSearch.current = new URL(next.href, location.origin).search
-    current.current = next
-    setError('')
-    setState(previous => ({ route: next, visited: discard ? [next.page] : Array.from(new Set([...previous.visited, next.page])), epoch: previous.epoch + (discard ? 1 : 0), initialWorkspace: initialWorkspace ?? (discard ? undefined : previous.initialWorkspace) }))
-    document.title = `${demo ? '합성 데모 · ' : ''}${next.page === 'home' ? '홈 · 프로젝트' : next.page === 'area-power' ? '프로젝트 비교' : next.page === 'admin' ? '서비스 · 권한 관리' : next.page === 'workbench' ? '로그 워크스페이스' : next.page === 'welcome' ? '내 계정 · 권한' : '수신 로그 대장'} | Design Atlas`
-  }, [auth.request, auth.config, demo])
+  }, [auth.request, auth.refreshSession, auth.config, demo])
   const navigate = useCallback<DashboardNavigate>((href, sourceUser, reset) => change(href, sourceUser, 'push', reset), [change])
   const replaceRoute = useCallback((href: string) => {
     const next = destination(href, demo)

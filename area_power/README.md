@@ -121,7 +121,8 @@ metadata에는 준비된 실제 Area `project_id`, `version_id`, `block_id` UUID
 
 - 프로젝트는 한 번 선택하고 그 프로젝트에 저장한 기준을 사용한다. A→B는 단방향이며 B의 기준이나 다른 프로젝트의 선택을 바꾸지 않는다. 한 프로젝트에 기준은 하나이고 자기 자신은 기준으로 지정할 수 없다.
 - 기준은 기존 project 레코드의 `payload.baseline_project_id`에 저장한다. 새 테이블·DDL·migration은 없다. 프로젝트만 준비해도 설정할 수 있으며 CSV·블록·버전 준비를 선행 조건으로 요구하지 않는다.
-- 양쪽 Block·NET_VER·REVISION·corner와 정확한 upload 실행을 명시적으로 선택한다. 현재 Block은 상단 공통 범위에서 선택하고 비교 화면에서는 읽기 전용이며, 현재 NET_VER·REVISION은 비교 화면과 상단 공통 범위에서 양방향으로 동기화된다. 현재 NET_VER 후보는 해당 Block에 한정되고, NET_VER 변경은 REVISION을 비우며 해당 NET_VER의 유효한 REVISION만 선택지로 제공한다. 현재 쪽 NET_VER/REVISION 변경 시 현재 corner·upload·mapping 선택은 초기화하되 기준 프로젝트와 기준 쪽 선택은 유지한다. 기준 쪽 선택은 현재 쪽과 독립적이다. Corner 하나가 CSV 한 파일이다. 이름·최신 시각·동일 경로로 기준 실행이나 프로젝트 간 대응을 자동 선택하지 않는다.
+- 현재 프로젝트와 양쪽 Block·NET_VER·REVISION·corner·정확한 upload 실행은 비교 화면에서 상단 범위와 독립적으로 선택한다. NET_VER 후보는 각 Block에 한정되며 변경 시 같은 쪽 REVISION과 하위 선택을 비운다. 현재 쪽 변경으로 기준 쪽 실행은 바꾸지 않는다. 기준 프로젝트는 현재 프로젝트에 저장된 지정을 사용하며 변경은 명시적으로 저장한다. Corner 하나가 CSV 한 파일이다. 이름·최신 시각·동일 경로로 기준 실행이나 프로젝트 간 대응을 자동 선택하지 않는다.
+- Instance 검색은 문자열을 입력한 뒤 결과를 펼친다. 구조 대응의 `Export template` → `Import mapping CSV`는 `baseline_path,current_path,scope` 세 열의 일대일 `node`/`subtree` 규칙을 지원한다. 모든 경로·중복 검증에 성공해야 작성 중 목록을 교체하고, 대응 저장 버튼으로 기존 불변 mapping revision을 등록한다. 잘못된 행을 건너뛰거나 일부만 저장하지 않는다.
 - 서로 다른 Block·경로는 같은 화면의 명시적 대응으로 연결한다. 매핑 없는 행은 한쪽의 관측값만 보여 주며 상대 값·Δ·%는 unavailable이다. 부모 수치와 자식을 다시 합산하지 않는다.
 - AI·작업·알림·target·변경 설명의 내부 엔진은 보존하지만 독립 주 탐색이나 비교의 선행 입력이 아니다.
 

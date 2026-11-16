@@ -244,7 +244,7 @@
 .area-power.area-power summary { color: var(--ink); font-size: 12px; font-weight: 600; }
 .area-power.area-power .mapping-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; margin-block: 12px; }
 .area-power.area-power .mapping-controls .field { margin: 0; }
-.area-power.area-power .mapping-actions { display: flex; align-items: end; gap: 12px; margin-block: 12px; }
+.area-power.area-power .mapping-actions { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; margin-block: 12px; }
 .area-power.area-power .mapping-actions .field { width: 200px; margin: 0; }
 .area-power.area-power .path-picker { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
 .area-power.area-power .path-picker > p { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--text-secondary); font-size: 11px; }
@@ -254,7 +254,7 @@
 .area-power.area-power .path-results { max-height: 240px; overflow: auto; list-style: none; margin: 8px 0 0; padding: 3px; border: 1px solid var(--line); border-radius: 6px; }
 .area-power.area-power .path-results li + li { border-top: 1px solid var(--line); }
 .area-power.area-power .path-results button { display: block; width: 100%; padding: 7px 9px; border: 0; border-radius: 3px; background: transparent; color: var(--ink); text-align: left; overflow-wrap: anywhere; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 12px; }
-.area-power.area-power .path-results button:hover, .area-power.area-power .path-results button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.area-power.area-power .path-results button:hover, .area-power.area-power .path-results button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); }
 .area-power.area-power .path-pages { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; }
 .area-power.area-power .path-picker .notice { margin-top: 8px; }
 .area-power.area-power .comparison-result-search { display: flex; align-items: end; gap: 12px; margin-block: 14px; }

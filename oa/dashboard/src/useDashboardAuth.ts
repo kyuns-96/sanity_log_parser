@@ -131,9 +131,9 @@ function useDashboardAuthState(enabled: boolean, initial?: DashboardAuthSnapshot
     }
   }, [enabled, config, token, abortRequests])
 
-  const refreshSession = useCallback(async () => {
+  const refreshSession = useCallback(async (signal?: AbortSignal) => {
     try {
-      const value = await request<Session>('/api/session')
+      const value = await request<Session>('/api/session', undefined, false, signal)
       if (!config || value.auth_method !== config.mode) throw new DashboardRequestError('AUTH_INVALID_RESULT', 503)
       setSession(value)
       return value
@@ -213,7 +213,7 @@ export interface DashboardAuth {
   accountProblem: boolean
   businessDenied: number
   request: <T>(path: string, body?: Record<string, unknown> | string, plain?: boolean | 'blob', signal?: AbortSignal) => Promise<T>
-  refreshSession: () => Promise<Session>
+  refreshSession: (signal?: AbortSignal) => Promise<Session>
   loginWithToken: (value: string) => void
   logout: () => Promise<boolean>
   retry: () => void

@@ -10,6 +10,7 @@ interface WorkspaceData { access: AreaAccess; records: TrackingRecord[]; uploads
 export default function AreaPower() {
   const host = useDashboardAuth(true)
   const atlas = useAtlas()!
+  const available = atlas.catalog?.area_enabled === true && atlas.catalog.area_status !== 'unavailable'
   const auth = useMemo<Auth>(() => ({ actor: host.session?.reviewer || '', request: host.request, demo: atlas.demo }), [host.session?.reviewer, host.request, atlas.demo])
   const [data, setData] = useState<WorkspaceData | null>(null)
   const [loading, setLoading] = useState(false)
@@ -19,7 +20,7 @@ export default function AreaPower() {
   const controller = useRef<AbortController | null>(null)
   const refresh = useCallback(async () => {
     controller.current?.abort()
-    if (!atlas.catalog?.area_enabled) { setData(null); setLoading(false); return }
+    if (!available) { setData(null); setLoading(false); return }
     const current = new AbortController(); controller.current = current
     setLoading(true)
     try {
@@ -32,14 +33,14 @@ export default function AreaPower() {
       ])
       if (!current.signal.aborted) { setData({ access, uploads, records: [...projects, ...blocks, ...versions, ...snapshots, ...mappings, ...comparisons] }); setError(''); setUpdated(new Date().toISOString()); setGeneration(value => value + 1) }
     } catch (cause) {
-      if (!current.signal.aborted) { setData(null); setError(cause instanceof Error ? cause.message : 'Area/Power 서비스 연결을 확인하세요.'); throw cause }
+      if (!current.signal.aborted) { setData(null); setError(cause instanceof Error ? cause.message : 'Area/Power 서비스 연결을 확인하세요.'); setLoading(false); current.abort(); throw cause }
     } finally { if (!current.signal.aborted) setLoading(false) }
-  }, [auth, atlas.catalog?.area_enabled])
+  }, [auth, available])
   useEffect(() => { void refresh().catch(() => undefined); return () => controller.current?.abort() }, [refresh])
   return <div className="area-power"><main id="area-power-main" tabIndex={-1}>
-    <div className="page-heading"><div><h1>프로젝트 비교</h1></div><div className="page-controls"><small>{updated ? `마지막 조회 ${new Date(updated).toLocaleString('ko-KR', { hour12: false })}` : atlas.demo ? '합성 자료 조회 전' : '실제 데이터 조회 전'}</small><Button variant="outline" disabled={loading || !atlas.catalog?.area_enabled} onClick={() => void refresh().catch(() => undefined)}><RefreshCw size={15} className={loading ? 'spin' : ''} />새로고침</Button></div></div>
-    {!atlas.catalog?.area_enabled ? <Empty title="수치 분석 서비스를 사용할 수 없습니다">{atlas.catalog?.area_error || '운영 설정을 확인하세요.'}</Empty> : loading && !data ? <div className="loading-state" role="status"><LoaderCircle className="spin" size={23} />불러오는 중…</div> : error && !data ? <div className="notice error" role="alert">{error}</div> : !data ? <Empty title="Area/Power 자료를 불러오지 못했습니다">연결을 확인하고 새로고침하세요.</Empty> : <>
-      {atlas.project ? <Comparisons key={atlas.project.id} auth={auth} access={data.access} records={data.records} uploads={data.uploads} comparisons={data.records.filter(row => row.record_type === 'comparison')} refresh={refresh} refreshVersion={generation} loading={loading} /> : <Empty title="프로젝트를 선택하세요" />}
+    <div className="page-heading"><div><h1>프로젝트 비교</h1></div><div className="page-controls"><small>{updated ? `마지막 조회 ${new Date(updated).toLocaleString('ko-KR', { hour12: false })}` : atlas.demo ? '합성 자료 조회 전' : '실제 데이터 조회 전'}</small><Button variant="outline" disabled={loading || atlas.loading} onClick={() => void (available ? refresh() : atlas.reload()).catch(cause => setError(cause instanceof Error ? cause.message : '서비스 상태를 다시 조회하지 못했습니다.'))}><RefreshCw size={15} className={loading || atlas.loading ? 'spin' : ''} />새로고침</Button></div></div>
+    {!available ? <Empty title="수치 분석 서비스가 준비되지 않았습니다">운영 담당자가 설치·연결 상태를 확인한 후 새로고침하세요.{atlas.catalog?.area_error && ` (${atlas.catalog.area_error})`}</Empty> : loading && !data ? <div className="loading-state" role="status"><LoaderCircle className="spin" size={23} />불러오는 중…</div> : error && !data ? <div className="notice error" role="alert">{error}</div> : !data ? <Empty title="Area/Power 자료를 불러오지 못했습니다">연결을 확인하고 새로고침하세요.</Empty> : <>
+      <Comparisons auth={auth} access={data.access} records={data.records} uploads={data.uploads} comparisons={data.records.filter(row => row.record_type === 'comparison')} refresh={refresh} refreshVersion={generation} loading={loading} />
       {error && <div className="notice error" role="alert"><strong>요청을 완료하지 못했습니다</strong><p>{error}</p></div>}
     </>}
   </main></div>

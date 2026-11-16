@@ -72,8 +72,8 @@ export default function AtlasDemo() {
       .finally(() => { if (active) setChecking(false) })
     return () => { active = false }
   }, [attempt])
-  const refreshSession = useCallback(async () => {
-    const value = await demoRequest<Session>('/api/session')
+  const refreshSession = useCallback(async (signal?: AbortSignal) => {
+    const value = await demoRequest<Session>('/api/session', undefined, false, signal)
     setSession(value)
     return value
   }, [])

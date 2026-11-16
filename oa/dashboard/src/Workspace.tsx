@@ -42,12 +42,13 @@ export default function Workspace({ routeSearch, initialSession }: { routeSearch
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   useEffect(() => {
+    if (initialSession) { setSession(initialSession); setChecking(false); return }
     const controller = new AbortController()
     request<WorkspaceSession>('/session', { signal: controller.signal }).then(setSession).catch(e => {
       if (e instanceof WorkspaceError && e.code !== 'UNAUTHORIZED') setError(e.message)
     }).finally(() => { if (!controller.signal.aborted) setChecking(false) })
     return () => controller.abort()
-  }, [])
+  }, [initialSession])
   async function login(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setError('')
     try { setSession(await request<WorkspaceSession>('/login', { body: { username, password } })); setPassword('') }
