@@ -130,7 +130,7 @@ Power 분석 결과는 snapshot에 연결한 별도 실행 결과다. 각 결과
 
 현재 원본은 이미 hierarchy별로 집계되어 있다. 상시 조회용으로는 design 루트와 target 등 조회 대상 hierarchy의 area·count와 분석 조건별 power를 저장하고, 상세 hierarchy 비교는 양쪽 압축 원본의 행을 읽어 수행한다. 비교 작업은 선택한 분석 범위의 모든 hierarchy를 검토하며, 상시 조회용 저장 범위가 검출 범위를 제한하지 않는다. 모든 행을 관계형 테이블에 중복 적재하면 압축 원본 외의 저장 공간이 증가하므로 즉시 조회가 필요한 범위에 맞춰 정한다.
 
-원본의 `*_pct`는 gzip 안에 보존한다. 검증된 count와 분모에서 다시 계산할 수 있는 비율은 조회 시 계산하고 별도 파생 상태로 중복 저장하지 않는다. 개별 cell instance 목록은 없으므로 원본을 해제해도 개별 cell 교체 이력은 얻을 수 없다.
+원본의 `*_pct`는 gzip 안에 보존한다. Vth/DRV 비율은 보고된 logic area 기준 값으로 사용하고, 그룹 비교에서는 각 행의 logic_area로 가중한다. 개별 cell instance 목록은 없으므로 원본을 해제해도 개별 cell 교체 이력은 얻을 수 없다.
 
 약 0.5 MB는 사용자가 기존 CSV에 대해 제시한 압축 크기다. 같은 통합 CSV는 구조와 power가 참조하더라도 원본을 한 번만 보관한다. 실제 수집한 모든 corner·재실행 파일의 크기를 합쳐 저장량을 산정한다. 집계·인덱스·WAL·백업 공간은 별도이며 실제 압축률을 측정하기 전 추정값을 보장하지 않는다.
 
@@ -140,7 +140,7 @@ Power 분석 결과는 snapshot에 연결한 별도 실행 결과다. 각 결과
 
 ### 제공된 컬럼과 확정된 의미
 
-컬럼명은 [원본 목록](csv_structure)을 따른다. 각 행은 `hier_name`이 가리키는 hierarchy의 누적 집계이며, 일반 Vth와 LLP는 서로 다른 범주다. 사용자가 확인한 logic cell 기준을 수치 단위에 맞춰 count 비율은 `logic_cells`, area 비율은 `logic_area`에 대응시킨다.
+컬럼명은 [원본 목록](csv_structure)을 따른다. 각 행은 `hier_name`이 가리키는 hierarchy의 누적 집계이며, 일반 Vth와 LLP는 서로 다른 범주다. 모든 `*_pct`는 `logic_area` 기준 면적 비율이다. `*_cnt`는 독립적인 셀 개수이며 비율 복원에 사용하지 않는다.
 
 | 컬럼 | 의미와 사용처 |
 | --- | --- |
@@ -152,9 +152,9 @@ Power 분석 결과는 snapshot에 연결한 별도 실행 결과다. 각 결과
 | `sram_cells`, `sram_area` | SRAM cell 수와 area |
 | `io_cells`, `io_area` | IO cell 수와 area |
 | `others_cells`, `others_area` | 원본에서 others로 분류한 cell 수와 area |
-| `vt_{slvt,lvt,rvt,hvt}_{cnt,pct}` | 일반 Vth 네 범주의 count와 logic cell 대비 비율 |
-| `vt_{slvt,lvt,rvt,hvt}_llp_{cnt,pct}` | LLP 네 범주의 count와 logic cell 대비 비율 |
-| `drv_D1`~`drv_D8`, `drv_D10`, `drv_D12`, `drv_D14`, `drv_D16`의 `_cnt`, `_pct` | 제공된 drive 범주별 count와 logic cell 대비 비율 |
+| `vt_{slvt,lvt,rvt,hvt}_{cnt,pct}` | 일반 Vth 네 범주의 count와 logic area 대비 면적 비율 |
+| `vt_{slvt,lvt,rvt,hvt}_llp_{cnt,pct}` | LLP 네 범주의 count와 logic area 대비 면적 비율 |
+| `drv_D1`~`drv_D8`, `drv_D10`, `drv_D12`, `drv_D14`, `drv_D16`의 `_cnt`, `_pct` | 제공된 drive 범주별 count와 logic area 대비 면적 비율 |
 | `drv_other_cnt`, `drv_other_pct` | 원본의 other drive 범주. 분류 누락과 구분해 유지 |
 | `pwr_all_{internal,switching,leakage,total}_mw` | 해당 hierarchy 전체의 성분별 전력과 총전력 |
 | `pwr_logic_{internal,switching,leakage,total}_mw` | CTS를 포함한 logic 분류의 성분별 전력과 총전력 |
@@ -172,7 +172,7 @@ Power의 단위는 mW다. Logic power에 CTS가 포함되므로 all에 CTS 전�
 
 Corner 컬럼이 포함된 CSV는 모든 행의 `process_label`, `voltage_v`, `temp_c`, `pex`가 같은 조건인지 검증한다. 서로 다른 조건이 섞인 파일은 적재 오류로 처리하며 여러 corner로 자동 분할하지 않는다. 파일 단위 단일 corner이므로 경로 중복 검사에 corner를 추가해 중복을 허용하지 않는다.
 
-`*_pct`는 0~100 scale로 읽고 각각의 count 또는 area와 대조한다. 반올림 허용 오차는 실제 CSV의 소수점 정밀도에 맞춘다. Logic 분모가 0일 때의 비율은 계산 불가로 표시하며, 원본의 0 또는 빈 값 표현 규칙은 예시 데이터로 확인한다.
+`*_pct`는 0~100 scale의 면적 비율이다. CTS는 area와 대조하고 Vth/DRV는 원본 비율을 보존하며 count 비율과 대조하지 않는다. 각 분류의 비율 합이 반올림 허용 범위를 넘어 100을 초과하면 거부한다. 반올림 허용 오차는 실제 CSV의 소수점 정밀도에 맞춘다. Logic 분모가 0일 때의 비율은 계산 불가로 표시하며, 원본의 0 또는 빈 값 표현 규칙은 예시 데이터로 확인한다.
 
 별도 Vth 여덟 범주의 count 합과 drive 범주의 count 합은 각각 `logic_cells`를 넘을 수 없다. 합이 부족하면 부족한 수를 집계 누락으로 표시하고, 기존 `drv_other_cnt`에 임의 합산하지 않는다. 분류 완전성과 percentage 일치 검사를 구분하며, 비율 합계를 억지로 100으로 재정규화하지 않는다.
 
@@ -204,22 +204,22 @@ Area는 현재 값, 기준 값, 절대 증감량과 증감률을 함께 표시�
 `slvt`, `slvt_llp`, `lvt`, `lvt_llp`, `rvt`, `rvt_llp`, `hvt`, `hvt_llp`의 여덟 count와 비율을 독립적으로 비교한다. LLP를 일반 Vth count의 부분집합으로 간주하지 않는다. Library가 다른 비교에서는 같은 범주명이 같은 조건을 뜻하는지 확인한다.
 
 ```text
-Vth 비율(v, %) = 100 × 해당 vt_*_cnt / logic_cells
+Vth 비율(v, %) = CSV의 vt_*_pct (logic area 기준)
 비율 변화(%p) = 현재 vt_*_pct - 기준 vt_*_pct
 ```
 
-현재 제공되는 Vth 비율은 count 기준이다. Vth별 area가 없으므로 area 가중 Vth ratio는 계산하지 않는다. `total_cells`를 분모로 사용하지 않고, 부모·자식 비율을 평균하지 않는다. 서로 겹치지 않는 hierarchy를 합칠 때만 Vth count와 `logic_cells`를 합쳐 비율을 계산한다.
+Vth 면적 비율은 CSV 값을 사용한다. 서로 겹치지 않는 hierarchy의 그룹 비율은 `Σ(logic_area × pct) / Σ(logic_area)`로 계산한다. 분자에 제시하는 범주 면적은 보고된 비율에서 환산한 값이며 독립적으로 수집한 면적이 아니다. 부모와 자식을 함께 더하거나 비율을 단순 평균하지 않는다.
 
 `logic_cells - Σ(vt_*_cnt)`가 양수면 분류되지 않은 수로 별도 표시한다. 분모를 이미 분류된 cell 수로 줄여 누락을 숨기지 않는다.
 
-예를 들어 LVT 비율 20%에서 30%로의 변화는 `+10%p`이고 상대 변화율은 `+50%`다. 기본 비교와 알림은 `%p`를 사용하고 양쪽 Vth count 및 `logic_cells`를 함께 보여준다. LVT count 증가와 다른 Vth 감소에 따른 구성비 상승을 구분한다.
+예를 들어 LVT 비율 20%에서 30%로의 변화는 `+10%p`이고 상대 변화율은 `+50%`다. 기본 비교와 알림은 `%p`를 사용하고 양쪽 보고 면적 비율 및 `logic_area`를 함께 보여준다. 범주 면적 증가와 분모 면적 감소에 따른 비율 상승을 구분한다.
 
 ### Drive strength
 
 `D1`~`D8`, `D10`, `D12`, `D14`, `D16`, `other`의 count와 구성비를 비교한다. `drv_other_cnt`는 제공된 범주이며, count 합에서 확인한 분류 누락 수와 구분한다.
 
 ```text
-Drive 비율(d, %) = 100 × 해당 drv_*_cnt / logic_cells
+Drive 비율(d, %) = CSV의 drv_*_pct (logic area 기준)
 비율 변화(%p) = 현재 drv_*_pct - 기준 drv_*_pct
 ```
 
@@ -324,7 +324,7 @@ Target에는 표시 이름, 현재 프로젝트·버전·block의 전체 경로,
 
 Subtree의 상대 경로 대응은 일대일 매핑에 적용한다. 분할·병합 그룹의 하위 노드까지 대응시키려면 별도 매핑을 입력해야 한다. 그룹 멤버는 각쪽에서 선택한 snapshot 안의 경로로 확인한다.
 
-일대일은 이름이나 위치가 바뀌어도 연결된 두 행을 비교한다. 분할·병합은 한쪽 그룹 안에 부모와 자식을 함께 넣지 않고, 겹치지 않는 영역들의 count·area를 더해 그룹끼리 비교한다. Vth·drive 비율은 각 범주의 count 합을 `logic_cells` 합으로 나누고, CTS area 비율은 `cts_area` 합을 `logic_area` 합으로 나눠 다시 계산한다. 비율을 평균하거나 이전 area를 새 자식에게 임의 배분하지 않는다.
+일대일은 이름이나 위치가 바뀌어도 연결된 두 행을 비교한다. 분할·병합은 한쪽 그룹 안에 부모와 자식을 함께 넣지 않고, 겹치지 않는 영역들의 count·area를 더해 그룹끼리 비교한다. Vth·drive 비율은 각 행의 면적 비율을 `logic_area`로 가중하고, CTS area 비율은 `cts_area` 합을 `logic_area` 합으로 나눠 다시 계산한다. 비율을 평균하거나 이전 area를 새 자식에게 임의 배분하지 않는다.
 
 Power는 같은 분석 조건에서 겹치지 않는 hierarchy 멤버의 성분별 mW를 더해 그룹끼리 비교한다. 그룹 멤버의 필요한 값이 누락되면 해당 power 비교를 불완전으로 표시한다. 서로 다른 corner·mode·activity의 결과를 한 그룹의 전력으로 더하지 않는다.
 
@@ -361,7 +361,7 @@ Target의 경로가 없거나 매핑이 불완전하면 그 target을 비교 불
 
 변경 설명에 이전 프로젝트의 instance 이름이 나오면 해당 비교에 적용한 매핑을 통해 현재 대상과 연결한다. 등록된 target의 표시 이름도 실제 경로로 해석한 뒤 사용한다. 구조화해 입력한 매핑과 자연어 설명의 대응이 충돌하면 사용자 매핑을 임의 수정하지 않고 충돌을 표시한다. AI가 이름 유사성으로 제안한 연결은 실제 사용자 매핑과 구분한다.
 
-변경 대상이 자식 hierarchy라면 그 자식과 조상들의 누적 지표에 영향을 줄 수 있다. 자식의 예상 증가율을 조상 전체의 허용 증가율로 그대로 적용하지 않고 실제 기여량을 본다. 자식의 크기 변화로 조상의 Vth·drive 구성비가 달라질 수도 있으므로 count와 분모 변화를 함께 설명한다. 형제 hierarchy까지 같은 설명을 자동 적용하지 않는다.
+변경 대상이 자식 hierarchy라면 그 자식과 조상들의 누적 지표에 영향을 줄 수 있다. 자식의 예상 증가율을 조상 전체의 허용 증가율로 그대로 적용하지 않고 실제 기여량을 본다. 자식의 크기 변화로 조상의 Vth·drive 구성비가 달라질 수도 있으므로 면적 비율과 logic_area 변화를 함께 설명한다. 형제 hierarchy까지 같은 설명을 자동 적용하지 않는다.
 
 일반 Vth와 LLP를 구분하는 원본 구조를 자연어 해석에도 유지한다. 일반 LVT 설명을 LVT_LLP의 변화까지 자동으로 설명하는 근거로 사용하지 않으며, 둘을 포함한 의미인지 불명확하면 해석 범위를 표시한다.
 
@@ -391,12 +391,12 @@ v10과 v13을 비교하면 v10 이후 v13까지 적용된 변경을 모은다. v
 | --- | --- |
 | Area와 cell 수 | `total_*`, `logic_*`, `cts_*`, `sram_*`, `io_*`, `others_*`의 절대·상대 변화, hierarchy별 변화 위치 |
 | CTS area ratio | `cts_area_pct`의 %p 차이와 분자·분모의 area 변화 |
-| Vth ratio | 일반 Vth와 LLP 각각의 %p 차이, count·`logic_cells` 변화, 분류 누락 비중 |
-| Drive strength | 제공된 D 범주와 other 각각의 %p 차이, count·`logic_cells` 변화 |
+| Vth ratio | 일반 Vth와 LLP 각각의 %p 차이, 보고 비율·`logic_area` 변화, 분류 누락 비중 |
+| Drive strength | 제공된 D 범주와 other 각각의 %p 차이, 보고 비율·`logic_area` 변화 |
 | Power | 분류·성분별 mW 증감량·증감률, 총전력과 성분 변화의 관계, 분석 조건 차이 |
 | 공통 | 신규·삭제 대상, 비교 조건 변화, 수치 누락과 분류 불일치 |
 
-Area와 power는 절대량과 상대량을 함께 고려해 작은 기준 값에서 생기는 과도한 증감률을 구분한다. Ratio와 drive는 분모 및 변화에 관련된 cell 수를 함께 본다. 초기 임계값은 사용자의 운영 기준과 실제 CSV를 확인한 뒤 정하며, 모든 지표에 동일한 고정 백분율을 적용하지 않는다.
+Area와 power는 절대량과 상대량을 함께 고려해 작은 기준 값에서 생기는 과도한 증감률을 구분한다. Ratio와 drive는 면적 분모와 보고된 면적 비율을 함께 본다. 초기 임계값은 사용자의 운영 기준과 실제 CSV를 확인한 뒤 정하며, 모든 지표에 동일한 고정 백분율을 적용하지 않는다.
 
 자연어로 명시된 예상 구간을 벗어난 변화도 후보에 포함한다. 이력이 쌓이면 같은 조건의 과거 분포를 보조 근거로 사용할 수 있다. 중앙값과 MAD를 사용하는 방법 등은 분포와 표본 조건을 확인한 후 적용하며, MAD가 0이거나 이력이 부족하면 통계 판정으로 대체하지 않는다. [NIST 이상치 판별 설명](https://www.itl.nist.gov/div898/handbook/eda/section3/eda35h.htm)
 
@@ -440,7 +440,7 @@ AI 호출 실패나 잘못된 응답은 성공으로 바꾸지 않는다. 후보
 | `di_area_power_csv` | 통합 CSV 원본 gzip, 업로드 실행·프로젝트·버전·block·snapshot, corner·보충 분석 조건, 루트 요약·검증 결과 |
 | `di_area_power_tracking_record` | 종류별 설정·원문 revision·매핑·파일 선택·계산 결과·AI 판정·알림·메일·작업. 객체·결과·작업별로 행을 분리하고 상세는 JSONB에 저장 |
 
-루트 요약은 `root_summary`, 분석한 hierarchy·target·매핑 그룹은 `metric_result`에 지표별 현재/기준 값·분자·분모·조건을 저장한다. 별도 `scope_result` 캐시는 생성하지 않는다. 원본 pct는 gzip에 남기고 비율은 검증한 분자·분모로 계산한다. 구조의 논리 키는 `(snapshot_id, hier_name)`, power는 `(upload_id, hier_name)`이며 업로드 시 원본 전체를 관계형 행으로 복제하지 않는다.
+루트 요약은 `root_summary`, 분석한 hierarchy·target·매핑 그룹은 `metric_result`에 지표별 현재/기준 값·분자·분모·조건을 저장한다. 별도 `scope_result` 캐시는 생성하지 않는다. 원본 pct는 gzip에 남기고 Vth/DRV 그룹 비율은 logic_area로 가중한다. 면적 비율도 구조 snapshot 동일성 검사에 포함한다. 구조의 논리 키는 `(snapshot_id, hier_name)`, power는 `(upload_id, hier_name)`이며 업로드 시 원본 전체를 관계형 행으로 복제하지 않는다.
 
 수치 비교 key는 양쪽 업로드·조건·범위·지표·검출 정책·매핑 revision과 실제 대응을 정규화해 산출하고 종류별 dedupe UNIQUE로 중복을 막는다. 설명만 수정하면 기존 수치 결과에 새 AI 실행을 연결한다. JSON 내부 참조·수치·범위 검증과 완료 데이터 불변성은 공통 모델과 각 서비스가 검증한다.
 
