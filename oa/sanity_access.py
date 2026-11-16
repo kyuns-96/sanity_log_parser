@@ -522,18 +522,21 @@ class AccessStore:
     def _scopes(self, user_id, *, write=False):
         self._identity(user_id)
         state = self._state()
-        # Legacy TOP/OWNER grants and new MEMBER grants all authorize the same
-        # project membership. The sealed project/block registry still bounds it.
-        projects = {g["project_id"] for g in state["grants"].values() if g["user_id"] == user_id}
+        # Project membership controls mutations; every active account may read
+        # the sealed project/block registry and its business data.
+        projects = ({g["project_id"] for g in state["grants"].values() if g["user_id"] == user_id}
+                    if write else None)
         return [{"schema_version": 1, "project_id": b["project_id"], "block_id": b["id"]}
-                for b in state["blocks"].values() if b["project_id"] in projects]
+                for b in state["blocks"].values() if projects is None or b["project_id"] in projects]
 
     def can_read_business(self, user_id):
         self._identity(user_id)
-        return any(grant["user_id"] == user_id for grant in self._state()["grants"].values())
+        self._state()
+        return True
 
     def can_write_business(self, user_id):
-        return self.can_read_business(user_id)
+        self._identity(user_id)
+        return any(grant["user_id"] == user_id for grant in self._state()["grants"].values())
 
     def read_predicate(self, user_id, alias="r"):
         if not isinstance(alias, str) or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", alias) is None:

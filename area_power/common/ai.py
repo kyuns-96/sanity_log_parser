@@ -85,7 +85,7 @@ class Runtime:
         actor = SimpleNamespace(user_id=pin['user_id'], auth_method='sso', access=access)
         permission = AreaAccess(actor)
         with self.db.connect() as conn:
-            permission.row(self.db, conn, self.subject)
+            permission.row(self.db, conn, self.subject, write=True)
         store = ConnectionStore(host_db)
         if pin['connection_id'] is not None:
             store.authorize_user(pin['connection_id'], pin['user_id'])
