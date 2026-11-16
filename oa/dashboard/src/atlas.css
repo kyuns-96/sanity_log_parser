@@ -72,7 +72,6 @@
 .atlas-project-grid article.selected { border-color:var(--accent-line); background:var(--accent-soft); }
 .atlas-project-grid article > div { display:flex; align-items:center; justify-content:space-between; color:var(--accent); }
 .atlas-project-grid article > div span { font-size:9px; }
-.atlas-project-grid code { display:block; overflow-wrap:anywhere; color:var(--text-muted); font-size:10px; margin:10px 0 18px; }
 .atlas-project-grid p { min-height:22px; }
 .atlas-project-grid footer { display:flex; align-items:center; gap:10px; justify-content:space-between; border-top:1px solid var(--line); padding-top:14px; }
 .atlas-project-grid footer > span { color:var(--text-muted); font-size:10px; }
@@ -80,7 +79,7 @@
 .atlas-block-list { border-top:1px solid var(--line); margin-top:24px; padding-top:8px; }
 .atlas-block-list > button { width:100%; display:flex; align-items:center; flex-wrap:wrap; gap:12px; background:var(--surface); color:var(--ink); border:1px solid var(--line); border-radius:7px; padding:13px; margin-top:8px; text-align:left; cursor:pointer; }
 .atlas-block-list > button.selected { background:var(--accent-soft); border-color:var(--accent-line); }
-.atlas-block-list code { flex:1; color:var(--text-muted); overflow-wrap:anywhere; font-size:10px; }
+.atlas-block-list > button > strong { flex:1; }
 .atlas-block-list span { font-size:10px; color:var(--text-muted); }
 .atlas-feature-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
 .atlas-feature-grid p { margin-bottom:20px; }
@@ -97,7 +96,6 @@
 .atlas-modal .atlas-actions { justify-content:flex-end; margin-top:22px; }
 .atlas-form-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; }
 .atlas-local-binding summary { cursor:pointer; color:var(--text-secondary); font-weight:600; font-size:12px; }
-.atlas-local-binding code { overflow-wrap:anywhere; }
 .atlas-shell .area-power #area-power-main { padding:30px; }
 .atlas-shell .am-main { margin:0; max-width:none; }
 .atlas-shell .ws-studio,.atlas-shell .ws-shell,.atlas-shell .shell.atlas-embedded { min-height:0; }

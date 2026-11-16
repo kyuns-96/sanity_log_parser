@@ -1,12 +1,16 @@
 import type { CaseSourceMetadata, WorkspaceReport, WorkspaceVersion } from './workspaceApi'
+import { useAtlas } from './atlasContext'
 
 export default function CaseSource({ value, report, version }: {
   value: CaseSourceMetadata; report?: WorkspaceReport; version?: WorkspaceVersion
 }) {
+  const atlas = useAtlas()
   const source = value.source_version
   const scope = value.scope
   const project = scope?.project_id ?? value.project_id ?? source?.project_id
   const block = scope?.block_id ?? value.block_id ?? source?.block_id
+  const sourceProject = atlas?.catalog?.projects.find(item => item.id === project)
+  const sourceBlock = sourceProject?.blocks.find(item => item.id === block)
   const eco = Object.prototype.hasOwnProperty.call(value, 'eco') ? value.eco : scope?.eco
   const differences: string[] = []
   const compare = (label: string, previous: unknown, current: unknown) => {
@@ -35,7 +39,7 @@ export default function CaseSource({ value, report, version }: {
   const versionParts = [source?.net_ver && `버전 ${source.net_ver}`, source?.revision && `revision ${source.revision}`,
     source?.layout ?? scope?.layout, eco === undefined ? null : eco === null ? 'ECO 없음' : `ECO ${eco}`].filter(Boolean)
   return <span className="ws-case-source">
-    {(project || block) && <small>{[project && `프로젝트 ${project}`, block && `블록 ${block}`].filter(Boolean).join(' · ')}</small>}
+    {(project || block) && <small>{[project && (sourceProject?.name || '프로젝트 정보 없음'), block && (sourceBlock?.name || '블록 정보 없음')].filter(Boolean).join(' · ')}</small>}
     {!!versionParts.length && <small>{versionParts.join(' · ')}</small>}
     {!!differences.length && <small>이번 보고서와 다른 조건: {differences.join(', ')}</small>}
   </span>

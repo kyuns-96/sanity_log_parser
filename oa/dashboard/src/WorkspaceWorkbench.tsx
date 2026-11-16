@@ -435,7 +435,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
     {data.current && <div className="ws-workbench-columns ws-studio-columns" role="region" aria-label={step === 1 ? '1단계 전체 로그 분류' : '2단계 확정 그룹별 판정'}>
       <aside className="ws-studio-context" aria-label="프로젝트와 보고서 정보">
         <div className="ws-context-heading"><FolderTree size={16} /><h2>프로젝트</h2></div>
-        <div className="ws-context-project"><strong>{context?.projectName || data.report.project_id}</strong><span>{context?.blockName || data.report.block_id}</span></div>
+        <div className="ws-context-project"><strong>{context?.projectName || '프로젝트 정보 없음'}</strong><span>{context?.blockName || '블록 정보 없음'}</span></div>
         <div className="ws-context-version"><GitBranch size={15} /><div><strong>{data.version.net_ver}</strong><span>{data.version.layout} · {data.version.revision}</span><span>ECO {data.report.eco || '해당 없음'}</span></div></div>
         <div className="ws-context-por"><ShieldCheck size={15} /><div><span>현재 PoR</span><strong>{context?.porLabel || '미지정'}</strong></div></div>
         <div className="ws-context-heading"><FileText size={16} /><h2>검사 보고서</h2></div>

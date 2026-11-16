@@ -73,8 +73,8 @@ export default function AtlasShell({ children, demoToolbar }: { children: ReactN
           <button className="atlas-button secondary" disabled={atlas.loading} onClick={() => void atlas.reload().catch(() => undefined)}>{atlas.loading ? '조회 중…' : '범위 새로고침'}</button>
         </div>
         {!scopeExpanded && <dl className="atlas-scope-overview" aria-label="선택한 공통 범위">
-          <div><dt>프로젝트</dt><dd title={atlas.project?.name || atlas.scope.projectId}>{atlas.project?.name || atlas.scope.projectId || '미선택'}</dd></div>
-          <div><dt>블록</dt><dd title={atlas.block?.name || atlas.scope.blockId}>{atlas.block?.name || atlas.scope.blockId || '미선택'}</dd></div>
+          <div><dt>프로젝트</dt><dd title={atlas.project?.name}>{atlas.project?.name || (atlas.scope.projectId ? '확인 필요' : '미선택')}</dd></div>
+          <div><dt>블록</dt><dd title={atlas.block?.name}>{atlas.block?.name || (atlas.scope.blockId ? '확인 필요' : '미선택')}</dd></div>
           <div><dt>NET_VER</dt><dd title={netVer}>{netVer || '미선택'}</dd></div>
           <div><dt>REVISION</dt><dd title={atlas.version?.revision || atlas.scope.versionId}>{atlas.version ? `${atlas.version.revision} · ${atlas.version.layout}` : atlas.scope.versionId || '미선택'}</dd></div>
         </dl>}

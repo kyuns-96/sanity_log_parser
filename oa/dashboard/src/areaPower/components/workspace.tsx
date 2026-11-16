@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Check, Copy, Database, LoaderCircle, X } from 'lucide-react'
+import { Check, Copy, Database, Download, LoaderCircle, X } from 'lucide-react'
 import StudioButton from './shadcn-studio/button/button-01'
 import { pretty, type TrackingRecord, nameOf, text } from '../api'
 
@@ -17,16 +17,20 @@ export function Badge({ value }: { value: unknown }) {
 export function Json({ value, label = '전체 JSON 보기', open = false }: { value: unknown; label?: string; open?: boolean }) {
   return <details className="json-details" open={open}><summary>{label}</summary><pre>{pretty(value)}</pre></details>
 }
-export function CopyButton({ value, label = 'ID 복사' }: { value: string; label?: string }) {
+export function CopyButton({ value, label }: { value: string; label: string }) {
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState('')
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => { clearTimeout(timer.current) }, [])
   async function copy() {
     try { await navigator.clipboard.writeText(value); setCopied(true); setError(''); clearTimeout(timer.current); timer.current = setTimeout(() => setCopied(false), 1800) }
-    catch { setError('클립보드 접근 불가: 텍스트를 선택해 복사하세요.') }
+    catch { setError('클립보드 접근 불가: JSON 파일을 내려받아 사용하세요.') }
   }
-  return <span className="copy-control"><StudioButton type="button" variant="ghost" size="sm" onClick={copy} aria-label={label}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? '복사됨' : label}</StudioButton>{error && <small role="alert">{error}<code>{value}</code></small>}</span>
+  function download() {
+    const url = URL.createObjectURL(new Blob([value], { type: 'application/json' }))
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'metadata.json'; anchor.click(); URL.revokeObjectURL(url)
+  }
+  return <span className="copy-control"><StudioButton type="button" variant="ghost" size="sm" onClick={copy} aria-label={label}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? '복사됨' : label}</StudioButton>{error && <small role="alert">{error}<StudioButton type="button" variant="ghost" size="sm" onClick={download}><Download size={14} />JSON 내려받기</StudioButton></small>}</span>
 }
 export function RecordOptions({ records }: { records: TrackingRecord[] }) {
   return <>{records.map(record => <option key={record.id} value={record.id}>{nameOf(record)} · r{record.revision} · {record.id.slice(0, 8)}</option>)}</>
