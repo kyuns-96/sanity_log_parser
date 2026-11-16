@@ -1,7 +1,7 @@
 """VWP upload HTTP boundary; OA and VWP exchange work only through the DB.
 
 Run: python -m area_power.vwp_server
-Configuration uses AREA_POWER_ environment variables.
+Area DB/upload settings use AREA_POWER_; AI uses the log parser's selected connection.
 """
 from __future__ import annotations
 

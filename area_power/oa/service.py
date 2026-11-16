@@ -119,6 +119,10 @@ class Service:
             db = AuthorizedDatabase(db, access)
         self.db = db
 
+    def ai_context(self):
+        from area_power.common.ai import capture_context
+        return capture_context(self.access)
+
     def authorize(self, conn, row):
         return self.db.authorize(conn, row) if self.access is not None else row
 
@@ -390,18 +394,19 @@ class Service:
                     targets[str(target["entity_id"])] = target
         return list(targets.values())
 
-    def new_run(self, conn, comparison, changes, recipients, actor, *, fresh=False):
+    def new_run(self, conn, comparison, changes, recipients, actor, *, fresh=False, ai_context=None, previous_run_id=None):
         frozen = comparison["payload"].get("frozen", {})
         scope_targets = frozen.get("scope_targets", frozen.get("targets", []))
         targets = self.explanation_targets(conn, scope_targets, changes, comparison)
-        key = digest(["ai_run", comparison["id"], sorted(str(row["id"]) for row in changes), sorted(str(target["id"]) for target in targets), sorted(recipients), str(uuid4()) if fresh else None])
+        ai_context = self.ai_context() if ai_context is None else ai_context
+        key = digest(["ai_run", comparison["id"], sorted(str(row["id"]) for row in changes), sorted(str(target["id"]) for target in targets), sorted(recipients), ai_context, previous_run_id, str(uuid4()) if fresh else None])
         self.lock(conn, ["ai_run", key])
         old = conn.execute(sql.SQL("SELECT * FROM {} WHERE record_type='ai_run' AND dedupe_key=%s").format(self.db.table("di_area_power_tracking_record")), (key,)).fetchone()
         if old:
             old = self.authorize(conn, old)
             jobs = self.db.records(conn, "job", parent_id=old["id"], limit=1)
             return old, jobs[0] if jobs else None
-        run = self.db.insert_record(conn, "ai_run", {"change_ids": [row["id"] for row in changes], "changes": changes, "targets": targets, "recipients": recipients, "coverage": {}}, actor, state="queued", parent_id=comparison["id"], upload_id=comparison["upload_id"], baseline_upload_id=comparison.get("baseline_upload_id"), dedupe_key=key, **self.scope(comparison))
+        run = self.db.insert_record(conn, "ai_run", {"change_ids": [row["id"] for row in changes], "changes": changes, "targets": targets, "recipients": recipients, "ai_context": ai_context, "coverage": {}}, actor, state="queued", parent_id=comparison["id"], upload_id=comparison["upload_id"], baseline_upload_id=comparison.get("baseline_upload_id"), dedupe_key=key, **self.scope(comparison))
         job = self.db.enqueue(conn, "judge", actor=actor, parent_id=run["id"], payload={}, **self.scope(comparison))
         return run, job
 
@@ -454,16 +459,21 @@ class Service:
             key = digest(numeric)
             self.lock(conn, ["comparison", key])
             old = conn.execute(sql.SQL("SELECT * FROM {} WHERE record_type='comparison' AND dedupe_key=%s FOR UPDATE").format(self.db.table("di_area_power_tracking_record")), (key,)).fetchone()
+            ai_context = self.ai_context()
             if old:
                 old = self.authorize(conn, old)
-                original = old["payload"]["request"]
+                runs = self.db.records(conn, "ai_run", parent_id=old["id"], limit=10000)
+                latest = max(runs, key=lambda row: (row["created_at"], str(row["id"]))) if runs else old
+                original = latest["payload"] if runs else old["payload"]["request"]
                 explanation_changed = set(map(str, original.get("change_ids", []))) != set(map(str, body.change_ids)) or set(original.get("recipients", [])) != set(recipients)
+                explanation_changed |= latest["payload"].get("ai_context") != ai_context
                 job = None
                 if explanation_changed:
-                    _, job = self.new_run(conn, old, changes, recipients, actor)
+                    _, job = self.new_run(conn, old, changes, recipients, actor, ai_context=ai_context, previous_run_id=latest["id"] if runs else None)
                 return {"comparison": old, "job": job, "reused": True}
             explanation_targets = self.explanation_targets(conn, targets, changes, current)
             payload = {"request": request, "frozen": {"current_upload": current, "baseline_upload": baseline, "mapping": mapping, "scope_targets": targets, "targets": explanation_targets, "changes": changes, "power_uploads": power_uploads}, "coverage": {}, "policy_unconfigured": not bool(body.policy.metrics or body.policy.operating_limits), "ai_state": "pending"}
+            payload["ai_context"] = ai_context
             if designation is not None:
                 payload["frozen"]["baseline_designation"] = designation
             comparison = self.db.insert_record(conn, "comparison", payload, actor, state="queued", upload_id=current["id"], baseline_upload_id=baseline["id"] if baseline else None, dedupe_key=key, **self.scope(current))
@@ -512,6 +522,8 @@ class Service:
                 parent = self.db.record(conn, job["parent_id"], lock=True)
             subject_context = {}
             if job["job_kind"] in ("compare", "judge", "extract"):
+                if job["created_by"] != actor:
+                    reject("Only the original requester can rerun an AI job.", "forbidden", 403)
                 expected_kind = {"compare": "comparison", "judge": "ai_run", "extract": "change"}[job["job_kind"]]
                 if not parent or parent["record_type"] != expected_kind:
                     reject("Job subject does not match its kind.", "invalid_job_subject")

@@ -83,3 +83,17 @@
 - 치명적 claim/finish 오류는 health와 upload 503으로 관찰했고 초기 claim/schema 오류는 startup을 막았다. 정상 SIGTERM은 현재 claim을 drain하고 다음 작업을 claim하지 않아 `running` 0건·다음 job pending·worker thread 없음으로 끝났다. 강제 종료 및 fatal finish는 불확실한 `running` job을 남길 수 있고 자동 reclaim은 없다. Uvicorn의 clean shutdown 뒤 subprocess `-15`는 정상 SIGTERM 결과다.
 - 초기 proof runner의 일부 단언은 AI 오류 처리 및 신호 종료 코드를 잘못 기대해 실패했다. 이를 전체 통과로 보고하지 않는다. 뒤이은 lifecycle 경계 proof는 종료 코드 0으로 끝났고, 폐기 cluster·소유 프로세스는 정리했다. 실제 회사 AI/model 품질은 미검증이다.
 
+## 기존 로그 AI 연결을 사용하는 Area AI — 2026-11-16
+
+- 별도 `AREA_POWER_AI_BASE_URL`, `AREA_POWER_AI_MODEL`, `AREA_POWER_AI_API_KEY` 설정을 제거했다. Area는 기존 로그 AI와 같은 `CLUSTER`/`REVIEW` task selection/default를 쓴다. managed connection이 없고 task default도 미설정일 때만 기존 no-connection default advisor(`SANITY_OA_AI_*`)를 사용하며, 선택된 managed connection/default의 오류로 그 경로에 fallback하지 않는다.
+- Area 작업 레코드에는 공개 연결/설정 pin과 actor만 저장하고 token은 저장하지 않는다. VWP worker는 추론 전후 Area 권한과 현재 연결/credential을 재검사한 뒤 기존 로그 AI advisor를 호출한다. OA↔VWP 전달은 DB만 사용한다. VWP 관리 프로필은 VWP 전용 `SANITY_VWP_AI_PROFILES_FILE`에 두며 OA/Area 설정으로 복사하지 않는다. 기존 VWP 로그 작업자 DB 설정을 재사용한다.
+- 기존 로그 AI가 선택한 auth mode를 따른다: managed connection/기존 user mode는 해당 OA actor의 기존 개인 token store, server mode는 기존 Log AI server 설정을 사용한다. 토큰은 Area queue에 저장하지 않는다.
+- 같은 숫자 비교 재요청은 기존 수치·frozen 입력·이력을 유지하며, actor/선택 연결·모델/config/credential pin이 달라지면 해당 문맥의 새 AI run을 만든다. 명시적 failed-job 재실행은 원래 actor와 저장 pins만 사용하며 credential 변경 후에는 새 비교 AI run 또는 rejudge가 필요하다.
+- 위 2026-11-13 lifecycle 관찰은 당시의 선택형 Area Bearer endpoint에 대한 역사 기록이며 현재 설정·인증 안내가 아니다. 별도 2026-11-16 통제 proof와 그 한계는 아래에 기록한다.
+
+## Area shared Log AI 경로 통제 proof — 2026-11-16
+
+- 별도 폐기 PostgreSQL 18.6에 기존 Sanity 4개와 Area 정확히 2개 테이블을 설치하고 제한 비소유 계정을 사용했다. 실제 VWP 실행 문맥에서 managed Log AI/Area가 동일한 모델 profile·API·auth·한도를 사용함을 loopback HTTP 49건으로 확인했다. Bearer, Bearer+x-client, x-client-only와 Chat Completions/Responses 경로를 포함한다.
+- 선택된 managed 연결 비활성화, credential revision 회전, Area grant 회수, profile/config 변경은 전송 전 또는 응답 후 결과 적용 전에 차단됐다. managed connection/default 오류는 유효한 legacy 설정이 있어도 전송하지 않고 legacy로 fallback하지 않았다. 무선택·task-default 미설정의 기존 legacy 경로에서는 server credential 및 기존 global UserTokenStore 경로가 각각 동작했고 token은 Area payload에 없었다.
+- 실제 `Service.compare` → 일반 DB queue → `consume_once`에서 수치 comparison과 AI run이 완료되고 79 metric rows를 저장했다(25 domain requests). 임의정밀도 수치 `10.123456789012345678901234567890123456789 → 12.123456789012345678901234567890123456789`, Δ `2.000000000000000000000000000000000000000`를 보존했다. AI를 사용할 수 없는 별도 비교도 numeric 완료, 정확한 AI 실패와 outbound 0건을 보였다. 같은 수치 비교는 ID/frozen inputs를 보존하며 actor/credential 변경은 새 AI run, A→B→A도 이전 run을 참조하는 새 context run을 만들었다.
+- 기존 strict-JSON rejection test 1개 통과, 신규 test/fixture/script 파일은 없다. 이 proof는 통제된 protocol 응답이며 실회사 모델 품질/SDK 검증이 아니다. profile는 in-memory `ProfileStore` injection으로 검증했고 실제 profile 파일의 권한/소유자 검사와 fresh canonical HTTP server/lifespan 경로는 실행하지 않았다.

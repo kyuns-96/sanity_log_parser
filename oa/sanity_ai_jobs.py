@@ -26,7 +26,7 @@ from oa.sanity_access import access_lock
 from oa.sanity_ai_cases import CaseRetriever
 from oa.sanity_ai_deletion import ensure_not_deleted, worker_load
 from oa.sanity_ai_tokens import UserTokenStore
-from oa.sanity_ai_model import OAAdvisor, OASettings, PROVIDER
+from oa.sanity_ai_model import PROVIDER
 from oa.sanity_workspace import record_id
 from oa.sanity_workspace_clustering import WorkspaceClusteringStore
 from oa.sanity_workspace_group_review import WorkspaceGroupReviewStore
@@ -230,12 +230,11 @@ class AIJobService:
 
     def __init__(self, db, ws, advisor=None, criteria_provider=None):
         self.db, self.ws = db, ws
-        if advisor is None:
-            settings = OASettings.from_env(load_environment())
-            advisor = OAAdvisor(settings) if settings.enabled else None
-        self.advisor = advisor
         from oa.sanity_ai_connections import ConnectionStore
         self.connections = ConnectionStore(db)
+        if advisor is None:
+            advisor = self.connections.default_advisor()
+        self.advisor = advisor
         if criteria_provider is None:
             from oa.sanity_ai_criteria import load_criteria
             criteria_provider = load_criteria
@@ -439,24 +438,10 @@ class AIJobService:
         latest_job = monitor.unknown_availability(latest,user_id,context) if latest else None
         # Final group membership/current-revision checks happen on the worker.
         supported = bool(context["ready"] and context["can_review"] and context["record_count"] and context["group_ready"])
-        connections = self.connections.user_connections(user_id)
+        connections, first, task_default = self.connections.task_selection(user_id, 'REVIEW' if group_id is not None else 'CLUSTER')
         for connection in connections:
             connection.update(available=bool(supported and connection["credential_ready"]), enabled=True,
                               supported=supported, credential_required=connection.get("credential_required", True))
-        first = connections[0] if connections else {}
-        from oa.sanity_ai_task_defaults import TaskDefaults
-        default = TaskDefaults(self.db).current()['defaults']['REVIEW' if group_id is not None else 'CLUSTER']
-        task_default = None
-        if default is not None:
-            selected = next((connection for connection in connections if connection['id']==default['connection_id']), None)
-            if selected is None:
-                task_default = {**default, 'applied':False, 'reason':'AI_CONNECTION_UNAVAILABLE'}
-            elif default['model_id'] not in selected['models']:
-                task_default = {**default, 'applied':False, 'reason':'AI_MODEL_NOT_ALLOWED'}
-            else:
-                selected['model'] = default['model_id']
-                first = selected
-                task_default = {**default, 'applied':True}
         credential = {key:first[key] for key in ("credential_required", "credential_ready", "credential_error") if key in first}
         return {"available": first.get("available", False), "supported": supported,
                 "enabled": bool(connections), "model": first.get("model", ""), "remaining": None,
