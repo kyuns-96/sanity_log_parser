@@ -23,7 +23,7 @@ export function WorkspaceBrand({ href }: { href?: string }) {
     <span className="console-mark" aria-hidden="true">
       <img src={appUrl('/design-atlas.svg')} alt="" width="100%" height="100%" />
     </span>
-    <span className="console-wordmark"><strong className="console-brand-name">Design Atlas</strong><span className="console-brand-tagline">로그 검토 · 구성·전력 분석</span></span>
+    <span className="console-wordmark"><strong className="console-brand-name">Design Atlas</strong></span>
   </>
   const target = href ?? homeHref()
   return <a className="console-brand console-studio-brand" href={atlas ? atlas.href(target) : appUrl(target)} aria-label="Design Atlas 홈">{content}</a>

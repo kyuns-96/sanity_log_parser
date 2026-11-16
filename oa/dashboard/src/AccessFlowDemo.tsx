@@ -71,7 +71,7 @@ export default function AccessFlowDemo() {
 
   return <div className="af-root"><a className="skip-link" href="#workspace-main">본문으로 건너뛰기</a>
     <section className="af-demo-bar" aria-label="데모 체험 도구">
-      <div className="af-demo-intro"><span className="af-demo-tag"><Sparkles size={13} />FLOW DEMO</span><strong>계정을 바꿔보세요</strong><span>같은 데이터, 서로 다른 담당 범위</span></div>
+      <div className="af-demo-intro"><span className="af-demo-tag"><Sparkles size={13} />데모</span><strong>접속 계정</strong></div>
       <div className="af-personas" role="group" aria-label="데모 접속 사용자">
         {demoUsers.map(account => <button key={account.id} className={`af-persona ${account.id === userId ? 'is-active' : ''}`} aria-pressed={account.id === userId} onClick={() => switchUser(account.id)} aria-label={`${account.name} 계정으로 전환`}><Avatar user={account} small /><span><strong>{account.name}</strong><small>{roleLabel(state, account)}</small></span>{account.id === userId && <Check size={14} />}</button>)}
       </div>
@@ -80,25 +80,24 @@ export default function AccessFlowDemo() {
     <div className="af-layout">
       <aside className="af-sidebar">
         <WorkspaceBrand href="/?demo=1&flow=access" />
-        <div className="af-workspace-label"><span>OA</span><div>검토 워크스페이스<small>PROJECT WORKSPACE</small></div></div>
-        <div className="af-nav-label">WORKSPACE</div>
+        <div className="af-workspace-label"><span>OA</span><div>검토 워크스페이스</div></div>
         <nav aria-label="워크스페이스 메뉴">
           <button className={view === 'projects' ? 'is-active' : ''} aria-current={view === 'projects' ? 'page' : undefined} onClick={() => setView('projects')}><FolderKanban size={17} />{user.admin ? '프로젝트 현황' : '내 프로젝트'}<span>{projects.length}</span></button>
           {manageable.length > 0 && <><div className="af-nav-label af-management-label">MANAGEMENT</div><button className={view === 'members' ? 'is-active' : ''} aria-current={view === 'members' ? 'page' : undefined} onClick={() => setView('members')}><Users size={17} />담당자 배정</button><button className={view === 'history' ? 'is-active' : ''} aria-current={view === 'history' ? 'page' : undefined} onClick={() => setView('history')}><History size={17} />변경 이력</button></>}
         </nav>
-        <div className="af-sidebar-note"><ShieldCheck size={21} /><strong>역할에 맞는 작업 공간</strong><p>프로젝트와 블록의 담당 범위에 따라 화면이 달라집니다.</p><a href={appUrl('/?demo=1&flow=versions')}>PRE · POST · ECO · PoR <ArrowUpRight size={13} /></a><a href={appUrl('/?demo=1&dataset=gca')}>기존 GCA 데모 <ArrowUpRight size={13} /></a></div>
+        <div className="af-sidebar-note"><a href={appUrl('/?demo=1&flow=versions')}>PRE · POST · ECO · PoR <ArrowUpRight size={13} /></a><a href={appUrl('/?demo=1&dataset=gca')}>기존 GCA 데모 <ArrowUpRight size={13} /></a></div>
         <div className="af-current-user"><Avatar user={user} /><div><strong>{user.name}</strong><span>{label}</span></div></div>
       </aside>
       <div className="af-main-shell">
         <header className="af-topbar"><div>워크스페이스 <ChevronRight size={13} /><strong>{view === 'members' ? '담당자 배정' : view === 'history' ? '변경 이력' : '프로젝트'}</strong></div><div className="color-mode-actions"><ColorModeControl /><span><i />데모 데이터 · 새로고침 시 초기화</span></div></header>
         <main className="af-main" id="workspace-main" tabIndex={-1}>
-          <div className="af-page-heading"><div><div className="af-eyebrow">PROJECT & PEOPLE</div><h1>{view === 'members' ? '담당자를 연결하세요' : view === 'history' ? '배정의 변화를 한눈에' : user.admin ? '프로젝트, 사람, 그리고 담당 범위' : `${user.name}님의 프로젝트`}</h1><p>{view === 'members' ? '계정을 선택하고, 그 사람이 맡을 프로젝트와 블록을 지정합니다.' : view === 'history' ? '프로젝트 생성과 담당 범위의 변경을 기록합니다.' : user.admin ? '프로젝트를 만들고 담당자를 연결하면, 각자의 작업 공간이 완성됩니다.' : '배정받은 범위의 블록과 sanity 결과를 확인하세요.'}</p></div><div className="af-heading-actions"><Button variant="outline" size="sm" aria-expanded={showHelp} onClick={() => setShowHelp(!showHelp)}><CircleHelp />흐름 안내</Button>{user.admin && <Button onClick={() => setCreating(true)}><Plus />프로젝트 만들기</Button>}</div></div>
+          <div className="af-page-heading"><div><h1>{view === 'members' ? '담당자 배정' : view === 'history' ? '변경 이력' : user.admin ? '프로젝트 관리' : `${user.name}님의 프로젝트`}</h1></div><div className="af-heading-actions"><Button variant="outline" size="sm" aria-expanded={showHelp} onClick={() => setShowHelp(!showHelp)}><CircleHelp />흐름 안내</Button>{user.admin && <Button onClick={() => setCreating(true)}><Plus />프로젝트 만들기</Button>}</div></div>
 
           {showHelp && <section className="af-guide" aria-label="프로젝트 등록과 배정 흐름"><div className="af-guide-heading"><span><Sparkles size={15} />이렇게 사용합니다</span><button onClick={() => setShowHelp(false)} aria-label="흐름 안내 닫기"><X size={15} /></button></div><div className="af-steps">{[
             ['01', '관리자가 프로젝트 등록', '프로젝트 이름과 TOP 담당자를 선택합니다.'],
             ['02', '블록별 담당자 연결', '사용자 계정에 블록과 sanity item을 배정합니다.'],
-            ['03', '각자의 대시보드로', 'TOP은 프로젝트 전체, 담당자는 자신의 블록을 봅니다.'],
-          ].map(([number, title, description], index) => <div className="af-step" key={number}><span>{number}</span><div><strong>{title}</strong><p>{description}</p></div>{index < 2 && <ArrowRight size={16} />}</div>)}</div><p className="af-guide-foot">직접 해보기: 정민수로 프로젝트를 만든 뒤, 위의 이영희와 김철수 계정을 차례로 눌러보세요.</p></section>}
+            ['03', '담당 범위 조회', 'TOP은 프로젝트 전체, 담당자는 자신의 블록을 봅니다.'],
+          ].map(([number, title, description], index) => <div className="af-step" key={number}><span>{number}</span><div><strong>{title}</strong><p>{description}</p></div>{index < 2 && <ArrowRight size={16} />}</div>)}</div></section>}
 
           {notice && <div className="af-notice" role="status"><CheckCircle2 size={17} /><span>{notice}</span><button onClick={() => setNotice('')} aria-label="안내 닫기"><X size={15} /></button></div>}
 

@@ -54,7 +54,6 @@ export default function AtlasShell({ children, demoToolbar }: { children: ReactN
     {mobile && <button className="atlas-scrim" aria-label="메뉴 닫기" onClick={close} />}
     <aside className={`atlas-sidebar${mobile ? ' is-open' : ''}`} id="atlas-menu" ref={sidebarRef} aria-label="Design Atlas 탐색" role={isMobile && mobile ? 'dialog' : undefined} aria-modal={isMobile && mobile || undefined} inert={isMobile && !mobile}>
       <div className="atlas-brand-row" onClick={event => { if (event.target instanceof Element && event.target.closest('a') && !event.button && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) { event.preventDefault(); go('/') } }}><WorkspaceBrand href={atlas.href('/')} /><button className="atlas-mobile" onClick={close} aria-label="메뉴 닫기"><X size={20} /></button></div>
-      <p className="atlas-nav-label">DESIGN WORKSPACE</p>
       <nav aria-label="업무 메뉴">{navigationGroups.map(group => <section className="atlas-nav-group" key={group.id} aria-label={group.title ? `${group.title} 메뉴` : group.id === 'home' ? '공통 홈' : '계정 및 관리'}>
         {group.title && <h2 className="atlas-nav-heading">{group.title}</h2>}
         {group.links.map(link => <a key={link.path} href={atlas.href(link.path)} aria-current={page === link.page ? 'page' : undefined} onClick={event => { if (event.button || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return; event.preventDefault(); go(link.path) }}><link.icon size={18} />{link.title}</a>)}

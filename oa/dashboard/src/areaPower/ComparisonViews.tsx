@@ -159,7 +159,7 @@ export function Comparisons(props: ComparisonProps) {
   return <>
     {action.feedback}
     <section className="panel project-baseline" aria-label="프로젝트 기준 설정">
-      <div className="baseline-summary"><div><span className="eyebrow">PROJECT BASELINE</span><h2>{project.name} <span aria-hidden="true">→</span> {baseline?.status === 'available' ? text(baseline.baseline_project?.payload.name) || savedProject?.name : baseline?.status === 'unavailable' ? '기준 조회 불가' : '기준 미설정'}</h2></div><Button variant="outline" disabled={baselineLoading} onClick={() => setBaselineEditing(value => !value)}>{baselineEditing ? '설정 접기' : '기준 변경'}</Button></div>
+      <div className="baseline-summary"><div><h2>{project.name} <span aria-hidden="true">→</span> {baseline?.status === 'available' ? text(baseline.baseline_project?.payload.name) || savedProject?.name : baseline?.status === 'unavailable' ? '기준 조회 불가' : '기준 미설정'}</h2></div><Button variant="outline" disabled={baselineLoading} onClick={() => setBaselineEditing(value => !value)}>{baselineEditing ? '설정 접기' : '기준 변경'}</Button></div>
       {baselineError && <div className="notice error" role="alert">{baselineError}</div>}
       {!currentAreaId ? <div className="notice"><p>프로젝트만 연결하면 CSV·블록·버전 없이 기준을 설정할 수 있습니다.</p><Button disabled={action.busy || !project.can_write} onClick={() => action.run(() => prepare(project))}>현재 프로젝트 연결</Button></div> : baselineEditing && <div className="baseline-editor">
         {baseline?.status === 'unavailable' && <p className="notice warning">저장된 기준은 현재 권한으로 조회할 수 없습니다. 다른 기준으로 교체하거나 해제할 수 있습니다.</p>}
