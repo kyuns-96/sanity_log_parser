@@ -49,12 +49,14 @@ class AccessStoreTests(PgTestCase):
         self.assertEqual(code, caught.exception.code)
 
     def registry(self):
-        self.call("create_project", ADMIN, uuid4(), "project.A", "합성 프로젝트 A", exclusive=True)
-        self.call("create_project", ADMIN, uuid4(), "project.B", "합성 프로젝트 B", exclusive=True)
-        for project, block in (("project.A", "block.A1"), ("project.A", "block.A2"), ("project.B", "block.B1")):
-            self.call("create_block", ADMIN, uuid4(), project, block, "합성 " + block, exclusive=True)
+        self.project_a = self.call("create_project", ADMIN, uuid4(), "합성 프로젝트 A", exclusive=True)["project_id"]
+        self.project_b = self.call("create_project", ADMIN, uuid4(), "합성 프로젝트 B", exclusive=True)["project_id"]
+        self.block_a1 = self.call("create_block", ADMIN, uuid4(), self.project_a, "합성 block.A1", exclusive=True)["block_id"]
+        self.block_a2 = self.call("create_block", ADMIN, uuid4(), self.project_a, "합성 block.A2", exclusive=True)["block_id"]
+        self.block_b1 = self.call("create_block", ADMIN, uuid4(), self.project_b, "합성 block.B1", exclusive=True)["block_id"]
 
-    def grant(self, actor, role, project="project.A", block=None):
+    def grant(self, actor, role, project=None, block=None):
+        project = project or self.project_a
         request_id = uuid4()
         result = self.call("request", actor, request_id, role, project, block, "합성 업무 배정 요청", exclusive=True)
         self.call("decide", ADMIN, request_id, uuid4(), "APPROVE", "합성 승인 근거", result["revision"], exclusive=True)
@@ -70,15 +72,15 @@ class AccessStoreTests(PgTestCase):
 
     def test_legacy_grants_are_project_members_with_sql_scoped_read_and_write(self):
         self.registry()
-        self.grant(OWNER, "OWNER", block="block.A1")
+        self.grant(OWNER, "OWNER", block=self.block_a1)
         self.grant(TOP, "TOP")
-        a1 = self.bundle({"schema_version": 1, "project_id": "project.A", "block_id": "block.A1"}, "a")
-        a2 = self.bundle({"schema_version": 1, "project_id": "project.A", "block_id": "block.A2"}, "b")
-        b1 = self.bundle({"schema_version": 1, "project_id": "project.B", "block_id": "block.B1"}, "c")
-        malformed = [None, {"schema_version": 1, "project_id": "project.A", "block_id": "block.B1"},
-                     {"schema_version": 1, "project_id": "project.A", "block_id": "block.A1", "extra": True},
-                     {"schema_version": True, "project_id": "project.A", "block_id": "block.A1"},
-                     {"schema_version": 1.0, "project_id": "project.A", "block_id": "block.A1"}]
+        a1 = self.bundle({"schema_version": 1, "project_id": self.project_a, "block_id": self.block_a1}, "a")
+        a2 = self.bundle({"schema_version": 1, "project_id": self.project_a, "block_id": self.block_a2}, "b")
+        b1 = self.bundle({"schema_version": 1, "project_id": self.project_b, "block_id": self.block_b1}, "c")
+        malformed = [None, {"schema_version": 1, "project_id": self.project_a, "block_id": self.block_b1},
+                     {"schema_version": 1, "project_id": self.project_a, "block_id": self.block_a1, "extra": True},
+                     {"schema_version": True, "project_id": self.project_a, "block_id": self.block_a1},
+                     {"schema_version": 1.0, "project_id": self.project_a, "block_id": self.block_a1}]
         for scope, suffix in zip(malformed, "def01"):
             self.bundle(scope, suffix)
         for actor, expected in ((OWNER, [a1, a2]), (TOP, [a1, a2]), (OTHER, []), (ADMIN, [])):
@@ -90,10 +92,10 @@ class AccessStoreTests(PgTestCase):
                 count = store.db.execute("SELECT count(*) AS n FROM {oa} r WHERE r.record_type='RECEIVED_BUNDLE' AND "
                                          + predicate, params).fetchone()["n"]
                 self.assertEqual(len(expected), count)
-        self.assertEqual("block.A1", self.call("require_bundle", OWNER.user_id, a1, write=True)["block_id"])
-        self.assertEqual("block.A2", self.call("require_bundle", TOP.user_id, a2)["block_id"])
-        self.assertEqual("block.A2", self.call("require_bundle", TOP.user_id, a2, write=True)["block_id"])
-        self.assertEqual("block.A2", self.call("require_bundle", OWNER.user_id, a2, write=True)["block_id"])
+        self.assertEqual(self.block_a1, self.call("require_bundle", OWNER.user_id, a1, write=True)["block_id"])
+        self.assertEqual(self.block_a2, self.call("require_bundle", TOP.user_id, a2)["block_id"])
+        self.assertEqual(self.block_a2, self.call("require_bundle", TOP.user_id, a2, write=True)["block_id"])
+        self.assertEqual(self.block_a2, self.call("require_bundle", OWNER.user_id, a2, write=True)["block_id"])
         self.assert_code("RESOURCE_NOT_FOUND", lambda: self.call("require_bundle", OWNER.user_id, b1, write=True))
         self.assert_code("RESOURCE_NOT_FOUND", lambda: self.call("require_bundle", TOP.user_id, b1))
         self.assert_code("RESOURCE_NOT_FOUND", lambda: self.call("require_bundle", OWNER.user_id, "b-" + "d" * 64))
@@ -102,8 +104,8 @@ class AccessStoreTests(PgTestCase):
     def test_approval_self_approval_rejection_conflicts_and_revocation(self):
         self.registry()
         request_id, command_id = uuid4(), uuid4()
-        requested = self.call("request", ADMIN, request_id, "OWNER", "project.A", "block.A1", "본인 업무 배정", exclusive=True)
-        self.assert_code("REQUEST_CONFLICT", lambda: self.call("request", ADMIN, uuid4(), "OWNER", "project.A", "block.A1", "중복 요청", exclusive=True))
+        requested = self.call("request", ADMIN, request_id, "OWNER", self.project_a, self.block_a1, "본인 업무 배정", exclusive=True)
+        self.assert_code("REQUEST_CONFLICT", lambda: self.call("request", ADMIN, uuid4(), "OWNER", self.project_a, self.block_a1, "중복 요청", exclusive=True))
         self.assert_code("REVISION_CONFLICT", lambda: self.call("decide", ADMIN, request_id, command_id, "APPROVE", "승인", 0, exclusive=True))
         approved = self.call("decide", ADMIN, request_id, command_id, "APPROVE", "승인", requested["revision"], exclusive=True)
         repeated = self.call("decide", ADMIN, request_id, command_id, "APPROVE", "승인", requested["revision"], exclusive=True)
@@ -116,6 +118,6 @@ class AccessStoreTests(PgTestCase):
         self.assertEqual("APPROVED", history["requests"][0]["status"])
         self.assertEqual([], history["grants"])
         rejected_id = uuid4()
-        pending = self.call("request", OWNER, rejected_id, "TOP", "project.A", None, "프로젝트 접근 요청", exclusive=True)
+        pending = self.call("request", OWNER, rejected_id, "TOP", self.project_a, None, "프로젝트 접근 요청", exclusive=True)
         self.call("decide", ADMIN, rejected_id, uuid4(), "REJECT", "업무 범위 확인 필요", pending["revision"], exclusive=True)
         self.assertEqual("REJECTED", self.call("snapshot", OWNER.user_id)["requests"][0]["status"])

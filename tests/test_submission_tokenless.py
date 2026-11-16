@@ -94,14 +94,19 @@ class TokenlessSubmissionTests(PgTestCase):
         return response.json()
 
     def register(self):
-        for project in ("project-a", "project-b"):
-            self.success(self.post(ADMIN, "/api/admin/projects", {
-                "request_id": str(uuid.uuid4()), "project_id": project, "name": "합성 " + project}))
-        for project, block in (("project-a", "block-a1"), ("project-a", "block-a2"), ("project-b", "block-b1")):
-            self.success(self.post(ADMIN, "/api/admin/projects/" + project + "/blocks", {
-                "request_id": str(uuid.uuid4()), "block_id": block, "name": "합성 " + block}))
+        self.project_a = self.success(self.post(ADMIN, "/api/admin/projects", {
+            "request_id": str(uuid.uuid4()), "name": "합성 project-a"}))["project_id"]
+        self.project_b = self.success(self.post(ADMIN, "/api/admin/projects", {
+            "request_id": str(uuid.uuid4()), "name": "합성 project-b"}))["project_id"]
+        self.block_a1 = self.success(self.post(ADMIN, f"/api/admin/projects/{self.project_a}/blocks", {
+            "request_id": str(uuid.uuid4()), "name": "합성 block-a1"}))["block_id"]
+        self.block_a2 = self.success(self.post(ADMIN, f"/api/admin/projects/{self.project_a}/blocks", {
+            "request_id": str(uuid.uuid4()), "name": "합성 block-a2"}))["block_id"]
+        self.block_b1 = self.success(self.post(ADMIN, f"/api/admin/projects/{self.project_b}/blocks", {
+            "request_id": str(uuid.uuid4()), "name": "합성 block-b1"}))["block_id"]
 
-    def grant(self, user, role, project="project-a", block=None):
+    def grant(self, user, role, project=None, block=None):
+        project = project or self.project_a
         request_id = str(uuid.uuid4())
         value = self.success(self.post(user, "/api/access/requests", {
             "request_id": request_id, "role": role, "project_id": project, "block_id": block,
@@ -126,11 +131,11 @@ class TokenlessSubmissionTests(PgTestCase):
         self.clients={user:TestClient(self.oa,base_url='http://127.0.0.1',raise_server_exceptions=False,
             cookies={'synthetic_session':'synthetic-verified-session-'+str(USERS.index(user))}) for user in USERS}
         for client in self.clients.values():self.addCleanup(client.close)
-        self.register();self.owner_grant=self.grant(OWNER,'OWNER',block='block-a1');self.grant(TOP,'TOP')
+        self.register();self.owner_grant=self.grant(OWNER,'OWNER',block=self.block_a1);self.grant(TOP,'TOP')
         tmp=tempfile.TemporaryDirectory(prefix='sanity-tokenless-');self.addCleanup(tmp.cleanup)
         self.root=Path(tmp.name);self.f=fixture(self.root)
-        self.f['prepared'].plan['collection'].update(project_key='project-a',block_key='block-a1')
-        self.f['target'].update(project='project-a',block='block-a1')
+        self.f['prepared'].plan['collection'].update(project_key=self.project_a,block_key=self.block_a1)
+        self.f['target'].update(project=self.project_a,block=self.block_a1)
         for name in ('archive','spool'):shutil.rmtree(self.root/name)
         (self.root/'scratch').mkdir()
         self.config={'schema_version':4,'transport':'https','submission_auth':'internal_network','storage':'postgresql',
@@ -165,7 +170,7 @@ class TokenlessSubmissionTests(PgTestCase):
         return sent['submission_id']
 
     def detail(self, sid, user=OWNER, suffix=''):
-        return self.success(self.clients[user].get('/api/workbench/blocks/block-a1/intake/'+sid+suffix))
+        return self.success(self.clients[user].get('/api/workbench/blocks/'+self.block_a1+'/intake/'+sid+suffix))
 
     def body(self, sid, decision='CONFIRM'):
         detail=self.detail(sid)
@@ -174,7 +179,7 @@ class TokenlessSubmissionTests(PgTestCase):
             **{k:detail[k] for k in ('content_sha256','manifest_sha256','scope_sha256')}}
 
     def decide(self, sid, body=None, user=OWNER):
-        return self.post(user,'/api/workbench/blocks/block-a1/intake/'+sid,body or self.body(sid))
+        return self.post(user,'/api/workbench/blocks/'+self.block_a1+'/intake/'+sid,body or self.body(sid))
 
     def report_count(self):
         return self.admin_query("SELECT count(*) FROM {oa} WHERE record_type='WS_REPORT'").fetchone()[0]
@@ -200,13 +205,13 @@ class TokenlessSubmissionTests(PgTestCase):
 
     def test_only_current_owner_can_confirm_and_digest_revision_and_request_are_bound(self):
         sid=self.submit();body=self.body(sid)
-        self.assertEqual(200,self.clients[TOP].get('/api/workbench/blocks/block-a1/intake/'+sid).status_code)
+        self.assertEqual(200,self.clients[TOP].get('/api/workbench/blocks/'+self.block_a1+'/intake/'+sid).status_code)
         for user in (OTHER,ADMIN):self.assertIn(self.decide(sid,body,user).status_code,(403,404))
         for change in ({'confirmed_scope':False},{'manifest_sha256':'0'*64},{'content_sha256':'0'*64},
                        {'scope_sha256':'0'*64},{'expected_revision':body['expected_revision']+1}):
             self.assertEqual(409,self.decide(sid,{**body,**change}).status_code)
         self.assertEqual(400,self.decide(sid,{**body,'user_id':OWNER}).status_code)
-        self.assertEqual(403,self.clients[OWNER].post('/api/workbench/blocks/block-a1/intake/'+sid,json=body).status_code)
+        self.assertEqual(403,self.clients[OWNER].post('/api/workbench/blocks/'+self.block_a1+'/intake/'+sid,json=body).status_code)
         self.assertEqual(0,self.report_count())
         first=self.success(self.decide(sid,body));second=self.success(self.decide(sid,body))
         self.assertEqual(first,second);self.assertEqual(2,self.report_count())

@@ -37,9 +37,7 @@ from tests.test_ai_connections import configuration
 
 ADMIN = Actor("feedback.test.admin", "Synthetic administrator", "sso")
 OWNER = Actor("feedback.test.owner", "Synthetic reviewer", "sso")
-PROJECT, BLOCK, VERSION = "feedback.project", "feedback.block", "feedback.version"
-SCOPE = {"project_id": PROJECT, "block_id": BLOCK, "item_id": "clock_check", "family": "GCA",
-         "parser": "synthetic-clock-parser-v1", "rule_version": "clock-policy-v1", "layout": "POST"}
+VERSION = "feedback.version"
 HUMAN_GROUP_REASON = "동일한 파생 클록 경로 두 건은 승인된 예외이며, 실제 클록 누락 경로와 분리해서 검토한다."
 HUMAN_PASS_REASON = "파생 클록 경로의 예외 조건을 사람이 확인했다. 실제 클록 누락과 달라 PASS로 정정한다."
 HUMAN_FAIL_REASON = "이 경로는 파생 클록 예외가 없고 실제 클록 정의가 누락되어 FAIL이다."
@@ -77,16 +75,18 @@ class OAFeedbackCycleTests(PgTestCase):
                  json_value({"enabled": True, "last_seen_at": timestamp})))
         with self.store(management=True) as ws:
             access = ws.authorization
-            access.create_project(ADMIN, uuid4(), PROJECT, "Synthetic feedback project")
-            access.create_block(ADMIN, uuid4(), PROJECT, BLOCK, "Synthetic feedback block")
+            self.project_id = access.create_project(ADMIN, uuid4(), "Synthetic feedback project")["project_id"]
+            self.block_id = access.create_block(ADMIN, uuid4(), self.project_id, "Synthetic feedback block")["block_id"]
+            self.scope = {"project_id": self.project_id, "block_id": self.block_id, "item_id": "clock_check", "family": "GCA",
+                          "parser": "synthetic-clock-parser-v1", "rule_version": "clock-policy-v1", "layout": "POST"}
             request = uuid4()
-            requested = access.request(OWNER, request, "OWNER", PROJECT, BLOCK, "Synthetic feedback assignment")
+            requested = access.request(OWNER, request, "OWNER", self.project_id, self.block_id, "Synthetic feedback assignment")
             access.decide(ADMIN, request, uuid4(), "APPROVE", "Synthetic approval", requested["revision"])
-            pre = {"id": VERSION + ".pre", "project_id": PROJECT, "block_id": BLOCK,
+            pre = {"id": VERSION + ".pre", "project_id": self.project_id, "block_id": self.block_id,
                    "net_ver": "N1", "revision": "R1", "layout": "PRE", "source_pre_id": None, "ecos": [None]}
             post = {**pre, "id": VERSION, "layout": "POST", "source_pre_id": pre["id"], "ecos": ["eco01", "eco02"]}
-            ws.put("WS_VERSION", pre["id"], pre, project=PROJECT, block=BLOCK)
-            ws.put("WS_VERSION", VERSION, post, project=PROJECT, block=BLOCK)
+            ws.put("WS_VERSION", pre["id"], pre, project=self.project_id, block=self.block_id)
+            ws.put("WS_VERSION", VERSION, post, project=self.project_id, block=self.block_id)
             self.originals = {}
             for suffix, eco in (("A", "eco01"), ("B", "eco02")):
                 report_id = "report-" + suffix
@@ -95,17 +95,17 @@ class OAFeedbackCycleTests(PgTestCase):
                     "fields": {"object": "top/" + kind, "code": "CLK_MISSING", "severity": "ERROR",
                                "check_point": "clock_definition", "mode": "FUNCTIONAL"}}
                     for index, kind in enumerate(("derived_a", "derived_b", "root_missing"), 1)]
-                report = {**{key: value for key, value in SCOPE.items() if key != "layout"},
+                report = {**{key: value for key, value in self.scope.items() if key != "layout"},
                     "id": report_id, "version_id": VERSION, "version_record_id": str(record_id("WS_VERSION", VERSION)),
                     "eco": eco, "rule": "CLK_MISSING", "check_status": "FAIL", "parse_status": "COMPLETE",
                     "analysis_ready": True, "record_count": len(records), "records": records, "blockers": [],
                     "raw_report": "\n".join(record["raw"] for record in records)}
-                ws.put("WS_REPORT", report_id, report, project=PROJECT, block=BLOCK)
+                ws.put("WS_REPORT", report_id, report, project=self.project_id, block=self.block_id)
                 self.originals[report_id] = copy.deepcopy(report)
         directory = tempfile.TemporaryDirectory(prefix="synthetic-feedback-criteria-")
         self.addCleanup(directory.cleanup)
         criteria_path = Path(directory.name) / "criteria.json"
-        self.criterion = {"id": "synthetic-clock-definition", "version": "1", "scope": SCOPE.copy(),
+        self.criterion = {"id": "synthetic-clock-definition", "version": "1", "scope": self.scope.copy(),
                           "text": "필수 클록 정의 누락은 FAIL로 제안한다. 확인된 파생 클록 예외는 근거를 비교한다."}
         criteria_path.write_bytes(canonical_json({"schema_version": 1, "criteria": [self.criterion]}))
         environment = patch.dict(os.environ, {"SANITY_OA_AI_CRITERIA_FILE": str(criteria_path)})
@@ -165,7 +165,7 @@ class OAFeedbackCycleTests(PgTestCase):
         request_id = str(uuid4())
         with self.store() as ws:
             queued = AIJobService(ws.db, ws, advisor=self.advisor).enqueue(
-                OWNER.user_id, BLOCK, VERSION, report_id, expected_revision=revision, request_id=request_id,
+                OWNER.user_id, self.block_id, VERSION, report_id, expected_revision=revision, request_id=request_id,
                 group_id=group_id, expected_cluster_revision=cluster_revision)
             self.assertEqual("PENDING", queued["status"])
             self.assertFalse(queued["model_called"])
@@ -191,7 +191,7 @@ class OAFeedbackCycleTests(PgTestCase):
                 return LocalUser(OWNER.user_id, OWNER.reviewer) if identity.subject == OWNER.user_id else None
 
         app = create_app(auth_mode="sso", identity_provider=Provider(), user_directory=Directory())
-        base = f"/api/workbench/blocks/{BLOCK}/versions/{VERSION}/reports/report-A"
+        base = f"/api/workbench/blocks/{self.block_id}/versions/{VERSION}/reports/report-A"
         headers = {"X-Sanity-Request": "1", "Origin": "http://127.0.0.1", "Sec-Fetch-Site": "same-origin"}
         factory = lambda scope: AIJobService(scope.db, scope.ws, advisor=self.advisor)
         connection_id = str(uuid4())
@@ -278,15 +278,15 @@ class OAFeedbackCycleTests(PgTestCase):
             self.assertEqual("oa-semantic-clustering-v3.rule-code-v1", first["model_metadata"]["prompt_version"])
             groups = [{"id": "human-derived", "label": "파생 클록 예외", "record_ids": ["A1", "A2"]},
                       {"id": "human-missing", "label": "실제 클록 누락", "record_ids": ["A3"]}]
-            edited = clusters.change(OWNER.user_id, BLOCK, VERSION, "report-A", action="EDIT",
+            edited = clusters.change(OWNER.user_id, self.block_id, VERSION, "report-A", action="EDIT",
                 expected_revision=revision, request_id=str(uuid4()), groups=groups, reason=HUMAN_GROUP_REASON)
             for group in groups:
-                edited = clusters.change(OWNER.user_id, BLOCK, VERSION, "report-A", action="EDIT",
+                edited = clusters.change(OWNER.user_id, self.block_id, VERSION, "report-A", action="EDIT",
                     expected_revision=edited["revision"], request_id=str(uuid4()), reason=HUMAN_GROUP_REASON,
                     rationale_operation={"kind": "SAVE", "group_id": group["id"], "reviewed": True,
                         "content": {"reason": HUMAN_GROUP_REASON + " " + group["label"],
                                     "evidence_ids": group["record_ids"], "reference_groups": []}})
-            confirmed = clusters.change(OWNER.user_id, BLOCK, VERSION, "report-A", action="CONFIRM",
+            confirmed = clusters.change(OWNER.user_id, self.block_id, VERSION, "report-A", action="CONFIRM",
                 expected_revision=edited["revision"], request_id=str(uuid4()), reason=HUMAN_GROUP_REASON,
                 reusable=False, compatible_versions=False)
             self.assertTrue(confirmed["confirmed"])
@@ -310,7 +310,7 @@ class OAFeedbackCycleTests(PgTestCase):
             self.assertTrue(proposal["model_called"])
             self.assertEqual(["A1", "A2"], proposal["evidence_ids"])
             self.assertEqual([], proposal["reference_ids"])
-            corrected = reviews.save(OWNER.user_id, BLOCK, VERSION, "report-A", conclusion="PASS",
+            corrected = reviews.save(OWNER.user_id, self.block_id, VERSION, "report-A", conclusion="PASS",
                 reason=HUMAN_PASS_REASON, criteria="", conditions={}, reusable=False, compatible_versions=False,
                 expected_revision=0, request_id=str(uuid4()), proposal_id=review_id)["event"]
             self.assertFalse(corrected["proposal_agreed"])
@@ -320,7 +320,7 @@ class OAFeedbackCycleTests(PgTestCase):
             self.assertEqual(proposal["reason"], corrected["ai_proposal"]["reason"])
             self.assertFalse(corrected["reusable"])
             negative = WorkspaceGroupReviewStore(ws.db, "human-missing", confirmed["revision"], ws=ws).save(
-                OWNER.user_id, BLOCK, VERSION, "report-A", conclusion="FAIL", reason=HUMAN_FAIL_REASON,
+                OWNER.user_id, self.block_id, VERSION, "report-A", conclusion="FAIL", reason=HUMAN_FAIL_REASON,
                 criteria="", conditions={}, reusable=False, compatible_versions=False,
                 expected_revision=0, request_id=str(uuid4()))["event"]
             register_evidence(ws.db,corrected,'REVIEW',ws=ws)
@@ -347,7 +347,7 @@ class OAFeedbackCycleTests(PgTestCase):
             proposal, _ = clusters.current("report-B")
             self.assertFalse(proposal["confirmed"])
             self.assertEqual([confirmed["id"]], [row["id"] for row in proposal["references"]])
-            confirmed_b = clusters.change(OWNER.user_id, BLOCK, VERSION, "report-B", action="CONFIRM",
+            confirmed_b = clusters.change(OWNER.user_id, self.block_id, VERSION, "report-B", action="CONFIRM",
                 expected_revision=proposal["revision"], request_id=str(uuid4()), reason="두 경로의 차이를 원문에서 확인",
                 reusable=False, compatible_versions=False)
 
@@ -377,12 +377,12 @@ class OAFeedbackCycleTests(PgTestCase):
         with self.store() as ws:
             review = WorkspaceGroupReviewStore(ws.db, "b-derived", confirmed_b["revision"], ws=ws)
             self.assertEqual((None, 0), review.current("report-B"))
-            proposal = review.view(OWNER.user_id, BLOCK, VERSION, "report-B")["proposal"]
+            proposal = review.view(OWNER.user_id, self.block_id, VERSION, "report-B")["proposal"]
             self.assertEqual("PASS", proposal["conclusion"])
             self.assertEqual({corrected["id"], negative["id"]}, set(proposal["reference_ids"]))
             self.assertEqual(["B1", "B2"], proposal["evidence_ids"])
             self.assertEqual("oa-direct-evidence-review-v5", proposal["model_metadata"]["prompt_version"])
             for report_id, original in self.originals.items():
-                self.assertEqual(original, ws.report(OWNER.user_id, BLOCK, VERSION, report_id))
+                self.assertEqual(original, ws.report(OWNER.user_id, self.block_id, VERSION, report_id))
         self.assertEqual(4, len(self.packets))
         self.assertEqual(0, self.admin_query("SELECT count(*) FROM {oa} WHERE record_type IN ('WS_USER','WS_SESSION')").fetchone()[0])

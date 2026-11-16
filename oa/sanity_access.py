@@ -16,6 +16,7 @@ from uuid import UUID
 from common.sanity_common import ReviewError
 from common.sanity_db import json_value, lock_key, stable_uuid
 from oa.sanity_auth import Actor
+from oa.sanity_workspace import WorkspaceStore
 
 NAMESPACE = "oa-rbac-v1"
 PREFIX = "rbac1.event."
@@ -230,6 +231,22 @@ class AccessStore:
                         or data["block_id"] in blocks):
                     _error()
                 blocks[data["block_id"]] = {"id": data["block_id"], "project_id": data["project_id"], "name": data["name"]}
+            elif kind in ("PROJECT_REUSE", "BLOCK_REUSE"):
+                if not _identifier(data.get("project_id")) or not _text(data.get("name"), 100):
+                    _error()
+                project = projects.get(data.get("project_id"))
+                if kind == "PROJECT_REUSE":
+                    if (set(data) != {"project_id", "name", "description"} or project is None
+                            or data["name"] != project["name"] or not _text(data["description"], 1000, empty=True)
+                            or (data["description"] and data["description"] != project["description"])):
+                        _error()
+                else:
+                    if not _identifier(data.get("block_id")):
+                        _error()
+                    block = blocks.get(data.get("block_id"))
+                    if (set(data) != {"project_id", "block_id", "name"} or project is None or block is None
+                            or block["project_id"] != data["project_id"] or block["name"] != data["name"]):
+                        _error()
             elif kind == "REQUEST":
                 if set(data) != {"role", "project_id", "block_id", "reason"} or not _text(data["reason"], 2000):
                     _error()
@@ -367,16 +384,31 @@ class AccessStore:
         return {"revision": state["revision"], "requests": [dict(r) for r in state["requests"].values()],
                 "grants": self._project_grants(state), "users": users}
 
-    def create_project(self, actor, request_id, project_id, name, description=""):
+    def _catalog_retry(self, command_id, kind, actor, data):
+        existing = self._state()["commands"].get(command_id)
+        if existing is not None and (existing["kind"] not in (kind, kind + "_REUSE")
+                or existing["actor_id"] != actor.user_id or existing["data"] != data):
+            _error("REQUEST_CONFLICT")
+        return existing is not None
+
+    def create_project(self, actor, request_id, name, description=""):
         self._admin(actor)
-        if not _identifier(project_id) or not _text(name, 100) or not _text(description, 1000, empty=True):
+        name = name.strip() if isinstance(name, str) else name
+        description = description.strip() if isinstance(description, str) else description
+        if not _text(name, 100) or not _text(description, 1000, empty=True):
             _error("INVALID_REQUEST")
         command_id = _uuid(request_id)
+        project_id, existing = WorkspaceStore(self.db).named_catalog("WS_PROJECT", name)
         data = {"project_id": project_id, "name": name, "description": description}
-        if self._retry(command_id, "PROJECT", actor, data):
+        if self._catalog_retry(command_id, "PROJECT", actor, data):
             return {"status": "ALREADY_CREATED", "project_id": project_id, "revision": self._state()["revision"]}
-        if self.db.execute("SELECT 1 FROM {oa} WHERE record_type='WS_PROJECT' AND workspace_key=%s", (project_id,)).fetchone():
-            _error("REQUEST_CONFLICT")
+        if existing:
+            if (project_id not in self._state()["projects"]
+                    or existing["payload"].get("registry_namespace") != NAMESPACE
+                    or (description and existing["payload"].get("description", "") != description)):
+                _error("REQUEST_CONFLICT")
+            revision = self._append(command_id, "PROJECT_REUSE", actor, data)
+            return {"status": "ALREADY_CREATED", "project_id": project_id, "revision": revision}
         payload = {"id": project_id, "project_id": project_id, "name": name, "description": description,
                    "tops": [], "registry_namespace": NAMESPACE}
         self.db.execute("INSERT INTO {oa}(record_id,record_type,workspace_key,project,payload) VALUES (%s,'WS_PROJECT',%s,%s,%s)",
@@ -384,25 +416,30 @@ class AccessStore:
         revision = self._append(command_id, "PROJECT", actor, data)
         return {"status": "CREATED", "project_id": project_id, "revision": revision}
 
-    def create_block(self, actor, request_id, project_id, block_id, name):
+    def create_block(self, actor, request_id, project_id, name):
         self._admin(actor)
-        if not _identifier(project_id) or not _identifier(block_id) or not _text(name, 100):
+        name = name.strip() if isinstance(name, str) else name
+        if not _identifier(project_id) or not _text(name, 100):
             _error("INVALID_REQUEST")
         command_id = _uuid(request_id)
-        data = {"project_id": project_id, "block_id": block_id, "name": name}
-        if self._retry(command_id, "BLOCK", actor, data):
-            return {"status": "ALREADY_CREATED", "block_id": block_id, "revision": self._state()["revision"]}
         if project_id not in self._state()["projects"]:
             _error("RESOURCE_NOT_FOUND")
-        if self.db.execute("SELECT 1 FROM {oa} WHERE record_type='WS_BLOCK' AND workspace_key=%s", (block_id,)).fetchone():
-            _error("REQUEST_CONFLICT")
+        block_id, existing = WorkspaceStore(self.db).named_catalog("WS_BLOCK", name, project_id)
+        data = {"project_id": project_id, "block_id": block_id, "name": name}
+        if self._catalog_retry(command_id, "BLOCK", actor, data):
+            return {"status": "ALREADY_CREATED", "project_id": project_id, "block_id": block_id, "revision": self._state()["revision"]}
+        if existing:
+            if block_id not in self._state()["blocks"] or existing["payload"].get("registry_namespace") != NAMESPACE:
+                _error("REQUEST_CONFLICT")
+            revision = self._append(command_id, "BLOCK_REUSE", actor, data)
+            return {"status": "ALREADY_CREATED", "project_id": project_id, "block_id": block_id, "revision": revision}
         payload = {"id": block_id, "project_id": project_id, "name": name, "owners": [], "registry_namespace": NAMESPACE}
         self.db.execute("INSERT INTO {oa}(record_id,record_type,workspace_key,project,payload,workspace_project_ref) "
                         "VALUES (%s,'WS_BLOCK',%s,%s,%s,%s)",
                         (stable_uuid("workspace-v1", "WS_BLOCK", block_id), block_id, project_id, json_value(payload),
                          stable_uuid("workspace-v1", "WS_PROJECT", project_id)))
         revision = self._append(command_id, "BLOCK", actor, data)
-        return {"status": "CREATED", "block_id": block_id, "revision": revision}
+        return {"status": "CREATED", "project_id": project_id, "block_id": block_id, "revision": revision}
 
     def request(self, actor, request_id, role, project_id, block_id, reason):
         self.require_actor(actor)
