@@ -239,8 +239,8 @@ function metricValue(upload: DemoUpload | null, paths: string[], metric: string)
   if (!upload || !paths.length || paths.some(path => !upload.rows[path])) return missing
   const total = (key: string) => sum(paths.map(path => upload.rows[path][key]))
   if (metric.endsWith('_pct')) {
-    const numerator = total(metric === 'cts_area_pct' ? 'cts_area' : `${metric.slice(0, -4)}_cnt`)
-    const denominator = total(metric === 'cts_area_pct' ? 'logic_area' : 'logic_cells')
+    const numerator = metric === 'cts_area_pct' ? total('cts_area') : paths.reduce((value, path) => add(value, divide(multiply(decimal(upload.rows[path][metric]), decimal(upload.rows[path].logic_area)), fraction(100n))), fraction(0n))
+    const denominator = total('logic_area')
     return { value: denominator.n ? multiply(divide(numerator, denominator), fraction(100n)) : null, numerator, denominator }
   }
   return { value: total(metric), numerator: null, denominator: null }
@@ -325,7 +325,7 @@ function resultPayload(metric: string, group: Group, current: DemoUpload, baseli
     if (powerKeys.includes(metric)) {
       if (current.condition_key !== baseline.condition_key) { comparability = 'contextual'; reason = 'power_conditions_different' }
     } else {
-      const checks = ['design_stage', 'constraint_context', 'library', 'classification', ...(metric.endsWith('_area') ? ['area_unit', 'area_basis'] : [])]
+      const checks = ['design_stage', 'constraint_context', 'library', 'classification', ...((metric.endsWith('_area') || metric.endsWith('_pct')) ? ['area_unit', 'area_basis'] : [])]
       if (checks.some(key => JSON.stringify(current.metadata[key]) !== JSON.stringify(baseline.metadata[key]))) { comparability = 'contextual'; reason = 'structural_metadata_different' }
     }
   }

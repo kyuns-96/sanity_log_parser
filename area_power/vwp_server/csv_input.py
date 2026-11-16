@@ -27,7 +27,7 @@ COUNT_FIELDS = tuple(f"{g}_cells" for g in CELL_GROUPS) + tuple(f"{g}_cnt" for g
 AREA_FIELDS = tuple(f"{g}_area" for g in CELL_GROUPS)
 PCT_FIELDS = ("cts_area_pct",) + tuple(f"{g}_pct" for g in VTH_NAMES + DRIVE_NAMES)
 POWER_FIELDS = tuple(f"pwr_{g}_{c}_mw" for g in POWER_GROUPS for c in POWER_COMPONENTS)
-STRUCTURE_FIELDS = ("hier_name", "level") + COUNT_FIELDS + AREA_FIELDS
+STRUCTURE_FIELDS = ("hier_name", "level") + COUNT_FIELDS + AREA_FIELDS + PCT_FIELDS[1:]
 HEADERS = ("hier_name", "level", "process_label", "voltage_v", "temp_c", "pex") + tuple(
     field for g in CELL_GROUPS for field in (f"{g}_cells", f"{g}_area")
 ) + PCT_FIELDS + tuple(f"{g}_cnt" for g in VTH_NAMES + DRIVE_NAMES) + POWER_FIELDS
@@ -76,7 +76,7 @@ def _half_unit(value: Decimal) -> Decimal:
 
 
 def structural_rows(parsed: ParsedCSV) -> dict[str, dict[str, Any]]:
-    """Return all structure, without power, PVT, or reported percentage formatting."""
+    """Return all structure, including reported area percentages, without power or PVT."""
     return {path: {key: row[key] for key in STRUCTURE_FIELDS} for path, row in parsed.rows.items()}
 
 
@@ -224,8 +224,7 @@ def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompre
                     _invalid(f"Row {line}: Vth or drive count sum exceeds logic_cells.")
                 unavailable = []
                 for key in PCT_FIELDS:
-                    numerator = values["cts_area"] if key == "cts_area_pct" else values[key[:-4] + "_cnt"]
-                    denominator = values["logic_area"] if key == "cts_area_pct" else logic
+                    denominator = values["logic_area"]
                     pct = reported[key]
                     if pct is not None and not Decimal(0) <= pct <= Decimal(100):
                         _invalid(f"Row {line}: {key} must use the 0..100 scale.")
@@ -238,9 +237,17 @@ def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompre
                         if pct is None:
                             _invalid(f"Row {line}: {key} is required with a nonzero denominator.")
                         tolerance = metadata.pct_tolerance if metadata.pct_tolerance is not None else _half_unit(pct)
-                        if abs(pct * denominator - Decimal(100) * numerator) > tolerance * denominator:
-                            _invalid(f"Row {line}: {key} disagrees with its numerator and denominator beyond report precision.")
-                        row[key] = Decimal(100) * numerator / denominator
+                        if key == "cts_area_pct":
+                            if abs(pct * denominator - Decimal(100) * values["cts_area"]) > tolerance * denominator:
+                                _invalid(f"Row {line}: {key} disagrees with its numerator and denominator beyond report precision.")
+                            row[key] = Decimal(100) * values["cts_area"] / denominator
+                        else:
+                            row[key] = pct
+                for names in (VTH_NAMES, DRIVE_NAMES):
+                    percentages = [reported[f"{name}_pct"] for name in names]
+                    tolerance = sum((metadata.pct_tolerance if metadata.pct_tolerance is not None else _half_unit(pct) for pct in percentages if pct is not None), Decimal(0))
+                    if sum((pct for pct in percentages if pct is not None), Decimal(0)) > Decimal(100) + tolerance:
+                        _invalid(f"Row {line}: classified area percentages exceed 100 beyond report precision.")
                 def check_power(lhs: str, rhs: list[str]) -> None:
                     tolerance = metadata.power_tolerance_mw
                     if tolerance is None:
@@ -271,7 +278,7 @@ def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompre
     contract = {
         "version": 1, "metadata": metadata.model_dump(mode="python"),
         "encoding": "utf-8-sig", "headers": header,
-        "percentage_scale": 100, "percentage_rounding": "explicit_tolerance" if metadata.pct_tolerance is not None else "half_last_reported_digit",
+        "percentage_basis": "logic_area", "percentage_scale": 100, "percentage_rounding": "explicit_tolerance" if metadata.pct_tolerance is not None else "half_last_reported_digit",
         "power_rounding": "explicit_identity_tolerance_mw" if metadata.power_tolerance_mw is not None else "sum_of_half_last_reported_digits",
         "structural_metadata": structural_metadata(metadata),
         "required_analysis_conditions": ["mode", "clocks", "activity", "rc", "tool", "voltage_domains"],

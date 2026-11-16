@@ -293,9 +293,16 @@ def total(rows: dict, paths: list[str], metric: str):
 
 def metric_value(rows, paths, metric):
     if metric.endswith('_pct'):
-        numerator = 'cts_area' if metric == 'cts_area_pct' else metric[:-4] + '_cnt'
-        denominator = 'logic_area' if metric == 'cts_area_pct' else 'logic_cells'
-        n, d = total(rows, paths, numerator), total(rows, paths, denominator)
+        d = total(rows, paths, 'logic_area')
+        if metric == 'cts_area_pct':
+            n = total(rows, paths, 'cts_area')
+        elif d is None:
+            n = None
+        else:
+            # A zero-area row contributes no area even when its ratio is unavailable.
+            contributions = [D(rows[path][metric]) * D(rows[path]['logic_area']) / D(100)
+                             for path in paths if D(rows[path]['logic_area']) != 0 and rows[path].get(metric) is not None]
+            n = None if any(D(rows[path]['logic_area']) != 0 and rows[path].get(metric) is None for path in paths) else sum(contributions, D(0))
         return (D(100) * n / d if n is not None and d else None), n, d
     return total(rows, paths, metric), None, None
 
@@ -325,7 +332,7 @@ def comparability(metric, group, cm, bm, current, baseline, cu, bu):
         if not known_metadata(cm.library) or not known_metadata(bm.library) or cm.library != bm.library or not known_metadata(cm.classification) or not known_metadata(bm.classification) or cm.classification != bm.classification:
             return 'unavailable', 'library_or_classification_mapping_unconfirmed'
     checks = ('design_stage', 'constraint_context', 'classification', 'library')
-    if '_area' in metric and not metric.endswith('_pct'):
+    if '_area' in metric or metric.endswith('_pct') or metric in DISTRIBUTIONS:
         checks += ('area_unit', 'area_basis')
     if any(not known_metadata(getattr(cm, k)) or not known_metadata(getattr(bm, k)) or getattr(cm, k) != getattr(bm, k) for k in checks):
         return 'contextual', 'structural_metadata_unknown_or_different'
@@ -357,13 +364,15 @@ def evaluate_metric(metric, group, current, baseline, cm, bm, cu, bu, policy, pa
     bn = bd = cn = cd = None
     if metric in DISTRIBUTIONS:
         prefixes = VT if metric.startswith('vth') else DRIVE
-        bd, cd = total(b_rows, baseline_paths, 'logic_cells'), total(current.rows, current_paths, 'logic_cells')
+        bd, cd = total(b_rows, baseline_paths, 'logic_area'), total(current.rows, current_paths, 'logic_area')
         b, c = None, None
         if bd and cd:
-            differences = [abs(total(current.rows, current_paths, p + '_cnt') / cd - total(b_rows, baseline_paths, p + '_cnt') / bd) for p in prefixes]
-            quality = QUALITY[0 if metric.startswith('vth') else 1]
-            differences.append(abs(total(current.rows, current_paths, quality) / cd - total(b_rows, baseline_paths, quality) / bd))
-            c = sum(differences, D(0)) / D(2)
+            before = [metric_value(b_rows, baseline_paths, p + '_pct')[0] for p in prefixes]
+            after = [metric_value(current.rows, current_paths, p + '_pct')[0] for p in prefixes]
+            if all(value is not None for value in before + after):
+                differences = [abs(cv - bv) for bv, cv in zip(before, after)]
+                differences.append(abs(max(D(0), D(100) - sum(after)) - max(D(0), D(100) - sum(before))))
+                c = sum(differences, D(0)) / D(200)
         delta = c
         relative = pp = None
     else:

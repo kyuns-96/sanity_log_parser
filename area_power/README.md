@@ -188,3 +188,5 @@ set -a && source .env.integrated.local && set +a
 Chromium에서 실제 code-server proxy 경유 공통 로그인, 재로그인 없는 Sanity↔Area 전환, 파란색 light/dark 화면, 390px drawer·수평 넘침 없음, 비교 수치·coverage·검색·needs_review 표시와 UI 원본 gzip 다운로드를 확인했다. 기존 명시적 Sanity 합성 demo는 유지됐고 자원 경로가 proxy 아래에서 200이었다. Frontend build와 canonical CLI 두 진입점의 help 실행이 성공했다.
 
 위 내용은 이전 엔진 통합 시점의 검증 기록이다. 현재 Design Atlas 공통 카탈로그·화면·실행 서비스·검증 상태는 [제품 인계](../HANDOFF.md)를 따른다. 사용자 DB·기존 수정 파일은 보존하며 새 테스트·fixture·mock·검증 스크립트 파일은 추가하지 않는다. 회사 DB·실데이터·AI 품질·사내 메일 서비스·Docker 이미지·대규모 성능은 미검증이다.
+
+2026-11-16 비율 기준 수정: Vth/DRV `*_pct`는 CSV의 logic area 기준 면적 비율이다. Count로 재계산하지 않으며 그룹 비교는 `Σ(logic_area × pct) / Σ(logic_area)`를 사용한다. 범주 면적 분자는 보고 비율로 환산한 값이다. 면적 비율도 구조 동일성에 포함하므로 이전 계약으로 저장한 upload/snapshot은 원본으로 새 snapshot에 재업로드하고 비교를 재실행한다. 과거 결과를 자동 변경하지 않는다.
