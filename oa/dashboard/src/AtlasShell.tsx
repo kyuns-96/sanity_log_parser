@@ -34,7 +34,6 @@ export default function AtlasShell({ children, demoToolbar }: { children: ReactN
   const [mobile, setMobile] = useState(false)
   const [error, setError] = useState('')
   const [scopeExpanded, setScopeExpanded] = useState(true)
-  const [netSelection, setNetSelection] = useState({ blockId: '', netVer: '' })
   const close = useCallback(() => setMobile(false), [])
   const { isMobile, sidebarRef, triggerRef } = useWorkspaceNavigation(mobile, close, !!auth.session)
   const logout = async () => { if (await auth.logout()) await navigate('/', undefined, true) }
@@ -43,12 +42,11 @@ export default function AtlasShell({ children, demoToolbar }: { children: ReactN
   const params = new URLSearchParams(atlas.routeSearch)
   const page = params.get('page') || 'home'
   const current = links.find(link => link.page === page)
-  const netVer = atlas.version?.net_ver ?? (netSelection.blockId === atlas.block?.id ? netSelection.netVer : '')
+  const netVer = atlas.netVer
   const netVersions = [...new Set(atlas.block?.versions.map(version => version.net_ver))]
   const revisions = atlas.block?.versions.filter(version => version.net_ver === netVer)
   const go = (path: string) => { close(); setError(''); void navigate(atlas.href(path), auth.session?.user_id).catch(cause => setError(cause instanceof Error ? cause.message : '화면을 열지 못했습니다.')) }
   const choose = (projectId: string, blockId: string, versionId: string) => {
-    if (projectId !== atlas.scope.projectId || blockId !== atlas.scope.blockId) setNetSelection({ blockId: '', netVer: '' })
     setError('')
     void atlas.selectScope({ projectId, blockId, versionId }).catch(cause => setError(cause instanceof Error ? cause.message : '범위를 변경하지 못했습니다.'))
   }
@@ -71,8 +69,8 @@ export default function AtlasShell({ children, demoToolbar }: { children: ReactN
         <div className="atlas-scope-fields" id="atlas-scope-fields" hidden={!scopeExpanded}>
           <label>프로젝트<select value={atlas.scope.projectId} onChange={event => choose(event.target.value, '', '')}><option value="">프로젝트 선택</option>{atlas.catalog?.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
           <label>블록<select disabled={!atlas.project} value={atlas.scope.blockId} onChange={event => choose(atlas.scope.projectId, event.target.value, '')}><option value="">블록 선택</option>{atlas.project?.blocks.map(block => <option key={block.id} value={block.id}>{block.name}</option>)}</select></label>
-          <label>NET_VER<select disabled={!atlas.block} value={netVer} onChange={event => { setNetSelection({ blockId: atlas.scope.blockId, netVer: event.target.value }); choose(atlas.scope.projectId, atlas.scope.blockId, '') }}><option value="">NET_VER 선택</option>{netVersions.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-          <label>REVISION<select disabled={!atlas.block || !netVer} value={atlas.scope.versionId} onChange={event => { setNetSelection({ blockId: atlas.scope.blockId, netVer }); choose(atlas.scope.projectId, atlas.scope.blockId, event.target.value) }}><option value="">REVISION 선택</option>{revisions?.map(version => <option key={version.id} value={version.id}>{version.revision} · {version.layout}</option>)}</select></label>
+          <label>NET_VER<select disabled={!atlas.block} value={netVer} onChange={event => { setError(''); void atlas.selectNetVer(event.target.value).catch(cause => setError(cause instanceof Error ? cause.message : '범위를 변경하지 못했습니다.')) }}><option value="">NET_VER 선택</option>{netVersions.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+          <label>REVISION<select disabled={!atlas.block || !netVer} value={atlas.scope.versionId} onChange={event => choose(atlas.scope.projectId, atlas.scope.blockId, event.target.value)}><option value="">REVISION 선택</option>{revisions?.map(version => <option key={version.id} value={version.id}>{version.revision} · {version.layout}</option>)}</select></label>
           <button className="atlas-button secondary" disabled={atlas.loading} onClick={() => void atlas.reload().catch(() => undefined)}>{atlas.loading ? '조회 중…' : '범위 새로고침'}</button>
         </div>
         {!scopeExpanded && <dl className="atlas-scope-overview" aria-label="선택한 공통 범위">

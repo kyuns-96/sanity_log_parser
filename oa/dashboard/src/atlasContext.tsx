@@ -13,8 +13,8 @@ export type AtlasCatalog = { product: string; local_mode: boolean; can_manage_ca
 export type AreaScope = { project_id: string; block_id: string | null; version_id: string | null; area_project_id: string; area_block_id: string | null; area_version_id: string | null }
 export type AtlasContextValue = {
   demo: boolean; catalog: AtlasCatalog | null; scope: AtlasScope; routeSearch: string; loading: boolean; error: string;
-  project?: AtlasProject; block?: AtlasBlock; version?: AtlasVersion; areaScope: AreaScope | null;
-  reload: () => Promise<void>; selectScope: (scope: AtlasScope) => Promise<void>; href: (path: string) => string;
+  project?: AtlasProject; block?: AtlasBlock; version?: AtlasVersion; netVer: string; areaScope: AreaScope | null;
+  reload: () => Promise<void>; selectScope: (scope: AtlasScope) => Promise<void>; selectNetVer: (netVer: string) => Promise<void>; href: (path: string) => string;
   replaceRoute: (href: string) => void;
   prepare: (previousVersionId?: string | null) => Promise<void>; preparing: boolean;
 }
@@ -28,6 +28,7 @@ export function AtlasProvider({ routeSearch, replaceRoute, children, demo = fals
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [preparing, setPreparing] = useState(false)
+  const [netSelection, setNetSelection] = useState({ projectId: '', blockId: '', netVer: '' })
   const sessionKey = auth.session ? `${auth.session.auth_method}:${auth.session.user_id}` : ''
   const reload = useCallback(async () => {
     if (!sessionKey) { setCatalog(null); return }
@@ -42,6 +43,10 @@ export function AtlasProvider({ routeSearch, replaceRoute, children, demo = fals
   const project = catalog?.projects.find(item => item.id === scope.projectId)
   const block = project?.blocks.find(item => item.id === scope.blockId)
   const version = block?.versions.find(item => item.id === scope.versionId)
+  const netVer = version?.net_ver ?? (netSelection.projectId === scope.projectId && netSelection.blockId === scope.blockId && block?.versions.some(item => item.net_ver === netSelection.netVer) ? netSelection.netVer : '')
+  useEffect(() => {
+    if (version) setNetSelection({ projectId: scope.projectId, blockId: scope.blockId, netVer: version.net_ver })
+  }, [scope.projectId, scope.blockId, version?.id, version?.net_ver])
   const areaScope = useMemo<AreaScope | null>(() => {
     if (!project?.area_id || scope.blockId && !block?.area_id || scope.versionId && !version?.area_id) return null
     return { project_id: project.id, block_id: block?.id || null, version_id: version?.id || null, area_project_id: project.area_id, area_block_id: block?.area_id || null, area_version_id: version?.area_id || null }
@@ -55,13 +60,18 @@ export function AtlasProvider({ routeSearch, replaceRoute, children, demo = fals
     return target.pathname + target.search
   }, [scope.projectId, scope.blockId, scope.versionId, demo])
   const selectScope = useCallback(async (next: AtlasScope) => {
+    if (next.projectId !== scope.projectId || next.blockId !== scope.blockId) setNetSelection({ projectId: '', blockId: '', netVer: '' })
     const target = new URL(location.href)
     for (const [key, value] of Object.entries({ project: next.projectId, block: next.blockId, version: next.versionId })) {
       if (value) target.searchParams.set(key, value); else target.searchParams.delete(key)
     }
     for (const key of ['review', 'item', 'eco', 'snapshot']) target.searchParams.delete(key)
     await navigate(target.pathname + target.search, auth.session?.user_id)
-  }, [navigate, auth.session?.user_id])
+  }, [navigate, auth.session?.user_id, scope.projectId, scope.blockId])
+  const selectNetVer = useCallback(async (next: string) => {
+    setNetSelection({ projectId: scope.projectId, blockId: scope.blockId, netVer: next })
+    await selectScope({ projectId: scope.projectId, blockId: scope.blockId, versionId: '' })
+  }, [selectScope, scope.projectId, scope.blockId])
   const prepare = async (previousVersionId?: string | null) => {
     if (!project || scope.blockId && !block || scope.versionId && !version) throw new Error('공통 프로젝트·블록·버전을 먼저 선택하세요.')
     setPreparing(true)
@@ -70,5 +80,5 @@ export function AtlasProvider({ routeSearch, replaceRoute, children, demo = fals
       await reload()
     } finally { setPreparing(false) }
   }
-  return <AtlasContext value={{ demo, catalog, scope, routeSearch, project, block, version, areaScope, loading, error, reload, selectScope, href, replaceRoute, prepare, preparing }}>{children}</AtlasContext>
+  return <AtlasContext value={{ demo, catalog, scope, routeSearch, project, block, version, netVer, areaScope, loading, error, reload, selectScope, selectNetVer, href, replaceRoute, prepare, preparing }}>{children}</AtlasContext>
 }

@@ -29,7 +29,7 @@ export function Comparisons(props: ComparisonProps) {
   const [baselineEditing, setBaselineEditing] = useState(false)
   const [baselineChoice, setBaselineChoice] = useState('')
   const lastDesignation = useRef<string | null>(null)
-  const [current, setCurrent] = useState<Selection>({ ...emptySelection, block: atlas.block?.id || '', net: atlas.version?.net_ver || '', version: atlas.version?.id || '' })
+  const [currentRun, setCurrentRun] = useState({ versionId: '', corner: '', upload: '' })
   const [before, setBefore] = useState<Selection>(emptySelection)
   const [mappingId, setMappingId] = useState('')
   const [mappingDraft, setMappingDraft] = useState<MappingDraft[]>([])
@@ -52,6 +52,7 @@ export function Comparisons(props: ComparisonProps) {
   const currentBlock = atlas.block
   const beforeBlock = savedProject?.blocks.find(row => row.id === before.block)
   const currentVersion = atlas.version
+  const current: Selection = { block: currentBlock?.id || '', net: atlas.netVer, version: currentVersion?.id || '', corner: currentRun.versionId === currentVersion?.id ? currentRun.corner : '', upload: currentRun.versionId === currentVersion?.id ? currentRun.upload : '' }
   const beforeVersion = beforeBlock?.versions.find(row => row.id === before.version && row.net_ver === before.net)
   const currentUploads = props.uploads.filter(row => row.state === 'ready' && row.project_id === currentAreaId && !!currentBlock?.area_id && row.block_id === currentBlock.area_id && !!currentVersion?.area_id && row.version_id === currentVersion.area_id)
   const beforeUploads = props.uploads.filter(row => row.state === 'ready' && row.project_id === baseline?.baseline_project_id && !!beforeBlock?.area_id && row.block_id === beforeBlock.area_id && !!beforeVersion?.area_id && row.version_id === beforeVersion.area_id)
@@ -73,8 +74,8 @@ export function Comparisons(props: ComparisonProps) {
   const canCompare = !!selectedCurrent && !!baseline?.baseline_project_id && (!before.upload || !!selectedBefore) && (!mappingId || mappings.some(row => row.id === mappingId))
 
   useEffect(() => {
-    setCurrent({ ...emptySelection, block: atlas.block?.id || '', net: atlas.version?.net_ver || '', version: atlas.version?.id || '' })
-  }, [atlas.scope.blockId, atlas.scope.versionId])
+    setCurrentRun({ versionId: '', corner: '', upload: '' })
+  }, [atlas.scope.blockId, atlas.netVer, atlas.scope.versionId])
   useEffect(() => {
     if (!currentAreaId) { setBaseline(null); return }
     const controller = new AbortController()
@@ -92,7 +93,7 @@ export function Comparisons(props: ComparisonProps) {
     }).catch(cause => { if (!controller.signal.aborted) { setBaseline(null); setBaselineChoice(''); setBaselineError(cause instanceof Error ? cause.message : '기준을 조회하지 못했습니다.') } }).finally(() => { if (!controller.signal.aborted) setBaselineLoading(false) })
     return () => controller.abort()
   }, [props.auth, currentAreaId, props.refreshVersion])
-  useEffect(() => { setMappingId(''); setMappingDraft([]); setBaselinePath(''); setCurrentPath('') }, [current.upload, before.upload])
+  useEffect(() => { setMappingId(''); setMappingDraft([]); setBaselinePath(''); setCurrentPath('') }, [current.block, current.net, current.version, current.upload, before.upload])
   useEffect(() => { setExpanded(new Set()) }, [displayedCurrentId, displayedBaselineId, comparisonId])
   useEffect(() => {
     if (!comparisonId) { setDetail(null); setDetailError(''); return }
@@ -113,6 +114,15 @@ export function Comparisons(props: ComparisonProps) {
   }, [props.auth, comparisonId, detailRefresh, props.refreshVersion])
 
   function beginMutation() { mutation.current?.abort(); const controller = new AbortController(); mutation.current = controller; return controller.signal }
+  function chooseCurrent(selection: Selection) {
+    if (selection.net !== atlas.netVer) {
+      void action.run(() => atlas.selectNetVer(selection.net), '')
+    } else if (selection.version !== current.version) {
+      void action.run(() => atlas.selectScope({ ...atlas.scope, versionId: selection.version }), '')
+    } else {
+      setCurrentRun({ versionId: current.version, corner: selection.corner, upload: selection.upload })
+    }
+  }
   async function prepare(nativeProject: AtlasProject, selection?: Selection, previous?: string | null) {
     const signal = beginMutation()
     await props.auth.request('/api/atlas/area-scope', { project_id: nativeProject.id, ...(selection?.block ? { block_id: selection.block } : {}), ...(selection?.version ? { version_id: selection.version } : {}), ...(previous !== undefined ? { previous_version_id: previous } : {}) }, false, signal)
@@ -162,7 +172,7 @@ export function Comparisons(props: ComparisonProps) {
     </section>
     <section className="panel comparison-workspace">
       <div className="compare-sides">
-        <RunSelector label="현재" project={project} selection={{ ...current, block: atlas.block?.id || '', net: atlas.version?.net_ver || '', version: atlas.version?.id || '' }} onChange={setCurrent} scopeReadOnly uploads={currentUploads} busy={action.busy} onPrepare={(selection, previous) => action.run(() => prepare(project, selection, previous))} />
+        <RunSelector label="현재" project={project} selection={current} onChange={chooseCurrent} blockReadOnly uploads={currentUploads} busy={action.busy} onPrepare={(selection, previous) => action.run(() => prepare(project, selection, previous))} />
         {savedProject && baseline?.status === 'available' ? <RunSelector label="기준" project={savedProject} selection={before} onChange={setBefore} uploads={beforeUploads} busy={action.busy} onPrepare={(selection, previous) => action.run(() => prepare(savedProject, selection, previous))} /> : <Empty title={baseline?.status === 'unavailable' ? '기준 프로젝트 조회 불가' : '비교 기준을 저장하세요'}>현재 실행의 관측값은 기준이 없어도 볼 수 있습니다. 기준·대응이 없는 Δ/%는 unavailable입니다.</Empty>}
       </div>
       {selectedCurrent && selectedBefore && cornerKey(selectedCurrent) !== cornerKey(selectedBefore) && <div className="notice warning">양쪽 corner가 다릅니다. Power의 비교 가능성과 조건 차이 사유를 확인하세요. 같은 이름으로 조건을 추정하지 않습니다.</div>}
@@ -186,7 +196,7 @@ export function Comparisons(props: ComparisonProps) {
   </>
 }
 
-function RunSelector({ label, project, selection, onChange, uploads, busy, onPrepare, scopeReadOnly = false }: { label: string; project: AtlasProject; selection: Selection; onChange: (value: Selection) => void; uploads: Upload[]; busy: boolean; onPrepare: (selection: Selection, previous?: string | null) => void; scopeReadOnly?: boolean }) {
+function RunSelector({ label, project, selection, onChange, uploads, busy, onPrepare, blockReadOnly = false }: { label: string; project: AtlasProject; selection: Selection; onChange: (value: Selection) => void; uploads: Upload[]; busy: boolean; onPrepare: (selection: Selection, previous?: string | null) => void; blockReadOnly?: boolean }) {
   const block = project.blocks.find(row => row.id === selection.block)
   const version = block?.versions.find(row => row.id === selection.version && row.net_ver === selection.net)
   const [previous, setPrevious] = useState('')
@@ -196,13 +206,13 @@ function RunSelector({ label, project, selection, onChange, uploads, busy, onPre
   for (const upload of uploads) if (!corners.has(cornerKey(upload))) corners.set(cornerKey(upload), `${upload.process_label ?? '?'} · ${upload.voltage_v ?? '?'} V · ${upload.temp_c ?? '?'} °C · ${upload.pex ?? '?'}`)
   const runs = selection.corner ? uploads.filter(row => cornerKey(row) === selection.corner) : []
   return <fieldset className="run-selector"><legend>{label} · {project.name}</legend><div className="run-fields">
-    <Field label={`${label} Block`}>{scopeReadOnly ? <input readOnly value={block?.name || '상단 공통 Block 선택'} /> : <select value={selection.block} onChange={event => { onChange({ ...emptySelection, block: event.target.value }); setPrevious('') }}><option value="">Block 선택</option>{project.blocks.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select>}</Field>
-    <Field label={`${label} NET_VER`}>{scopeReadOnly ? <input readOnly value={version?.net_ver || '상단 공통 NET_VER 선택'} /> : <select value={selection.net} disabled={!block} onChange={event => { onChange({ ...selection, net: event.target.value, version: '', corner: '', upload: '' }); setPrevious('') }}><option value="">NET_VER 선택</option>{[...new Set(block?.versions.map(row => row.net_ver) || [])].map(value => <option key={value}>{value}</option>)}</select>}</Field>
-    <Field label={`${label} REVISION`}>{scopeReadOnly ? <input readOnly value={version ? `${version.revision} · ${version.layout}` : '상단 공통 REVISION 선택'} /> : <select value={selection.version} disabled={!selection.net} onChange={event => { onChange({ ...selection, version: event.target.value, corner: '', upload: '' }); setPrevious('') }}><option value="">REVISION 선택</option>{block?.versions.filter(row => row.net_ver === selection.net).map(row => <option key={row.id} value={row.id}>{row.revision} · {row.layout}</option>)}</select>}</Field>
+    <Field label={`${label} Block`}>{blockReadOnly ? <input readOnly value={block?.name || '상단 공통 Block 선택'} /> : <select value={selection.block} onChange={event => { onChange({ ...emptySelection, block: event.target.value }); setPrevious('') }}><option value="">Block 선택</option>{project.blocks.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select>}</Field>
+    <Field label={`${label} NET_VER`}><select value={selection.net} disabled={!block} onChange={event => { onChange({ ...selection, net: event.target.value, version: '', corner: '', upload: '' }); setPrevious('') }}><option value="">NET_VER 선택</option>{[...new Set(block?.versions.map(row => row.net_ver) || [])].map(value => <option key={value}>{value}</option>)}</select></Field>
+    <Field label={`${label} REVISION`}><select value={selection.version} disabled={!block || !selection.net} onChange={event => { onChange({ ...selection, version: event.target.value, corner: '', upload: '' }); setPrevious('') }}><option value="">REVISION 선택</option>{block?.versions.filter(row => row.net_ver === selection.net).map(row => <option key={row.id} value={row.id}>{row.revision} · {row.layout}</option>)}</select></Field>
     <Field label={`${label} corner`}><select value={selection.corner} disabled={!version?.area_id} onChange={event => onChange({ ...selection, corner: event.target.value, upload: '' })}><option value="">corner 선택</option>{[...corners].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
     <Field label={`${label} 실행 파일`} className="run-file"><select value={selection.upload} disabled={!selection.corner} onChange={event => onChange({ ...selection, upload: event.target.value })}><option value="">실행 파일 선택</option>{runs.map(row => <option key={row.id} value={row.id}>{uploadName(row)}</option>)}</select></Field>
   </div>
-    {scopeReadOnly && <small>현재 Block·NET_VER·REVISION은 상단 공통 범위를 그대로 사용합니다.</small>}
+    {blockReadOnly && <small>현재 Block은 상단 공통 범위를 사용하며, NET_VER·REVISION은 양쪽에서 함께 변경됩니다.</small>}
     {block && (!block.area_id || version && !version.area_id) && <div className="scope-preparation"><small>선택한 정확한 범위의 수치 연결이 필요합니다. 다른 범위 파일로 대체하지 않습니다.</small>{needsLineage && <Field label={`${label} 명시적 이전 버전`}><select value={previous} onChange={event => setPrevious(event.target.value)}><option value="">계보를 선택하세요</option><option value="none">이 버전에서 계보 시작</option>{block.versions.filter(row => row.id !== version.id).map(row => <option key={row.id} value={row.id}>{row.net_ver} · {row.revision} · {row.layout}</option>)}</select></Field>}<Button variant="outline" disabled={busy || !project.can_write || !!needsLineage && !previous} onClick={() => onPrepare(selection, needsLineage ? previous === 'none' ? null : previous : undefined)}>선택 범위 연결</Button></div>}
     {version?.area_id && !uploads.length && <small>선택한 버전에 준비된 CSV가 없습니다. 아래 업로드 이력의 메타데이터로 PC CLI 업로드를 준비하세요.</small>}
   </fieldset>
