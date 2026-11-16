@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import secrets
 
-from common.sanity_common import ReviewError, digest
+from common.sanity_common import ReviewError, digest, require_id
 from common.sanity_db import json_value, stable_uuid, uuid_value, lock_key
 
 SYNTHETIC_PASSWORD = "sanity-workspace"  # Public test fixture, never a company credential.
@@ -35,6 +35,15 @@ def record_id(kind, key):
     return stable_uuid("workspace-v1", kind, key)
 
 
+def catalog_name_id(kind, name, project_id=None):
+    """Exact normalized names, unambiguous UTF-8 canonical JSON, native-safe IDs."""
+    if kind == "WS_PROJECT":
+        return "project-" + digest(["atlas-project-v1", name])
+    if kind == "WS_BLOCK" and project_id is not None:
+        return "block-" + digest(["atlas-block-v1", project_id, name])
+    raise ReviewError("INVALID_REQUEST", "Invalid catalog identity scope")
+
+
 class WorkspaceStore:
     def __init__(self, db):
         self.db = db
@@ -48,6 +57,27 @@ class WorkspaceStore:
 
     def rows(self, kind):
         return self.db.execute("SELECT * FROM {oa} WHERE record_type=%s ORDER BY workspace_key", (kind,)).fetchall()
+
+    def named_catalog(self, kind, name, project_id=None):
+        """Resolve legacy business names before deriving an ID; never mutate rows."""
+        self.db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("design-atlas-catalog"),))
+        rows = self.db.execute(
+            "SELECT * FROM {oa} WHERE record_type=%s AND payload->>'name'=%s" +
+            (" AND payload->>'project_id'=%s" if project_id is not None else ""),
+            (kind, name, project_id) if project_id is not None else (kind, name)).fetchall()
+        if len(rows) > 1:
+            raise ReviewError("REQUEST_CONFLICT", "Catalog name is ambiguous")
+        if rows:
+            row = rows[0]
+            if (row["payload"].get("id") != row["workspace_key"]
+                    or (kind == "WS_PROJECT" and row["payload"].get("project_id") != row["workspace_key"])
+                    or (project_id is not None and row["workspace_project_ref"] != record_id("WS_PROJECT", project_id))):
+                raise ReviewError("REQUEST_CONFLICT", "Catalog ownership does not match")
+            return require_id(row["workspace_key"]), row
+        key = catalog_name_id(kind, name, project_id)
+        if self.db.execute("SELECT 1 FROM {oa} WHERE record_type=%s AND workspace_key=%s", (kind, key)).fetchone():
+            raise ReviewError("REQUEST_CONFLICT", "Catalog identity already belongs to another name")
+        return key, None
 
     def put(self, kind, key, payload, *, project=None, block=None, state=None, source_packet_ref=None):
         project_ref = record_id("WS_PROJECT", project) if project else None

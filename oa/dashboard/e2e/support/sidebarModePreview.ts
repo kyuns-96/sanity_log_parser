@@ -29,13 +29,12 @@ export class SidebarModePreview {
       if (!this.admin) throw new WorkspaceError('FORBIDDEN')
       if (url.pathname === '/api/admin/access') return { revision: this.revision, grants, requests: this.requests, users: [{ user_id: user.id, display_name: user.name }, { user_id: 'user-05', display_name: '김지안' }] }
       if (method === 'POST' && body) {
-        if (url.pathname === '/api/admin/projects') this.projects.push({ id: String(body.project_id), name: String(body.name), description: String(body.description || '') })
-        else if (url.pathname.endsWith('/blocks')) this.blocks.push({ id: String(body.block_id), name: String(body.name), project_id: url.pathname.split('/')[4] })
-        else if (url.pathname.endsWith('/decision')) {
+        if (url.pathname.endsWith('/decision')) {
           const request = this.requests.find(request => request.request_id === url.pathname.split('/')[4])
           if (!request) throw new WorkspaceError('NOT_FOUND')
           request.status = body.decision === 'APPROVE' ? 'APPROVED' : 'REJECTED'
         }
+        else throw new WorkspaceError('NOT_FOUND')
         this.revision++
         return { status: 'SAVED' }
       }

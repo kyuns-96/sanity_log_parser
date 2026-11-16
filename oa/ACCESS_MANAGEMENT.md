@@ -16,7 +16,7 @@
 ## 2. 사용자 흐름과 역할
 
 1. SSO 로그인 후 내부 계정·활성을 확인한다. 권한 엔진이 준비됐으나 배정이 없으면 Welcome을 연다. 이는 로그인 실패가 아니다.
-2. 관리자가 관리 화면에서 고정 프로젝트 ID·표시 이름·설명을 등록하고, 그 아래에 고정 블록 ID·표시 이름을 등록한다. ID는 생성 후 이름과 별개로 유지하며 다른 프로젝트에도 같은 표시 이름을 쓸 수 있다. 블록 ID는 이 레지스트리에서 고유하다.
+2. 관리자는 관리 화면에서 프로젝트 이름과 설명을 등록하고, 그 아래에서 블록 이름을 등록한다. 클라이언트는 ID를 입력하지 않는다. 서버가 이름과 프로젝트 범위로 고정 ID를 결정해 응답하며 같은 이름의 재등록은 기존 항목을 사용한다. 이름은 바깥 공백만 제거한 뒤 정확히 비교하며 대소문자나 내부 공백을 합치지 않는다. 같은 이름의 블록은 서로 다른 프로젝트에서 별도 항목이다.
 3. 사용자는 등록 목록에서 참여할 프로젝트를 골라 사유를 적어 멤버 권한을 요청한다. 역할·블록 선택은 없다. 다른 사람의 user_id를 대신 제출하지 않는다.
 4. 관리자는 신청자·역할·범위·사유를 확인해 승인 또는 거절하고 사유를 남긴다. 아직 승인되지 않은 요청은 업무 권한이 아니다.
 5. 승인 후 현재 배정으로 업무 목록을 조회한다. 프로젝트 멤버는 해당 프로젝트의 모든 등록 블록을 조회·검토·수정한다. 이후 같은 프로젝트에 추가된 블록에도 적용된다.
@@ -95,14 +95,16 @@
 | `GET /api/access/me` | 본인 `{user_id,is_admin,revision,grants,requests}` |
 | `POST /api/access/requests` | `{request_id,role:"MEMBER",project_id,block_id:null,reason}`. 기존 TOP·OWNER 요청은 호환 수락하되 프로젝트 멤버로 해석 |
 | `GET /api/admin/access` | 관리자 전용 현재 `revision`, 전체 요청·활성 배정·활성 계정의 ID/표시 이름 |
-| `POST /api/admin/projects` | `{request_id,project_id,name,description}` |
-| `POST /api/admin/projects/{project_id}/blocks` | `{request_id,block_id,name}` |
+| `POST /api/admin/projects` | `{request_id,name,description?}` → `{status,project_id,revision}`. 반환된 `project_id`를 이후 범위 선택에 사용 |
+| `POST /api/admin/projects/{project_id}/blocks` | `{request_id,name}` → `{status,project_id,block_id,revision}`. 경로의 canonical `project_id`와 반환된 `block_id`를 사용 |
 | `POST /api/admin/requests/{request_id}/decision` | `{command_id,decision:"APPROVE"\|"REJECT",reason,expected_revision}` |
 | `POST /api/admin/grants/{grant_id}/revoke` | `{command_id,reason,expected_revision}` |
 
+프로젝트·블록 생성은 서버에서 canonical ID를 정한다. 프로젝트 ID는 `project-`와 `["atlas-project-v1",trimmed name]`의 compact UTF-8 JSON 바이트에 대한 SHA-256 digest로, 블록 ID는 `block-`와 `["atlas-block-v1",canonical project ID,trimmed name]`의 compact UTF-8 JSON 바이트에 대한 SHA-256 digest로 구성된다. 입력은 기존 텍스트 규칙대로 바깥 공백만 제거하고, 대소문자·내부 공백·Unicode를 정규화하지 않는다. 클라이언트와 수집기는 규칙을 재구현하거나 이름에서 ID를 계산하지 않고 응답·선택된 ID를 그대로 보존한다. 기존 등록 이름과 ID는 우선 보존되며, 모호한 기존 이름·ID 충돌은 거부한다. 빈 설명을 포함한 기존 재등록은 메타데이터를 바꾸지 않으며, 비어 있지 않은 다른 설명은 충돌로 거부한다.
+
 기존 TOP·OWNER의 불변 요청·승인·회수 이력은 재작성하지 않는다. 현재 grant 응답은 사용자·프로젝트당 `role="MEMBER"`, `block_id=null` 한 건으로 통합하며 실제 현재 grant UUID 중 사전순 첫 값을 회수 대상 ID로 제공한다. 새로운 `REVOKE_PROJECT` 이벤트는 이 ID의 사용자·프로젝트에 속한 모든 현재 배정을 한 번에 해제한다. 과거 `REVOKE` 이벤트는 원래 한 건 회수 의미와 같은 UUID 재확인 계약을 유지한다. 새 신청·승인은 사용자·프로젝트 단위 중복을 거부한다.
 
-request status는 `PENDING`, `APPROVED`, `REJECTED`다. grant는 승인된 활성 배정이며 회수 후 현재 grant 목록에서 제외하고 과거 승인·회수 이벤트는 보존한다. ID는 1~100자 고정 형식, 이름은 1~100자, 설명은 최대 1,000자, 사유는 1~2,000자다. 앞뒤 공백·제어문자·미정의 필드를 받아 임의 정규화하지 않는다.
+request status는 `PENDING`, `APPROVED`, `REJECTED`다. grant는 승인된 활성 배정이며 회수 후 현재 grant 목록에서 제외하고 과거 승인·회수 이벤트는 보존한다. 등록 이름은 1~100자, 설명은 최대 1,000자, 사유는 1~2,000자다. 등록 이름의 앞뒤 공백은 제거되며 제어문자·미정의 필드는 거부된다. 생성 요청은 UUID `request_id`를 계속 사용하며 같은 UUID의 재전달은 기존 idempotency 계약을 따른다. 기존 이름을 새 `request_id`로 다시 등록한 경우에는 별도의 재사용 receipt를 기록한다. 해당 이벤트는 중앙 VWP 작업자와 같은 릴리스로 배포해야 한다.
 
 `GET /api/session`은 기존 필드를 유지하고 `is_admin`, `can_read_business`, `can_receive`를 추가한다. `authorization_ready`는 권한 엔진 준비 여부이며 배정 보유 여부가 아니다. 미배정 SSO 사용자도 준비된 엔진에서는 `authorization_ready=true`, `can_read_business=false`, `writable=false`다. SSO의 `can_receive`는 false다. `writable=true`가 승인되지 않은 프로젝트 bundle의 수정 권한을 뜻하지 않으며 상세 `permissions`와 실제 서버 검사를 따른다.
 
@@ -128,4 +130,4 @@ SSO 목록은 허용 scope를 **SQL count·정렬·페이지 제한 전에** 적
 
 업무 overview의 `tops`·`owners` 배열은 빈 배열로 제공하고 전체 사용자 명단을 조회·표시하지 않는다. 권한 관리는 관리자 화면에서 사용자별로 확인하며, PoR 지정자·판정 작성자·변경 이력의 실제 행위자 이름은 보존한다. 프로젝트 ID·이름은 이 변경에서 수정하지 않는다.
 
-배포 시 OA 웹·정적 UI와 중앙 VWP 작업자의 공통 `oa/` 권한 코드를 같은 릴리스로 맞춘다. 기존 불변 이력은 유지되지만 신규 MEMBER/REVOKE_PROJECT를 읽지 못하는 구버전 작업자를 혼용하지 않는다. 추가 DDL·GRANT·운영 이력 일괄 수정은 필요 없다. 회사 어댑터 수정 허용 범위는 확대하지 않는다.
+배포는 두 단계로 진행한다. 먼저 중앙 VWP 작업자를 `PROJECT_REUSE`/`BLOCK_REUSE`를 읽는 새 receipt reader로 배포하되, 기존 `PROJECT`/`BLOCK` 이력도 계속 읽는 backward-compatible 상태를 확인한다. 그 reader 준비 후 OA API와 정적 frontend를 같은 릴리스로 배포해 새 receipt를 쓰도록 한다. reader보다 OA emitter를 먼저 배포하면 구버전 작업자가 알 수 없는 이벤트 kind로 이력을 읽지 못할 수 있다. 기존 MEMBER/REVOKE_PROJECT 이력과 모든 불변 이력은 유지하며 추가 DDL·GRANT·운영 이력 일괄 수정은 없다. 회사 어댑터 수정 허용 범위는 확대하지 않는다.

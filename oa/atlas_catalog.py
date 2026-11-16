@@ -110,13 +110,16 @@ class AtlasCatalog:
         if not self.can_manage:
             fail("FORBIDDEN")
         if not self.local:
-            return self.access.create_project(self.actor, body.request_id, body.project_id, body.name, body.description)
+            return self.access.create_project(self.actor, body.request_id, body.name, body.description)
         def create():
-            if self.db.execute("SELECT 1 FROM {oa} WHERE record_type='WS_PROJECT' AND workspace_key=%s", (body.project_id,)).fetchone():
-                fail()
-            self.ws.put("WS_PROJECT", body.project_id, {"id": body.project_id, "project_id": body.project_id,
+            project_id, existing = self.ws.named_catalog("WS_PROJECT", body.name)
+            if existing:
+                if body.description and existing["payload"].get("description", "") != body.description:
+                    fail()
+                return {"status": "ALREADY_CREATED", "project_id": project_id}
+            self.ws.put("WS_PROJECT", project_id, {"id": project_id, "project_id": project_id,
                         "name": body.name, "description": body.description, "tops": []})
-            return {"status": "CREATED", "project_id": body.project_id}
+            return {"status": "CREATED", "project_id": project_id}
         return self.command(body.request_id, "PROJECT", body.model_dump(mode="json", exclude={"request_id"}), create)
 
     def create_block(self, body):
@@ -124,13 +127,14 @@ class AtlasCatalog:
             fail("FORBIDDEN")
         self.project(body.project_id, manage=True)
         if not self.local:
-            return self.access.create_block(self.actor, body.request_id, body.project_id, body.block_id, body.name)
+            return self.access.create_block(self.actor, body.request_id, body.project_id, body.name)
         def create():
-            if self.db.execute("SELECT 1 FROM {oa} WHERE record_type='WS_BLOCK' AND workspace_key=%s", (body.block_id,)).fetchone():
-                fail()
-            self.ws.put("WS_BLOCK", body.block_id, {"id": body.block_id, "project_id": body.project_id,
+            block_id, existing = self.ws.named_catalog("WS_BLOCK", body.name, body.project_id)
+            if existing:
+                return {"status": "ALREADY_CREATED", "project_id": body.project_id, "block_id": block_id}
+            self.ws.put("WS_BLOCK", block_id, {"id": block_id, "project_id": body.project_id,
                         "name": body.name, "owners": []}, project=body.project_id)
-            return {"status": "CREATED", "project_id": body.project_id, "block_id": body.block_id}
+            return {"status": "CREATED", "project_id": body.project_id, "block_id": block_id}
         return self.command(body.request_id, "BLOCK", body.model_dump(mode="json", exclude={"request_id"}), create)
 
     @staticmethod
