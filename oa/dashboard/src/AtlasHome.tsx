@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowRight, Boxes, FolderPlus, Layers3, Plus, RefreshCw } from 'lucide-react'
+import { ArrowRight, Boxes, Check, ChevronRight, FolderPlus, Layers3, Plus, RefreshCw } from 'lucide-react'
 import { useAtlas } from './atlasContext'
 import type { UnboundArea } from './atlasContext'
 import { useDashboardAuth } from './useDashboardAuth'
@@ -17,15 +17,45 @@ export default function AtlasHome() {
   const catalog = atlas.catalog
   const canWrite = !!atlas.project?.can_write || !!catalog?.can_manage_catalog
   const open = (path: string) => { void navigate(atlas.href(path), auth.session?.user_id).catch(cause => setError(String(cause))) }
+  const logsPath = catalog?.local_mode ? '/?page=review' : '/?page=workbench'
+  const select = (scope: { projectId: string; blockId: string; versionId: string }) => { setError(''); void atlas.selectScope(scope).catch(cause => setError(cause instanceof Error ? cause.message : String(cause))) }
   return <main className="atlas-home"><section className="atlas-home-heading"><div><h1>프로젝트</h1></div><button className="atlas-button secondary" disabled={atlas.loading} onClick={() => void atlas.reload().catch(() => undefined)}><RefreshCw size={16} />새로고침</button></section>
     {catalog?.local_mode && <div className="atlas-message">로컬 모드 · 변경사항은 DB에 저장됩니다. 로그 검토는 회사 SSO가 필요합니다.</div>}
     {error && <p className="atlas-message error" role="alert">{error}</p>}{notice && <p className="atlas-message" role="status">{notice}</p>}
-    <section className="atlas-summary-grid"><article><span>접근 가능한 프로젝트</span><strong>{catalog ? catalog.projects.length : '—'}</strong></article><article><span>선택한 블록</span><strong>{atlas.block?.name || '선택 전'}</strong>{atlas.project && <small>{atlas.project.name}</small>}</article><article><span>선택한 버전</span><strong>{atlas.version ? `${atlas.version.net_ver} · ${atlas.version.layout}` : '선택 전'}</strong>{atlas.version && <small>Revision {atlas.version.revision} · 수신 ECO {atlas.version.ecos.filter(Boolean).length}개</small>}</article></section>
-    <section className="atlas-panel"><div className="atlas-section-heading"><div><h2>프로젝트 · 블록 · 버전</h2></div><div className="atlas-actions">{catalog?.can_manage_catalog && <button className="atlas-button" onClick={() => setKind('project')}><FolderPlus size={16} />프로젝트 등록</button>}{catalog?.can_manage_catalog && atlas.project && <button className="atlas-button secondary" onClick={() => setKind('block')}><Plus size={16} />블록 등록</button>}{canWrite && atlas.block && <button className="atlas-button secondary" onClick={() => setKind('version')}><Layers3 size={16} />버전 선언</button>}</div></div>
-      {atlas.loading && !catalog ? <p role="status">불러오는 중…</p> : !catalog ? <div className="atlas-empty">프로젝트를 조회할 수 없습니다. 연결 상태를 확인하고 새로고침하세요.</div> : !catalog.projects.length ? <div className="atlas-empty">등록된 프로젝트가 없습니다. {catalog.can_manage_catalog ? '프로젝트를 등록하세요.' : '관리자에게 프로젝트 등록을 요청하세요.'}</div> : <div className="atlas-project-grid">{catalog.projects.map(project => <article key={project.id} className={atlas.scope.projectId === project.id ? 'selected' : ''}><div><Boxes size={21} /><span>{project.can_write ? '읽기 · 쓰기' : '읽기'}</span></div><h3>{project.name}</h3>{project.description && <p>{project.description}</p>}<footer><span>블록 {project.blocks.length} · 버전 {project.blocks.reduce((count, block) => count + block.versions.length, 0)}</span><button className="atlas-button secondary" onClick={() => void atlas.selectScope({ projectId: project.id, blockId: '', versionId: '' }).catch(cause => setError(String(cause)))}>프로젝트 선택<ArrowRight size={14} /></button></footer></article>)}</div>}
-      {atlas.project && <div className="atlas-block-list"><h3>{atlas.project.name}의 블록</h3>{atlas.project.blocks.length ? atlas.project.blocks.map(block => <button key={block.id} className={atlas.block?.id === block.id ? 'selected' : ''} onClick={() => void atlas.selectScope({ projectId: atlas.project!.id, blockId: block.id, versionId: '' }).catch(cause => setError(String(cause)))}><strong>{block.name}</strong><span>버전 {block.versions.length}</span><ArrowRight size={16} /></button>) : <p>등록된 블록이 없습니다.</p>}</div>}
+    <section className="atlas-selection" aria-label="선택한 범위">
+      <div className="atlas-selection-path"><span>선택한 범위</span>
+        <ol>
+          <li className={atlas.project ? undefined : 'is-empty'}>{atlas.project?.name || '프로젝트 선택 전'}</li>
+          <li className={atlas.block ? undefined : 'is-empty'}>{atlas.block?.name || '블록 선택 전'}</li>
+          <li className={atlas.version ? undefined : 'is-empty'}>{atlas.version ? `${atlas.version.net_ver} · ${atlas.version.revision} · ${atlas.version.layout}` : '버전 선택 전'}</li>
+        </ol>
+        {atlas.version && <small>수신 ECO {atlas.version.ecos.filter(Boolean).length}개</small>}
+      </div>
+      <div className="atlas-actions">
+        <button className="atlas-button" onClick={() => open(logsPath)}>{catalog?.local_mode ? '수신 로그 대장 열기' : '로그 검토 열기'}<ArrowRight size={16} /></button>
+        {catalog && !catalog.area_enabled ? <span className="atlas-selection-note">수치 분석 서비스를 사용할 수 없습니다. {catalog.area_error || ''}</span> : <button className="atlas-button secondary" onClick={() => open('/?page=area-power')}>프로젝트 비교 열기<ArrowRight size={16} /></button>}
+      </div>
     </section>
-    <section className="atlas-feature-grid"><article className="atlas-panel"><h2>로그 검토 · Sanity 검사</h2><button className="atlas-button" onClick={() => open(catalog?.local_mode ? '/?page=review' : '/?page=workbench')}>{catalog?.local_mode ? '수신 로그 대장' : '로그 워크스페이스'}<ArrowRight size={16} /></button></article><article className="atlas-panel"><h2>프로젝트 비교</h2>{!catalog?.area_enabled ? <p className="atlas-message">수치 분석 서비스를 사용할 수 없습니다. {catalog?.area_error || ''}</p> : <button className="atlas-button" onClick={() => open('/?page=area-power')}>프로젝트 비교 열기<ArrowRight size={16} /></button>}</article></section>
+    <section className="atlas-picker" aria-label="프로젝트 · 블록 · 버전">
+      <div className="atlas-picker-column">
+        <header><h2>프로젝트{catalog && <span>{catalog.projects.length}</span>}</h2>{catalog?.can_manage_catalog && <button className="atlas-button secondary" onClick={() => setKind('project')}><FolderPlus size={15} />프로젝트 등록</button>}</header>
+        {atlas.loading && !catalog ? <p className="atlas-picker-empty" role="status">불러오는 중…</p> : !catalog ? <p className="atlas-picker-empty">프로젝트를 조회할 수 없습니다. 연결 상태를 확인하고 새로고침하세요.</p> : !catalog.projects.length ? <p className="atlas-picker-empty">등록된 프로젝트가 없습니다. {catalog.can_manage_catalog ? '프로젝트를 등록하세요.' : '관리자에게 프로젝트 등록을 요청하세요.'}</p> : <ul>{catalog.projects.map(project => <li key={project.id}><button type="button" className="atlas-picker-item" aria-pressed={atlas.scope.projectId === project.id} onClick={() => select({ projectId: project.id, blockId: '', versionId: '' })}>
+          <Boxes size={18} /><span className="atlas-picker-text"><strong>{project.name}</strong>{project.description && <small>{project.description}</small>}<small>블록 {project.blocks.length} · 버전 {project.blocks.reduce((count, block) => count + block.versions.length, 0)}</small></span><em>{project.can_write ? '읽기 · 쓰기' : '읽기'}</em><ChevronRight size={16} />
+        </button></li>)}</ul>}
+      </div>
+      <div className="atlas-picker-column">
+        <header><h2>블록{atlas.project && <span>{atlas.project.blocks.length}</span>}</h2>{catalog?.can_manage_catalog && atlas.project && <button className="atlas-button secondary" onClick={() => setKind('block')}><Plus size={15} />블록 등록</button>}</header>
+        {!atlas.project ? <p className="atlas-picker-empty">프로젝트를 선택하면 블록이 표시됩니다.</p> : !atlas.project.blocks.length ? <p className="atlas-picker-empty">등록된 블록이 없습니다.</p> : <ul>{atlas.project.blocks.map(block => <li key={block.id}><button type="button" className="atlas-picker-item" aria-pressed={atlas.block?.id === block.id} onClick={() => select({ projectId: atlas.project!.id, blockId: block.id, versionId: '' })}>
+          <span className="atlas-picker-text"><strong>{block.name}</strong><small>버전 {block.versions.length}</small></span><ChevronRight size={16} />
+        </button></li>)}</ul>}
+      </div>
+      <div className="atlas-picker-column">
+        <header><h2>버전{atlas.block && <span>{atlas.block.versions.length}</span>}</h2>{canWrite && atlas.block && <button className="atlas-button secondary" onClick={() => setKind('version')}><Layers3 size={15} />버전 선언</button>}</header>
+        {!atlas.block ? <p className="atlas-picker-empty">블록을 선택하면 버전이 표시됩니다.</p> : !atlas.block.versions.length ? <p className="atlas-picker-empty">선언된 버전이 없습니다.</p> : <ul>{atlas.block.versions.map(version => <li key={version.id}><button type="button" className="atlas-picker-item" aria-pressed={atlas.version?.id === version.id} onClick={() => select({ projectId: atlas.project!.id, blockId: atlas.block!.id, versionId: version.id })}>
+          <span className="atlas-picker-text"><strong className="atlas-picker-version">{version.net_ver}<span>{version.revision}</span></strong><small>{version.layout === 'POST' ? `수신 ECO ${version.ecos.filter(Boolean).length}개` : 'ECO 없음'}</small></span><em>{version.layout}</em>{atlas.version?.id === version.id && <Check size={16} />}
+        </button></li>)}</ul>}
+      </div>
+    </section>
     {catalog?.local_mode && catalog.unbound_area && <LocalBinding key={`${atlas.scope.projectId}:${atlas.scope.blockId}:${atlas.scope.versionId}`} />}
     {kind && <CatalogForm kind={kind} onClose={() => setKind(null)} onCreated={message => { setKind(null); setNotice(message) }} />}
   </main>

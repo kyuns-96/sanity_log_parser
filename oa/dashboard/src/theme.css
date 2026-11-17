@@ -77,7 +77,8 @@
   background: var(--canvas);
   font-variant-numeric: tabular-nums;
 }
-body { font-size: var(--text-lead); line-height: 1.6; font-family: var(--font-sans); background: var(--canvas); }
+/* keep-all: Korean wraps between words, not inside them; break-word still splits long IDs and paths. */
+body { font-size: var(--text-body); line-height: 1.6; font-family: var(--font-sans); background: var(--canvas); word-break: keep-all; overflow-wrap: break-word; }
 ::selection { color: var(--ink); background: var(--accent-line); }
 a { color: inherit; }
 button, a, input, textarea, select { transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease; }

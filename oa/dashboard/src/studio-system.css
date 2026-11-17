@@ -214,9 +214,11 @@ body { text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; 
 .ws-studio-workspace .ws-studio-item-tabs .ws-item-title { align-items: center; gap: 12px; }
 .ws-studio-workspace .ws-studio-item-tabs .ws-item-title > [data-slot='badge'] { padding: 2px 6px; color: var(--text-secondary); background: var(--surface-recessed); border-color: var(--line); font-size: var(--text-caption); }
 .ws-studio-workspace .ws-studio-item-tabs .ws-item-stats { font-size: var(--text-caption); }
-.ws-studio-dialog-tabs [data-slot='tabs-list'] { width: 100%; min-height: 39px; padding: 0; gap: 22px; background: transparent; border-bottom: 1px solid var(--line); border-radius: 0; justify-content: flex-start; }
-.ws-studio-dialog-tabs [data-slot='tabs-trigger'] { flex: 0 0 auto; padding: 10px 0; font-size: var(--text-body); border-radius: 0; box-shadow: none; color: var(--text-muted); }
-.ws-studio-dialog-tabs [data-slot='tabs-trigger'][data-state='active'] { border-bottom: 2px solid var(--primary); color: var(--ink); background: transparent; }
+/* The class sits on the list itself in the report dialog, so match both placements. */
+.ws-studio-dialog-tabs[data-slot='tabs-list'], .ws-studio-dialog-tabs [data-slot='tabs-list'] { width: 100%; min-height: 39px; padding: 0; gap: 22px; background: transparent; border-bottom: 1px solid var(--line); border-radius: 0; justify-content: flex-start; }
+.ws-studio-dialog-tabs [data-slot='tabs-trigger'] { flex: 0 0 auto; padding: 10px 2px; font-size: var(--text-body); border: 0; border-bottom: 2px solid transparent; border-radius: 0; box-shadow: none; background: transparent; color: var(--text-muted); }
+.ws-studio-dialog-tabs [data-slot='tabs-trigger']:hover { color: var(--ink); }
+.ws-studio-dialog-tabs [data-slot='tabs-trigger'][data-state='active'] { border-bottom-color: var(--primary); color: var(--ink); background: transparent; font-weight: 600; }
 
 @media (min-width: 1600px) { .workspace { padding-inline: 34px; } .content-grid { grid-template-columns: 250px minmax(0, 1fr); } }
 @media (min-width: 721px) {
@@ -302,7 +304,44 @@ body { text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; 
   .atlas-shell .ws-studio-workspace .ws-version-context h2 { font-size:16px; margin:2px 0; }
   .atlas-shell .ws-version-context [data-slot='button'] { min-height:30px; height:auto; padding-block:5px; }
   .atlas-shell .ws-report-counts { flex-wrap:wrap; align-items:center; gap:6px 20px; padding:6px 3px; }
+  /* 1080p density: keep the page chrome short so the report table starts above the fold. */
+  .atlas-shell .ws-studio-workspace .ws-main:not(.ws-main-reviewing) { max-width:none; padding:18px 30px 20px; }
+  .atlas-shell .ws-studio-workspace .ws-block-strip { margin-bottom:12px; }
+  .atlas-shell .ws-studio-workspace .ws-block-strip button { min-height:34px; padding:6px 13px; }
+  .atlas-shell .ws-studio-workspace .ws-heading { margin-bottom:12px; }
+  .atlas-shell .ws-studio-workspace .ws-heading > div { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 14px; min-width:0; }
+  .atlas-shell .ws-studio-workspace .ws-heading .eyebrow { display:none; }
+  .atlas-shell .ws-studio-workspace .ws-heading h1 { font-size:24px; font-weight:700; letter-spacing:-.03em; line-height:1.35; margin:0; }
+  .atlas-shell .ws-studio-workspace .ws-heading p { line-height:1.5; }
+  .atlas-shell .ws-version-comparison .ws-por-summary { grid-template-columns:auto minmax(0,1fr) auto; }
+  .atlas-shell .ws-por-summary-label { white-space:nowrap; }
+  .atlas-shell .ws-version-context > div { display:flex; align-items:baseline; flex-wrap:wrap; gap:2px 12px; }
+  .atlas-shell .ws-version-context > div > .ws-caption { flex-basis:100%; }
+  .atlas-shell .ws-item-catalog { margin-bottom:10px; }
+  .atlas-shell .ws-item-heading { margin-bottom:6px; }
+  .atlas-shell .ws-studio-workspace .ws-studio-item-tabs > button { min-height:56px; padding:8px 13px; }
+  .atlas-shell .ws-studio-item-tabs .ws-item-stats { margin-top:6px; }
+  .atlas-shell .ws-studio-workspace .ws-report-start-guide { padding-block:4px; margin-bottom:4px; }
+  .atlas-shell .ws-report-start-guide > div { display:flex; align-items:baseline; flex-wrap:wrap; gap:2px 14px; }
+  .atlas-shell .ws-studio-workspace .ws-report-start-guide h2 { margin:0; }
+  .atlas-shell .ws-report-start-guide p { line-height:1.5; }
+  .atlas-shell .ws-studio-workspace .ws-report-toolbar { padding:8px 16px; }
+  .atlas-shell .ws-report-toolbar > div:first-child { display:flex; align-items:baseline; flex-wrap:wrap; gap:2px 12px; min-width:0; }
+  .atlas-shell .ws-studio-workspace th { padding-block:8px; }
+  .atlas-shell .ws-studio-workspace :is(.ws-report-table,.ws-block-table) td { padding:8px 18px; }
+  .atlas-shell .ws-report-table td small { margin-top:2px; }
+  .atlas-shell .ws-report-table :is(th,td):last-child { width:1%; white-space:nowrap; }
+  .atlas-shell .ws-report-row-actions { flex-wrap:nowrap; }
+  .atlas-shell .ws-report-row-actions [data-slot='button'] { height:30px; min-height:30px; }
+  .atlas-shell .ws-studio-workspace .ws-statistics { margin-bottom:14px; }
+  .atlas-shell .ws-studio-workspace .ws-statistics section { padding:12px 18px; }
+  .atlas-shell .ws-studio-workspace .ws-statistics strong { font-size:24px; margin-top:4px; }
+  .atlas-shell .ws-studio-workspace .ws-pagination { padding:8px 16px; }
+  .atlas-shell .ws-studio-workspace .ws-footer { margin-top:16px; padding-top:12px; }
 }
+/* Row-level main action: reads as the next step without 25 solid buttons competing with the result badges. */
+[data-slot='button'].ws-row-primary { border-color: var(--accent-line); color: var(--accent); font-weight: 600; }
+[data-slot='button'].ws-row-primary:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
 [data-slot='dialog-header'] { padding-right: 28px; }
 [data-slot='dialog-close'] { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; top: 12px; right: 12px; border-radius: 6px; }
 [data-slot='dialog-close']:hover { background: var(--surface-recessed); }

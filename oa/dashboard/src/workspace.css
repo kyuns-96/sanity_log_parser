@@ -491,7 +491,7 @@
 .ws-workbench-empty { display: grid; justify-items: center; gap: 14px; padding: 70px 24px; text-align: center; color: var(--text-secondary); }
 .ws-workbench-empty > svg { color: var(--accent); }
 .ws-workbench-empty h2 { font-size: 18px; color: var(--ink); }
-.ws-workbench-empty p { max-width: 52ch; line-height: 1.8; }
+.ws-workbench-empty p { max-width: 68ch; line-height: 1.7; margin: 0; }
 .ws-report-start-guide { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px; padding: 18px 0; margin-bottom: 6px; }
 .ws-report-start-guide h2 { font-size: 16px; font-weight: 600; margin: 0 0 5px; }
 .ws-report-start-guide p { color: var(--text-secondary); font-size: var(--text-body); line-height: 1.8; margin: 0; max-width: 65ch; }
