@@ -250,6 +250,8 @@ class ConnectionStore:
         connections = self.user_connections(user_id)
         first = connections[0] if connections else {}
         default = TaskDefaults(self.db).current()['defaults'][task]
+        if task == 'AREA_TRIAGE' and default is None:
+            return connections, {}, {'applied': False, 'reason': 'AI_TASK_MODEL_REQUIRED'}
         task_default = None
         if default is not None:
             selected = next((connection for connection in connections if connection['id'] == default['connection_id']), None)
@@ -261,6 +263,8 @@ class ConnectionStore:
                 selected['model'] = default['model_id']
                 first = selected
                 task_default = {**default, 'applied': True}
+        if task == 'AREA_TRIAGE' and task_default and not task_default.get('applied'):
+            return connections, {}, task_default
         return connections, first, task_default
 
     def advisor(self, connection_id, model_id=None, *, transport=None):

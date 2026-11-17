@@ -113,7 +113,9 @@ flowchart TD
 새 화면은 선택한 `connection_id`와 `model_id`를 작업 요청에 명시한다. 기존 클라이언트가 이를
 생략하는 동작은 기존 계약을 유지한다. 관리자 기본값을 바꿔도 이미 제출한 작업과 재개의 고정 모델은
 바뀌지 않는다. 관리자 API는 `GET`/`POST /api/admin/ai/task-defaults`이며, 저장할 때 개정 번호와
-분류(`CLUSTER`)·판정(`REVIEW`)의 연결·모델을 함께 제출한다.
+분류(`CLUSTER`)·판정(`REVIEW`)·프로젝트 비교(`AREA_TRIAGE`)의 연결·모델을 함께 제출한다.
+
+프로젝트 비교의 AI 분석 버튼은 `AREA_TRIAGE`에 지정한 연결·모델을 중앙 VWP에서 실행한다. VWP 모델만 사용하는 환경은 이 항목에도 VWP 연결을 지정한다. 사용자는 본인의 해당 연결 인증값을 등록해야 한다. 미설정/비활성/삭제된 연결이나 부족한 인증을 다른 모델로 대체하지 않는다. 이전 두 작업만 저장된 개정은 새 항목 미설정으로 읽고 기존 로그 선택을 보존한다. 설정 저장은 새 개정으로 남기며 DDL은 없다. 업데이트 전 Area 분석의 REVIEW 고정값과 그 재시도는 유지하고 새 분석부터 새 설정을 사용한다.
 
 관리자는 각 OA 또는 VWP 연결에서 선택적으로 추론 설정을 지정할 수 있다. 저장 형식은
 `reasoning={"mode":"default|on|off","protocol":"openai|chat_template","effort":"default|minimal|low|medium|high|xhigh|max"}`이며

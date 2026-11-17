@@ -617,6 +617,8 @@ class Service:
                     history = list(payload.get("failure_history", []))
                     history.append({"job_id": identifier, "error_detail": job.get("error_detail"), "subject_error": parent.get("error_detail"), "failed_at": job.get("finished_at"), "coverage": payload.get("coverage")})
                     payload["failure_history"] = history
+                    if payload.get('engine') == 'instance-triage-v1':
+                        history[-1]['rerun_ai_run_id'] = payload.pop('rerun_ai_run_id', None)
                     self.db.update_record(conn, parent["id"], actor, expected_row_version=parent["row_version"], state="queued", payload=payload, error_detail=None)
             elif job["job_kind"] == "ingest":
                 upload = self.db.upload(conn, job["upload_id"], lock=True)

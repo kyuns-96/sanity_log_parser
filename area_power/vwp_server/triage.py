@@ -1,7 +1,7 @@
 """Central VWP execution of one instance triage run.
 
 Reads the frozen comparison, selects candidates, calls the requester's pinned
-REVIEW connection in batches and stores one judgement per instance. A missing
+project-comparison connection in batches and stores one judgement per instance. A missing
 or failing model never becomes a success: affected instances stay
 ``needs_review`` and the run is marked failed.
 """
@@ -23,19 +23,19 @@ def _aborts(code: str) -> bool:
     return code in AI_CONTEXT_ERRORS or code.startswith(('AUTHORIZATION_', 'DATABASE_', 'DBAAS_'))
 
 
-def judge(runtime, cards, notes, context, same_rtl, kind):
+def judge(runtime, cards, notes, context, same_rtl, kind, task):
     """One model call for a batch; a batch over the input limit is halved."""
     evidence, instructions = batch_request(cards, notes, context, same_rtl, kind)
     try:
-        response = runtime.infer('REVIEW', evidence, instructions, PROMPT_VERSION)
+        response = runtime.infer(task, evidence, instructions, PROMPT_VERSION)
     except ReviewError as exc:
         if _aborts(exc.code):
             raise
         if exc.code == 'AI_INPUT_LIMIT':
             if len(cards) > 1:
                 middle = len(cards) // 2
-                return (judge(runtime, cards[:middle], notes, context, same_rtl, kind)
-                        + judge(runtime, cards[middle:], notes, context, same_rtl, kind))
+                return (judge(runtime, cards[:middle], notes, context, same_rtl, kind, task)
+                        + judge(runtime, cards[middle:], notes, context, same_rtl, kind, task))
             return validate_batch(cards, notes, None, 'ai_context_limit')
         return validate_batch(cards, notes, None, exc.code)
     except ConfigurationError:
@@ -86,9 +86,11 @@ def _run(db, settings, run, comparison):
     thresholds = Thresholds.model_validate(payload['thresholds'])
     notes, process = payload.get('notes', []), payload.get('process') or {}
     runtime = runtime_for(db, run, comparison)
+    # Old runs keep their pinned REVIEW choice, including explicit reruns.
+    task = 'AREA_TRIAGE' if 'AREA_TRIAGE' in runtime.context else 'REVIEW'
     abort = None
     try:
-        runtime.validate(tasks=('REVIEW',))
+        runtime.validate(tasks=(task,))
     except ConfigurationError:
         raise
     except Exception as exc:
@@ -109,7 +111,7 @@ def _run(db, settings, run, comparison):
     for batch in batches:
         if abort is None:
             try:
-                results = judge(runtime, batch, notes, context, payload.get('same_rtl', False), payload.get('comparison_kind'))
+                results = judge(runtime, batch, notes, context, payload.get('same_rtl', False), payload.get('comparison_kind'), task)
             except ConfigurationError:
                 raise
             except ReviewError as exc:

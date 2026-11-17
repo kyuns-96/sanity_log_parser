@@ -1,7 +1,7 @@
-"""Administrator defaults for classification and group judgment models.
+"""Administrator model choices for log tasks and project comparison analysis.
 
-The selection only supplies a UI default. Each submitted job still pins its
-explicit connection/model and validates its owner's own credential.
+Log tasks use UI defaults; project comparison uses its explicit administrator
+choice. Submitted jobs pin that choice and validate the owner's credential.
 """
 from common.sanity_common import ReviewError
 from common.sanity_db import lock_key, uuid_value
@@ -10,10 +10,13 @@ from oa.sanity_ai_model import _model_id
 from oa.sanity_workspace import WorkspaceStore, record_id
 
 PREFIX = 'ai.task-defaults.'
-TASKS = ('CLUSTER', 'REVIEW')
+TASKS = ('CLUSTER', 'REVIEW', 'AREA_TRIAGE')
 
 
-def _defaults(value, *, code):
+def _defaults(value, *, code, stored=False):
+    # Existing persisted revisions predate the project-comparison selection.
+    if stored and isinstance(value, dict) and set(value) == {'CLUSTER', 'REVIEW'}:
+        value = {**value, 'AREA_TRIAGE': None}
     check(isinstance(value,dict) and set(value)==set(TASKS), code)
     for selection in value.values():
         check(selection is None or isinstance(selection,dict) and set(selection)=={'connection_id','model_id'}, code)
@@ -42,7 +45,7 @@ class TaskDefaults:
               and row['workspace_key']==PREFIX+f"{value['revision']:010d}"
               and row['record_id']==record_id('WS_CONFIG',row['workspace_key']), 'AI_TASK_DEFAULTS_CORRUPT')
         return {'revision':value['revision'],
-                'defaults':_defaults(value.get('defaults'),code='AI_TASK_DEFAULTS_CORRUPT')}
+                'defaults':_defaults(value.get('defaults'),code='AI_TASK_DEFAULTS_CORRUPT',stored=True)}
 
     @staticmethod
     def _admin(actor, db):

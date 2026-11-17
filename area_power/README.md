@@ -50,13 +50,13 @@ npm --prefix oa/dashboard ci
 npm --prefix oa/dashboard run build
 ```
 
-[환경변수 예제](.env.example)의 필요한 Area 키를 해당 서버 실행 환경에 export한다. `AREA_POWER_*`는 Area 기능·DB·메일·사용자 PC 업로드 설정이며 별도 AI endpoint, model, token 설정은 없다. 로그 AI와 동일하게 OA 인증 actor의 `CLUSTER` 설명 추출·`REVIEW` 판정 task selection/default를 사용한다. 사용할 managed connection이 없고 해당 task default도 설정되지 않은 경우에만 기존 no-connection Log AI 기본 설정을 사용한다. 선택된 managed connection/default 또는 credential이 유효하지 않으면 그 오류를 유지하고 legacy 설정으로 전환하지 않는다. 사용자별 인증 방식이면 managed connection 또는 기존 Log AI의 사용자 토큰 저장소를 사용하고, 기존 server 인증 방식이면 Log AI 서버 설정을 사용한다. 개인 token은 Area DB에 저장하지 않는다. 기존 VWP 로그 작업자가 사용하는 DB 설정을 그대로 쓰며 VWP 관리 연결을 선택할 때만 [VWP 프로필](../vwp_bridge/AI_WORKER.md)이 VWP에 있어야 한다. 프로필·endpoint·비밀을 OA/Area 설정으로 복사하지 않는다. OA↔VWP 작업 전달은 기존 DB 경계를 사용하며 새 HTTP 중계나 비밀 전달 경로를 추가하지 않는다. 연결·legacy AI 설정은 [OA 로그 AI 실행 안내](../oa/AI_RUNTIME.md)를 따른다. PC에는 DB·AI 계정을 주지 않고 `VITE_*`에 비밀을 넣지 않는다.
+[환경변수 예제](.env.example)의 필요한 Area 키를 해당 서버 실행 환경에 export한다. `AREA_POWER_*`는 Area 기능·DB·메일·사용자 PC 업로드 설정이며 별도 AI endpoint, model, token 설정은 없다. 프로젝트 비교 AI 분석은 관리자 설정의 `AREA_TRIAGE` 연결·모델을 사용한다. VWP 모델을 쓰면 해당 VWP 연결과 모델을 지정하고 사용자 본인의 인증값을 등록한다. 미설정이면 첫 연결이나 OA 모델로 자동 전환하지 않는다. 기존 지표별 `/rejudge`만 로그 AI의 `CLUSTER` 설명 추출·`REVIEW` 판정 선택을 사용한다. 사용할 managed connection이 없고 해당 task default도 설정되지 않은 경우에만 기존 no-connection Log AI 기본 설정을 사용한다. 선택된 managed connection/default 또는 credential이 유효하지 않으면 그 오류를 유지하고 legacy 설정으로 전환하지 않는다. 사용자별 인증 방식이면 managed connection 또는 기존 Log AI의 사용자 토큰 저장소를 사용하고, 기존 server 인증 방식이면 Log AI 서버 설정을 사용한다. 개인 token은 Area DB에 저장하지 않는다. 기존 VWP 로그 작업자가 사용하는 DB 설정을 그대로 쓰며 VWP 관리 연결을 선택할 때만 [VWP 프로필](../vwp_bridge/AI_WORKER.md)이 VWP에 있어야 한다. 프로필·endpoint·비밀을 OA/Area 설정으로 복사하지 않는다. OA↔VWP 작업 전달은 기존 DB 경계를 사용하며 새 HTTP 중계나 비밀 전달 경로를 추가하지 않는다. 연결·legacy AI 설정은 [OA 로그 AI 실행 안내](../oa/AI_RUNTIME.md)를 따른다. PC에는 DB·AI 계정을 주지 않고 `VITE_*`에 비밀을 넣지 않는다.
 
 | 실행 위치 | 주요 설정 |
 | --- | --- |
 | OA 호스트 | 기존 `SANITY_AUTH_MODE`/SSO 설정, `AREA_POWER_ENABLED=true`, 공유 DB 설정 |
 | 중앙 VWP + OA | `AREA_POWER_DB_DSN`, `AREA_POWER_DB_SCHEMA` — 각 서버에서 같은 DB/schema를 가리키도록 설정 (기존 역할별 계정 사용 가능) |
-| 중앙 VWP | Area AI용 별도 endpoint/model/token 키 없음. OA 로그 AI와 같은 `CLUSTER`/`REVIEW` 선택·task-default 및 no-connection legacy 기본 경로를 사용하며, 선택된 경로의 기존 model/auth/limits를 그대로 적용 |
+| 중앙 VWP | 별도 endpoint/model/token 키 없음. 프로젝트 비교는 `AREA_TRIAGE` 지정 모델, 기존 `/rejudge`는 `CLUSTER`/`REVIEW` 선택을 사용. 기존 개인 인증·한도를 유지 |
 | OA 메일 | `AREA_POWER_MAIL_RECIPIENTS`, 명시적으로 주입한 사내 `MailSender` 어댑터 |
 | 사용자 PC | `AREA_POWER_SERVER_URL` 또는 `--url` — DB·AI 계정과 업로드 신원 설정 불필요 |
 
@@ -138,9 +138,10 @@ metadata에는 준비된 실제 Area `project_id`, `version_id`, `block_id` UUID
 - **AI 이상치 분석(instance 단위, `instance-triage-v1`)** 은 비교 화면의 버튼으로 실행한다. 설계는 [설계 문서](../docs/superpowers/specs/2026-11-17-area-power-ai-triage-design.md)를 따른다.
   - 입력: NET_VER 업데이트 메모·프로젝트 변경 메모(`change` 레코드의 `note_kind`·`net_ver`), 주요 instance(`target` 레코드의 `watch`), 프로젝트 공정(Area `project` payload의 `process`, `POST /projects/{id}/process`).
   - 코드가 후보를 고른다: Area/Power 증가율 기준(기본 +10%), Area 최소(기본 50), 신규 instance, 주요 instance(항상). 자식 후보가 증가분의 80% 이상을 차지하는 조상은 자식 항목에 묶는다. 대상이 400개를 넘으면 실행하지 않는다.
-  - `POST /comparisons/{id}/triage/preview`는 후보 수·예상 호출 수·적용 메모를 돌려주고, `POST /comparisons/{id}/triage`는 고정 입력을 담은 `ai_run`과 `judge` job을 만든다. 중앙 VWP가 요청자의 `REVIEW` 연결로 20개씩 묶어 호출하고 instance마다 `judgement`를 저장한다. `GET /comparisons/{id}/triage`, `GET /triage/{run}`으로 조회한다.
-  - 판정은 `expected`·`unexpected`·`needs_review`·`minor`(주요 instance 전용)이며 코드는 판정을 낮추는 방향으로만 고친다. AI 미설정·실패·권한 변경은 해당 instance를 `needs_review`로 남기고 실행을 `failed`로 표시한다.
+  - `POST /comparisons/{id}/triage/preview`는 후보 수·예상 호출 수·적용 메모를 돌려주고, `POST /comparisons/{id}/triage`는 고정 입력을 담은 `ai_run`과 `judge` job을 만든다. 중앙 VWP가 관리자 지정 `AREA_TRIAGE` 연결·모델과 요청자의 개인 인증값으로 20개씩 묶어 호출하고 instance마다 `judgement`를 저장한다. `GET /comparisons/{id}/triage`, `GET /triage/{run}`으로 조회한다.
+  - 판정은 `expected`·`unexpected`·`needs_review`·`minor`(주요 instance 전용)이며 코드는 판정을 낮추는 방향으로만 고친다. 후보가 있는 새 요청에서 모델/인증이 미설정이면 실행 등록 전에 오류를 표시한다. 실행 중 실패·권한 변경은 해당 instance를 `needs_review`로 남기고 실행을 `failed`로 표시한다. 미리보기는 모델 미설정이어도 가능하며 사용할 연결·모델·인증 준비 상태를 표시한다.
   - 비교 조건이 확인되지 않은 Area/Power도 분석하되 표시를 붙이고, corner나 분석 조건이 실제로 다르면 Power를 뺀다. Vth·Drive Δ%p는 분석 모듈이 직접 계산하며 "공정이 같고 corner가 같으면 같은 library" 규칙으로 표시를 정한다. 비교 표의 `comparability`와 수치 규칙은 바꾸지 않는다.
+  - 실패한 분석은 원래 요청자가 화면의 재시도 버튼으로 `POST /jobs/{id}/rerun`을 요청한다. 당시 입력·모델·인증 개정을 유지하며 전체를 다시 분석한다. 결과 조회와 메일은 재실행 결과를 따라간다. 모델/인증값을 변경했다면 새 AI 분석을 실행한다. 업데이트 전 실행은 고정된 REVIEW 선택을 유지한다.
   - `POST /triage/{run}/mail`은 검토 후 요약 메일 한 통을 요청한다(`triage_mail` 레코드와 `mail` job). 실제 발송에는 사내 `MailSender` 어댑터가 필요하다.
   - 같은 프로젝트의 이전 버전 비교(`previous_version`)를 화면에서 선택할 수 있다. NET_VER 메모는 명시적 계보에서 기준 NET_VER 다음부터 현재까지 적용하고, 프로젝트 비교에는 계보 전체와 프로젝트 변경 메모를 적용한다.
 
@@ -164,7 +165,7 @@ metadata에는 준비된 실제 Area `project_id`, `version_id`, `block_id` UUID
 - 일반 Vth·LLP·drive 분류를 구분하고 분류 누락을 표시한다. 비율 변화는 %p, 기준 0의 상대 변화율과 0분모 비율은 계산 불가로 둔다. 결측을 0으로 바꾸지 않는다.
 - Power 단위는 mW이며 logic에 CTS가 포함된다. 실제 PVT·mode·activity·도구 등 조건이 같아야 comparable이다. 미확인·다른 조건은 contextual, 기준 누락은 unavailable이다.
 - 임계값을 임의로 정하지 않는다. 요청 정책이 없으면 `policy_unconfigured`를 표시한다. 산출 문맥이 미확인인 지표도 정상으로 보증하지 않는다.
-- 수치 계산은 코드가 담당한다. Area AI는 OA 인증 actor의 기존 Log AI `CLUSTER`/`REVIEW` 선택과 기본값을 그대로 사용한다. 유효한 managed 연결이 없고 작업별 기본값도 설정되지 않은 경우에만 기존 no-connection Log AI 설정(`SANITY_OA_AI_*`)을 사용한다. 선택된 managed 연결/default가 유효하지 않거나 인증에 실패하면 별도 AI 경로로 전환하지 않고 숫자 결과와 비교 상태는 보존한다. 기존 provider가 요구하는 actor 개인 token 또는 기존 server credential을 사용하며, 수치·매핑·비교 상태는 바꾸지 못한다.
+- 수치 계산은 코드가 담당한다. 기존 `/rejudge`는 OA 인증 actor의 Log AI `CLUSTER`/`REVIEW` 선택과 기본값을 그대로 사용한다. 유효한 managed 연결이 없고 작업별 기본값도 설정되지 않은 경우에만 기존 no-connection Log AI 설정(`SANITY_OA_AI_*`)을 사용한다. 선택된 managed 연결/default가 유효하지 않거나 인증에 실패하면 별도 AI 경로로 전환하지 않고 숫자 결과와 비교 상태는 보존한다. 기존 provider가 요구하는 actor 개인 token 또는 기존 server credential을 사용하며, 수치·매핑·비교 상태는 바꾸지 못한다.
 - 익명 VWP 업로드는 AI 사용자의 신원이 아니며 AI 인증으로 승격되지 않는다. OA 비교 actor가 없으면 AI 작업은 인증 오류로 남고 숫자 비교는 계속 처리한다.
 - 같은 비교 요청은 고정된 참조를 재사용하며 AI run을 자동 생성하지 않는다. 명시적 rejudge가 요청 actor의 현재 `CLUSTER`/`REVIEW` 선택·연결 설정·credential revision/scope를 새 run에 고정하고 기존 비교·이력은 보존한다. 실패한 AI job의 명시적 재실행은 원래 actor와 저장된 pins를 사용한다. credential 변경 후에는 새 rejudge를 사용하고 재실행 중 다른 사용자나 credential로 바꾸지 않는다.
 - 알림 event마다 mail job을 DB에 남긴다. OA는 [사내 메일 Protocol](../oa/MAIL_INTEGRATION.md)의 `MailSender`만 호출하며 회사 API/SDK는 사내 AI가 허용된 어댑터 지점에서 구현한다. 미연결은 DB 접속·job 점유 전에 실패한다. 요청 수신자가 없으면 `AREA_POWER_MAIL_RECIPIENTS`를 사용하며 수신자도 없으면 실패한다. 서비스 접수는 전달·열람 보장이 아니며 일부 거부·결과 불명·접수 후 DB 기록 실패를 보존한다. 자동 재발송·정확히 한 번 전달은 보장하지 않는다. SMTP 구현·`AREA_POWER_SMTP_*`는 제거했다.

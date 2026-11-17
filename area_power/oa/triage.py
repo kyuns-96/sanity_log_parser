@@ -127,7 +127,19 @@ def triage_context(service, conn, comparison) -> dict:
 def prepare(service, identifier) -> dict:
     with service.db.connect() as conn:
         comparison = service.db.record(conn, identifier, kind='comparison')
-        return {'comparison': comparison, **triage_context(service, conn, comparison)}
+        prepared = {'comparison': comparison, **triage_context(service, conn, comparison)}
+    host = _host_db(service)
+    model = {'ready': False, 'error': 'AI_AUTHENTICATED_REQUEST_REQUIRED'}
+    if host is not None:
+        from oa.sanity_ai_connections import ConnectionStore
+        _, selected, default = ConnectionStore(host).task_selection(service.access.actor.user_id, 'AREA_TRIAGE')
+        error = (default.get('reason') if default and not default.get('applied') else
+                 selected.get('credential_error') if selected and not selected.get('credential_ready') else None)
+        model = {'ready': bool(selected and error is None), 'error': error,
+                 'connection_label': selected.get('label') if selected else None,
+                 'model': selected.get('model') if selected else None,
+                 'site': selected.get('execution_site', 'oa') if selected else None}
+    return {**prepared, 'ai_model': model}
 
 
 def select(raw, prepared, thresholds):
@@ -144,7 +156,8 @@ def preview_result(prepared, context, selection, thresholds) -> dict:
             'watched_paths': prepared['watched_paths'], 'context': context,
             'notes': [{key: note[key] for key in ('id', 'kind', 'net_ver', 'revision')} for note in prepared['notes']],
             'note_warnings': prepared['note_warnings'], 'same_rtl': prepared['same_rtl'],
-            'applicable_net_vers': prepared['applicable_net_vers'], 'process': prepared['process']}
+            'applicable_net_vers': prepared['applicable_net_vers'], 'process': prepared['process'],
+            'ai_model': prepared['ai_model']}
 
 
 def request_run(service, prepared, selection, body: TriageInput, actor) -> dict:
@@ -155,11 +168,15 @@ def request_run(service, prepared, selection, body: TriageInput, actor) -> dict:
         comparison = service.db.record(conn, prepared['comparison']['id'], kind='comparison', lock=True)
         service.authorize(conn, comparison, write=True)
         service.validate_comparison(conn, prepared['comparison'], write=True)
+        from area_power.common.ai import capture_context
+        ai_context = capture_context(service.access, tasks=('AREA_TRIAGE',))
+        if selection.items and ai_context['AREA_TRIAGE'].get('error'):
+            reject('The project comparison AI selection is unavailable.', ai_context['AREA_TRIAGE']['error'], 409)
         payload = {'engine': ENGINE, 'thresholds': body.thresholds.model_dump(mode='python'),
                    'notes': prepared['notes'], 'note_warnings': prepared['note_warnings'], 'same_rtl': prepared['same_rtl'],
                    'watched_paths': prepared['watched_paths'], 'process': prepared['process'],
                    'comparison_kind': prepared['comparison_kind'], 'labels': body.labels, 'requested_by': actor,
-                   'ai_context': service.ai_context(), 'coverage': {'expected_items': selection.counts['total']}}
+                   'ai_context': ai_context, 'coverage': {'expected_items': selection.counts['total']}}
         run = service.db.insert_record(conn, 'ai_run', payload, actor, state='queued', parent_id=comparison['id'],
                                        upload_id=comparison['upload_id'], baseline_upload_id=comparison['baseline_upload_id'],
                                        **service.scope(comparison))
@@ -187,13 +204,25 @@ def _run(service, conn, identifier, *, lock=False):
     run = service.db.record(conn, identifier, kind='ai_run', lock=lock)
     if run['payload'].get('engine') != ENGINE:
         reject('This analysis run uses another engine.', 'unsupported_analysis_run', 404)
+    seen = {str(run['id'])}
+    while run['payload'].get('rerun_ai_run_id'):
+        next_id = str(run['payload']['rerun_ai_run_id'])
+        if next_id in seen:
+            reject('Analysis rerun references contain a cycle.', 'invalid_analysis_attempt', 409)
+        attempt = service.db.record(conn, UUID(next_id), kind='ai_run', lock=lock)
+        if (attempt['payload'].get('engine') != ENGINE or attempt.get('previous_id') != run['id']
+                or attempt['parent_id'] != run['parent_id']):
+            reject('Analysis rerun reference is inconsistent.', 'invalid_analysis_attempt', 409)
+        seen.add(next_id)
+        run = attempt
     return run
 
 
 def results(service, identifier) -> dict:
     with service.db.connect() as conn:
         run = _run(service, conn, identifier)
-        items = [{'id': row['id'], 'state': row['state'], **row['payload']} for row in service.all_records(conn, 'judgement', parent_id=identifier)]
+        identifier = run['id']
+        items = [] if run['state'] == 'queued' else [{'id': row['id'], 'state': row['state'], **row['payload']} for row in service.all_records(conn, 'judgement', parent_id=identifier)]
         mails = [{'id': row['id'], 'created_at': row.get('created_at'), **row['payload']}
                  for row in service.all_records(conn, 'triage_mail', parent_id=identifier)]
         jobs = {str(job['parent_id']): job for mail in mails for job in service.db.records(conn, 'job', parent_id=mail['id'], limit=1)}
@@ -201,13 +230,21 @@ def results(service, identifier) -> dict:
             job = jobs.get(str(mail['id']))
             mail['job_state'] = job['state'] if job else None
             mail['job_error'] = job.get('error_detail') if job else None
-        return {'ai_run': {**_summary(run), 'notes': run['payload'].get('notes', [])}, 'items': items, 'mails': mails}
+        attempt_job = run['payload'].get('explicit_attempt_job_id')
+        analysis_jobs = ([service.db.record(conn, UUID(str(attempt_job)), kind='job')] if attempt_job else
+                         service.db.records(conn, 'job', parent_id=identifier, limit=1))
+        job = analysis_jobs[0] if analysis_jobs else None
+        retry_job = ({'id': job['id'], 'row_version': job['row_version'], 'state': job['state']}
+                     if job and job['job_kind'] == 'judge' and job['state'] == 'failed' and run['state'] == 'failed'
+                     and job.get('finished_at') and service.access and job['created_by'] == service.access.actor.user_id else None)
+        return {'ai_run': {**_summary(run), 'notes': run['payload'].get('notes', [])}, 'items': items, 'mails': mails, 'retry_job': retry_job}
 
 
 def request_mail(service, identifier, body: TriageMailInput, actor) -> dict:
     recipients = addresses(body.recipients)
     with service.db.connect() as conn:
         run = _run(service, conn, identifier, lock=True)
+        identifier = run['id']
         service.authorize(conn, run, write=True)
         if run['state'] not in FINISHED:
             reject('The analysis is still running.', 'analysis_not_finished', 409)

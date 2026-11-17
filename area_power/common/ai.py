@@ -22,18 +22,20 @@ def _token_store(store, connection_id, advisor):
     return UserTokenStore(store.db, store.settings) if advisor.settings.token_source == 'user' else None
 
 
-def capture_context(access):
+def capture_context(access, *, tasks=('CLUSTER', 'REVIEW')):
     """Capture the same initial choices as log classification and judgment."""
     from oa.sanity_ai_connections import ConnectionStore
 
     actor = getattr(access, 'actor', None)
     if getattr(actor, 'auth_method', None) != 'sso' or getattr(actor, 'access', None) is None:
-        return {task: {'error': 'AI_AUTHENTICATED_REQUEST_REQUIRED'} for task in ('CLUSTER', 'REVIEW')}
+        return {task: {'error': 'AI_AUTHENTICATED_REQUEST_REQUIRED'} for task in tasks}
     store = ConnectionStore(actor.access.db)
     result = {}
-    for task in ('CLUSTER', 'REVIEW'):
+    for task in tasks:
         try:
             _, selected, task_default = store.task_selection(actor.user_id, task)
+            if task_default is not None:
+                require(task_default.get('applied'), task_default.get('reason') or 'AI_CONNECTION_UNAVAILABLE')
             if selected:
                 require(selected.get('credential_ready'), selected.get('credential_error') or 'AI_USER_TOKEN_REQUIRED')
                 connection_id = selected['id']

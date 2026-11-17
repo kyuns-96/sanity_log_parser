@@ -16,11 +16,11 @@ async function adminFixture(page: Page, initial: Entry[]) {
     const request = route.request(); const url = new URL(request.url()); const path = url.pathname
     if (path === '/api/auth-config') return route.fulfill({ json: { mode: 'sso', login_url: '/auth/login', logout_url: '/auth/logout', logout_method: 'POST' } })
     if (path === '/api/session') return route.fulfill({ json: { user_id: 'synthetic-user', reviewer: '합성 사용자', auth_method: 'sso', authorization_ready: true, is_admin: true, can_read_business: false, can_receive: false, writable: false, access_mode: 'postgresql', notice: '' } })
-    if (path === '/api/access/catalog') return route.fulfill({ json: { projects: [], blocks: [] } })
+    if (path === '/api/access/catalog' || path === '/api/atlas/catalog') return route.fulfill({ json: { projects: [], blocks: [], product: 'Design Atlas', local_mode: false, can_manage_catalog: true, area_enabled: false, area_status: 'disabled' } })
     if (path === '/api/access/me') return route.fulfill({ json: { user_id: 'synthetic-user', is_admin: true, revision: 0, grants: [], requests: [] } })
     if (path === '/api/admin/access') return route.fulfill({ json: { revision: 0, requests: [], grants: [], users: [] } })
     if (path === '/api/admin/ai/task-defaults' && request.method() === 'GET') {
-      return route.fulfill({ json: { revision: 0, defaults: { CLUSTER: null, REVIEW: null } } })
+      return route.fulfill({ json: { revision: 0, defaults: { CLUSTER: null, REVIEW: null, AREA_TRIAGE: null } } })
     }
     if (path === '/api/admin/ai/scheduler' && request.method() === 'GET') {
       return route.fulfill({ json: { revision: 0, limits: { max_concurrency: 8, max_jobs: 4 } } })

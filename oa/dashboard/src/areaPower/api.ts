@@ -57,6 +57,7 @@ export const triagePreviewSchema = z.object({
   missing_watched: z.array(z.string()), watched_paths: z.array(z.string()), context: loose,
   notes: z.array(triageNoteSchema), note_warnings: z.array(loose), same_rtl: z.boolean(),
   applicable_net_vers: z.array(z.string()), process: loose,
+  ai_model: z.object({ ready: z.boolean(), error: z.string().nullish(), connection_label: z.string().nullish(), model: z.string().nullish(), site: z.string().nullish() }).optional(),
 })
 export type TriagePreview = z.infer<typeof triagePreviewSchema>
 export const triageRunSchema = z.object({ id: z.string(), state: z.string(), created_at: optionalText, error_detail: z.unknown().nullish(), payload: loose, note_count: count.optional(), notes: z.array(triageNoteSchema).optional() }).passthrough()
@@ -64,7 +65,7 @@ export type TriageRun = z.infer<typeof triageRunSchema>
 export const triageRunsSchema = z.object({ runs: z.array(triageRunSchema) })
 export const triageItemSchema = z.object({ group_id: z.string(), verdict: z.string(), cause: z.string(), explanation: z.string(), failed: z.boolean(), failure: z.string().nullish(), quotes: z.array(z.string()).optional(), card: loose }).passthrough()
 export type TriageItem = z.infer<typeof triageItemSchema>
-export const triageResultSchema = z.object({ ai_run: triageRunSchema, items: z.array(triageItemSchema), mails: z.array(loose) })
+export const triageResultSchema = z.object({ ai_run: triageRunSchema, items: z.array(triageItemSchema), mails: z.array(loose), retry_job: z.object({ id: z.string(), row_version: z.string(), state: z.string() }).nullish() })
 export type TriageResult = z.infer<typeof triageResultSchema>
 export const triageStartedSchema = z.object({ ai_run: recordSchema, job: recordSchema.nullable() })
 export const unknownSchema = z.unknown()
@@ -96,7 +97,14 @@ export async function request<T>(auth: Auth, path: string, schema: z.ZodType<T>,
   let value: unknown
   try { value = source ? exact(parse(source)) : null } catch { throw new Error('Area/Power API 응답을 읽을 수 없습니다.') }
   const result = schema.safeParse(value)
-  if (!result.success) throw new Error('OA API 응답 형식이 계약과 다릅니다. 서비스 버전과 연결 상태를 확인하세요.')
+  if (!result.success) {
+    // Only the API route and top-level schema field: never response values,
+    // search text, instance paths, credentials or provider responses.
+    const route = path.split('?')[0].replace(/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/gi, ':id')
+    const issue = result.error.issues[0]
+    const field = typeof issue.path[0] === 'string' ? issue.path[0] : 'response'
+    throw new Error(`프로젝트 비교 API 응답 형식이 맞지 않습니다. (${body === undefined ? 'GET' : 'POST'} /api/area-power${route} · ${field} · ${issue.code})`)
+  }
   return result.data
 }
 export async function allRecords(auth: Auth, type: string, filters: Record<string, string> = {}, signal?: AbortSignal): Promise<TrackingRecord[]> {
