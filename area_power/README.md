@@ -33,6 +33,10 @@ Area 테이블은 **`di_area_power_csv`, `di_area_power_tracking_record` 두 개
 
 Area 모듈은 Python 3.11 이상을 사용한다. 기존 Sanity 실행 구조는 [배포 안내](../DEPLOYMENT.md)를 따른다. 같은 저장소 루트에서 역할별 requirements를 설치한다. 기존 venv를 덮어쓰지 않아야 할 때는 별도 venv를 사용한다.
 
+CSV 파서와 고정 입력 비교 계산은 `area_power/common/csv_input.py`, `area_power/common/analysis.py`에 있다. OA 조회와 중앙 VWP의 업로드·worker가 이 구현을 직접 사용한다. OA 이미지의 `area_power/common/`과 `area_power/oa/`만으로 수치 조회를 실행할 수 있으며 OA 수치 API는 `area_power.vwp_server`를 import하지 않는다.
+
+중앙 VWP의 AI는 기존 `oa.ai_worker --site vwp`와 같은 논리 OA DB·권한·연결·토큰 실행 코어를 사용한다. 이 배포에는 같은 release의 `common/`, `oa/*.py`, `area_power/` 소스와 `vwp_bridge/requirements.txt`가 필요하다. 해당 requirements는 암호화 저장의 `cryptography`와 `tokenizer_json` 모드의 `tokenizers`도 포함한다. 순수 AI 설정 검증은 공통 설정 함수를 사용하며 OA HTTP router를 import하지 않는다. 실행 서버와 Python 모듈 이름을 구분하고, 서로 다른 release의 파일을 섞지 않는다.
+
 ```bash
 python3 -m venv .venv-integrated
 .venv-integrated/bin/python -m pip install -r requirements.txt

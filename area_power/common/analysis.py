@@ -11,7 +11,7 @@ from psycopg import sql
 from area_power.common.errors import DomainError
 from area_power.common.jsonutil import digest
 from area_power.common.models import CALCULATION_CONTRACT, COMPARISON_FORMAT, ComparisonRequest, MappingPayload, UploadMetadata
-from area_power.vwp_server.csv_input import parse_csv
+from area_power.common.csv_input import parse_csv
 
 D = Decimal
 CATEGORIES = ('total', 'logic', 'cts', 'sram', 'io', 'others')

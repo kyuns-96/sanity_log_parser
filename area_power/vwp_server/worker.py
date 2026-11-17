@@ -14,7 +14,7 @@ from psycopg.types.json import Jsonb
 from area_power.common.errors import DomainError
 from area_power.common.jsonutil import dumps
 from area_power.common.models import COMPARISON_FORMAT
-from area_power.vwp_server.analysis import all_records, compute_comparison, parse_upload
+from area_power.common.analysis import all_records, compute_comparison, parse_upload
 from area_power.vwp_server.ai import (AIError, ensure_run, extract_one, failure_detail,
                            prepare_extractions, publish_numeric_alerts, run_judgement, new_attempt, mirror_attempt)
 

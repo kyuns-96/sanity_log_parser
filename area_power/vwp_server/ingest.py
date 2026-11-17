@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 from area_power.common.errors import DomainError
 from area_power.common.jsonutil import digest
 from area_power.common.models import UploadMetadata
-from area_power.vwp_server.csv_input import parse_csv, structural_metadata, structural_rows
+from area_power.common.csv_input import parse_csv, structural_metadata, structural_rows
 
 
 def _scope_matches(row: dict[str, Any], metadata: UploadMetadata) -> bool:

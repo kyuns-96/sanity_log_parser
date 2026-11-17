@@ -24,6 +24,8 @@
 
 각 서버에 저장소 전체가 있어도 **자기 진입점만 실행**한다. VWP-bridge는 OA 앱을 import하지 않고, OA의 일반 실행은 VWP 모델·외부 mock을 import하지 않는다. Sanity 서버 간 통신은 기존 PostgreSQL 네 테이블만 사용한다. 선택형 Area/Power의 통신도 별도 두 테이블을 통한 DB 작업이며 HTTP 중계가 아니다. 수집 snapshot은 VWP 영역 안에서 원천 수집→VWP-bridge로 전달하는 입력이다.
 
+Area CSV 파서·비교 계산은 `area_power/common/`이 소유하며 OA와 중앙 VWP가 직접 사용한다. OA 배포에 `area_power/vwp_server/`를 추가할 필요는 없다. VWP의 로그/Area AI는 기존 논리 OA 작업자 코어를 실행하므로 같은 release의 `oa/*.py`도 필요하다. 이 소스 재사용과 OA 웹 앱 실행을 구분하며, 중앙 Area 설치에는 `vwp_bridge/requirements.txt`의 암호화·tokenizer 의존성까지 적용한다.
+
 ## 2. 의존성과 비공개 설정
 
 각 서버의 저장소 루트에서 자기 역할의 의존성만 설치한다. 전체 개발·회귀 테스트에는 루트 `requirements.txt`를 사용한다.

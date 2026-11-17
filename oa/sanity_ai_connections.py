@@ -4,7 +4,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from common.sanity_clustering import check
 from common.sanity_common import ReviewError, _decode_json, canonical_json, digest
-from common.sanity_config import load_environment
+from common.sanity_config import ai_token_issuance_url, load_environment
 from common.sanity_db import lock_key, uuid_value
 from common.sanity_privacy import SecretGuard
 from common.sanity_ai_reasoning import ReasoningSettings
@@ -49,9 +49,8 @@ def validate_config(config):
           and config["label"] == config["label"].strip() and config["label"].isprintable(), "AI_CONNECTION_CONFIG")
     check(type(config["enabled"]) is bool and config["auth_mode"] in
           ("bearer", "bearer_x_client", "x_client_api_key"), "AI_CONNECTION_CONFIG")
-    from oa.ai_tokens_api import _issuance_url
     check(isinstance(config["issuance_url"], str) and (not config["issuance_url"] or
-          _issuance_url({"SANITY_OA_AI_TOKEN_ISSUE_URL": config["issuance_url"]}) is not None), "AI_CONNECTION_CONFIG")
+          ai_token_issuance_url({"SANITY_OA_AI_TOKEN_ISSUE_URL": config["issuance_url"]}) is not None), "AI_CONNECTION_CONFIG")
     check(isinstance(config["models"], list) and 1 <= len(config["models"]) <= 100, "AI_CONNECTION_CONFIG")
     batch = config["batch"]
     batch_keys = set(BatchSettings().public())

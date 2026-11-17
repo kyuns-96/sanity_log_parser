@@ -52,7 +52,12 @@ class SafeAreaRoute(APIRoute):
                 # messages, request values, SQL, credentials or CSV contents.
                 frames = [f'{frame.filename.rsplit("/", 1)[-1]}:{frame.name}:{frame.lineno}'
                           for frame in traceback.extract_tb(exc.__traceback__)]
-                LOG.error('Unhandled Area API error: %s (%s)', type(exc).__name__, '; '.join(frames))
+                missing = exc.name if isinstance(exc, ModuleNotFoundError) else None
+                if (not isinstance(missing, str) or len(missing) > 200
+                        or not all(part.isascii() and part.isidentifier() for part in missing.split('.'))):
+                    missing = None
+                LOG.error('Unhandled Area API error: %s module=%s (%s)',
+                          type(exc).__name__, missing, '; '.join(frames))
                 raise
         return safe
 

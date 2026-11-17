@@ -1,6 +1,7 @@
 """Load only application settings from the repository-local .env; never log values."""
 from pathlib import Path
 import os
+from urllib.parse import urlsplit
 
 from common.sanity_common import ReviewError
 
@@ -23,6 +24,22 @@ ENV_KEYS += tuple('SANITY_OA_AI_BATCH_'+key for key in (
     'ENABLED','TOKENIZER_MODE','TOKENIZER_FILE','TOKENIZER_SHA256','CONTEXT_TOKENS','INPUT_TOKENS','OUTPUT_TOKENS',
     'OVERHEAD_TOKENS','OUTPUT_PARAMETER','MAX_RECORDS','MERGE_GROUPS','MAX_CALLS','MAX_ROUNDS','DEADLINE_SECONDS'))
 ENV_KEYS += ("SANITY_VWP_AI_PROFILES_FILE",)
+
+
+def ai_token_issuance_url(settings):
+    """An optional operator-supplied browser link, never a model endpoint."""
+    value = settings.get("SANITY_OA_AI_TOKEN_ISSUE_URL", "")
+    if (not isinstance(value, str) or not 1 <= len(value) <= 2048
+            or any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 or ch == "\\" for ch in value)):
+        return None
+    try:
+        parsed = urlsplit(value)
+        if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
+                or parsed.password is not None or parsed.port is not None and not 1 <= parsed.port <= 65535):
+            return None
+    except ValueError:
+        return None
+    return value
 
 
 def load_environment(env_file=None):

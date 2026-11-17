@@ -13,7 +13,7 @@ from area_power.common.ai import runtime_for
 from area_power.common.errors import ConfigurationError, DomainError
 from area_power.common.jsonutil import digest, dumps
 from area_power.common.models import COMPARISON_FORMAT
-from area_power.vwp_server.analysis import (METRICS, POWER, Group, expected_bounds, all_records, advisory_lock,
+from area_power.common.analysis import (METRICS, POWER, Group, expected_bounds, all_records, advisory_lock,
                                  existing_dedupe, interval_reason, iter_comparison_metrics, scope_fields, version_chain)
 from psycopg import sql
 
@@ -320,7 +320,7 @@ def prepare_extractions(db, settings, comparison, run, *, attempt_id=None):
     mapping = comparison['payload'].get('mapping_context') or comparison['payload'].get('resolved_mapping', [])
     if not mapping:
         # Numeric mapping resolution precedes extraction applicability; no guessed name correspondence.
-        from area_power.vwp_server.analysis import load_inputs
+        from area_power.common.analysis import load_inputs
         inputs = load_inputs(db, settings, comparison)
         mapping = [{'baseline_paths': g.baseline_paths, 'current_paths': g.current_paths, 'reason': g.reason} for g in inputs[9]]
     result = []

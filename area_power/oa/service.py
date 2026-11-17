@@ -219,7 +219,7 @@ class Service:
                 "row_version": project["row_version"]}
 
     def upload_hierarchy(self, identifier):
-        from area_power.vwp_server.analysis import parse_upload
+        from area_power.common.analysis import parse_upload
         with self.db.connect() as conn:
             upload = self.ready_upload(conn, identifier)
             upload = self.db.upload(conn, upload["id"], include_blob=True)
@@ -481,7 +481,7 @@ class Service:
                     payload["frozen"]["baseline_designation"] = designation
                 comparison = self.db.insert_record(conn, "comparison", payload, actor, state="queued", upload_id=current["id"], baseline_upload_id=baseline["id"] if baseline else None, dedupe_key=key, **self.scope(current))
         if comparison["state"] != "completed":
-            from area_power.vwp_server.analysis import compute_comparison
+            from area_power.common.analysis import compute_comparison
             raw = self.db.raw if self.access is not None else self.db
             try:
                 comparison = compute_comparison(self.db, raw.settings, comparison['id'])
@@ -590,7 +590,7 @@ class Service:
                 judgements = [result for run in runs for result in self.all_records(conn, 'judgement', parent_id=run['id'])]
                 if comparison['state'] != 'completed':
                     return {'comparison': comparison, 'results': [], 'judgements': judgements, 'ai_runs': runs}
-                from area_power.vwp_server.analysis import comparison_observations
+                from area_power.common.analysis import comparison_observations
                 raw = self.db.raw if self.access is not None else self.db
                 observations = comparison_observations(self.db, raw.settings, comparison, offset=offset, limit=limit, search=search)
                 return {'comparison': comparison, 'results': [], 'judgements': judgements, 'ai_runs': runs,
