@@ -71,6 +71,12 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
     def json(value, status_code=200):
         return JSONResponse(public(value), status_code=status_code)
 
+    def reauthenticated(request, actor):
+        current = authenticated_dependency(request)
+        if (current.user_id, current.auth_method) != (actor.user_id, actor.auth_method):
+            raise AuthError('UNAUTHORIZED')
+        return current
+
     def access(request: Request, identity=Depends(authorized_dependency, scope="function")):
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             from oa.sanity_access import require_mutation_request
@@ -142,9 +148,7 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
         _validate_frozen_upload(selected, upload)
         response = json(Service(raw).upload_hierarchy(upload))
 
-        current_actor = authenticated_dependency(request)
-        if (current_actor.user_id, current_actor.auth_method) != (actor.user_id, actor.auth_method):
-            raise AuthError("UNAUTHORIZED")
+        current_actor = reauthenticated(request, actor)
         with authorization_scope(request, current_actor) as identity:
             context = Service(raw, AreaAccess(identity))
             with context.db.connect() as conn:
@@ -189,14 +193,49 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
         return json(context.selection(body, context.access.actor.user_id))
 
     @router.post("/comparisons")
-    def compare(body: ComparisonRequest, context=Depends(service)):
-        return json(context.compare(body, context.access.actor.user_id))
+    def compare(body: ComparisonRequest, request: Request, actor=Depends(authenticated_dependency)):
+        from area_power.common.analysis import comparison_coverage
+        raw = Database(Settings.from_env())
+        with authorization_scope(request, actor) as identity:
+            result, designation = Service(raw, AreaAccess(identity)).prepare_comparison(body, identity.user_id)
+        selected = result['comparison']
+        coverage = None
+        if selected['state'] != 'completed':
+            try:
+                coverage = comparison_coverage(raw, raw.settings, selected)
+            except Exception as exc:
+                error = {'code': exc.code if isinstance(exc, DomainError) else 'comparison_preparation_failed'}
+                with authorization_scope(request, reauthenticated(request, actor)) as identity:
+                    Service(raw, AreaAccess(identity)).finish_comparison(selected, None, identity.user_id,
+                        error=error, baseline_designation=designation)
+                raise
+        with authorization_scope(request, reauthenticated(request, actor)) as identity:
+            context = Service(raw, AreaAccess(identity))
+            result['comparison'] = context.finish_comparison(selected, coverage, identity.user_id, baseline_designation=designation)
+            return json(result)
 
     @router.get("/comparisons/{identifier}")
-    def comparison(identifier: UUID, context=Depends(service), view: Literal["full", "summary", "hierarchy"] = "full",
+    def comparison(identifier: UUID, request: Request, actor=Depends(authenticated_dependency), view: Literal["full", "summary", "hierarchy"] = "full",
                    offset: int = Query(default=0, ge=0), limit: int = Query(default=200, ge=1, le=500),
                    search: str = Query(default="", max_length=1000)):
-        return json(context.comparison_detail(identifier, view=view, offset=offset, limit=limit, search=search))
+        from area_power.common.models import COMPARISON_FORMAT
+        raw = Database(Settings.from_env())
+        with authorization_scope(request, actor) as identity:
+            context = Service(raw, AreaAccess(identity))
+            with context.db.connect() as conn:
+                selected = context.db.record(conn, identifier, kind='comparison')
+            if view == 'summary' or selected['payload'].get('result_format') != COMPARISON_FORMAT:
+                return json(context.comparison_detail(identifier, view=view, offset=offset, limit=limit, search=search))
+        value = Service(raw).comparison_detail(identifier, view=view, offset=offset, limit=limit, search=search)
+        response = json(value)
+        with authorization_scope(request, reauthenticated(request, actor)) as identity:
+            context = Service(raw, AreaAccess(identity))
+            with context.db.connect() as conn:
+                context.validate_comparison(conn, value['comparison'])
+                # Observations use the frozen uploads checked above. AI records
+                # are separate persisted inputs and need their own scope check.
+                context.db.references(conn, {'ai_runs': value['ai_runs'], 'judgements': value['judgements']})
+            return response
 
     @router.post("/comparisons/{identifier}/rejudge")
     def rejudge(identifier: UUID, body: RejudgeInput, context=Depends(service)):

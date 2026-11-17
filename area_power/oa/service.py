@@ -410,7 +410,7 @@ class Service:
         job = self.db.enqueue(conn, "judge", actor=actor, parent_id=run["id"], payload={}, **self.scope(comparison))
         return run, job
 
-    def compare(self, body: ComparisonRequest, actor):
+    def prepare_comparison(self, body: ComparisonRequest, actor):
         recipients = addresses(body.recipients)
         with self.db.connect() as conn:
             current = self.ready_upload(conn, body.current_upload_id)
@@ -430,14 +430,14 @@ class Service:
                         reject("Baseline version is not an explicit predecessor.", "invalid_baseline")
                 elif baseline["project_id"] == current["project_id"]:
                     reject("Previous-project comparison requires another project.", "invalid_baseline")
-            mapping = self.mapping_for(conn, body.mapping_id, current, baseline)
+            self.mapping_for(conn, body.mapping_id, current, baseline)
             targets = []
             for identifier in body.scope.target_ids:
                 target = self.entity(conn, identifier, "target")
                 if target.get("project_id") != current["project_id"] or (target.get("block_id") and target["block_id"] != current["block_id"]):
                     reject("Target belongs to another comparison scope.", "scope_mismatch")
                 targets.append(target)
-            changes = self.changes(conn, body.change_ids, current, baseline)
+            self.changes(conn, body.change_ids, current, baseline)
             power_uploads = []
             for pair in body.power_pairs:
                 if not pair.get("current_upload_id"):
@@ -478,19 +478,43 @@ class Service:
                 if designation is not None:
                     payload["frozen"]["baseline_designation"] = designation
                 comparison = self.db.insert_record(conn, "comparison", payload, actor, state="queued", upload_id=current["id"], baseline_upload_id=baseline["id"] if baseline else None, dedupe_key=key, **self.scope(current))
-        if comparison["state"] != "completed":
-            from area_power.common.analysis import compute_comparison
-            raw = self.db.raw if self.access is not None else self.db
-            try:
-                comparison = compute_comparison(self.db, raw.settings, comparison['id'])
-            except Exception as exc:
-                error = {"code": exc.code if isinstance(exc, DomainError) else "comparison_preparation_failed"}
-                with self.db.connect() as conn:
-                    row = self.db.record(conn, comparison['id'], lock=True, kind='comparison')
-                    if row['state'] != 'completed':
-                        self.db.update_record(conn, row['id'], actor, state='failed', error_detail=error)
-                raise
-        return {"comparison": comparison, "job": None, "reused": old is not None}
+        return {"comparison": comparison, "job": None, "reused": old is not None}, designation
+
+    def validate_comparison(self, conn, selected, *, write=False, baseline_designation=None):
+        from area_power.common.analysis import _validate_frozen_upload
+        raw = self.db.raw if self.access is not None else self.db
+        row = raw.record(conn, selected['id'], kind='comparison', lock=write)
+        self.authorize(conn, row, write=write)
+        keys = ('request', 'frozen', 'result_format', 'calculation_contract')
+        if any(digest(row['payload'].get(key)) != digest(selected['payload'].get(key)) for key in keys):
+            reject('Comparison inputs changed during calculation.', 'frozen_input_mismatch', 409)
+        request = ComparisonRequest.model_validate(row['payload']['request'])
+        frozen = row['payload']['frozen']
+        def validate(pair, current_id, baseline_id):
+            current = self.ready_upload(conn, current_id)
+            baseline = self.ready_upload(conn, baseline_id) if baseline_id else None
+            _validate_frozen_upload(pair.get('current_upload'), current)
+            _validate_frozen_upload(pair.get('baseline_upload'), baseline)
+            return current, baseline
+        current, baseline = validate(frozen, request.current_upload_id, request.baseline_upload_id)
+        if len(frozen.get('power_uploads', [])) != len(request.power_pairs):
+            reject('Power inputs differ from frozen comparison.', 'frozen_input_mismatch', 409)
+        for pair, saved in zip(request.power_pairs, frozen.get('power_uploads', [])):
+            validate(saved, pair['current_upload_id'], pair.get('baseline_upload_id'))
+        if write and baseline_designation is not None:
+            designation = self.designated_baseline(conn, current['project_id'], baseline['project_id'] if baseline else None)
+            if digest(designation) != digest(baseline_designation):
+                reject('Baseline designation changed during calculation.', 'frozen_input_mismatch', 409)
+        return row
+
+    def finish_comparison(self, selected, coverage, actor, *, error=None, baseline_designation=None):
+        with self.db.connect() as conn:
+            row = self.validate_comparison(conn, selected, write=True, baseline_designation=baseline_designation)
+            if row['state'] == 'completed':
+                return row
+            return self.db.update_record(conn, row['id'], actor,
+                expected_row_version=row['row_version'], state='failed' if error else 'completed',
+                payload={**row['payload'], **({'coverage': coverage} if error is None else {})}, error_detail=error)
 
     def rejudge(self, identifier, body, actor):
         with self.db.connect() as conn:
@@ -590,20 +614,21 @@ class Service:
                     return {'comparison': comparison, 'results': [], 'judgements': judgements, 'ai_runs': runs}
                 from area_power.common.analysis import comparison_observations
                 raw = self.db.raw if self.access is not None else self.db
-                observations = comparison_observations(self.db, raw.settings, comparison, offset=offset, limit=limit, search=search)
-                return {'comparison': comparison, 'results': [], 'judgements': judgements, 'ai_runs': runs,
-                        'observations': observations['items'],
-                        'result_page': {key: value for key, value in observations.items() if key != 'items'}}
-            if view == "hierarchy":
+            elif view == "hierarchy":
                 metrics = ("total_area", "pwr_all_total_mw")
                 results = self.all_records(conn, "metric_result", parent_id=identifier, metrics=metrics)
                 return {"comparison": comparison, "results": results, "judgements": [], "ai_runs": []}
-            results = self.all_records(conn, "metric_result", parent_id=identifier)
-            runs = self.all_records(conn, "ai_run", parent_id=identifier)
-            judgements = []
-            for run in runs:
-                judgements.extend(self.all_records(conn, "judgement", parent_id=run["id"]))
-            return {"comparison": comparison, "results": results, "judgements": judgements, "ai_runs": runs}
+            else:
+                results = self.all_records(conn, "metric_result", parent_id=identifier)
+                runs = self.all_records(conn, "ai_run", parent_id=identifier)
+                judgements = []
+                for run in runs:
+                    judgements.extend(self.all_records(conn, "judgement", parent_id=run["id"]))
+                return {"comparison": comparison, "results": results, "judgements": judgements, "ai_runs": runs}
+        observations = comparison_observations(self.db, raw.settings, comparison, offset=offset, limit=limit, search=search)
+        return {'comparison': comparison, 'results': [], 'judgements': judgements, 'ai_runs': runs,
+                'observations': observations['items'],
+                'result_page': {key: value for key, value in observations.items() if key != 'items'}}
 
     def dashboard(self, filters, limit=100, offset=0):
         with self.db.connect() as conn:

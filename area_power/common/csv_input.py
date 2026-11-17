@@ -59,6 +59,16 @@ class ParsedCSV:
     row_count: int
 
 
+@dataclass
+class ObservedCSV:
+    rows: dict[str, dict[str, Any]]
+    conditions: dict[str, Any]
+    condition_key: bytes
+    conditions_complete: bool
+    numeric_highest: int
+    numeric_lowest: int
+
+
 def _invalid(message: str) -> None:
     raise DomainError(message, code="invalid_csv", status_code=422)
 
@@ -230,6 +240,79 @@ def parse_hierarchy(
     return items
 
 
+def _row_precision(values, reported, metadata):
+    decimals = [v for v in values.values() if isinstance(v, Decimal)] + [v for v in reported.values() if v is not None]
+    decimals.extend(v for v in (metadata.pct_tolerance, metadata.power_tolerance_mw) if v is not None)
+    highest = max((v.adjusted() for v in decimals), default=0)
+    lowest = min((v.as_tuple().exponent for v in decimals), default=0)
+    count_digits = max(len(str(values[key])) for key in COUNT_FIELDS)
+    return highest, lowest, max(50, highest - lowest + count_digits + 50)
+
+
+def read_observations(upload, metadata: UploadMetadata, maximum: int) -> ObservedCSV:
+    """Read an immutable ready original without repeating ingestion validation.
+
+    Retain the complete numeric precision envelope: even a non-displayed field
+    can affect the established Decimal context used by comparison arithmetic.
+    """
+    original, _ = _unpack(bytes(upload['csv_gzip']), maximum)
+    if len(original) != upload['original_byte_length'] or sha256(original).digest() != bytes(upload['original_sha256']):
+        raise DomainError('Stored upload no longer matches validated snapshot', code='stored_upload_mismatch')
+    reader, header = _csv_reader(original)
+    rows, roots = {}, []
+    numeric_highest, numeric_lowest = 0, 0
+    separator = metadata.hierarchy_separator
+    corner = None
+    try:
+        for fields in reader:
+            if len(fields) != len(header):
+                _invalid(f'Row {reader.line_num}: column count does not match the header.')
+            raw = dict(zip(header, fields))
+            path = raw['hier_name']
+            values = {key: Decimal(raw[key].strip()) for key in COUNT_FIELDS + AREA_FIELDS + POWER_FIELDS + ('level',)}
+            for key in COUNT_FIELDS + ('level',):
+                values[key] = int(values[key])
+            if (not path or not path.strip() or any(not part for part in path.split(separator))
+                    or path in rows or values['level'] != len(path.split(separator)) - 1):
+                raise DomainError('Stored hierarchy no longer matches its input contract', code='stored_upload_mismatch')
+            if values['level'] == 0:
+                roots.append(path)
+            reported = {key: Decimal(raw[key].strip()) if raw[key].strip() else None for key in PCT_FIELDS}
+            this_corner = {
+                'process_label': raw['process_label'] if raw['process_label'].strip() else None,
+                'voltage_v': Decimal(raw['voltage_v'].strip()) if raw['voltage_v'].strip() else None,
+                'temp_c': Decimal(raw['temp_c'].strip()) if raw['temp_c'].strip() else None,
+                'pex': raw['pex'] if raw['pex'].strip() else None,
+            }
+            if corner is None:
+                corner = this_corner
+            row = {'hier_name': path, **values, **this_corner}
+            row.update(reported if values['logic_area'] else {key: None for key in PCT_FIELDS})
+            if values['logic_area']:
+                highest, lowest, precision = _row_precision(values, reported, metadata)
+                with localcontext() as context:
+                    context.prec = precision
+                    context.Emax = max(context.Emax, highest + precision)
+                    context.Emin = min(context.Emin, lowest - precision)
+                    row['cts_area_pct'] = Decimal(100) * values['cts_area'] / values['logic_area']
+            for value in row.values():
+                if isinstance(value, (Decimal, int)):
+                    number = Decimal(value)
+                    numeric_highest = max(numeric_highest, number.adjusted())
+                    numeric_lowest = min(numeric_lowest, number.as_tuple().exponent)
+            rows[path] = {key: row[key] for key in ('level', 'total_area', 'pwr_all_total_mw')}
+    except (csv.Error, InvalidOperation, ValueError, OverflowError) as exc:
+        raise DomainError('Stored upload is not a validated CSV original', code='stored_upload_mismatch') from exc
+    if (len(rows) != upload['row_count'] or len(roots) != 1
+            or any(path != roots[0] and not path.startswith(roots[0] + separator) for path in rows)):
+        raise DomainError('Stored upload no longer matches validated snapshot', code='stored_upload_mismatch')
+    conditions, missing = _conditions(corner, metadata)
+    key = digest(conditions)
+    if key != bytes(upload['condition_key']):
+        raise DomainError('Stored conditions no longer match validated snapshot', code='stored_upload_mismatch')
+    return ObservedCSV(rows, conditions, key, not missing, numeric_highest, numeric_lowest)
+
+
 def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompressed_bytes: int) -> ParsedCSV:
     """Validate a complete export. Compression is detected by magic, not filename."""
     original, compressed = _unpack(data, max_uncompressed_bytes)
@@ -275,15 +358,11 @@ def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompre
             if values["level"] == 0:
                 root_paths.append(path)
             row = {"hier_name": path, **values, **this_corner}
-            decimal_values = [v for v in values.values() if isinstance(v, Decimal)] + [v for v in reported.values() if v is not None]
-            decimal_values.extend(value for value in (metadata.pct_tolerance, metadata.power_tolerance_mw) if value is not None)
             # Enough precision for exact finite input sums and tolerance products;
             # the extra digits also make recomputed repeating ratios useful.
-            highest = max((v.adjusted() for v in decimal_values), default=0)
-            lowest = min((v.as_tuple().exponent for v in decimal_values), default=0)
-            count_digits = max(len(str(values[key])) for key in COUNT_FIELDS)
+            highest, lowest, precision = _row_precision(values, reported, metadata)
             with localcontext() as context:
-                context.prec = max(50, highest - lowest + count_digits + 50)
+                context.prec = precision
                 context.Emax = max(context.Emax, highest + context.prec)
                 context.Emin = min(context.Emin, lowest - context.prec)
                 logic = values["logic_cells"]

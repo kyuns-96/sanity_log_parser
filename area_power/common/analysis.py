@@ -11,7 +11,7 @@ from psycopg import sql
 from area_power.common.errors import DomainError
 from area_power.common.jsonutil import digest
 from area_power.common.models import CALCULATION_CONTRACT, COMPARISON_FORMAT, ComparisonRequest, MappingPayload, UploadMetadata
-from area_power.common.csv_input import parse_csv
+from area_power.common.csv_input import ObservedCSV, parse_csv, read_observations
 
 D = Decimal
 CATEGORIES = ('total', 'logic', 'cts', 'sram', 'io', 'others')
@@ -47,10 +47,12 @@ def advisory_lock(conn, key: bytes) -> None:
     conn.execute('SELECT pg_advisory_xact_lock(%s)', (int.from_bytes(key[:8], 'big', signed=True),))
 
 
-def parse_upload(upload: dict, settings):
+def parse_upload(upload: dict, settings, *, observations=False):
     if upload['state'] != 'ready':
         raise DomainError('Selected upload is not ready', code='upload_not_ready')
     metadata = UploadMetadata.model_validate(upload['input_contract']['metadata'])
+    if observations:
+        return read_observations(upload, metadata, settings.max_uncompressed_bytes), metadata
     parsed = parse_csv(bytes(upload['csv_gzip']), upload['original_filename'], metadata, settings.max_uncompressed_bytes)
     if (bytes(parsed.structure_digest) != bytes(upload['structure_digest'])
             or bytes(parsed.condition_key) != bytes(upload['condition_key'])
@@ -429,7 +431,7 @@ def _validate_frozen_upload(snapshot, selected):
         raise DomainError('Selected upload contract differs from frozen comparison input', code='frozen_input_mismatch')
 
 
-def load_inputs(db, settings, comparison):
+def load_inputs(db, settings, comparison, *, observations=False):
     request = ComparisonRequest.model_validate(comparison['payload']['request'])
     unknown_policy = (set(request.policy.metrics) | set(request.policy.operating_limits)) - set(METRICS)
     if unknown_policy:
@@ -453,8 +455,8 @@ def load_inputs(db, settings, comparison):
         for name, selected in (('current_upload', cu), ('baseline_upload', bu)):
             if name in frozen:
                 _validate_frozen_upload(frozen[name], selected)
-    current, cm = parse_upload(cu, settings)
-    baseline, bm = parse_upload(bu, settings) if bu else (None, None)
+    current, cm = parse_upload(cu, settings, observations=observations)
+    baseline, bm = parse_upload(bu, settings, observations=observations) if bu else (None, None)
     mapping_reason = None
     if mapping:
         payload = mapping['payload']
@@ -486,7 +488,7 @@ def _reference_contract(comparison):
         raise DomainError('This comparison calculation contract is unsupported.', code='comparison_contract_unsupported')
 
 
-def _power_pairs(db, settings, comparison, request, cu, bu, current, baseline, cm, bm):
+def _power_pairs(db, settings, comparison, request, cu, bu, current, baseline, cm, bm, *, observations=False):
     pairs = [(cu, bu, current, baseline, cm, bm, None)]
     pair_ids = {(str(cu['id']), str(bu['id']) if bu else None)}
     frozen = comparison['payload'].get('frozen', {}).get('power_uploads', [])
@@ -504,8 +506,8 @@ def _power_pairs(db, settings, comparison, request, cu, bu, current, baseline, c
         pair_ids.add(pair_id)
         if str(pc['snapshot_id']) != str(cu['snapshot_id']) or (pb and (not bu or str(pb['snapshot_id']) != str(bu['snapshot_id']))):
             raise DomainError('Additional power runs must belong to selected snapshot sides', code='power_snapshot_mismatch')
-        cp, cmeta = parse_upload(pc, settings)
-        bp, bmeta = parse_upload(pb, settings) if pb else (None, None)
+        cp, cmeta = parse_upload(pc, settings, observations=observations)
+        bp, bmeta = parse_upload(pb, settings, observations=observations) if pb else (None, None)
         pairs.append((pc, pb, cp, bp, cmeta, bmeta, spec))
     return pairs
 
@@ -514,6 +516,10 @@ def _pair_precision(current, baseline):
     highest, lowest = 0, 0
     for parsed in (current, baseline):
         if parsed:
+            if isinstance(parsed, ObservedCSV):
+                highest = max(highest, parsed.numeric_highest)
+                lowest = min(lowest, parsed.numeric_lowest)
+                continue
             for row in parsed.rows.values():
                 for value in row.values():
                     if isinstance(value, (D, int)):
@@ -529,6 +535,18 @@ def _power_pair(pc, pb, current, baseline, spec):
             'label': spec.get('label') if spec else None}
 
 
+def comparison_coverage(db, settings, comparison):
+    _reference_contract(comparison)
+    request, cu, bu, current, baseline, cm, bm, groups, chain, full_groups = load_inputs(db, settings, comparison, observations=True)
+    pairs = _power_pairs(db, settings, comparison, request, cu, bu, current, baseline, cm, bm, observations=True)
+    expected = sum(len(group.metrics) + sum(1 for _ in pairs[1:] for metric in group.metrics if metric in POWER) for group in groups)
+    return {'scope_validation': 'complete', 'metric_evaluation': 'on_demand',
+            'expected_scopes': len(groups), 'processed_scopes': len(groups),
+            'unresolved_scopes': sum(group.reason is not None for group in groups),
+            'expected_metrics': expected, 'processed_metrics': 0, 'stored_result_rows': 0,
+            'power_pairs': len(pairs)}
+
+
 def compute_comparison(db, settings, comparison_id):
     with db.connect() as conn:
         comparison = db.record(conn, comparison_id, lock=True, kind='comparison')
@@ -536,14 +554,7 @@ def compute_comparison(db, settings, comparison_id):
             return comparison
         _reference_contract(comparison)
         db.update_record(conn, comparison_id, 'vwp-worker', state='running', error_detail=None)
-    request, cu, bu, current, baseline, cm, bm, groups, chain, full_groups = load_inputs(db, settings, comparison)
-    pairs = _power_pairs(db, settings, comparison, request, cu, bu, current, baseline, cm, bm)
-    expected = sum(len(group.metrics) + sum(1 for _ in pairs[1:] for metric in group.metrics if metric in POWER) for group in groups)
-    coverage = {'scope_validation': 'complete', 'metric_evaluation': 'on_demand',
-                'expected_scopes': len(groups), 'processed_scopes': len(groups),
-                'unresolved_scopes': sum(group.reason is not None for group in groups),
-                'expected_metrics': expected, 'processed_metrics': 0, 'stored_result_rows': 0,
-                'power_pairs': len(pairs)}
+    coverage = comparison_coverage(db, settings, comparison)
     with db.connect() as conn:
         row = db.record(conn, comparison_id, lock=True, kind='comparison')
         if row['state'] == 'completed':
@@ -574,7 +585,7 @@ def comparison_observations(db, settings, comparison, offset=0, limit=200, searc
     _reference_contract(comparison)
     if not isinstance(offset, int) or not isinstance(limit, int) or offset < 0 or limit < 1 or limit > 500:
         raise DomainError('Observation pagination requires offset >= 0 and limit 1..500.', code='invalid_pagination')
-    request, cu, bu, current, baseline, cm, bm, groups, chain, full_groups = load_inputs(db, settings, comparison)
+    request, cu, bu, current, baseline, cm, bm, groups, chain, full_groups = load_inputs(db, settings, comparison, observations=True)
     needle = search.strip().casefold()
     if needle:
         groups = [group for group in groups if any(needle in path.casefold() for path in group.baseline_paths + group.current_paths)]
