@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, ChevronsDownUp, Columns3, LoaderCircle, Maximize2, Minimize2, StepBack, StepForward } from 'lucide-react'
 import { format, formatPercent, text, type TrackingRecord } from './api'
 import { Button } from './components/workspace'
@@ -16,7 +16,7 @@ type Line = { kind: 'row'; row: BrowserRow; depth: number; parent: string; paren
 // Amounts show Δ and Δ%; shares (Vth, drive, CTS) show the percentage-point change.
 const fieldsOf = (metric: MetricDef): [Field, string][] => metric.ratio ? [['baseline', '기준'], ['current', '현재'], ['pct_point_change', 'Δ%p']] : [['baseline', '기준'], ['current', '현재'], ['delta', 'Δ'], ['relative_change_pct', 'Δ%']]
 const changeOf = (metric: MetricDef): [Field, string] => metric.ratio ? ['pct_point_change', 'Δ%p'] : ['relative_change_pct', 'Δ%']
-const unitOf = (metric: MetricDef) => metric.unit ? ` (${metric.unit})` : ''
+const unitOf = (metric: MetricDef) => metric.unit ? ` ${metric.unit}` : ''
 const ABS_PERCENT_FIELDS = new Set<Field>(['relative_change_pct', 'pct_point_change'])
 const MARK_LABEL: Record<string, string> = { unexpected: '이상', needs_review: '확인', expected: '설명됨', minor: '미미' }
 const stateLabel: Record<string, string> = { comparable: '비교', contextual: '조건 차이', unavailable: '불가', pending: '실행 전' }
@@ -49,6 +49,42 @@ function sign(input: unknown) {
   if (!source || !/\d/.test(source) || /^[+-]?0*(\.0*)?([eE][+-]?\d+)?$/.test(source)) return 0
   return source.startsWith('-') ? -1 : 1
 }
+
+// The text a number cell shows. Column widths are measured from the same text.
+function shown(row: BrowserRow, metric: MetricDef, field: Field) {
+  const raw = value(row, metric.id, field)
+  if (ABS_PERCENT_FIELDS.has(field)) return formatPercent(raw)
+  const direction = field === 'delta' ? sign(raw) : 0
+  if (direction) return `${direction > 0 ? '▲' : '▼'} ${format(raw)}`
+  return metric.ratio ? formatPercent(raw) : format(raw)
+}
+
+// Number columns are as wide as their content (the header label or the longest
+// loaded value) instead of a fixed 92px, so the default Area · Power · Vth set
+// fits a 1920px screen side by side. Instance columns share the width that is
+// left and never go below their minimum; past that the table scrolls sideways.
+// DIGIT, CELL_SLACK and HEAD_FONT mirror the cell and header styles in styles.css.
+const CELL_SLACK = 16, DIGIT = 7.8, SORT_MARK = 14, COLUMN_MIN = 48, COLUMN_MAX = 150
+const PANE_MIN = 150, INSTANCE_MIN = 240
+const HEAD_FONT = '600 12px "Pretendard Variable", Pretendard, sans-serif'
+// Mono digits are DIGIT wide; the ▲▼ markers come from a wider fallback glyph.
+const valueWidth = (shownText: string) => Math.ceil(shownText.length * DIGIT) + (/[▲▼]/.test(shownText) ? 5 : 0)
+// State labels are short Korean words (about 12px a glyph) after a 13px dot.
+const stateWidth = (label: string) => 13 + [...label].reduce((sum, glyph) => sum + (glyph === ' ' ? 4 : 12), 0) + CELL_SLACK
+const measuredHeads = new Map<string, number>()
+let ruler: CanvasRenderingContext2D | null | undefined
+function headWidth(label: string) {
+  const cached = measuredHeads.get(label)
+  if (cached !== undefined) return cached
+  if (ruler === undefined) ruler = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d')
+  if (!ruler) return label.length * 7
+  ruler.font = HEAD_FONT
+  const width = Math.ceil(ruler.measureText(label).width)
+  // Before the web font is ready the measurement uses a fallback face; do not keep it.
+  if (document.fonts?.status === 'loaded') measuredHeads.set(label, width)
+  return width
+}
+const columnWidth = (label: string, longest: number, sorted: boolean) => Math.min(COLUMN_MAX, Math.max(COLUMN_MIN, headWidth(label) + CELL_SLACK + (sorted ? SORT_MARK : 0), longest + CELL_SLACK))
 
 function reasonOf(row: BrowserRow, hasResult: boolean) {
   const notes = ['total_area', 'pwr_all_total_mw'].map(metric => {
@@ -214,20 +250,41 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
   }
   const sortMark = (key: string) => sort.key === key ? (sort.descending ? <ArrowDown size={11} aria-hidden="true" /> : <ArrowUp size={11} aria-hidden="true" />) : null
   const ariaSort = (key: string) => sort.key === key ? (sort.descending ? 'descending' : 'ascending') : 'none'
-  const sortHead = (key: string, label: string, extra = '') => <th key={key} className={`numeric${extra ? ` ${extra}` : ''}`} aria-sort={ariaSort(key)}><button type="button" onClick={() => sortBy(key)}>{label} {sortMark(key)}</button></th>
+  // `short` is what the header shows when the zone header above already names the unit.
+  const sortHead = (key: string, label: string, extra = '', short = label) => <th key={key} className={`numeric${extra ? ` ${extra}` : ''}`} aria-sort={ariaSort(key)} title={label}><button type="button" aria-label={label} onClick={() => sortBy(key)}><span className="head-label">{short}</span>{sortMark(key)}</button></th>
 
   const toggleColumn = (id: string) => onColumns(columns.includes(id) ? columns.filter(item => item !== id) : METRIC_CATALOG.map(metric => metric.id).filter(item => item === id || columns.includes(item)))
   const numberCell = (row: BrowserRow, metric: MetricDef, field: Field, extra = '') => {
     const raw = value(row, metric.id, field)
     const direction = field === 'delta' || ABS_PERCENT_FIELDS.has(field) ? sign(raw) : 0
     const magnitude = field === 'relative_change_pct' && direction ? Math.min(100, Math.abs(Number(text(raw)))) : field === 'pct_point_change' && direction ? Math.min(100, Math.abs(Number(text(raw))) * 5) : 0
-    return <td key={`${metric.id}.${field}`} className={`numeric${extra ? ` ${extra}` : ''}${direction > 0 ? ' up' : direction < 0 ? ' down' : ''}`} title={raw == null || raw === '' ? undefined : text(raw)}>
-      {ABS_PERCENT_FIELDS.has(field) ? <span className="pct-cell"><span className="pct-bar" aria-hidden="true"><span style={{ width: `${magnitude}%` }} /></span>{formatPercent(raw)}</span> : field === 'delta' && direction ? `${direction > 0 ? '▲' : '▼'} ${format(raw)}` : metric.ratio ? formatPercent(raw) : format(raw)}
-    </td>
+    const label = shown(row, metric, field)
+    // The size of a change is a bar along the bottom of the cell, so it costs no column width.
+    return <td key={`${metric.id}.${field}`} className={`numeric${extra ? ` ${extra}` : ''}${direction > 0 ? ' up' : direction < 0 ? ' down' : ''}${magnitude ? ' change-bar' : ''}`} style={magnitude ? { '--magnitude': magnitude / 100 } as CSSProperties : undefined} title={raw == null || raw === '' ? undefined : text(raw)}>{label}</td>
   }
   const splitColumns = 2 + metrics.length * 3 + 1
   const singleColumns = 1 + metrics.reduce((sum, metric) => sum + fieldsOf(metric).length, 0) + 1
-  const minWidth = mode === 'split' ? 2 * 220 + metrics.length * 3 * 92 + 92 : 260 + (singleColumns - 2) * 92 + 92
+  const stateOf = (row: BrowserRow) => row.result ? overall(row) : hasResult ? 'unavailable' : 'pending'
+  // Widest shown value per column (px) among the loaded rows.
+  const longest = useMemo(() => {
+    const result = new Map<string, number>()
+    const note = (key: string, width: number) => { if (width > (result.get(key) || 0)) result.set(key, width) }
+    for (const line of lines) {
+      if (line.kind !== 'row') continue
+      note('state', stateWidth(stateLabel[stateOf(line.row)] || stateOf(line.row)))
+      for (const metric of metrics) for (const field of mode === 'split' ? ['baseline', 'current', changeOf(metric)[0]] as Field[] : fieldsOf(metric).map(([field]) => field)) note(`${metric.id}.${field}`, valueWidth(shown(line.row, metric, field)))
+    }
+    return result
+  }, [lines, columns.join('\n'), mode, hasResult])
+  const widthOf = (metric: MetricDef, field: Field, label: string) => columnWidth(label, longest.get(`${metric.id}.${field}`) || 0, sort.key === `${metric.id}.${field}`)
+  // Both panes use one width per metric so the two sides line up.
+  const paneWidth = (metric: MetricDef) => Math.max(widthOf(metric, 'baseline', `${metric.label}${unitOf(metric)}`), widthOf(metric, 'current', `${metric.label}${unitOf(metric)}`))
+  const gutterWidth = (metric: MetricDef) => widthOf(metric, changeOf(metric)[0], metric.label)
+  const singleWidths = metrics.flatMap(metric => fieldsOf(metric).map(([field, label]) => widthOf(metric, field, label)))
+  const stateColumn = Math.max(52, longest.get('state') || 0)
+  const minWidth = mode === 'split'
+    ? 2 * PANE_MIN + metrics.reduce((sum, metric) => sum + 2 * paneWidth(metric) + gutterWidth(metric), 0) + stateColumn
+    : INSTANCE_MIN + singleWidths.reduce((sum, width) => sum + width, 0) + stateColumn
 
   return <div className={`hierarchy-browser${maximized ? ' maximized' : ''}`} role={maximized ? 'dialog' : undefined} aria-modal={maximized || undefined} aria-label={maximized ? 'Hierarchy 크게 보기' : undefined}>
     <div className="browser-toolbar" role="toolbar" aria-label="Hierarchy 보기">
@@ -242,7 +299,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
       <label className="browser-check"><input type="checkbox" checked={changedOnly} onChange={event => setChangedOnly(event.target.checked)} />변화·미대응만</label>
       {sort.key === 'size' ? <span className="diff-count">정렬 · Area 큰 순</span> : <Button variant="ghost" size="xs" onClick={() => setSort(defaultSort)}>정렬 초기화 (Area 큰 순)</Button>}
       {mode === 'single' && <span className="side-legend">{sideName('baseline')} <span aria-hidden="true">↔</span> {sideName('current')}</span>}
-      <small>{flat ? '검색 결과 · instance 전체 경로' : '↑↓ 이동 · → 펼치기 · ← 접기 · Alt+↑↓ 차이 이동'} · 부모 값에는 자식이 포함됩니다 · 수치 비교이며 정상/이상 판정이 아님</small>
+      <small>{flat ? '검색 결과 · instance 전체 경로 · ' : ''}부모 값에는 자식이 포함됩니다 · 수치 비교이며 정상/이상 판정이 아님</small>
     </div>
     {choosing && <div className="column-chooser" role="group" aria-label="표시할 지표">
       {METRIC_GROUPS.map(group => <fieldset key={group}><legend>{group}</legend>{METRIC_CATALOG.filter(metric => metric.group === group).map(metric => {
@@ -254,15 +311,15 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
     <div className="browser-scroll">
       <table role={flat ? 'grid' : 'treegrid'} aria-label="Instance hierarchy 비교" className={mode === 'split' ? 'split-view' : undefined} style={{ minWidth }}>
         {mode === 'split'
-          ? <colgroup><col className="col-pane" />{metrics.map(metric => <col key={`b${metric.id}`} className="col-number" />)}{metrics.map(metric => <col key={`g${metric.id}`} className="col-gutter" />)}<col className="col-pane" />{metrics.map(metric => <col key={`c${metric.id}`} className="col-number" />)}<col className="col-state" /></colgroup>
-          : <colgroup><col className="col-instance" />{Array.from({ length: singleColumns - 2 }, (_, index) => <col key={index} className="col-number" />)}<col className="col-state" /></colgroup>}
+          ? <colgroup><col className="col-pane" />{metrics.map(metric => <col key={`b${metric.id}`} style={{ width: paneWidth(metric) }} />)}{metrics.map(metric => <col key={`g${metric.id}`} style={{ width: gutterWidth(metric) }} />)}<col className="col-pane" />{metrics.map(metric => <col key={`c${metric.id}`} style={{ width: paneWidth(metric) }} />)}<col className="col-state" style={{ width: stateColumn }} /></colgroup>
+          : <colgroup><col className="col-instance" />{singleWidths.map((width, index) => <col key={index} style={{ width }} />)}<col className="col-state" style={{ width: stateColumn }} /></colgroup>}
         <thead>
           {mode === 'split' ? <>
-            <tr><th colSpan={1 + metrics.length} className="pane-head" title={sideName('baseline')}>{sideName('baseline')}</th><th colSpan={metrics.length} className="group-head gutter-head">변화</th><th colSpan={2 + metrics.length} className="pane-head current-pane" title={sideName('current')}>{sideName('current')}</th></tr>
+            <tr><th colSpan={1 + metrics.length} className="pane-head" title={sideName('baseline')}><span className="zone-label">{sideName('baseline')}</span></th><th colSpan={metrics.length} className="group-head gutter-head" title="현재가 기준보다 얼마나 달라졌는지입니다. 값은 Δ%, 비율 지표(%)는 Δ%p입니다."><span className="zone-label">변화 <small>Δ% · 비율은 Δ%p</small></span></th><th colSpan={2 + metrics.length} className="pane-head current-pane" title={sideName('current')}><span className="zone-label">{sideName('current')}</span></th></tr>
             <tr>
               <th className="instance-head" aria-sort={ariaSort('name')}><button type="button" onClick={() => sortBy('name')}>Instance {sortMark('name')}</button></th>
               {metrics.map(metric => sortHead(`${metric.id}.baseline`, `${metric.label}${unitOf(metric)}`))}
-              {metrics.map((metric, index) => sortHead(`${metric.id}.${changeOf(metric)[0]}`, `${metric.label} ${changeOf(metric)[1]}`, index ? '' : 'group-start'))}
+              {metrics.map((metric, index) => sortHead(`${metric.id}.${changeOf(metric)[0]}`, `${metric.label} ${changeOf(metric)[1]}`, index ? '' : 'group-start', metric.label))}
               <th className="instance-head group-start"><button type="button" onClick={() => sortBy('name')}>Instance</button></th>
               {metrics.map(metric => sortHead(`${metric.id}.current`, `${metric.label}${unitOf(metric)}`))}
               <th className="state-head">상태</th>
@@ -287,7 +344,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
             const open = expanded.has(row.key)
             const pathSeparator = separatorOf(row, separator)
             const name = leaf(row.currentPaths, line.parentRow?.currentPaths, pathSeparator, flat), baseName = leaf(row.baselinePaths, line.parentRow?.baselinePaths, pathSeparator, flat)
-            const state = row.result ? overall(row) : hasResult ? 'unavailable' : 'pending'
+            const state = stateOf(row)
             const reason = reasonOf(row, hasResult)
             const diff = diffOf(row, separator)
             const toggleButton = row.childCount ? <button type="button" tabIndex={-1} className="tree-toggle" aria-label={`${name || baseName} ${open ? '접기' : '펼치기'}`} onClick={event => { event.stopPropagation(); toggle(row) }}>{open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</button> : <span className="tree-spacer" />
@@ -325,6 +382,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
         </tbody>
       </table>
     </div>
+    {!flat && <p className="browser-keys">↑↓ 이동 · → 펼치기 · ← 접기 · Alt+↑↓ 차이 이동</p>}
     {current && <dl className="browser-detail" aria-live="polite">
       <div><dt title={sideName('current')}>{sideName('current')}</dt><dd>{current.row.currentPaths.join(' + ') || '대응 없음'}</dd></div>
       <div><dt title={sideName('baseline')}>{sideName('baseline')}</dt><dd>{current.row.baselinePaths.join(' + ') || '대응 없음'}</dd></div>
