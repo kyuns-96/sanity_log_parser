@@ -11,16 +11,20 @@ export type ChildState = { rows: BrowserRow[]; total: number; loading: boolean; 
 type Metric = 'area' | 'power'
 type Field = 'baseline' | 'current' | 'delta' | 'relative_change_pct'
 type Sort = { key: 'name' | `${Metric}.${Field}`; descending: boolean }
-type Line = { kind: 'row'; row: BrowserRow; depth: number; parent: string } | { kind: 'status'; key: string; depth: number; parent: string; state: ChildState }
+type Line = { kind: 'row'; row: BrowserRow; depth: number; parent: string; parentRow?: BrowserRow } | { kind: 'status'; key: string; depth: number; parent: string; state: ChildState }
 const metricKey: Record<Metric, string> = { area: 'total_area', power: 'pwr_all_total_mw' }
 const fields: [Field, string][] = [['baseline', '기준'], ['current', '현재'], ['delta', 'Δ'], ['relative_change_pct', 'Δ%']]
 const stateLabel: Record<string, string> = { comparable: '비교', contextual: '조건 차이', unavailable: '불가', pending: '실행 전' }
 
-function leaf(paths: string[], item: HierarchyItem | undefined, separator: string | undefined, full: boolean) {
-  const joined = paths.join(' + ')
-  if (full || paths.length !== 1) return joined
-  if (item?.parent_path && joined.startsWith(item.parent_path)) return joined.slice(item.parent_path.length + 1)
-  return separator && joined.includes(separator) ? joined.slice(joined.lastIndexOf(separator) + separator.length) : joined
+// A nested row shows only its path below the displayed parent on the same
+// side (normally the next hierarchy level). Search results keep full paths.
+function leaf(paths: string[], parentPaths: string[] | undefined, separator: string | undefined, full: boolean) {
+  if (full) return paths.join(' + ')
+  return paths.map(path => {
+    const parent = parentPaths?.find(candidate => path.length > candidate.length && path.startsWith(candidate) && (!separator || path.startsWith(separator, candidate.length)))
+    if (parent !== undefined) return path.slice(parent.length + (separator ? separator.length : 1))
+    return separator && path.includes(separator) ? path.slice(path.lastIndexOf(separator) + separator.length) : path
+  }).join(' + ')
 }
 
 function value(row: BrowserRow, metric: Metric, field: Field): unknown {
@@ -52,10 +56,14 @@ function overall(row: BrowserRow) {
   return states.includes('unavailable') ? 'unavailable' : states.includes('contextual') ? 'contextual' : 'comparable'
 }
 
+// Reference results carry the separator in each metric's evidence.
+const separatorOf = (row: BrowserRow, fallback?: string) => fallback || text((row.result?.metrics.total_area?.evidence as Record<string, unknown> | undefined)?.hierarchy_separator) || undefined
+
 type Diff = 'added' | 'removed' | 'changed' | 'same'
 // Meld-style row state: presence first, then a renamed counterpart or any
 // non-zero/unavailable comparison. This is a difference marker, not a verdict.
-function diffOf(row: BrowserRow, separator = '/'): Diff {
+function diffOf(row: BrowserRow, fallback?: string): Diff {
+  const separator = separatorOf(row, fallback) || '/'
   if (!row.baselinePaths.length) return 'added'
   if (!row.currentPaths.length) return 'removed'
   const leafName = (paths: string[]) => paths.map(path => path.slice(path.lastIndexOf(separator) + separator.length)).join('+')
@@ -106,12 +114,12 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
 
   const lines = useMemo(() => {
     const result: Line[] = []
-    const walk = (rows: BrowserRow[], depth: number, parent: string) => {
+    const walk = (rows: BrowserRow[], depth: number, parent: string, parentRow?: BrowserRow) => {
       for (const row of order(rows)) {
-        result.push({ kind: 'row', row, depth, parent })
+        result.push({ kind: 'row', row, depth, parent, parentRow })
         if (!expanded.has(row.key)) continue
         const state = childrenOf(row)
-        if (state) walk(state.rows, depth + 1, row.key)
+        if (state) walk(state.rows, depth + 1, row.key, row)
         if (!state || state.loading || state.error || state.rows.length < state.total) result.push({ kind: 'status', key: `status:${row.key}`, depth: depth + 1, parent: row.key, state: state || { rows: [], total: row.childCount, loading: true, error: '' } })
       }
     }
@@ -205,7 +213,8 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
             }
             const { row } = line
             const open = expanded.has(row.key)
-            const name = leaf(row.currentPaths, row.current, separator, flat), baseName = leaf(row.baselinePaths, row.baseline, separator, flat)
+            const pathSeparator = separatorOf(row, separator)
+            const name = leaf(row.currentPaths, line.parentRow?.currentPaths, pathSeparator, flat), baseName = leaf(row.baselinePaths, line.parentRow?.baselinePaths, pathSeparator, flat)
             const state = row.result ? overall(row) : hasResult ? 'unavailable' : 'pending'
             const reason = reasonOf(row, hasResult)
             const diff = diffOf(row, separator)
