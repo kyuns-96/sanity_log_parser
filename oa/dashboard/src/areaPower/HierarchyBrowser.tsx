@@ -18,6 +18,7 @@ const fieldsOf = (metric: MetricDef): [Field, string][] => metric.ratio ? [['bas
 const changeOf = (metric: MetricDef): [Field, string] => metric.ratio ? ['pct_point_change', 'Δ%p'] : ['relative_change_pct', 'Δ%']
 const unitOf = (metric: MetricDef) => metric.unit ? ` (${metric.unit})` : ''
 const ABS_PERCENT_FIELDS = new Set<Field>(['relative_change_pct', 'pct_point_change'])
+const MARK_LABEL: Record<string, string> = { unexpected: '이상', needs_review: '확인', expected: '설명됨', minor: '미미' }
 const stateLabel: Record<string, string> = { comparable: '비교', contextual: '조건 차이', unavailable: '불가', pending: '실행 전' }
 
 // A nested row shows only its path below the displayed parent on the same
@@ -82,7 +83,7 @@ function unchanged(row: BrowserRow) {
   return !!row.result && overall(row) === 'comparable' && ['total_area', 'pwr_all_total_mw'].every(metric => sign(value(row, metric, 'delta')) === 0)
 }
 
-export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, hasResult, separator, columns, onColumns, minArea, onMinArea, labels }: {
+export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, hasResult, separator, columns, onColumns, minArea, onMinArea, labels, marks, locate }: {
   roots: BrowserRow[]
   childrenOf: (row: BrowserRow) => ChildState | undefined
   onRequestChildren?: (key: string, offset: number) => void
@@ -94,6 +95,10 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
   minArea: string
   onMinArea: (value: string) => void
   labels: { baseline: string; current: string }
+  /** AI analysis verdict per result group id. */
+  marks?: Map<string, string>
+  /** Open these ancestor rows, then select the row `id`. */
+  locate?: { ancestors: string[]; id: string; nonce: number } | null
 }) {
   const sideName = (side: 'baseline' | 'current') => `${side === 'baseline' ? '기준' : '현재'}${labels[side] ? ` · ${labels[side]}` : ''}`
   const metrics = columns.map(id => metricDef.get(id)).filter((metric): metric is MetricDef => !!metric)
@@ -155,6 +160,16 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
     return result
   }, [roots, expanded, childrenOf, sort, changedOnly])
   const rowLines = lines.filter((line): line is Extract<Line, { kind: 'row' }> => line.kind === 'row')
+  // Jump to an analysed instance: expand its ancestors (children load one level
+  // at a time) and select it once its row exists.
+  const [pending, setPending] = useState('')
+  useEffect(() => {
+    if (!locate) return
+    setExpanded(previous => new Set([...previous, ...locate.ancestors]))
+    setPending(locate.id)
+  }, [locate?.nonce])
+  const pendingVisible = !!pending && rowLines.some(line => line.row.key === pending)
+  useEffect(() => { if (pendingVisible) { focus(pending); setPending('') } }, [pendingVisible, pending])
   // Expanded nodes without loaded children (first open, or after the columns
   // or threshold changed) request one level.
   const missing = lines.filter(line => line.kind === 'status' && line.missing).map(line => line.parent).join('\n')
@@ -276,6 +291,8 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
             const reason = reasonOf(row, hasResult)
             const diff = diffOf(row, separator)
             const toggleButton = row.childCount ? <button type="button" tabIndex={-1} className="tree-toggle" aria-label={`${name || baseName} ${open ? '접기' : '펼치기'}`} onClick={event => { event.stopPropagation(); toggle(row) }}>{open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</button> : <span className="tree-spacer" />
+            const verdict = marks?.get(row.result?.id || row.key)
+            const mark = verdict && <span className={`verdict-tag verdict-${verdict}`} title="AI 분석 판정">{MARK_LABEL[verdict] || verdict}</span>
             const count = row.childCount > 0 && <span className="child-count" title={row.hiddenChildren ? `표시 ${row.childCount.toLocaleString()} · 임계값 미만 ${row.hiddenChildren.toLocaleString()} 숨김` : undefined}>{row.childCount.toLocaleString()}</span>
             const stateCell = <td className="state" title={reason || undefined}><span className={`state-dot ${state}`} aria-hidden="true" />{stateLabel[state] || state}</td>
             const attributes = { 'data-key': row.key, tabIndex: selected === row.key || (!selected && line === lines[0]) ? 0 : -1, 'aria-level': line.depth + 1, 'aria-expanded': row.childCount ? open : undefined, 'aria-selected': selected === row.key, onClick: () => setSelected(row.key), onDoubleClick: () => toggle(row), onFocus: () => setSelected(row.key) }
@@ -283,8 +300,8 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
               // Both panes share one row, so expanding either side expands both
               // and corresponding instances stay on the same line.
               const side = (present: boolean, label: string, paths: string[], kind: 'baseline' | 'current') => present
-                ? <><td className={`instance pane-${kind}`} title={paths.join(' + ')}><span className="tree-cell">{guides}{toggleButton}<span className="instance-name">{label}</span>{count}</span></td>{metrics.map(metric => numberCell(row, metric, kind, `pane-${kind}`))}</>
-                : <><td className={`instance void pane-${kind}`}><span className="tree-cell">{guides}{toggleButton}<span className="void-label">{kind === 'baseline' ? '기준 없음' : '현재 없음'}</span></span></td>{metrics.map(metric => <td key={metric.id} className={`void pane-${kind}`} />)}</>
+                ? <><td className={`instance pane-${kind}`} title={paths.join(' + ')}><span className="tree-cell">{guides}{toggleButton}<span className="instance-name">{label}</span>{count}{kind === 'current' && mark}</span></td>{metrics.map(metric => numberCell(row, metric, kind, `pane-${kind}`))}</>
+                : <><td className={`instance void pane-${kind}`}><span className="tree-cell">{guides}{toggleButton}<span className="void-label">{kind === 'baseline' ? '기준 없음' : '현재 없음'}</span>{kind === 'current' && mark}</span></td>{metrics.map(metric => <td key={metric.id} className={`void pane-${kind}`} />)}</>
               return <tr key={row.key} {...attributes} className={`diff-${diff}${selected === row.key ? ' selected' : ''}`}>
                 {side(row.baselinePaths.length > 0, baseName, row.baselinePaths, 'baseline')}
                 {metrics.map((metric, index) => numberCell(row, metric, changeOf(metric)[0], `${index ? '' : 'group-start '}gutter`))}
@@ -299,7 +316,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
                 {name && baseName && name !== baseName && <span className="instance-alias">← {baseName}</span>}
                 {!row.currentPaths.length && <span className="side-tag">현재 없음</span>}
                 {!row.baselinePaths.length && <span className="side-tag">기준 없음</span>}
-                {count}
+                {count}{mark}
               </span></td>
               {metrics.flatMap(metric => fieldsOf(metric).map(([field]) => numberCell(row, metric, field, field === 'baseline' ? 'group-start' : '')))}
               {stateCell}

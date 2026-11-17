@@ -116,6 +116,130 @@ def message_for(settings, job, alert, event, comparison, metric, baseline, curre
     )
 
 
+CAUSES = {"note": "메모", "vth_shift": "Vth 변화", "drive_shift": "Drive 변화", "new_instance": "신규 instance", "unknown": "원인 불명"}
+FLAGS = {"area_conditions_unconfirmed": "Area 조건 미확인", "power_conditions_unconfirmed": "Power 조건 미확인",
+         "library_unknown": "library 미확인", "library_different": "library 다름(Vth/Drive는 참고용)",
+         "removed_in_current": "현재 실행에 없음"}
+EXCLUSIONS = {"corner_different": "양쪽 corner가 다름", "analysis_conditions_different": "분석 조건이 다름",
+              "area_unit_different": "area 단위가 다름", "baseline_missing": "기준 실행 없음"}
+
+
+def digest_context(db, job, owner):
+    with db.connect() as conn:
+        current_job = owned(db, conn, job["id"], owner)
+        request = db.record(conn, current_job["parent_id"], kind="triage_mail")
+        run = db.record(conn, request["parent_id"], kind="ai_run")
+        comparison = db.record(conn, run["parent_id"], kind="comparison")
+        judgements, offset = [], 0
+        while True:
+            page = db.records(conn, "judgement", parent_id=run["id"], limit=500, offset=offset)
+            judgements.extend(page)
+            if len(page) < 500:
+                break
+            offset += len(page)
+        baseline = db.upload(conn, comparison["baseline_upload_id"]) if comparison.get("baseline_upload_id") else None
+        current = db.upload(conn, comparison["upload_id"])
+        return current_job, request, run, comparison, judgements, baseline, current
+
+
+def _number(value, suffix=""):
+    if value is None:
+        return "—"
+    text = format(value, "f") if hasattr(value, "is_finite") else str(value)
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text + suffix
+
+
+def _signed(value, suffix):
+    return "—" if value is None else ("+" if value > 0 else "") + _number(value, suffix)
+
+
+def _execution(upload, label):
+    if upload is None:
+        return "없음"
+    corner = " / ".join(str(upload.get(key) if upload.get(key) is not None else "?") for key in ("process_label", "voltage_v", "temp_c", "pex"))
+    return f"{label + ' · ' if label else ''}{upload.get('execution_name') or upload['id']} ({corner})"
+
+
+def _item_lines(item):
+    card = item["card"]
+    path = card.get("current_path") or card.get("baseline_path") or card["id"]
+    if card.get("baseline_path") and card.get("current_path") and card["baseline_path"] != card["current_path"]:
+        path += f"  (기준: {card['baseline_path']})"
+    area, power = card["area"], card["power_mw"]
+    values = [f"Area {_number(area.get('baseline'))} → {_number(area.get('current'))} ({_signed(area.get('delta_pct'), '%')})"]
+    if "excluded" not in power:
+        values.append(f"Power {_number(power.get('baseline'))} → {_number(power.get('current'))} mW ({_signed(power.get('delta_pct'), '%')})")
+    lines = [f"- {path}", "    " + " · ".join(values),
+             f"    원인: {CAUSES.get(item['cause'], item['cause'])} · {' '.join(str(item['explanation']).split())}"]
+    for title, key in (("Vth", "vth"), ("Drive", "drive")):
+        shares = [f"{share['name']} {_number(share['baseline_pct'], '%')} → {_number(share['current_pct'], '%')} ({_signed(share['delta_pp'], '%p')})" for share in card.get(key, [])[:6]]
+        if shares:
+            lines.append(f"    {title}: " + ", ".join(shares))
+    if item.get("quotes"):
+        lines.append("    근거 메모: " + " / ".join(f"\"{quote}\"" for quote in item["quotes"][:3]))
+    flags = [FLAGS.get(flag, flag) for flag in card.get("flags", [])]
+    if item.get("failed"):
+        flags.append(f"AI 판정 실패({item.get('failure')})")
+    if card.get("rolled_up_ancestors"):
+        flags.append("영향받은 상위 " + ", ".join(card["rolled_up_ancestors"][:4]))
+    if flags:
+        lines.append("    표시: " + " · ".join(flags))
+    return lines
+
+
+def digest_message(settings, job, request, run, comparison, judgements, baseline, current, *, attempt_id):
+    """One summary mail for one reviewed analysis run."""
+    recipients = addresses(request["payload"].get("recipients") or []) or addresses(settings.mail_recipients)
+    if not recipients:
+        reject("No mail recipients are configured or requested.", "mail_recipients_missing")
+    payload = run["payload"]
+    excluded = set(request["payload"].get("excluded_ids") or [])
+    items = [row["payload"] for row in judgements]
+    shown = [item for item in items if item["group_id"] not in excluded]
+    shown.sort(key=lambda item: (item["card"].get("current_path") or item["card"].get("baseline_path") or ""))
+    by = lambda verdict: [item for item in shown if item["verdict"] == verdict]
+    unexpected, review = by("unexpected"), by("needs_review")
+    watched = [item for item in shown if item["card"].get("watched") and item["verdict"] in ("expected", "minor")]
+    labels = payload.get("labels") or {}
+    thresholds = payload.get("thresholds") or {}
+    context = payload.get("side_context") or {}
+    kind = "같은 프로젝트의 이전 버전" if payload.get("comparison_kind") == "previous_version" else "기준 프로젝트"
+    subject = " ".join(f"[Design Atlas] AI 분석 · {labels.get('current') or (current.get('execution_name') if current else '')} · 이상 {len(unexpected)}건 · 확인 필요 {len(review)}건".split())[:200]
+    body = [
+        "Design Atlas AI 이상치 분석 결과입니다. 수치는 코드가 계산했고, AI는 메모와 대조해 판정만 했습니다.",
+        "",
+        f"비교 대상: {kind} 비교",
+        f"  현재: {_execution(current, labels.get('current'))}",
+        f"  기준: {_execution(baseline, labels.get('baseline'))}",
+        f"기준 숫자: Area 증가 {_number(thresholds.get('area_increase_pct'), '%')} 이상 · Power 증가 {_number(thresholds.get('power_increase_pct'), '%')} 이상 · Area 최소 {_number(thresholds.get('min_area'))}",
+        f"적용 메모: {len(payload.get('notes', []))}건" + (" · RTL 동일(같은 NET_VER)" if payload.get("same_rtl") else ""),
+        f"결과: 이상 {len(by('unexpected'))} · 확인 필요 {len(by('needs_review'))} · 설명됨 {len(by('expected'))} · 변화 미미 {len(by('minor'))}",
+    ]
+    for part, title in (("power", "Power"), ("area", "Area")):
+        if context.get(part) and not context[part].get("analyzed"):
+            body.append(f"분석 제외: {title} — {EXCLUSIONS.get(context[part].get('reason'), context[part].get('reason'))}")
+    if any(warning.get("code") == "net_ver_unresolved" for warning in payload.get("note_warnings", [])):
+        body.append("주의: 공통 카탈로그와 연결되지 않은 버전이 계보에 있어 일부 NET_VER 메모를 적용하지 못했습니다.")
+    failed = sum(bool(item.get("failed")) for item in items)
+    if run["state"] != "completed" or failed:
+        body.append(f"주의: 이 분석은 완료되지 않았습니다. AI 판정을 받지 못한 instance {failed}건은 확인 필요로 남았습니다.")
+    if payload.get("missing_watched"):
+        body.append("현재 실행에 없는 주요 instance: " + ", ".join(payload["missing_watched"][:20]))
+    if excluded:
+        body.append(f"보낸 사람이 목록에서 뺀 항목: {len(excluded & {item['group_id'] for item in items})}건")
+    for title, group in (("이상", unexpected), ("확인 필요", review), ("주요 instance (설명됨 · 변화 미미)", watched)):
+        body += ["", f"■ {title} ({len(group)}건)"]
+        for item in group:
+            body += _item_lines(item)
+        if not group:
+            body.append("  없음")
+    body += ["", f"분석 실행: {run['id']}", f"비교: {comparison['id']}", f"요청: {request['payload'].get('requested_by')}",
+             "", "이 메일은 검토 대상을 알리는 것이며 정상·이상의 최종 판정이 아닙니다."]
+    return MailMessage(job_id=str(job["id"]), attempt_id=attempt_id, recipients=tuple(recipients), subject=subject, text_body="\n".join(body))
+
+
 def validate_receipt(receipt, recipients):
     if not isinstance(receipt, MailReceipt):
         raise ValueError("Company mail adapter must return MailReceipt")
@@ -146,9 +270,16 @@ def consume_once(db, settings, sender: MailSender, owner=None):
     try:
         if job["job_kind"] != "mail":
             reject("OA consumer only supports mail jobs.", "invalid_job_kind")
-        context = mail_context(db, job, owner)
-        message = message_for(settings, *context, attempt_id=emission["attempt_id"])
-        emission.update(phase="sending", recipients=list(message.recipients), alert_id=context[1]["id"], event_id=context[2]["id"] if context[2] else None)
+        with db.connect() as conn:
+            parent_type = db.record(conn, job["parent_id"])["record_type"]
+        if parent_type == "triage_mail":
+            context = digest_context(db, job, owner)
+            message = digest_message(settings, *context, attempt_id=emission["attempt_id"])
+            emission.update(phase="sending", recipients=list(message.recipients), mail_request_id=context[1]["id"], analysis_run_id=context[2]["id"])
+        else:
+            context = mail_context(db, job, owner)
+            message = message_for(settings, *context, attempt_id=emission["attempt_id"])
+            emission.update(phase="sending", recipients=list(message.recipients), alert_id=context[1]["id"], event_id=context[2]["id"] if context[2] else None)
         # Durable before the external side effect. A lost process stays running;
         # operators must decide whether a new explicit rerun is safe.
         record_emission(db, job["id"], owner, emission)

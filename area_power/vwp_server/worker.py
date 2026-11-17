@@ -14,6 +14,8 @@ from psycopg.types.json import Jsonb
 from area_power.common.errors import DomainError
 from area_power.common.jsonutil import dumps
 from area_power.common.models import COMPARISON_FORMAT
+from area_power.common.triage import ENGINE as TRIAGE_ENGINE
+from .triage import run_triage
 from area_power.common.analysis import all_records, compute_comparison, parse_upload
 from area_power.vwp_server.ai import (AIError, ensure_run, extract_one, failure_detail,
                            prepare_extractions, publish_numeric_alerts, run_judgement, new_attempt, mirror_attempt)
@@ -61,6 +63,23 @@ def dispatch(db, settings, job):
                 run_id, comparison_id, comparison = None, subject['id'], subject
             else:
                 raise DomainError('Judge job requires an AI run or comparison', code='invalid_job_subject')
+        if subject['record_type'] == 'ai_run' and subject['payload'].get('engine') == TRIAGE_ENGINE:
+            # Instance triage runs carry their own frozen inputs; an explicit
+            # rerun repeats the whole run with the same inputs and pins.
+            original = subject if job.get('previous_id') else None
+            if original:
+                run_id = new_attempt(db, comparison, original, job['id'])['id']
+            error = None
+            try:
+                if run_triage(db, settings, run_id)['state'] == 'failed':
+                    raise AIError('ai_incomplete')
+            except Exception as exc:
+                error = failure_detail(exc)
+                raise
+            finally:
+                if original:
+                    mirror_attempt(db, original['id'], run_id, error)
+            return
         original_run = None
         if job.get('previous_id'):
             original_run = ensure_run(db, comparison, run_id=run_id)

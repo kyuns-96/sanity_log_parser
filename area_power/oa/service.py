@@ -64,6 +64,8 @@ class TargetPayload(Input):
     scope: Literal["node", "subtree"] = "node"
     metrics: list[str] = Field(default_factory=list)
     bindings: list[Binding] = Field(default_factory=list)
+    # Key instances the AI triage always analyses for this project and block.
+    watch: bool = False
 
     @field_validator("paths", "metrics")
     @classmethod
@@ -83,11 +85,29 @@ class ChangePayload(Input):
     metrics: list[str] = Field(default_factory=list)
     expected: list[dict[str, Any]] = Field(default_factory=list)
     extraction_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    # Free-text notes for the AI triage: an update of one NET_VER, or what to
+    # consider when the project changes against one baseline project.
+    note_kind: Literal["net_ver", "project_change"] | None = None
+    net_ver: str | None = Field(default=None, min_length=1, max_length=200)
+    archived: bool = False
 
 
 class BaselineInput(Input):
     baseline_project_id: UUID | None
     expected_row_version: int = Field(ge=1)
+
+
+class ProcessInput(Input):
+    process: str | None = Field(default=None, max_length=100)
+    expected_row_version: int = Field(ge=1)
+
+    @field_validator("process")
+    @classmethod
+    def single_line(cls, value):
+        value = value.strip() if value else None
+        if value and any(char in value for char in "\x00\r\n"):
+            raise ValueError("A single-line process name is required")
+        return value or None
 
 
 class SelectionInput(Input):
@@ -186,7 +206,9 @@ class Service:
         status = project.get("baseline_status", "available" if baseline else "unset")
         return {"project_id": project["id"], "row_version": project["row_version"],
                 "baseline_project_id": baseline["id"] if baseline else None,
-                "baseline_project": baseline, "status": status}
+                "baseline_project": baseline, "status": status,
+                "process": project["payload"].get("process"),
+                "baseline_process": baseline["payload"].get("process") if baseline else None}
 
     def project_baseline(self, identifier, body=None, actor=None):
         with self.db.connect() as conn:
@@ -205,6 +227,18 @@ class Service:
             raw = self.db.raw if self.access is not None else self.db
             updated = raw.update_record(conn, project["id"], actor,
                 expected_row_version=body.expected_row_version, payload=payload)
+            return self.baseline_setting(conn, self.authorize(conn, updated))
+
+    def project_process(self, identifier, body, actor):
+        """The project's process name; same process and corner mean the same library."""
+        with self.db.connect() as conn:
+            project = self.db.record(conn, identifier, kind="project", lock=True)
+            self.authorize(conn, project, write=True)
+            if project["row_version"] != body.expected_row_version:
+                reject("Project settings were changed; reload before editing.", "conflict", 409)
+            raw = self.db.raw if self.access is not None else self.db
+            updated = raw.update_record(conn, project["id"], actor, expected_row_version=body.expected_row_version,
+                                        payload={**project["payload"], "process": body.process})
             return self.baseline_setting(conn, self.authorize(conn, updated))
 
     def designated_baseline(self, conn, current_project_id, baseline_project_id=None):
@@ -296,6 +330,12 @@ class Service:
                 payload["path_validation"] = "pending_worker_validation"
             else:
                 payload = ChangePayload.model_validate(body.payload).model_dump(mode="python")
+                if payload["note_kind"] and not scope["block_id"]:
+                    reject("A note belongs to one block.", "scope_mismatch")
+                if payload["note_kind"] == "net_ver" and not payload["net_ver"]:
+                    reject("A NET_VER note names its NET_VER.")
+                if payload["note_kind"] == "project_change" and not payload["baseline_project_id"]:
+                    reject("A project-change note names its baseline project.")
                 self.version_range(conn, payload.get("applies_from_version_id"), payload.get("applies_through_version_id"), scope["project_id"])
                 if payload.get("baseline_project_id"):
                     self.db.record(conn, payload["baseline_project_id"], kind="project")

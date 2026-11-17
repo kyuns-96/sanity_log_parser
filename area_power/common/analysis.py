@@ -655,6 +655,7 @@ class ObservationView:
     child_count: dict[str, int]
     index: dict[str, int]
     sizes: list[Decimal | None]
+    parents: dict[str, str | None]
 
 
 _VIEW_CACHE: OrderedDict[tuple[str, str], ObservationView] = OrderedDict()
@@ -717,7 +718,7 @@ def observation_view(db, settings, comparison) -> ObservationView:
         view = ObservationView(request, cu, bu, current, baseline, cm, bm, groups, order, children,
                                {identifier: len(rows) for identifier, rows in children.items() if identifier is not None},
                                {group.id: position for position, group in enumerate(groups)},
-                               [_group_size(group, current, baseline) for group in groups])
+                               [_group_size(group, current, baseline) for group in groups], parents)
         with _VIEW_LOCK:
             _VIEW_CACHE[key] = view
             while len(_VIEW_CACHE) > VIEW_CACHE_SIZE:

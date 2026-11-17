@@ -21,9 +21,11 @@ from area_power.common.models import ComparisonRequest
 from oa.sanity_auth import AuthError
 from .access import AreaAccess
 from .service import (
-    AlertStateInput, BaselineInput, ConfigInput, RejudgeInput, RerunInput,
+    AlertStateInput, BaselineInput, ConfigInput, ProcessInput, RejudgeInput, RerunInput,
     SelectionInput, Service, CONFIG_TYPES,
 )
+from . import triage
+from .triage import TriageInput, TriageMailInput
 
 LOG = logging.getLogger('area_power.oa')
 
@@ -112,6 +114,10 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
     @router.post("/projects/{identifier}/baseline")
     def set_project_baseline(identifier: UUID, body: BaselineInput, context=Depends(service)):
         return json(context.project_baseline(identifier, body, context.access.actor.user_id))
+
+    @router.post("/projects/{identifier}/process")
+    def set_project_process(identifier: UUID, body: ProcessInput, context=Depends(service)):
+        return json(context.project_process(identifier, body, context.access.actor.user_id))
 
     @router.get("/dashboard")
     def dashboard(scope=Depends(filters), context=Depends(service),
@@ -241,6 +247,42 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
                 # are separate persisted inputs and need their own scope check.
                 context.db.references(conn, {'ai_runs': value['ai_runs'], 'judgements': value['judgements']})
             return response
+
+    def triage_selection(identifier, body, request, actor):
+        # Same shape as the comparison routes: no authorization transaction is
+        # held while the stored originals are parsed and candidates selected.
+        raw = Database(Settings.from_env())
+        with authorization_scope(request, actor) as identity:
+            prepared = triage.prepare(Service(raw, AreaAccess(identity)), identifier)
+        context, selection = triage.select(raw, prepared, body.thresholds)
+        return raw, prepared, context, selection
+
+    @router.post("/comparisons/{identifier}/triage/preview")
+    def triage_preview(identifier: UUID, body: TriageInput, request: Request, actor=Depends(authenticated_dependency)):
+        raw, prepared, context, selection = triage_selection(identifier, body, request, actor)
+        with authorization_scope(request, reauthenticated(request, actor)) as identity:
+            current = Service(raw, AreaAccess(identity))
+            with current.db.connect() as conn:
+                current.validate_comparison(conn, prepared['comparison'])
+            return json(triage.preview_result(prepared, context, selection, body.thresholds))
+
+    @router.post("/comparisons/{identifier}/triage")
+    def triage_run(identifier: UUID, body: TriageInput, request: Request, actor=Depends(authenticated_dependency)):
+        raw, prepared, context, selection = triage_selection(identifier, body, request, actor)
+        with authorization_scope(request, reauthenticated(request, actor)) as identity:
+            return json(triage.request_run(Service(raw, AreaAccess(identity)), prepared, selection, body, identity.user_id), 201)
+
+    @router.get("/comparisons/{identifier}/triage")
+    def triage_runs(identifier: UUID, context=Depends(service)):
+        return json(triage.runs(context, identifier))
+
+    @router.get("/triage/{identifier}")
+    def triage_results(identifier: UUID, context=Depends(service)):
+        return json(triage.results(context, identifier))
+
+    @router.post("/triage/{identifier}/mail")
+    def triage_mail(identifier: UUID, body: TriageMailInput, context=Depends(service)):
+        return json(triage.request_mail(context, identifier, body, context.access.actor.user_id), 201)
 
     @router.post("/comparisons/{identifier}/rejudge")
     def rejudge(identifier: UUID, body: RejudgeInput, context=Depends(service)):

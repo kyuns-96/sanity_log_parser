@@ -24,14 +24,16 @@ export default function AreaPower() {
     const current = new AbortController(); controller.current = current
     setLoading(true)
     try {
-      const [access, uploads, projects, blocks, versions, snapshots, mappings, comparisons] = await Promise.all([
+      const [access, uploads, projects, blocks, versions, snapshots, mappings, comparisons, notes, targets] = await Promise.all([
         request(auth, '/access', accessSchema, undefined, current.signal), allUploads(auth, current.signal),
         allRecords(auth, 'project', { latest: 'false' }, current.signal), allRecords(auth, 'block', { latest: 'false' }, current.signal),
         allRecords(auth, 'version', { latest: 'false' }, current.signal), allRecords(auth, 'snapshot', { latest: 'false' }, current.signal),
         allRecords(auth, 'mapping', { latest: 'false' }, current.signal),
         allRecords(auth, 'comparison', { latest: 'false' }, current.signal),
+        // Latest revision of each AI-analysis note and key-instance list.
+        allRecords(auth, 'change', {}, current.signal), allRecords(auth, 'target', {}, current.signal),
       ])
-      if (!current.signal.aborted) { setData({ access, uploads, records: [...projects, ...blocks, ...versions, ...snapshots, ...mappings, ...comparisons] }); setError(''); setUpdated(new Date().toISOString()); setGeneration(value => value + 1) }
+      if (!current.signal.aborted) { setData({ access, uploads, records: [...projects, ...blocks, ...versions, ...snapshots, ...mappings, ...comparisons, ...notes, ...targets] }); setError(''); setUpdated(new Date().toISOString()); setGeneration(value => value + 1) }
     } catch (cause) {
       if (!current.signal.aborted) { setData(null); setError(cause instanceof Error ? cause.message : 'Area/Power 서비스 연결을 확인하세요.'); setLoading(false); current.abort(); throw cause }
     } finally { if (!current.signal.aborted) setLoading(false) }

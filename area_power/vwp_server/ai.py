@@ -13,6 +13,7 @@ from area_power.common.ai import runtime_for
 from area_power.common.errors import ConfigurationError, DomainError
 from area_power.common.jsonutil import digest, dumps
 from area_power.common.models import COMPARISON_FORMAT
+from area_power.common.triage import RUN_KEYS as TRIAGE_RUN_KEYS
 from area_power.common.analysis import (METRICS, POWER, Group, expected_bounds, all_records, advisory_lock,
                                  existing_dedupe, interval_reason, iter_comparison_metrics, scope_fields, version_chain)
 from psycopg import sql
@@ -196,7 +197,7 @@ def ensure_run(db, comparison: dict, *, run_id=None, change_ids=None, recipients
 
 def new_attempt(db, comparison, original, job_id):
     key = digest({'explicit_job_attempt': job_id, 'previous_ai_run': original['id']})
-    payload = {key: original['payload'][key] for key in ('change_ids', 'changes', 'recipients', 'targets', 'ai_context') if key in original['payload']}
+    payload = {key: original['payload'][key] for key in ('change_ids', 'changes', 'recipients', 'targets', 'ai_context', *TRIAGE_RUN_KEYS) if key in original['payload']}
     payload.update({'coverage': {}, 'prompt_version': PROMPT_VERSION, 'explicit_attempt_job_id': job_id})
     with db.connect() as conn:
         advisory_lock(conn, key)

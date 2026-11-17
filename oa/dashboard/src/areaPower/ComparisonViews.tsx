@@ -1,15 +1,17 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Check, Download, GitCompareArrows, LoaderCircle, Plus, RefreshCw, Trash2, Upload as UploadIcon } from 'lucide-react'
 import { z } from 'zod'
-import { comparisonCreatedSchema, cornerKey, date, detailSchema, format, formatPercent, object, recordSchema, request, revision, text, uploadName, type AreaAccess, type Auth, type ComparisonDetail, type TrackingRecord, type Upload } from './api'
+import { comparisonCreatedSchema, cornerKey, date, detailSchema, format, object, recordSchema, request, revision, text, uploadName, type AreaAccess, type Auth, type ComparisonDetail, type TrackingRecord, type TriageItem, type Upload } from './api'
 import { Badge, Button, Empty, Field, useAction } from './components/workspace'
 import { Uploads } from './UploadViews'
 import { useAtlas, type AtlasProject } from '../atlasContext'
 import { mappingCsv, readMappingCsv, validateMappingDraft, type MappingDraft } from './mappingCsv'
 import { HierarchyBrowser, type BrowserRow, type ChildState, type ResultGroup } from './HierarchyBrowser'
 import { AREA_THRESHOLD, atLeast, loadColumns, loadMinArea, requestedMetrics, saveColumns, saveMinArea } from './metricCatalog'
+import { NotesPanel } from './NotesPanel'
+import { TriagePanel } from './TriagePanel'
 
-const baselineSchema = z.object({ project_id: z.string(), row_version: z.string(), baseline_project_id: z.string().nullable(), baseline_project: recordSchema.nullable(), status: z.enum(['unset', 'available', 'unavailable']) })
+const baselineSchema = z.object({ project_id: z.string(), row_version: z.string(), baseline_project_id: z.string().nullable(), baseline_project: recordSchema.nullable(), status: z.enum(['unset', 'available', 'unavailable']), process: z.string().nullish(), baseline_process: z.string().nullish() })
 const hierarchySchema = z.object({ upload_id: z.string(), snapshot_id: z.string().nullable(), hierarchy_separator: z.string(), items: z.array(z.object({ path: z.string(), parent_path: z.string().nullable(), depth: z.string().transform(Number).refine(value => Number.isSafeInteger(value) && value >= 0), area: z.unknown().nullable(), power_mw: z.unknown().nullable() })) })
 type Hierarchy = z.infer<typeof hierarchySchema>
 type Selection = { block: string; net: string; version: string; corner: string; upload: string }
@@ -44,6 +46,12 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
   const lastDesignation = useRef<string | null>(null)
   const [current, setCurrent] = useState<Selection>(emptySelection)
   const [before, setBefore] = useState<Selection>(emptySelection)
+  // What the current run is compared with: the designated baseline project,
+  // or an earlier version of the same project and block (an RTL update).
+  const [mode, setMode] = useState<'project' | 'version'>('project')
+  const [processDraft, setProcessDraft] = useState('')
+  const [triageItems, setTriageItems] = useState<TriageItem[]>([])
+  const [locate, setLocate] = useState<{ ancestors: string[]; id: string; nonce: number } | null>(null)
   const [mappingId, setMappingId] = useState('')
   const [mappingDraft, setMappingDraft] = useState<MappingDraft[]>([])
   const [mappingDraftPage, setMappingDraftPage] = useState(0)
@@ -83,11 +91,13 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
   const choiceProject = baselineCandidates.find(row => row.id === baselineChoice)
   const choiceAreaId = choiceProject?.area_id || (choiceProject ? projectRecords.get(choiceProject.id)?.id : '') || ''
   const currentBlock = project.blocks.find(row => row.id === current.block)
-  const beforeBlock = savedProject?.blocks.find(row => row.id === before.block)
+  const baselineSide = mode === 'version' ? project : savedProject
+  const baselineAreaId = mode === 'version' ? currentAreaId : baseline?.baseline_project_id
+  const beforeBlock = baselineSide?.blocks.find(row => row.id === before.block)
   const currentVersion = currentBlock?.versions.find(row => row.id === current.version && row.net_ver === current.net)
   const beforeVersion = beforeBlock?.versions.find(row => row.id === before.version && row.net_ver === before.net)
   const currentUploads = props.uploads.filter(row => row.state === 'ready' && row.project_id === currentAreaId && !!currentBlock?.area_id && row.block_id === currentBlock.area_id && !!currentVersion?.area_id && row.version_id === currentVersion.area_id)
-  const beforeUploads = props.uploads.filter(row => row.state === 'ready' && row.project_id === baseline?.baseline_project_id && !!beforeBlock?.area_id && row.block_id === beforeBlock.area_id && !!beforeVersion?.area_id && row.version_id === beforeVersion.area_id)
+  const beforeUploads = props.uploads.filter(row => row.state === 'ready' && !!baselineAreaId && row.project_id === baselineAreaId && !!beforeBlock?.area_id && row.block_id === beforeBlock.area_id && !!beforeVersion?.area_id && row.version_id === beforeVersion.area_id)
   const selectedCurrent = currentUploads.find(row => row.id === current.upload && cornerKey(row) === current.corner)
   const selectedBefore = beforeUploads.find(row => row.id === before.upload && cornerKey(row) === before.corner)
   const mappings = props.records.filter(row => row.record_type === 'mapping' && selectedCurrent && selectedBefore && ['current', 'baseline'].every(side => {
@@ -141,7 +151,16 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
     return [owner?.name, owner?.blocks.find(row => row.area_id === upload.block_id)?.name].filter(Boolean).join(' · ') || fallback
   }
   const sideLabels = { current: sideLabel(displayedCurrent, project.name), baseline: sideLabel(displayedBefore, savedProject?.name || '') }
-  const canCompare = project.can_write && !!selectedCurrent && !!baseline?.baseline_project_id && (!before.upload || !!selectedBefore) && !mappingDraft.length && (!mappingId || mappings.some(row => row.id === mappingId))
+  // Project · Block · NET_VER · REVISION for mail subjects and analysis records.
+  const runLabel = (upload: Upload | undefined, fallback: string) => {
+    const owner = upload && candidates.find(row => (row.area_id || projectRecords.get(row.id)?.id) === upload.project_id)
+    const version = owner?.blocks.find(row => row.area_id === upload?.block_id)?.versions.find(row => row.area_id === upload?.version_id)
+    return [sideLabel(upload, fallback), version && `${version.net_ver} ${version.revision} ${version.layout}`].filter(Boolean).join(' · ').slice(0, 280)
+  }
+  const triageLabels = { current: runLabel(displayedCurrent, project.name), baseline: runLabel(displayedBefore, savedProject?.name || '') }
+  const marks = useMemo(() => new Map(triageItems.map(item => [item.group_id, item.verdict])), [triageItems])
+  const ready = mode === 'version' ? !!selectedBefore && selectedBefore.id !== selectedCurrent?.id : !!baseline?.baseline_project_id && (!before.upload || !!selectedBefore)
+  const canCompare = project.can_write && !!selectedCurrent && ready && !mappingDraft.length && (!mappingId || mappings.some(row => row.id === mappingId))
 
   useEffect(() => {
     if (!currentAreaId) { setBaseline(null); return }
@@ -149,7 +168,7 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
     setBaselineLoading(true); setBaselineError('')
     request(props.auth, `/projects/${encodeURIComponent(currentAreaId)}/baseline`, baselineSchema, undefined, controller.signal).then(value => {
       if (controller.signal.aborted) return
-      setBaseline(value)
+      setBaseline(value); setProcessDraft(value.process || '')
       const designation = `${value.status}:${value.baseline_project_id || ''}`
       if (lastDesignation.current !== designation) {
         lastDesignation.current = designation
@@ -216,7 +235,37 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
   }
   function chooseCurrent(selection: Selection) {
     if (selection.block !== current.block || selection.net !== current.net || selection.version !== current.version || selection.corner !== current.corner || selection.upload !== current.upload) resetCorrespondence()
+    // A version comparison stays inside the current block.
+    if (mode === 'version' && selection.block !== current.block) setBefore({ ...emptySelection, block: selection.block })
     setCurrent(selection)
+  }
+  function chooseMode(next: 'project' | 'version') {
+    if (next === mode) return
+    setMode(next); resetCorrespondence()
+    setBefore(next === 'version' ? { ...emptySelection, block: current.block } : emptySelection)
+  }
+  async function saveProcess() {
+    if (!currentAreaId || !baseline) throw new Error('현재 프로젝트 연결과 기준 조회가 필요합니다.')
+    const value = await request(props.auth, `/projects/${encodeURIComponent(currentAreaId)}/process`, baselineSchema, { process: processDraft.trim() || null, expected_row_version: revision(baseline.row_version) }, beginMutation())
+    if (!alive.current) return
+    setBaseline(value); setProcessDraft(value.process || '')
+  }
+  // Open the tree down to one analysed instance. Reference results are keyed
+  // by group id; earlier results and previews nest rows locally.
+  function locateItem(item: TriageItem) {
+    const nonce = Date.now()
+    if (referenceComparison) {
+      const ancestors = Array.isArray(item.card.ancestor_ids) ? item.card.ancestor_ids.map(text) : []
+      if (resultQuery.search) { setResultSearch(''); setResultQuery({ offset: 0, search: '' }) }
+      setLocate({ ancestors, id: item.group_id, nonce })
+      return
+    }
+    const byKey = new Map(treeRows.map(row => [row.key, row]))
+    const target = treeRows.find(row => row.result?.id === item.group_id)
+    if (!target) return
+    const ancestors: string[] = []
+    for (let node = byKey.get(target.parent); node; node = byKey.get(node.parent)) ancestors.unshift(node.key)
+    setLocate({ ancestors, id: target.key, nonce })
   }
   function chooseBefore(selection: Selection) {
     if (selection.block !== before.block || selection.net !== before.net || selection.version !== before.version || selection.corner !== before.corner || selection.upload !== before.upload) resetCorrespondence()
@@ -268,7 +317,7 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
   }
   async function compare() {
     if (!canCompare || !selectedCurrent) throw new Error('현재·기준의 정확한 실행을 다시 선택하세요.')
-    const value = await request(props.auth, '/comparisons', comparisonCreatedSchema, { current_upload_id: selectedCurrent.id, baseline_upload_id: selectedBefore?.id || null, comparison_kind: 'previous_project', scope: { kind: 'all' }, mapping_id: mappingId || null }, beginMutation())
+    const value = await request(props.auth, '/comparisons', comparisonCreatedSchema, { current_upload_id: selectedCurrent.id, baseline_upload_id: selectedBefore?.id || null, comparison_kind: mode === 'version' ? 'previous_version' : 'previous_project', scope: { kind: 'all' }, mapping_id: mappingId || null }, beginMutation())
     if (!alive.current) return
     setDetail(null); setDetailError(''); setResultSearch(''); setResultQuery({ offset: 0, search: '' }); setComparisonId(value.comparison.id)
     showResult()
@@ -287,7 +336,7 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
     {action.feedback}
     {!project.can_write && <p className="notice">조회 전용 · 기준 설정, 비교 실행과 구조 대응 변경에는 프로젝트 멤버 권한이 필요합니다.</p>}
     <section className="panel comparison-setup-bar project-baseline" aria-label="프로젝트 기준 설정">
-      <div className="baseline-summary">{props.picker}<span className="setup-arrow" aria-hidden="true">→</span><span className="setup-baseline"><small>기준 프로젝트</small><strong>{baseline?.status === 'available' ? text(baseline.baseline_project?.payload.name) || savedProject?.name : baseline?.status === 'unavailable' ? '기준 조회 불가' : '기준 미설정'}</strong></span><Button variant="outline" size="sm" disabled={baselineLoading || !project.can_write} onClick={() => setBaselineEditing(value => !value)}>{baselineEditing ? '설정 접기' : '기준 변경'}</Button></div>
+      <div className="baseline-summary">{props.picker}<div className="view-switch" role="group" aria-label="비교 대상">{([['project', '기준 프로젝트와 비교'], ['version', '같은 프로젝트의 이전 버전과 비교']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={mode === value} disabled={!!comparisonId} onClick={() => chooseMode(value)}>{label}</button>)}</div><span className="setup-arrow" aria-hidden="true">→</span><span className="setup-baseline"><small>기준 프로젝트</small><strong>{baseline?.status === 'available' ? text(baseline.baseline_project?.payload.name) || savedProject?.name : baseline?.status === 'unavailable' ? '기준 조회 불가' : '기준 미설정'}</strong></span><span className="setup-process"><small>공정</small>{baseline?.process || '미등록'}</span><Button variant="outline" size="sm" disabled={baselineLoading || !project.can_write} onClick={() => setBaselineEditing(value => !value)}>{baselineEditing ? '설정 접기' : '기준 변경'}</Button></div>
       {baselineError && <div className="notice error" role="alert">{baselineError}</div>}
       {!currentAreaId ? <div className="notice"><p>프로젝트만 연결하면 CSV·블록·버전 없이 기준을 설정할 수 있습니다.</p><Button disabled={action.busy || !project.can_write} onClick={() => action.run(() => prepare(project))}>현재 프로젝트 연결</Button></div> : baselineEditing && <div className="baseline-editor">
         {baseline?.status === 'unavailable' && <p className="notice warning">저장된 기준은 현재 권한으로 조회할 수 없습니다. 다른 기준으로 교체하거나 해제할 수 있습니다.</p>}
@@ -296,15 +345,17 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
         <Button disabled={action.busy || baselineLoading || !baseline || !choiceAreaId || !project.can_write} onClick={() => action.run(() => saveBaseline(choiceAreaId))}>기준 저장</Button>
         <Button variant="outline" disabled={action.busy || !baseline || baseline.status === 'unset' || !project.can_write} onClick={() => action.run(() => saveBaseline(null))}>기준 해제</Button>
         <small>A→B는 현재 프로젝트에만 저장됩니다. 다른 프로젝트의 기준을 바꾸지 않습니다.</small>
+        <div className="process-editor"><Field label="현재 프로젝트 공정" hint="공정과 corner가 같으면 같은 library로 봅니다. AI 분석의 Vth·Drive 비교에 쓰입니다."><input type="text" value={processDraft} maxLength={100} onChange={event => setProcessDraft(event.target.value)} placeholder="예: 공정 이름" autoComplete="off" /></Field><Button variant="outline" disabled={action.busy || baselineLoading || !baseline || !project.can_write || processDraft.trim() === (baseline.process || '')} onClick={() => action.run(saveProcess)}>공정 저장</Button>{baseline?.status === 'available' && <small>기준 프로젝트 공정 · {baseline.baseline_process || '미등록'}</small>}</div>
       </div>}
     </section>
     <section className="panel comparison-workspace">
       {setupOpen || (!comparisonId && !selectedCurrent) ? <div className="compare-sides">
         <RunSelector label="현재" project={project} selection={current} onChange={chooseCurrent} uploads={currentUploads} busy={action.busy} onPrepare={(selection, previous) => action.run(() => prepare(project, selection, previous))} />
-        {savedProject && baseline?.status === 'available' ? <RunSelector label="기준" project={savedProject} selection={before} onChange={chooseBefore} uploads={beforeUploads} busy={action.busy} onPrepare={(selection, previous) => action.run(() => prepare(savedProject, selection, previous))} /> : <Empty title={baseline?.status === 'unavailable' ? '기준 프로젝트 조회 불가' : '비교 기준을 저장하세요'}>현재 실행의 관측값은 기준이 없어도 볼 수 있습니다. 기준·대응이 없는 Δ/%는 unavailable입니다.</Empty>}
+        {mode === 'version' ? <RunSelector label="기준" project={project} selection={before} onChange={chooseBefore} uploads={beforeUploads} busy={action.busy} lockedBlock hint="기준 버전은 현재 버전의 명시적 이전 버전(계보)이어야 합니다. NET_VER가 다르면 RTL 변경 비교입니다." onPrepare={(selection, previous) => action.run(() => prepare(project, selection, previous))} />
+          : savedProject && baseline?.status === 'available' ? <RunSelector label="기준" project={savedProject} selection={before} onChange={chooseBefore} uploads={beforeUploads} busy={action.busy} onPrepare={(selection, previous) => action.run(() => prepare(savedProject, selection, previous))} /> : <Empty title={baseline?.status === 'unavailable' ? '기준 프로젝트 조회 불가' : '비교 기준을 저장하세요'}>현재 실행의 관측값은 기준이 없어도 볼 수 있습니다. 기준·대응이 없는 Δ/%는 unavailable입니다.</Empty>}
       </div> : !comparisonId && <p className="setup-summary">현재 {selectedCurrent ? uploadName(selectedCurrent) : '실행 미선택'} <span aria-hidden="true">↔</span> 기준 {selectedBefore ? uploadName(selectedBefore) : '기준 실행 없음'}</p>}
       {selectedCurrent && selectedBefore && cornerKey(selectedCurrent) !== cornerKey(selectedBefore) && <div className="notice warning">양쪽 corner가 다릅니다. Power의 비교 가능성과 조건 차이 사유를 확인하세요. 같은 이름으로 조건을 추정하지 않습니다.</div>}
-      <div className="comparison-actions" ref={resultTop}><div><h2 title="부모 값에는 자식이 포함됩니다. 행을 다시 합산하지 않습니다.">Instance Area · Power</h2></div>{(comparisonId || selectedCurrent) && <Button variant="ghost" size="sm" aria-expanded={setupOpen} onClick={() => setSetupOpen(value => !value)}>{setupOpen ? '실행 선택 접기' : '실행 선택 펼치기'}</Button>}{comparisonId ? <><Badge value={referenceComparison && detail?.comparison.state === 'completed' ? '조회 준비 완료' : detail?.comparison.state || 'loading'} /><Button variant="outline" onClick={() => { setComparisonId(''); setDetail(null); setSetupOpen(true) }}>현재 선택으로 돌아가기</Button><Button variant="outline" disabled={detailLoading} onClick={() => setDetailRefresh(value => value + 1)}><RefreshCw size={15} />결과 갱신</Button></> : <Button disabled={action.busy || !canCompare} onClick={() => action.run(compare)}><GitCompareArrows size={16} />비교 실행</Button>}</div>
+      <div className="comparison-actions" ref={resultTop}><div><h2 title="부모 값에는 자식이 포함됩니다. 행을 다시 합산하지 않습니다.">Instance Area · Power</h2></div>{(comparisonId || selectedCurrent) && <Button variant="ghost" size="sm" aria-expanded={setupOpen} onClick={() => setSetupOpen(value => !value)}>{setupOpen ? '실행 선택 접기' : '실행 선택 펼치기'}</Button>}{comparisonId ? <><Badge value={referenceComparison && detail?.comparison.state === 'completed' ? '조회 준비 완료' : detail?.comparison.state || 'loading'} /><Button variant="outline" onClick={() => { setComparisonId(''); setDetail(null); setSetupOpen(true); setTriageItems([]) }}>현재 선택으로 돌아가기</Button><Button variant="outline" disabled={detailLoading} onClick={() => setDetailRefresh(value => value + 1)}><RefreshCw size={15} />결과 갱신</Button></> : <Button disabled={action.busy || !canCompare} onClick={() => action.run(compare)}><GitCompareArrows size={16} />비교 실행</Button>}</div>
       {!comparisonId && selectedCurrent && !selectedBefore && baseline?.status === 'available' && <p className="notice">기준 실행을 선택하지 않으면 현재 관측만 보존하고 비교 값은 unavailable로 남깁니다.</p>}
       {!comparisonId && mappingDraft.length > 0 && <p className="notice">작성 중인 대응 {mappingDraft.length.toLocaleString()}개를 저장한 뒤 비교를 실행하세요.</p>}
       {comparisonId && <p className="frozen-inputs">고정 입력 · 현재 {displayedCurrent ? uploadName(displayedCurrent) : displayedCurrentId ? '선택 당시 실행' : '조회 중'} ↔ 기준 {displayedBefore ? uploadName(displayedBefore) : displayedBaselineId ? '선택 당시 실행' : '기준 실행 없음'} · 경로 대응 {savedInput.mapping_id ? '고정 revision' : '미선택'}</p>}
@@ -315,10 +366,11 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
       {detailError && <div className="notice error" role="alert">{detailError}</div>}
       {[['현재', currentHierarchy.error], ['기준', beforeHierarchy.error]].filter(([, error]) => error).map(([side, error]) => <div className="notice error" role="alert" key={side}>{side} 경로 조회 실패 · {error}<Button variant="outline" onClick={() => setDetailRefresh(value => value + 1)}>경로 다시 조회</Button></div>)}
       {(currentHierarchy.loading || beforeHierarchy.loading) && <p role="status"><LoaderCircle size={16} className="spin" />선택한 실행의 hierarchy 조회 중…</p>}
+      {comparisonId && detail?.comparison.state === 'completed' && !!displayedBaselineId && (referenceComparison || props.auth.demo) && <TriagePanel auth={props.auth} comparisonId={comparisonId} canWrite={project.can_write} labels={triageLabels} onItems={setTriageItems} onLocate={locateItem} />}
       {referenceComparison && <form className="comparison-result-search" onSubmit={event => { event.preventDefault(); setResultQuery({ offset: 0, search: resultSearch.trim() }) }}><Field label="비교 경로 검색"><input type="search" value={resultSearch} onChange={event => setResultSearch(event.target.value)} placeholder="기준 또는 현재 instance 경로 검색" autoComplete="off" spellCheck={false} /></Field><Button type="submit" disabled={detailLoading}>검색</Button></form>}
       {detailLoading && <p role="status"><LoaderCircle size={16} className="spin" />비교 수치 조회 중…</p>}
       {resultPage && (flatResults || resultPage.total_groups > resultPage.limit) && <div className="comparison-result-pages"><p role="status">{resultPage.total_groups ? `${(resultPage.offset + 1).toLocaleString()}–${Math.min(resultPage.offset + resultPage.limit, resultPage.total_groups).toLocaleString()} / ${resultPage.total_groups.toLocaleString()}그룹` : '검색 조건에 맞는 경로가 없습니다.'}</p><Button variant="outline" disabled={detailLoading || resultPage.offset === 0} onClick={() => setResultQuery({ offset: Math.max(0, resultPage.offset - resultPage.limit), search: resultPage.search })}>이전</Button><Button variant="outline" disabled={detailLoading || resultPage.offset + resultPage.limit >= resultPage.total_groups} onClick={() => setResultQuery({ offset: resultPage.offset + resultPage.limit, search: resultPage.search })}>다음</Button></div>}
-      {browser.roots.length ? <HierarchyBrowser roots={browser.roots} childrenOf={childrenOf} onRequestChildren={referenceComparison ? (key, offset) => void loadChildren(key, offset) : undefined} flat={flatResults} hasResult={!!detail} separator={currentHierarchy.data?.hierarchy_separator} columns={columns} onColumns={chooseColumns} minArea={minArea} onMinArea={chooseMinArea} labels={sideLabels} /> : !currentHierarchy.loading && !beforeHierarchy.loading && !currentHierarchy.error && !beforeHierarchy.error && !pending && !detailLoading && !referenceComparison && <Empty title={comparisonId || selectedCurrent ? '선택한 실행에 표시할 hierarchy가 없습니다' : '현재 실행을 선택하세요'}>Block → NET_VER → REVISION → corner → 실행 파일을 명시적으로 선택하세요. 최신 실행을 자동 선택하지 않습니다.</Empty>}
+      {browser.roots.length ? <HierarchyBrowser roots={browser.roots} childrenOf={childrenOf} onRequestChildren={referenceComparison ? (key, offset) => void loadChildren(key, offset) : undefined} flat={flatResults} hasResult={!!detail} separator={currentHierarchy.data?.hierarchy_separator} columns={columns} onColumns={chooseColumns} minArea={minArea} onMinArea={chooseMinArea} labels={sideLabels} marks={marks} locate={locate} /> : !currentHierarchy.loading && !beforeHierarchy.loading && !currentHierarchy.error && !beforeHierarchy.error && !pending && !detailLoading && !referenceComparison && <Empty title={comparisonId || selectedCurrent ? '선택한 실행에 표시할 hierarchy가 없습니다' : '현재 실행을 선택하세요'}>Block → NET_VER → REVISION → corner → 실행 파일을 명시적으로 선택하세요. 최신 실행을 자동 선택하지 않습니다.</Empty>}
       {!comparisonId && selectedCurrent && selectedBefore && <details className="correspondence-settings"><summary>구조 대응 설정 · 다른 Block / hierarchy 연결</summary><p className="muted">규칙이 없는 instance는 양쪽 design 루트 아래 상대 경로가 같으면 자동으로 대응합니다. 이름이나 위치가 달라진 경로만 규칙을 추가하세요. 경로 일부를 검색하거나 전체 경로를 붙여넣고, ‘하위 트리 전체’는 상대 경로가 같은 자식까지 함께 대응합니다.</p>
         <div className="mapping-actions"><Button variant="outline" onClick={exportMappingTemplate}><Download size={15} />Export template</Button><Button variant="outline" disabled={action.busy || !project.can_write || beforeHierarchy.loading || currentHierarchy.loading || !!beforeHierarchy.error || !!currentHierarchy.error || !beforeHierarchy.data || !currentHierarchy.data} onClick={() => mappingFile.current?.click()}><UploadIcon size={15} />Import mapping CSV</Button><input ref={mappingFile} type="file" accept=".csv,text/csv" hidden aria-label="Mapping CSV 파일" onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; if (file) void action.run(() => importMapping(file), 'CSV 대응을 불러왔습니다. 내용을 확인한 뒤 대응 저장을 누르세요.') }} /></div>
         <p className="muted">UTF-8 CSV · baseline_path,current_path,scope · 한 행에 1:1 대응 하나, scope는 node 또는 subtree입니다. 템플릿에는 작성 중인 대응 또는 선택한 경로가 포함됩니다. 가져오기는 작성 중인 목록 전체를 교체하며, 모든 행을 검증한 뒤 적용합니다. 대응 저장을 눌러야 서버에 저장됩니다.</p>
@@ -328,6 +380,11 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
         <Field label="저장된 구조 대응"><select value={mappingId} onChange={event => setMappingId(event.target.value)}><option value="">대응 미선택 · 비교 불가</option>{mappings.map(row => <option key={row.id} value={row.id}>{date(row.created_at)} · 규칙 {Array.isArray(row.payload.rules) ? row.payload.rules.length : 0}개 · r{row.revision}</option>)}</select></Field>
       </details>}
     </section>
+    {currentAreaId && <NotesPanel auth={props.auth} canWrite={project.can_write} projectId={currentAreaId}
+      block={currentBlock?.area_id ? { areaId: currentBlock.area_id, name: currentBlock.name } : undefined}
+      netVers={[...new Set(currentBlock?.versions.map(row => row.net_ver) || [])]} currentNet={current.net}
+      baselineProject={mode === 'project' && baseline?.status === 'available' && baseline.baseline_project_id ? { areaId: baseline.baseline_project_id, name: savedProject?.name || text(baseline.baseline_project?.payload.name) } : null}
+      records={props.records} onSaved={props.refresh} />}
     <details className="panel upload-history"><summary>업로드 이력 · PC CLI 메타데이터</summary><Uploads auth={props.auth} access={props.access} uploads={props.uploads} records={props.records} filters={filters} /></details>
     <details className="panel comparison-history"><summary>저장된 비교 이력 · {history.length}건</summary><div className="compact-list">{history.map(row => <button key={row.id} onClick={() => { setDetail(null); setDetailError(''); setResultSearch(''); setResultQuery({ offset: 0, search: '' }); setComparisonId(row.id); setDetailRefresh(value => value + 1); showResult() }}><span>{date(row.created_at)} · {text(object(row.payload.request).comparison_kind) === 'previous_version' ? '이전 버전' : '프로젝트 비교'}</span><Badge value={row.payload.result_format === 'hierarchy-reference-v1' && row.state === 'completed' ? '조회 준비 완료' : row.state} /></button>)}</div>{!history.length && <p className="muted">저장된 비교가 없습니다.</p>}</details>
   </>
@@ -367,7 +424,7 @@ function PathPicker({ label, hierarchy, value, onChange, onReload, disabled }: {
   </section>
 }
 
-function RunSelector({ label, project, selection, onChange, uploads, busy, onPrepare }: { label: string; project: AtlasProject; selection: Selection; onChange: (value: Selection) => void; uploads: Upload[]; busy: boolean; onPrepare: (selection: Selection, previous?: string | null) => void }) {
+function RunSelector({ label, project, selection, onChange, uploads, busy, onPrepare, lockedBlock = false, hint }: { label: string; project: AtlasProject; selection: Selection; onChange: (value: Selection) => void; uploads: Upload[]; busy: boolean; onPrepare: (selection: Selection, previous?: string | null) => void; lockedBlock?: boolean; hint?: string }) {
   const block = project.blocks.find(row => row.id === selection.block)
   const version = block?.versions.find(row => row.id === selection.version && row.net_ver === selection.net)
   const [previous, setPrevious] = useState('')
@@ -377,7 +434,7 @@ function RunSelector({ label, project, selection, onChange, uploads, busy, onPre
   for (const upload of uploads) if (!corners.has(cornerKey(upload))) corners.set(cornerKey(upload), `${upload.process_label ?? '?'} · ${upload.voltage_v ?? '?'} V · ${upload.temp_c ?? '?'} °C · ${upload.pex ?? '?'}`)
   const runs = selection.corner ? uploads.filter(row => cornerKey(row) === selection.corner) : []
   return <fieldset className="run-selector"><legend>{label} · {project.name}</legend><div className="run-fields">
-    <Field label={`${label} Block`}><select value={selection.block} onChange={event => { onChange({ ...emptySelection, block: event.target.value }); setPrevious('') }}><option value="">Block 선택</option>{project.blocks.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field>
+    <Field label={`${label} Block`}><select value={selection.block} disabled={lockedBlock} onChange={event => { onChange({ ...emptySelection, block: event.target.value }); setPrevious('') }}><option value="">Block 선택</option>{project.blocks.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field>
     <Field label={`${label} NET_VER`}><select value={selection.net} disabled={!block} onChange={event => { onChange({ ...selection, net: event.target.value, version: '', corner: '', upload: '' }); setPrevious('') }}><option value="">NET_VER 선택</option>{[...new Set(block?.versions.map(row => row.net_ver) || [])].map(value => <option key={value}>{value}</option>)}</select></Field>
     <Field label={`${label} REVISION`}><select value={selection.version} disabled={!block || !selection.net} onChange={event => { onChange({ ...selection, version: event.target.value, corner: '', upload: '' }); setPrevious('') }}><option value="">REVISION 선택</option>{block?.versions.filter(row => row.net_ver === selection.net).map(row => <option key={row.id} value={row.id}>{row.revision} · {row.layout}</option>)}</select></Field>
     <Field label={`${label} corner`}><select value={selection.corner} disabled={!version?.area_id} onChange={event => onChange({ ...selection, corner: event.target.value, upload: '' })}><option value="">corner 선택</option>{[...corners].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
@@ -385,6 +442,7 @@ function RunSelector({ label, project, selection, onChange, uploads, busy, onPre
   </div>
     {block && (!block.area_id || version && !version.area_id) && <div className="scope-preparation"><small>선택한 정확한 범위의 수치 연결이 필요합니다. 다른 범위 파일로 대체하지 않습니다.</small>{needsLineage && <Field label={`${label} 명시적 이전 버전`}><select value={previous} onChange={event => setPrevious(event.target.value)}><option value="">계보를 선택하세요</option><option value="none">이 버전에서 계보 시작</option>{block.versions.filter(row => row.id !== version.id).map(row => <option key={row.id} value={row.id}>{row.net_ver} · {row.revision} · {row.layout}</option>)}</select></Field>}<Button variant="outline" disabled={busy || !project.can_write || !!needsLineage && !previous} onClick={() => onPrepare(selection, needsLineage ? previous === 'none' ? null : previous : undefined)}>선택 범위 연결</Button></div>}
     {version?.area_id && !uploads.length && <small>선택한 버전에 준비된 CSV가 없습니다. 아래 업로드 이력의 메타데이터로 PC CLI 업로드를 준비하세요.</small>}
+    {hint && <small>{hint}</small>}
   </fieldset>
 }
 

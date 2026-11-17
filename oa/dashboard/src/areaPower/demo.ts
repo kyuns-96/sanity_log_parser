@@ -468,7 +468,7 @@ function config(body: Payload, visible: Set<string>) {
   if (!['target', 'mapping', 'change'].includes(type)) fail('지원하는 설정은 target / mapping / change입니다.')
   validateScope(body, visible)
   const payload = structuredClone(object(body.payload))
-  if (type === 'target') { if (!text(payload.name).trim()) fail('Target 이름이 필요합니다.'); checkedPaths(payload.paths); requestedMetrics(payload.metrics); if (!['node', 'subtree'].includes(text(payload.scope))) fail('Target scope는 node / subtree입니다.'); for (const value of list(payload.bindings)) { const binding = object(value); const snapshot = scopedRecord(text(binding.snapshot_id), 'snapshot', visible); if (snapshot.project_id !== body.project_id || body.block_id && snapshot.block_id !== body.block_id) fail('Target binding snapshot 범위가 다릅니다.'); checkedPaths(binding.paths) } }
+  if (type === 'target') { if (!text(payload.name).trim()) fail('Target 이름이 필요합니다.'); if (payload.watch === true) { if (!strings(payload.paths).length) fail('주요 instance 경로가 필요합니다.') } else checkedPaths(payload.paths); requestedMetrics(payload.metrics); if (!['node', 'subtree'].includes(text(payload.scope))) fail('Target scope는 node / subtree입니다.'); for (const value of list(payload.bindings)) { const binding = object(value); const snapshot = scopedRecord(text(binding.snapshot_id), 'snapshot', visible); if (snapshot.project_id !== body.project_id || body.block_id && snapshot.block_id !== body.block_id) fail('Target binding snapshot 범위가 다릅니다.'); checkedPaths(binding.paths) } }
   if (type === 'change' && !text(payload.text).trim()) fail('변경 원문이 필요합니다.')
   if (type === 'mapping') {
     for (const side of ['baseline', 'current']) validateScope({ project_id: payload[`${side}_project_id`], block_id: payload[`${side}_block_id`], version_id: payload[`${side}_version_id`] }, visible)
@@ -498,6 +498,83 @@ function config(body: Payload, visible: Set<string>) {
   if (previous) { row.entity_id = previous.entity_id; row.revision = String(BigInt(previous.revision) + 1n); row.row_version = String(BigInt(previous.row_version) + 1n) }
   return row
 }
+function baselineSetting(project: TrackingRecord, visible: Set<string>) {
+  const value = publicProject(project, visible)
+  const target = value.payload.baseline_project_id ? scopedRecord(text(value.payload.baseline_project_id), 'project', visible) : null
+  return { project_id: value.id, row_version: value.row_version, baseline_project_id: target?.id || null, baseline_project: target ? publicProject(target, visible) : null, status: value.baseline_status,
+    process: project.payload.process ?? null, baseline_process: target?.payload.process ?? null }
+}
+// Synthetic AI triage: the same candidate thresholds as the product, without
+// ancestor roll-up and without any model call. Every item stays needs_review.
+const TRIAGE_ENGINE = 'instance-triage-v1'
+function triageSummary(run: TrackingRecord) {
+  return { id: run.id, state: run.state, created_at: run.created_at, error_detail: run.payload.error ?? null, payload: run.payload, note_count: list(run.payload.notes).length }
+}
+function triageSelection(comparison: TrackingRecord, thresholds: Payload, visible: Set<string>) {
+  if (comparison.state !== 'completed') fail('수치 계산이 완료된 비교만 분석할 수 있습니다.')
+  const input = object(comparison.payload.request)
+  if (!input.baseline_upload_id) fail('AI 분석에는 기준 실행이 필요합니다.')
+  const current = scopedUpload(text(input.current_upload_id), visible), baseline = scopedUpload(text(input.baseline_upload_id), visible)
+  const limit = (key: string, fallback: number) => { const value = Number(text(thresholds[key]) || fallback); if (!Number.isFinite(value) || value < 0) fail('기준 숫자는 0 이상이어야 합니다.'); return value }
+  const areaLimit = limit('area_increase_pct', 10), powerLimit = limit('power_increase_pct', 10), minArea = limit('min_area', 50)
+  const groups = new Map<string, { id: string; baseline: string[]; current: string[]; metrics: Record<string, Payload> }>()
+  for (const row of records.values()) if (row.record_type === 'metric_result' && row.parent_id === comparison.id) {
+    const id = text(row.payload.group_id), group = groups.get(id) || { id, baseline: strings(row.payload.baseline_paths), current: strings(row.payload.current_paths), metrics: {} }
+    group.metrics[text(row.payload.metric)] = row.payload; groups.set(id, group)
+  }
+  const scopedRows = (type: string) => latest([...records.values()].filter(row => row.record_type === type && row.project_id === current.project_id && row.block_id === current.block_id))
+  const watched = [...new Set(scopedRows('target').filter(row => row.payload.watch === true).flatMap(row => strings(row.payload.paths)))]
+  const kind = text(input.comparison_kind)
+  const notes = scopedRows('change').filter(row => row.payload.archived !== true && (row.payload.note_kind === 'net_ver' || kind === 'previous_project' && row.payload.note_kind === 'project_change' && row.payload.baseline_project_id === baseline.project_id))
+    .map(row => ({ id: row.id, kind: text(row.payload.note_kind), net_ver: row.payload.net_ver ?? null, text: text(row.payload.text), revision: row.revision }))
+  const process = { current: records.get(current.project_id)?.payload.process ?? null, baseline: records.get(baseline.project_id)?.payload.process ?? null }
+  const sameCorner = current.condition_key === baseline.condition_key
+  const library = !sameCorner ? 'different' : current.project_id === baseline.project_id ? 'same' : process.current && process.baseline ? process.current === process.baseline ? 'same' : 'different' : 'unknown'
+  const context = { same_project: current.project_id === baseline.project_id, same_corner: sameCorner, library,
+    area: { analyzed: true, unconfirmed: false, reason: null }, power: sameCorner ? { analyzed: true, unconfirmed: false, reason: null } : { analyzed: false, unconfirmed: false, reason: 'corner_different' } }
+  const number = (value: unknown) => value == null || value === '' ? null : Number(text(value))
+  const cards: Payload[] = []
+  const counts = { area_increase: 0, power_increase: 0, new_instance: 0, watched: 0, rolled_up: 0, total: 0 }
+  for (const group of groups.values()) {
+    const area = object(group.metrics.total_area), power = object(group.metrics.pwr_all_total_mw)
+    const size = Math.max(number(area.baseline) ?? 0, number(area.current) ?? 0)
+    const reasons: string[] = []
+    if (group.baseline.length && group.current.length && size >= minArea) {
+      if ((number(area.relative_change_pct) ?? -Infinity) >= areaLimit) reasons.push('area_increase')
+      if (context.power.analyzed && (number(power.relative_change_pct) ?? -Infinity) >= powerLimit) reasons.push('power_increase')
+    }
+    if (!group.baseline.length && group.current.length && size >= minArea) reasons.push('new_instance')
+    const isWatched = group.current.some(path => watched.includes(path))
+    if (!reasons.length && !isWatched) continue
+    for (const reason of reasons) counts[reason as 'area_increase'] += 1
+    if (isWatched) counts.watched += 1
+    const shares = (prefix: string) => Object.entries(group.metrics).filter(([metric, value]) => metric.startsWith(prefix) && metric.endsWith('_pct') && value.pct_point_change != null && Number(text(value.pct_point_change)) !== 0)
+      .map(([metric, value]) => ({ name: metric.replace(/_pct$/, ''), baseline_pct: value.baseline, current_pct: value.current, delta_pp: value.pct_point_change }))
+    cards.push({ id: group.id, current_path: group.current.join(' + ') || null, baseline_path: group.baseline.join(' + ') || null, reasons, watched: isWatched, notable: reasons.length > 0,
+      flags: library === 'same' ? [] : [`library_${library}`], area: { baseline: area.baseline, current: area.current, delta: area.delta, delta_pct: area.relative_change_pct },
+      power_mw: context.power.analyzed ? { baseline: power.baseline, current: power.current, delta: power.delta, delta_pct: power.relative_change_pct } : { excluded: 'corner_different' },
+      vth: shares('vt_'), drive: shares('drv_'), rolled_up_ancestors: [], top_children: [], ancestor_ids: [] })
+  }
+  counts.total = cards.length
+  const known = new Set([...groups.values()].flatMap(group => group.current))
+  const missing = watched.filter(path => !known.has(path))
+  const applied = { area_increase_pct: String(areaLimit), power_increase_pct: String(powerLimit), min_area: String(minArea) }
+  const preview = { thresholds: applied, counts, estimated_calls: 0, max_items: 400, over_limit: cards.length > 400, missing_watched: missing, watched_paths: watched, context,
+    notes: notes.map(({ text: _text, ...note }) => note), note_warnings: [], same_rtl: false, applicable_net_vers: [...new Set(notes.map(note => text(note.net_ver)).filter(Boolean))], process }
+  return { preview, cards, notes, context, counts, missing, thresholds: applied, kind }
+}
+function triageRun(comparison: TrackingRecord, body: Payload, visible: Set<string>, actor: string) {
+  const selection = triageSelection(comparison, object(body.thresholds), visible)
+  if (selection.preview.over_limit) fail('분석 대상이 400개를 넘습니다. 기준을 올리세요.')
+  const reason = 'synthetic_demo_model_not_called'
+  const run = record('ai_run', { ...scopeFromRecord(comparison), parent_id: comparison.id }, { engine: TRIAGE_ENGINE, thresholds: selection.thresholds, notes: selection.notes, note_warnings: [], same_rtl: false,
+    watched_paths: selection.preview.watched_paths, comparison_kind: selection.kind, labels: object(body.labels), requested_by: actor, side_context: selection.context, counts: selection.counts,
+    missing_watched: selection.missing, coverage: { expected_items: selection.cards.length, processed_items: selection.cards.length, failed_items: selection.cards.length, batches: 0, processed_batches: 0 },
+    error: selection.cards.length ? { code: reason } : null, model_called: false, source: 'synthetic_memory_demo', notice }, selection.cards.length ? 'failed' : 'completed')
+  for (const card of selection.cards) record('judgement', { ...scopeFromRecord(comparison), parent_id: run.id }, { group_id: card.id, card, verdict: 'needs_review', cause: 'unknown',
+    explanation: '합성 데모는 AI를 호출하지 않습니다. 후보 선별 결과만 표시하며 판정은 확인 필요로 남깁니다.', note_ids: [], quotes: [], failed: true, failure: reason, adjusted: [], model_called: false }, 'needs_review')
+  return { ai_run: run, job: null }
+}
 async function dispatch(path: string, body: Payload | undefined, plain: boolean | 'blob' | undefined): Promise<unknown> {
   const { catalog, visible, actor } = await synchronize()
   const url = new URL(path.replace(/^\/api\/area-power(?=\/|\?|$)/, '') || '/', 'https://synthetic.invalid')
@@ -522,7 +599,37 @@ async function dispatch(path: string, body: Payload | undefined, plain: boolean 
     }
     const value = publicProject(project, visible)
     const target = value.payload.baseline_project_id ? scopedRecord(text(value.payload.baseline_project_id), 'project', visible) : null
-    return { project_id: value.id, row_version: value.row_version, baseline_project_id: target?.id || null, baseline_project: target ? publicProject(target, visible) : null, status: value.baseline_status }
+    return baselineSetting(project, visible)
+  }
+  const processRoute = /^\/projects\/([^/]+)\/process$/.exec(route)
+  if (processRoute && body) {
+    const project = scopedRecord(decodeURIComponent(processRoute[1]), 'project', visible)
+    cas(project, body.expected_row_version)
+    project.payload.process = text(body.process).trim() || null
+    touch(project)
+    return baselineSetting(project, visible)
+  }
+  const triagePreview = /^\/comparisons\/([^/]+)\/triage\/preview$/.exec(route)
+  if (triagePreview && body) return triageSelection(scopedRecord(decodeURIComponent(triagePreview[1]), 'comparison', visible), object(body.thresholds), visible).preview
+  const triageRuns = /^\/comparisons\/([^/]+)\/triage$/.exec(route)
+  if (triageRuns) {
+    const comparison = scopedRecord(decodeURIComponent(triageRuns[1]), 'comparison', visible)
+    if (body) return triageRun(comparison, body, visible, actor)
+    return { runs: accessible().filter(row => row.record_type === 'ai_run' && row.parent_id === comparison.id && row.payload.engine === TRIAGE_ENGINE).sort((a, b) => text(b.created_at).localeCompare(text(a.created_at))).map(triageSummary) }
+  }
+  const triageMail = /^\/triage\/([^/]+)\/mail$/.exec(route)
+  if (triageMail && body) {
+    const run = scopedRecord(decodeURIComponent(triageMail[1]), 'ai_run', visible)
+    // No mail service exists in the demo: the request is recorded as not sent.
+    const mail = record('triage_mail', { ...scopeFromRecord(run), parent_id: run.id }, { recipients: strings(body.recipients), excluded_ids: strings(body.excluded_ids), requested_by: actor, job_state: 'failed', job_error: { code: 'mail_unconfigured' }, mail_called: false, source: 'synthetic_memory_demo' }, 'requested')
+    return { mail_request: mail, job: null }
+  }
+  const triageResult = /^\/triage\/([^/]+)$/.exec(route)
+  if (triageResult && !body) {
+    const run = scopedRecord(decodeURIComponent(triageResult[1]), 'ai_run', visible)
+    const children = accessible().filter(row => row.parent_id === run.id)
+    return { ai_run: { ...triageSummary(run), notes: list(run.payload.notes) }, items: children.filter(row => row.record_type === 'judgement').map(row => row.payload),
+      mails: children.filter(row => row.record_type === 'triage_mail').map(row => ({ id: row.id, created_at: row.created_at, ...row.payload })) }
   }
   const hierarchy = /^\/uploads\/([^/]+)\/hierarchy$/.exec(route)
   if (hierarchy && !body) {

@@ -48,6 +48,25 @@ export const detailSchema = z.object({
 })
 export type ComparisonDetail = z.infer<typeof detailSchema>
 export const comparisonCreatedSchema = z.object({ comparison: recordSchema, job: recordSchema.nullable(), reused: z.boolean() })
+// AI instance triage. Numbers arrive as exact strings; counts are small integers.
+const count = z.union([z.string(), z.number()]).transform(Number).refine(value => Number.isSafeInteger(value) && value >= 0)
+const loose = z.record(z.string(), z.unknown())
+export const triageNoteSchema = z.object({ id: z.string(), kind: z.string(), net_ver: z.string().nullish(), text: z.string().optional() }).passthrough()
+export const triagePreviewSchema = z.object({
+  counts: z.record(z.string(), count), estimated_calls: count, max_items: count, over_limit: z.boolean(),
+  missing_watched: z.array(z.string()), watched_paths: z.array(z.string()), context: loose,
+  notes: z.array(triageNoteSchema), note_warnings: z.array(loose), same_rtl: z.boolean(),
+  applicable_net_vers: z.array(z.string()), process: loose,
+})
+export type TriagePreview = z.infer<typeof triagePreviewSchema>
+export const triageRunSchema = z.object({ id: z.string(), state: z.string(), created_at: optionalText, error_detail: z.unknown().nullish(), payload: loose, note_count: count.optional(), notes: z.array(triageNoteSchema).optional() }).passthrough()
+export type TriageRun = z.infer<typeof triageRunSchema>
+export const triageRunsSchema = z.object({ runs: z.array(triageRunSchema) })
+export const triageItemSchema = z.object({ group_id: z.string(), verdict: z.string(), cause: z.string(), explanation: z.string(), failed: z.boolean(), failure: z.string().nullish(), quotes: z.array(z.string()).optional(), card: loose }).passthrough()
+export type TriageItem = z.infer<typeof triageItemSchema>
+export const triageResultSchema = z.object({ ai_run: triageRunSchema, items: z.array(triageItemSchema), mails: z.array(loose) })
+export type TriageResult = z.infer<typeof triageResultSchema>
+export const triageStartedSchema = z.object({ ai_run: recordSchema, job: recordSchema.nullable() })
 export const unknownSchema = z.unknown()
 
 // No server numeric value passes through IEEE-754 before display.

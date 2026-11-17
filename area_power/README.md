@@ -134,7 +134,15 @@ metadata에는 준비된 실제 Area `project_id`, `version_id`, `block_id` UUID
 - 현재 프로젝트와 양쪽 Block·NET_VER·REVISION·corner·정확한 upload 실행은 비교 화면에서 상단 범위와 독립적으로 선택한다. NET_VER 후보는 각 Block에 한정되며 변경 시 같은 쪽 REVISION과 하위 선택을 비운다. 현재 쪽 변경으로 기준 쪽 실행은 바꾸지 않는다. 기준 프로젝트는 현재 프로젝트에 저장된 지정을 사용하며 변경은 명시적으로 저장한다. Corner 하나가 CSV 한 파일이다. 이름·최신 시각·동일 경로로 기준 실행이나 프로젝트 간 대응을 자동 선택하지 않는다.
 - Instance 검색은 문자열을 입력한 뒤 결과를 펼친다. 구조 대응의 `Export template` → `Import mapping CSV`는 `baseline_path,current_path,scope` 세 열의 일대일 `node`/`subtree` 규칙을 지원한다. 모든 경로·중복 검증에 성공해야 작성 중 목록을 교체하고, 대응 저장 버튼으로 기존 불변 mapping revision을 등록한다. 잘못된 행을 건너뛰거나 일부만 저장하지 않는다.
 - 서로 다른 Block·경로는 같은 화면의 명시적 대응으로 연결한다. 매핑 없는 행은 한쪽의 관측값만 보여 주며 상대 값·Δ·%는 unavailable이다. 부모 수치와 자식을 다시 합산하지 않는다.
-- AI·작업·알림·target·변경 설명의 내부 엔진은 보존하지만 독립 주 탐색이나 비교의 선행 입력이 아니다.
+- AI·작업·알림·target·변경 설명의 기존 내부 엔진(지표별 판정)은 보존하지만 독립 주 탐색이나 비교의 선행 입력이 아니다.
+- **AI 이상치 분석(instance 단위, `instance-triage-v1`)** 은 비교 화면의 버튼으로 실행한다. 설계는 [설계 문서](../docs/superpowers/specs/2026-11-17-area-power-ai-triage-design.md)를 따른다.
+  - 입력: NET_VER 업데이트 메모·프로젝트 변경 메모(`change` 레코드의 `note_kind`·`net_ver`), 주요 instance(`target` 레코드의 `watch`), 프로젝트 공정(Area `project` payload의 `process`, `POST /projects/{id}/process`).
+  - 코드가 후보를 고른다: Area/Power 증가율 기준(기본 +10%), Area 최소(기본 50), 신규 instance, 주요 instance(항상). 자식 후보가 증가분의 80% 이상을 차지하는 조상은 자식 항목에 묶는다. 대상이 400개를 넘으면 실행하지 않는다.
+  - `POST /comparisons/{id}/triage/preview`는 후보 수·예상 호출 수·적용 메모를 돌려주고, `POST /comparisons/{id}/triage`는 고정 입력을 담은 `ai_run`과 `judge` job을 만든다. 중앙 VWP가 요청자의 `REVIEW` 연결로 20개씩 묶어 호출하고 instance마다 `judgement`를 저장한다. `GET /comparisons/{id}/triage`, `GET /triage/{run}`으로 조회한다.
+  - 판정은 `expected`·`unexpected`·`needs_review`·`minor`(주요 instance 전용)이며 코드는 판정을 낮추는 방향으로만 고친다. AI 미설정·실패·권한 변경은 해당 instance를 `needs_review`로 남기고 실행을 `failed`로 표시한다.
+  - 비교 조건이 확인되지 않은 Area/Power도 분석하되 표시를 붙이고, corner나 분석 조건이 실제로 다르면 Power를 뺀다. Vth·Drive Δ%p는 분석 모듈이 직접 계산하며 "공정이 같고 corner가 같으면 같은 library" 규칙으로 표시를 정한다. 비교 표의 `comparability`와 수치 규칙은 바꾸지 않는다.
+  - `POST /triage/{run}/mail`은 검토 후 요약 메일 한 통을 요청한다(`triage_mail` 레코드와 `mail` job). 실제 발송에는 사내 `MailSender` 어댑터가 필요하다.
+  - 같은 프로젝트의 이전 버전 비교(`previous_version`)를 화면에서 선택할 수 있다. NET_VER 메모는 명시적 계보에서 기준 NET_VER 다음부터 현재까지 적용하고, 프로젝트 비교에는 계보 전체와 프로젝트 변경 메모를 적용한다.
 
 ### 프로젝트 기준 API
 
