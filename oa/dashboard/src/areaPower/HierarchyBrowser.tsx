@@ -82,7 +82,7 @@ function unchanged(row: BrowserRow) {
   return !!row.result && overall(row) === 'comparable' && ['total_area', 'pwr_all_total_mw'].every(metric => sign(value(row, metric, 'delta')) === 0)
 }
 
-export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, hasResult, separator, columns, onColumns, minArea, onMinArea }: {
+export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, hasResult, separator, columns, onColumns, minArea, onMinArea, labels }: {
   roots: BrowserRow[]
   childrenOf: (row: BrowserRow) => ChildState | undefined
   onRequestChildren?: (key: string, offset: number) => void
@@ -93,7 +93,9 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
   onColumns: (columns: string[]) => void
   minArea: string
   onMinArea: (value: string) => void
+  labels: { baseline: string; current: string }
 }) {
+  const sideName = (side: 'baseline' | 'current') => `${side === 'baseline' ? '기준' : '현재'}${labels[side] ? ` · ${labels[side]}` : ''}`
   const metrics = columns.map(id => metricDef.get(id)).filter((metric): metric is MetricDef => !!metric)
   const [choosing, setChoosing] = useState(false)
   const [areaDraft, setAreaDraft] = useState(minArea)
@@ -224,6 +226,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
       {!flat && <Button variant="outline" size="xs" onClick={() => setExpanded(new Set())} disabled={!expanded.size}><ChevronsDownUp size={14} />모두 접기</Button>}
       <label className="browser-check"><input type="checkbox" checked={changedOnly} onChange={event => setChangedOnly(event.target.checked)} />변화·미대응만</label>
       {sort.key === 'size' ? <span className="diff-count">정렬 · Area 큰 순</span> : <Button variant="ghost" size="xs" onClick={() => setSort(defaultSort)}>정렬 초기화 (Area 큰 순)</Button>}
+      {mode === 'single' && <span className="side-legend">{sideName('baseline')} <span aria-hidden="true">↔</span> {sideName('current')}</span>}
       <small>{flat ? '검색 결과 · instance 전체 경로' : '↑↓ 이동 · → 펼치기 · ← 접기 · Alt+↑↓ 차이 이동'} · 부모 값에는 자식이 포함됩니다 · 수치 비교이며 정상/이상 판정이 아님</small>
     </div>
     {choosing && <div className="column-chooser" role="group" aria-label="표시할 지표">
@@ -240,7 +243,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
           : <colgroup><col className="col-instance" />{Array.from({ length: singleColumns - 2 }, (_, index) => <col key={index} className="col-number" />)}<col className="col-state" /></colgroup>}
         <thead>
           {mode === 'split' ? <>
-            <tr><th colSpan={1 + metrics.length} className="pane-head">기준</th><th colSpan={metrics.length} className="group-head gutter-head">변화</th><th colSpan={2 + metrics.length} className="pane-head current-pane">현재</th></tr>
+            <tr><th colSpan={1 + metrics.length} className="pane-head" title={sideName('baseline')}>{sideName('baseline')}</th><th colSpan={metrics.length} className="group-head gutter-head">변화</th><th colSpan={2 + metrics.length} className="pane-head current-pane" title={sideName('current')}>{sideName('current')}</th></tr>
             <tr>
               <th className="instance-head" aria-sort={ariaSort('name')}><button type="button" onClick={() => sortBy('name')}>Instance {sortMark('name')}</button></th>
               {metrics.map(metric => sortHead(`${metric.id}.baseline`, `${metric.label}${unitOf(metric)}`))}
@@ -289,7 +292,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
                 {stateCell}
               </tr>
             }
-            const tooltip = [`현재 ${row.currentPaths.join(' + ') || '없음'}`, `기준 ${row.baselinePaths.join(' + ') || '없음'}`].join('\n')
+            const tooltip = [`${sideName('current')}: ${row.currentPaths.join(' + ') || '없음'}`, `${sideName('baseline')}: ${row.baselinePaths.join(' + ') || '없음'}`].join('\n')
             return <tr key={row.key} {...attributes} className={selected === row.key ? 'selected' : undefined}>
               <td className="instance" title={tooltip}><span className="tree-cell">{guides}{toggleButton}
                 <span className="instance-name">{name || baseName}</span>
@@ -306,8 +309,8 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
       </table>
     </div>
     {current && <dl className="browser-detail" aria-live="polite">
-      <div><dt>현재</dt><dd>{current.row.currentPaths.join(' + ') || '대응 없음'}</dd></div>
-      <div><dt>기준</dt><dd>{current.row.baselinePaths.join(' + ') || '대응 없음'}</dd></div>
+      <div><dt title={sideName('current')}>{sideName('current')}</dt><dd>{current.row.currentPaths.join(' + ') || '대응 없음'}</dd></div>
+      <div><dt title={sideName('baseline')}>{sideName('baseline')}</dt><dd>{current.row.baselinePaths.join(' + ') || '대응 없음'}</dd></div>
       {metrics.map(metric => <div key={metric.id}><dt>{metric.label}{unitOf(metric)}</dt><dd>{metric.ratio
         ? <>{percent(value(current.row, metric.id, 'baseline'))} → {percent(value(current.row, metric.id, 'current'))} · Δ {formatPercent(value(current.row, metric.id, 'pct_point_change'))}%p</>
         : <>{format(value(current.row, metric.id, 'baseline'))} → {format(value(current.row, metric.id, 'current'))} · Δ {format(value(current.row, metric.id, 'delta'))} · {percent(value(current.row, metric.id, 'relative_change_pct'))}</>}</dd></div>)}
