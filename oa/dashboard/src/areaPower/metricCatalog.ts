@@ -22,7 +22,7 @@ export const METRIC_GROUPS = ['Area', 'Vth', 'Power', 'Drive', 'Cells']
 export const metricDef = new Map(METRIC_CATALOG.map(metric => [metric.id, metric]))
 // Area and total power are always fetched: they decide order, diff markers and status.
 export const REQUIRED_METRICS = ['total_area', 'pwr_all_total_mw']
-export const DEFAULT_COLUMNS = ['total_area', 'pwr_all_total_mw', 'vt_slvt_pct', 'vt_lvt_pct', 'vt_rvt_pct', 'vt_hvt_pct']
+export const DEFAULT_COLUMNS = ['total_area', 'pwr_all_total_mw', 'vt_lvt_pct', 'vt_rvt_pct', 'vt_hvt_pct']
 export const MAX_COLUMNS = 14
 export const DEFAULT_MIN_AREA = '50'
 export const requestedMetrics = (columns: string[]) => [...new Set([...REQUIRED_METRICS, ...columns])]
