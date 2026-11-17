@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import os
 from pathlib import Path
 import sys
+import traceback
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -38,6 +40,7 @@ ID = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")]
 BundleID = Annotated[str, Field(pattern=r"^b-[0-9a-f]{64}$")]
 Offset = Annotated[int, Query(ge=0, le=1_000_000)]
 Limit = Annotated[int, Query(ge=1, le=100)]
+LOG = logging.getLogger('oa.dashboard')
 
 
 class Command(BaseModel):
@@ -224,6 +227,15 @@ def create_app(*, auth_mode: AuthMode | None = None,
                                  "SOURCE_INTAKE_NOT_READY", "SOURCE_SCOPE_CONFIRMATION_REQUIRED",
                                  "AREA_BINDING_CONFLICT", "AREA_PREVIOUS_NOT_PREPARED", "AREA_LINEAGE_REQUIRED"} else
                   503 if code == "AREA_POWER_UNAVAILABLE" else 400)
+        if status >= 500:
+            cause = exc.__cause__ or exc.__context__ or exc
+            state = getattr(cause, 'sqlstate', None) or getattr(cause, 'pgcode', None)
+            if not isinstance(state, str) or len(state) != 5 or any(char not in '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ' for char in state):
+                state = None
+            frames = [f'{frame.filename.rsplit("/", 1)[-1]}:{frame.name}:{frame.lineno}'
+                      for frame in traceback.extract_tb(cause.__traceback__)]
+            LOG.error('Dashboard API unavailable: code=%s type=%s sqlstate=%s at=%s',
+                      code, type(cause).__name__, state, '; '.join(frames))
         return JSONResponse({"code": code}, status, headers={"Cache-Control": "no-store"})
 
     @app.exception_handler(RequestValidationError)

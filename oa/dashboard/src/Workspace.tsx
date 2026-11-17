@@ -29,6 +29,7 @@ import './workspace.css'
 const n = (value: number) => value.toLocaleString('ko-KR')
 const itemNames: Record<string, string> = { gca_constraints: 'GCA 제약조건 검사', vclp_low_power: 'VC LP 저전력 검사', spyglass_lint: 'SpyGlass Lint 검사' }
 const itemName = (id: string) => itemNames[id] || id || '항목 미분류'
+const readLabels = { overview: '프로젝트 현황', versions: '블록 버전', reports: '검사 대장', history: 'PoR 변경 이력' }
 function Status({ value }: { value: string }) { return <Badge variant="outline" className={`ws-status ws-status-${value.toLowerCase()}`}><i />{labels[value] || value}</Badge> }
 function Loading({ lines = 3 }: { lines?: number }) { return <div className="ws-skeleton" aria-label="불러오는 중" role="status">{Array.from({ length: lines }, (_, i) => <span key={i} />)}</div> }
 
@@ -93,6 +94,7 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
   const [search, setSearch] = useState('')
   const [offset, setOffset] = useState(0)
   const [error, setError] = useState('')
+  const [readErrors, setReadErrors] = useState({ overview: '', versions: '', reports: '', history: '' })
   const [notice, setNotice] = useState('')
   const [refresh, setRefresh] = useState(0)
   const [selectedReport, setSelectedReport] = useState<WorkspaceReport | null>(null)
@@ -119,10 +121,12 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
   const por = versions?.por
   const isPor = !!version && por?.version?.id === version.id
   const selectedItem = reports?.groups.find(group => group.item_id === itemId)
-  const handleError = useCallback((e: unknown) => {
+  const handleError = useCallback((e: unknown, resource?: keyof typeof readLabels) => {
     if (e instanceof DOMException && e.name === 'AbortError') return
     if (e instanceof WorkspaceError && e.code === 'UNAUTHORIZED') { onExpired(); return }
-    setError(e instanceof Error ? e.message : '요청을 완료하지 못했습니다.')
+    const message = e instanceof Error ? e.message : '요청을 완료하지 못했습니다.'
+    if (resource) setReadErrors(previous => ({ ...previous, [resource]: message }))
+    else setError(message)
   }, [onExpired])
 
   useLayoutEffect(() => {
@@ -146,19 +150,21 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
   }, [routeSearch])
 
   useEffect(() => {
-    let active = true
-    request<WorkspaceOverview>('/overview').then(value => {
-      if (!active) return
+    setReadErrors(previous => ({ ...previous, overview: '' }))
+    const controller = new AbortController()
+    request<WorkspaceOverview>('/overview', { signal: controller.signal }).then(value => {
+      if (controller.signal.aborted) return
       setOverview(value)
       if (!atlas) setProjectId(previous => value.projects.some(project => project.id === previous) ? previous : value.projects[0]?.id || '')
-    }).catch(e => { if (active) handleError(e) })
-    return () => { active = false }
+    }).catch(e => { if (!controller.signal.aborted) handleError(e, 'overview') })
+    return () => controller.abort()
   }, [refresh]) // Account is fixed for the lifetime of this keyed page.
   useEffect(() => {
     if (!project || atlas) return
     if (!project.blocks.some(block => block.id === blockId)) setBlockId(project.blocks[0]?.id || '')
   }, [project, blockId, !!atlas])
   useEffect(() => {
+    setReadErrors(previous => ({ ...previous, versions: '' }))
     if (!blockId || !block) return
     const controller = new AbortController()
     if (loadedBlock.current !== blockId) {
@@ -170,7 +176,7 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
       setVersions(value)
       if (!atlas) setVersionId(previous => value.items.some(version => version.id === previous) ? previous
         : value.por.version?.id || value.items.find(version => version.layout === 'POST')?.id || value.items[0]?.id || '')
-    }).catch(handleError)
+    }).catch(e => { if (!controller.signal.aborted) handleError(e, 'versions') })
     return () => controller.abort()
   }, [blockId, refresh, !!block])
   useEffect(() => {
@@ -179,15 +185,16 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
     if (selectedEco === undefined) setEco(version.ecos[0] || '')
   }, [version, eco])
   useEffect(() => {
-    setReportsLoading(true)
-    if (!version) return
+    setReadErrors(previous => ({ ...previous, reports: '' }))
+    if (!version) { setReportsLoading(false); return }
     if (!version.ecos.length) {
       setReports({ items: [], total: 0, offset: 0, limit: 25, counts: {}, groups: [], version })
       setReportsLoading(false)
       return
     }
-    if (!version.ecos.some(item => (item || '') === eco)) return
+    if (!version.ecos.some(item => (item || '') === eco)) { setReportsLoading(false); return }
     const controller = new AbortController()
+    setReportsLoading(true)
     const params = new URLSearchParams({ offset: String(offset), limit: '25' })
     if (eco) params.set('eco', eco)
     if (itemId !== null) params.set('item_id', itemId)
@@ -201,16 +208,16 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
         const group = value.groups.find(group => group.item_id === itemId) || value.groups[0]
         if (group && group.item_id !== itemId) { setItemId(group.item_id); setOffset(0); return }
         setReports(value)
-        setReportsLoading(false)
-      }).catch(handleError), 120)
+      }).catch(e => { if (!controller.signal.aborted) handleError(e, 'reports') }).finally(() => { if (!controller.signal.aborted) setReportsLoading(false) }), 120)
     return () => { clearTimeout(timer); controller.abort() }
   }, [blockId, version, eco, itemId, offset, family, status, search, refresh, includeHistory])
   useEffect(() => {
+    setReadErrors(previous => ({ ...previous, history: '' }))
     if (!block) return
     const controller = new AbortController()
     request<{ items: WorkspaceEvent[] }>(`/blocks/${blockId}/history`, { signal: controller.signal }).then(value => {
       if (!controller.signal.aborted) setEvents(value.items)
-    }).catch(handleError)
+    }).catch(e => { if (!controller.signal.aborted) handleError(e, 'history') })
     return () => controller.abort()
   }, [blockId, refresh, !!block])
   useEffect(() => {
@@ -344,8 +351,8 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
         {demo && !atlas && <WorkspaceDemoBanner session={session} onAccount={onDemoAccount} />}
         {atlas && (reviewing ? <Button variant="ghost" size="sm" aria-label="검사 대장으로 돌아가기" onClick={() => { setWorkbenchId(''); setRefresh(value => value + 1) }}><ArrowLeft size={14} />검사 대장</Button> : <nav className="ws-block-strip" aria-label="로그 검토 기능">{[{ id: 'overview', label: '프로젝트 현황' }, { id: 'reports', label: '버전·검사 대장' }, { id: 'history', label: 'PoR 변경 이력' }, ...(production ? [{ id: 'ai-jobs', label: 'AI 작업 현황' }] : [])].map(item => <button key={item.id} aria-current={view === item.id ? 'page' : undefined} aria-pressed={view === item.id} onClick={() => setView(item.id)}>{item.label}</button>)}</nav>)}
         {!reviewing && <div className="ws-heading ws-studio-content-heading"><div><span className="eyebrow">{view === 'ai-jobs' ? 'AI 실행' : view === 'overview' ? '프로젝트' : view === 'history' ? '기준 버전 이력' : '검사 대장'}</span><h1>{view === 'ai-jobs' ? 'AI 작업 현황' : view === 'overview' ? `${project?.name || session.user.name} 프로젝트` : view === 'history' ? 'PoR 변경 이력' : `${block?.name || '블록'} · 버전과 검사 결과`}</h1><p>{view === 'ai-jobs' ? '내가 요청한 분류·판정 작업의 진행과 처리 시간을 확인합니다.' : view === 'overview' ? '담당 블록의 기준 버전과 검사 현황을 확인합니다.' : view === 'history' ? '기준 버전의 변경 사유와 확정자를 확인합니다.' : '버전과 sanity 항목을 선택하고 보고서 검토를 시작하세요.'}</p></div>{view !== 'ai-jobs' && <Button variant="outline" size="sm" onClick={() => { setError(''); setRefresh(value => value + 1) }}><RefreshCw size={14} />새로고침</Button>}</div>}
-        {error && <div className="ws-error" role="alert">{error}</div>}{notice && <div className="ws-notice" role="status"><Check size={16} />{notice}</div>}
-        {!overview ? <Loading lines={4} /> : !project ? <div className="ws-empty"><FolderKanban /><h2>{atlas ? projectId ? '선택한 프로젝트의 로그를 조회할 수 없습니다.' : '공통 범위에서 프로젝트를 선택해 주세요.' : production ? '등록된 프로젝트가 없습니다.' : '배정된 프로젝트가 없습니다.'}</h2><p>{atlas ? demo ? '상단 공통 범위와 선택한 합성 계정의 프로젝트 배정으로 조회합니다.' : '로그인한 사용자는 모든 프로젝트를 조회할 수 있습니다. 프로젝트·블록·버전은 상단 공통 범위에서 선택합니다.' : production ? '관리자에게 프로젝트 등록을 요청해 주세요.' : '프로젝트 담당자에게 배정을 요청해 주세요.'}</p>{production && <a href={appUrl('/?page=welcome')}>내 프로젝트·권한 확인</a>}</div> : <>
+        {error && <div className="ws-error" role="alert">{error}</div>}{Object.entries(readErrors).filter(([, message]) => message).map(([resource, message]) => <div key={resource} className="ws-error" role="alert">{readLabels[resource as keyof typeof readLabels]} 조회 실패 · {message}</div>)}{notice && <div className="ws-notice" role="status"><Check size={16} />{notice}</div>}
+        {!overview ? readErrors.overview ? <div className="ws-empty"><FolderKanban /><h2>프로젝트 현황을 불러오지 못했습니다.</h2><p>위 오류를 확인하고 새로고침하세요.</p></div> : <Loading lines={4} /> : !project ? <div className="ws-empty"><FolderKanban /><h2>{atlas ? projectId ? '선택한 프로젝트의 로그를 조회할 수 없습니다.' : '공통 범위에서 프로젝트를 선택해 주세요.' : production ? '등록된 프로젝트가 없습니다.' : '배정된 프로젝트가 없습니다.'}</h2><p>{atlas ? demo ? '상단 공통 범위와 선택한 합성 계정의 프로젝트 배정으로 조회합니다.' : '로그인한 사용자는 모든 프로젝트를 조회할 수 있습니다. 프로젝트·블록·버전은 상단 공통 범위에서 선택합니다.' : production ? '관리자에게 프로젝트 등록을 요청해 주세요.' : '프로젝트 담당자에게 배정을 요청해 주세요.'}</p>{production && <a href={appUrl('/?page=welcome')}>내 프로젝트·권한 확인</a>}</div> : <>
           {view === 'ai-jobs' && production ? <AIJobsDashboard refresh={refresh} /> : view === 'overview' ? <>
             {production && <AIJobsDashboard projectId={project.id} compact refresh={refresh} onAll={() => setView('ai-jobs')} />}
             <div className="ws-statistics"><section><span>수신 대상 검사</span><strong>{n(totals!.total)}<small>항목</small></strong></section><section><span>확인할 FAIL</span><strong className="ws-danger-text">{n(totals!.fail)}<small>항목</small></strong></section><section><span>판정 보류·미수신</span><strong>{n(totals!.unknown)}<small>항목</small></strong></section><section><span>PoR 지정</span><strong>{totals!.por}<small>/ {project.blocks.length}블록</small></strong></section></div>
@@ -355,12 +362,12 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
           </> : <>
             {!atlas && !reviewing && <div className="ws-block-strip" aria-label="담당 블록 선택">{project.blocks.map(item => <button key={item.id} aria-pressed={blockId === item.id} onClick={() => chooseBlock(item.id)}><Layers3 size={15} />{item.name}</button>)}</div>}
             {production && view === 'reports' && !reviewing && block && <SubmissionIntake key={blockId} blockId={blockId} refresh={refresh} onComplete={() => setRefresh(value => value + 1)} />}
-            {atlas && !block ? <div className="ws-empty"><Layers3 /><h3>{blockId ? '선택한 블록의 로그를 조회할 수 없습니다.' : '공통 범위에서 블록을 선택해 주세요.'}</h3><p>상단 공통 범위에서 조회할 블록을 선택하세요.</p></div> : !versions || !block ? <Loading lines={4} /> : !version ? <div className="ws-empty"><FileSearch /><h3>{atlas ? versionId ? '선택한 버전의 로그를 조회할 수 없습니다.' : '공통 범위에서 버전을 선택해 주세요.' : '수신된 버전이 아직 없습니다.'}</h3><p>{atlas ? 'PoR이나 첫 버전을 자동으로 선택하지 않습니다. 상단에서 조회할 버전을 명시해 주세요.' : 'VWP에서 보고서를 제출하면 버전과 검사 항목이 표시됩니다.'}</p></div> : <>
+            {atlas && !block ? <div className="ws-empty"><Layers3 /><h3>{blockId ? '선택한 블록의 로그를 조회할 수 없습니다.' : '공통 범위에서 블록을 선택해 주세요.'}</h3><p>상단 공통 범위에서 조회할 블록을 선택하세요.</p></div> : !versions || !block ? readErrors.versions ? <div className="ws-empty"><Layers3 /><h3>블록 버전을 불러오지 못했습니다.</h3><p>위 오류를 확인하고 새로고침하세요.</p></div> : <Loading lines={4} /> : !version ? <div className="ws-empty"><FileSearch /><h3>{atlas ? versionId ? '선택한 버전의 로그를 조회할 수 없습니다.' : '공통 범위에서 버전을 선택해 주세요.' : '수신된 버전이 아직 없습니다.'}</h3><p>{atlas ? 'PoR이나 첫 버전을 자동으로 선택하지 않습니다. 상단에서 조회할 버전을 명시해 주세요.' : 'VWP에서 보고서를 제출하면 버전과 검사 항목이 표시됩니다.'}</p></div> : <>
               {!reviewing && view === 'history' && <PorSummary por={versions.por} canAssign={versions.can_assign_por} />}
-              {view === 'history' ? <section className="ws-panel"><header className="ws-panel-header"><div><h2>{block.name} · 변경 기록</h2><p>{demo ? '현재 탭에 저장된 데모 지정 이력' : '최신 50건 · 서버에 저장된 지정 이력'}</p></div><span className="ws-caption">현재 개정 {por?.revision}</span></header>{events.length ? <ol className="ws-history">{events.map(event => <li key={event.id}><div className="ws-history-marker"><Check size={13} /></div><div><header><strong>{event.actor.name}</strong><span>{time(event.at)} · 개정 {event.revision}</span></header><h3>{event.version.net_ver}<span>{event.version.layout}</span></h3><code>{event.version.revision}</code><p>{event.reason}</p></div></li>)}</ol> : <div className="ws-empty"><History /><h3>아직 PoR 지정 이력이 없습니다.</h3><p>{production ? '프로젝트 멤버가 버전을 지정하면 이곳에 기록됩니다.' : '블록 담당자가 버전을 지정하면 이곳에 기록됩니다.'}</p><Button variant="outline" onClick={() => setView('reports')}>버전 목록 보기<ArrowRight size={14} /></Button></div>}</section> : <>
+              {view === 'history' ? <section className="ws-panel"><header className="ws-panel-header"><div><h2>{block.name} · 변경 기록</h2><p>{demo ? '현재 탭에 저장된 데모 지정 이력' : '최신 50건 · 서버에 저장된 지정 이력'}</p></div><span className="ws-caption">현재 개정 {por?.revision}</span></header>{events.length ? <ol className="ws-history">{events.map(event => <li key={event.id}><div className="ws-history-marker"><Check size={13} /></div><div><header><strong>{event.actor.name}</strong><span>{time(event.at)} · 개정 {event.revision}</span></header><h3>{event.version.net_ver}<span>{event.version.layout}</span></h3><code>{event.version.revision}</code><p>{event.reason}</p></div></li>)}</ol> : readErrors.history ? <div className="ws-empty"><History /><h3>PoR 변경 이력을 불러오지 못했습니다.</h3><p>위 오류를 확인하고 새로고침하세요.</p></div> : <div className="ws-empty"><History /><h3>아직 PoR 지정 이력이 없습니다.</h3><p>{production ? '프로젝트 멤버가 버전을 지정하면 이곳에 기록됩니다.' : '블록 담당자가 버전을 지정하면 이곳에 기록됩니다.'}</p><Button variant="outline" onClick={() => setView('reports')}>버전 목록 보기<ArrowRight size={14} /></Button></div>}</section> : <>
                 {!reviewing && <>{(!atlas || version.layout === 'POST') && <section className="ws-version-bar ws-studio-version-toolbar" aria-label={atlas ? '조회할 ECO 선택' : '조회할 버전 선택'}>{!atlas && <><div className="ws-layout-toggle" role="group" aria-label="Layout 단계">{(['PRE', 'POST'] as const).map(layout => <button key={layout} disabled={!versions.items.some(item => item.layout === layout && item.net_ver === version.net_ver)} aria-pressed={version.layout === layout} onClick={() => { const next = versions.items.find(item => item.layout === layout && item.net_ver === version.net_ver); if (next) chooseVersion(next.id) }}>{layout}</button>)}</div><label>NET_VER · REVISION<select aria-label="조회 버전" value={versionId} onChange={e => chooseVersion(e.target.value)}>{versions.items.filter(item => item.layout === version.layout).map(item => <option value={item.id} key={item.id}>{item.net_ver} · {item.revision}</option>)}</select></label></>}{version.layout === 'POST' && <label>ECO<select aria-label="조회 ECO" value={eco} onChange={e => { resetSelection(); setEco(e.target.value); setReports(null) }}>{version.ecos.map(value => <option key={value || '__none'} value={value || ''}>{value || 'ECO 없음'}</option>)}</select></label>}</section>}
                 <div className="ws-version-comparison"><PorSummary por={versions.por} canAssign={versions.can_assign_por} /><section className="ws-version-context"><div><span className="ws-caption">조회 중인 버전</span><h2>{version.net_ver}<span>{version.layout}{eco ? ` / ${eco}` : ''}</span>{isPor && <b className="ws-por-tag"><Check size={12} />현재 PoR</b>}</h2><code>{version.revision}</code></div>{versions.can_assign_por ? <Button disabled={isPor} onClick={() => { requestId.current = null; setReason(''); setSaveError(''); setConfirm(true) }}>{isPor ? <Check size={15} /> : <Layers3 size={15} />}{isPor ? '현재 PoR' : '이 버전을 PoR로 지정'}</Button> : <span className="ws-readonly">{production ? '프로젝트 멤버 권한이 있어야 PoR을 지정할 수 있습니다.' : '조회 권한 · PoR 지정은 블록 담당자만 가능'}</span>}{production && versions.can_assign_por && <WorkspaceRemoval key={version.id} base={`/blocks/${blockId}/versions/${version.id}`} title={`${version.net_ver} · ${version.revision} · ${version.layout}`} kind="버전" onRemoved={() => { setWorkbenchId(''); if (atlas) { void atlas.selectScope({ projectId, blockId, versionId: '' }).then(atlas.reload).catch(handleError) } else setVersionId(''); setVersions(null); setReports(null); setNotice('버전과 연관 원본·판정 이력을 삭제했습니다.'); setRefresh(v => v + 1) }} onAccessDenied={() => { setVersions(null); setReports(null); setRefresh(v => v + 1) }} />}</section></div></>}
-                {!reports ? <Loading /> : <>
+                {!reports ? reportsLoading || !readErrors.reports ? <Loading /> : <div className="ws-empty"><FileSearch /><h3>검사 대장을 불러오지 못했습니다.</h3><p>위 오류를 확인하고 새로고침하세요.</p></div> : <>
                   {!reviewing && <><div className="ws-report-counts"><span>버전 전체 <strong>{n(Object.values(reports.counts).reduce((a, b) => a + b, 0))}</strong></span><span>PASS <strong>{reports.counts.PASS || 0}</strong></span><span>FAIL <strong>{reports.counts.FAIL || 0}</strong></span><span>보류 <strong>{reports.counts.UNKNOWN || 0}</strong></span></div>
                   {reports.groups.length > 0 && <section className="ws-item-catalog" aria-label="Sanity item별 현황">
                     <div className="ws-item-heading"><h2>Sanity 항목</h2><span>{reports.groups.length}개 항목</span></div>

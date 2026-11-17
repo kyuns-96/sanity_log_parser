@@ -33,7 +33,15 @@ class SafeAreaRoute(APIRoute):
         async def safe(request):
             try:
                 return await handler(request)
-            except ConfigurationError:
+            except ConfigurationError as exc:
+                cause = exc.__cause__ or exc.__context__ or exc
+                state = getattr(cause, 'sqlstate', None) or getattr(cause, 'pgcode', None)
+                if not isinstance(state, str) or len(state) != 5 or any(char not in '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ' for char in state):
+                    state = None
+                frames = [f'{frame.filename.rsplit("/", 1)[-1]}:{frame.name}:{frame.lineno}'
+                          for frame in traceback.extract_tb(cause.__traceback__)]
+                LOG.error('Area API unavailable: code=AREA_POWER_UNAVAILABLE type=%s sqlstate=%s at=%s',
+                          type(cause).__name__, state, '; '.join(frames))
                 return JSONResponse({"code": "AREA_POWER_UNAVAILABLE"}, 503)
             except DomainError as exc:
                 return JSONResponse({"code": exc.code.upper()}, exc.status_code)
@@ -55,7 +63,7 @@ def create_area_power_router(authorized_dependency):
     def json(value, status_code=200):
         return JSONResponse(public(value), status_code=status_code)
 
-    def access(request: Request, identity=Depends(authorized_dependency)):
+    def access(request: Request, identity=Depends(authorized_dependency, scope="function")):
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             from oa.sanity_access import require_mutation_request
             require_mutation_request(request)

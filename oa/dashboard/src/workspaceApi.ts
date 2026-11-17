@@ -236,8 +236,18 @@ export async function workspaceRequest<T>(path: string, options: { body?: unknow
     if (error instanceof DOMException && error.name === 'AbortError') throw error
     throw new WorkspaceError('NETWORK_ERROR')
   }
-  const value = await response.json().catch(() => ({ code: 'INVALID_RESPONSE' }))
-  if (!response.ok) throw new WorkspaceError(value.code || 'REQUEST_FAILED', response.status)
+  let value: unknown
+  try { value = await response.json() }
+  catch (error) {
+    options.signal?.throwIfAborted()
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
+    throw new WorkspaceError('INVALID_RESPONSE', response.status)
+  }
+  options.signal?.throwIfAborted()
+  if (!response.ok) {
+    const code = value && typeof value === 'object' && 'code' in value && typeof value.code === 'string' ? value.code : 'REQUEST_FAILED'
+    throw new WorkspaceError(code, response.status)
+  }
   return value as T
 }
 
