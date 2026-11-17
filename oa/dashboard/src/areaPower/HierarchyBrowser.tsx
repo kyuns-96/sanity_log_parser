@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, ChevronsDownUp, LoaderCircle } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, ChevronsDownUp, LoaderCircle, StepBack, StepForward } from 'lucide-react'
 import { format, formatPercent, text, type TrackingRecord } from './api'
 import { Button } from './components/workspace'
 
@@ -14,7 +14,7 @@ type Sort = { key: 'name' | `${Metric}.${Field}`; descending: boolean }
 type Line = { kind: 'row'; row: BrowserRow; depth: number; parent: string } | { kind: 'status'; key: string; depth: number; parent: string; state: ChildState }
 const metricKey: Record<Metric, string> = { area: 'total_area', power: 'pwr_all_total_mw' }
 const fields: [Field, string][] = [['baseline', '기준'], ['current', '현재'], ['delta', 'Δ'], ['relative_change_pct', 'Δ%']]
-const stateLabel: Record<string, string> = { comparable: '비교', contextual: '조건 차이', unavailable: '불가' }
+const stateLabel: Record<string, string> = { comparable: '비교', contextual: '조건 차이', unavailable: '불가', pending: '실행 전' }
 
 function leaf(paths: string[], item: HierarchyItem | undefined, separator: string | undefined, full: boolean) {
   const joined = paths.join(' + ')
@@ -42,7 +42,7 @@ function sign(input: unknown) {
 function reasonOf(row: BrowserRow, hasResult: boolean) {
   const notes = (['area', 'power'] as Metric[]).map(metric => {
     const reason = text(row.result?.metrics[metricKey[metric]]?.reason).replace(/^policy_unconfigured( · 정상 판정 아님)?$/, '')
-    return reason || (!row.result ? hasResult ? '결과 없음' : '대응 미지정' : '')
+    return reason || (!row.result ? hasResult ? '결과 없음' : row.baselinePaths.length && row.currentPaths.length ? '비교 실행 전' : '대응 미지정' : '')
   })
   return notes[0] === notes[1] ? notes[0] : notes.map((note, index) => note && `${index ? 'Power' : 'Area'} ${note}`).filter(Boolean).join(' · ')
 }
@@ -50,6 +50,18 @@ function reasonOf(row: BrowserRow, hasResult: boolean) {
 function overall(row: BrowserRow) {
   const states = (['area', 'power'] as Metric[]).map(metric => text(row.result?.metrics[metricKey[metric]]?.comparability) || 'unavailable')
   return states.includes('unavailable') ? 'unavailable' : states.includes('contextual') ? 'contextual' : 'comparable'
+}
+
+type Diff = 'added' | 'removed' | 'changed' | 'same'
+// Meld-style row state: presence first, then a renamed counterpart or any
+// non-zero/unavailable comparison. This is a difference marker, not a verdict.
+function diffOf(row: BrowserRow, separator = '/'): Diff {
+  if (!row.baselinePaths.length) return 'added'
+  if (!row.currentPaths.length) return 'removed'
+  const leafName = (paths: string[]) => paths.map(path => path.slice(path.lastIndexOf(separator) + separator.length)).join('+')
+  if (leafName(row.baselinePaths) !== leafName(row.currentPaths)) return 'changed'
+  // Previews have no calculated result yet: only presence and names differ.
+  return !row.result || unchanged(row) ? 'same' : 'changed'
 }
 
 function unchanged(row: BrowserRow) {
@@ -68,6 +80,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
   const [selected, setSelected] = useState('')
   const [sort, setSort] = useState<Sort>({ key: 'name', descending: false })
   const [changedOnly, setChangedOnly] = useState(false)
+  const [mode, setMode] = useState<'split' | 'single'>('split')
   const body = useRef<HTMLTableSectionElement>(null)
   const rootKeys = roots.map(row => row.key).join('\n')
   useEffect(() => {
@@ -130,7 +143,15 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
       ArrowLeft: () => { if (!line) return; if (expanded.has(line.row.key)) toggle(line.row, false); else if (line.parent) focus(line.parent) },
       Enter: () => line && toggle(line.row),
     }
+    if (event.altKey && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) { event.preventDefault(); jump(event.key === 'ArrowDown' ? 1 : -1); return }
     if (moves[event.key]) { event.preventDefault(); moves[event.key]() }
+  }
+  const differences = rowLines.filter(line => diffOf(line.row, separator) !== 'same').length
+  function jump(step: 1 | -1) {
+    const start = rowLines.findIndex(line => line.row.key === selected)
+    for (let index = start + step; index >= 0 && index < rowLines.length; index += step) {
+      if (diffOf(rowLines[index].row, separator) !== 'same') { focus(rowLines[index].row.key); return }
+    }
   }
   function sortBy(key: Sort['key']) {
     // Numbers start with the largest value; a second click reverses.
@@ -138,56 +159,91 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
   }
   const sortMark = (key: Sort['key']) => sort.key === key ? (sort.descending ? <ArrowDown size={11} aria-hidden="true" /> : <ArrowUp size={11} aria-hidden="true" />) : null
   const ariaSort = (key: Sort['key']) => sort.key === key ? (sort.descending ? 'descending' : 'ascending') : 'none'
+  const sortHead = (key: Sort['key'], label: string, extra = '') => <th key={key} className={`numeric${extra ? ` ${extra}` : ''}`} aria-sort={ariaSort(key)}><button type="button" onClick={() => sortBy(key)}>{label} {sortMark(key)}</button></th>
 
   return <div className="hierarchy-browser">
     <div className="browser-toolbar" role="toolbar" aria-label="Hierarchy 보기">
+      <div className="view-switch" role="group" aria-label="보기 방식">{([['split', '좌우 비교'], ['single', '단일 표']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)}>{label}</button>)}</div>
+      <Button variant="outline" size="xs" disabled={!differences} onClick={() => jump(-1)} title="이전 차이 (Alt+↑)"><StepBack size={13} />이전 차이</Button>
+      <Button variant="outline" size="xs" disabled={!differences} onClick={() => jump(1)} title="다음 차이 (Alt+↓)"><StepForward size={13} />다음 차이</Button>
+      <span className="diff-count">표시 중 차이 {differences.toLocaleString()}</span>
       {!flat && <Button variant="outline" size="xs" onClick={() => setExpanded(new Set())} disabled={!expanded.size}><ChevronsDownUp size={14} />모두 접기</Button>}
       <label className="browser-check"><input type="checkbox" checked={changedOnly} onChange={event => setChangedOnly(event.target.checked)} />변화·미대응만</label>
       {sort.key !== 'name' && <Button variant="ghost" size="xs" onClick={() => setSort({ key: 'name', descending: false })}>정렬 초기화</Button>}
-      <small>{flat ? '검색 결과 · instance 전체 경로' : '↑↓ 이동 · → 펼치기 · ← 접기'} · 부모 값에는 자식이 포함됩니다 · 수치 비교이며 정상/이상 판정이 아님</small>
+      <small>{flat ? '검색 결과 · instance 전체 경로' : '↑↓ 이동 · → 펼치기 · ← 접기 · Alt+↑↓ 차이 이동'} · 부모 값에는 자식이 포함됩니다 · 수치 비교이며 정상/이상 판정이 아님</small>
     </div>
     <div className="browser-scroll">
-      <table role={flat ? 'grid' : 'treegrid'} aria-label="Instance Area · Power hierarchy">
-        <colgroup><col className="col-instance" />{Array.from({ length: 8 }, (_, index) => <col key={index} className="col-number" />)}<col className="col-state" /></colgroup>
+      <table role={flat ? 'grid' : 'treegrid'} aria-label="Instance Area · Power hierarchy" className={mode === 'split' ? 'split-view' : undefined}>
+        {mode === 'split'
+          ? <colgroup><col className="col-pane" /><col className="col-number" /><col className="col-number" /><col className="col-gutter" /><col className="col-gutter" /><col className="col-pane" /><col className="col-number" /><col className="col-number" /><col className="col-state" /></colgroup>
+          : <colgroup><col className="col-instance" />{Array.from({ length: 8 }, (_, index) => <col key={index} className="col-number" />)}<col className="col-state" /></colgroup>}
         <thead>
-          <tr><th rowSpan={2} className="instance-head" aria-sort={ariaSort('name')}><button type="button" onClick={() => sortBy('name')}>Instance {sortMark('name')}</button></th><th colSpan={4} className="group-head">Area</th><th colSpan={4} className="group-head">Power (mW)</th><th rowSpan={2} className="state-head">상태</th></tr>
-          <tr>{(['area', 'power'] as Metric[]).flatMap(metric => fields.map(([field, label]) => <th key={`${metric}.${field}`} className={field === 'baseline' ? 'numeric group-start' : 'numeric'} aria-sort={ariaSort(`${metric}.${field}`)}><button type="button" onClick={() => sortBy(`${metric}.${field}`)}>{label} {sortMark(`${metric}.${field}`)}</button></th>))}</tr>
+          {mode === 'split' ? <>
+            <tr><th colSpan={3} className="pane-head">기준</th><th colSpan={2} className="group-head gutter-head">변화율</th><th colSpan={4} className="pane-head current-pane">현재</th></tr>
+            <tr>
+              <th className="instance-head" aria-sort={ariaSort('name')}><button type="button" onClick={() => sortBy('name')}>Instance {sortMark('name')}</button></th>
+              {sortHead('area.baseline', 'Area')}{sortHead('power.baseline', 'Power (mW)')}
+              {sortHead('area.relative_change_pct', 'Area Δ%', 'group-start')}{sortHead('power.relative_change_pct', 'Power Δ%')}
+              <th className="instance-head group-start"><button type="button" onClick={() => sortBy('name')}>Instance</button></th>
+              {sortHead('area.current', 'Area')}{sortHead('power.current', 'Power (mW)')}
+              <th className="state-head">상태</th>
+            </tr>
+          </> : <>
+            <tr><th rowSpan={2} className="instance-head" aria-sort={ariaSort('name')}><button type="button" onClick={() => sortBy('name')}>Instance {sortMark('name')}</button></th><th colSpan={4} className="group-head">Area</th><th colSpan={4} className="group-head">Power (mW)</th><th rowSpan={2} className="state-head">상태</th></tr>
+            <tr>{(['area', 'power'] as Metric[]).flatMap(metric => fields.map(([field, label]) => sortHead(`${metric}.${field}`, label, field === 'baseline' ? 'group-start' : '')))}</tr>
+          </>}
         </thead>
         <tbody ref={body} onKeyDown={onKey}>
           {lines.map(line => {
             const guides = Array.from({ length: Math.min(line.depth, 24) }, (_, index) => <span key={index} className="tree-guide" aria-hidden="true" />)
             if (line.kind === 'status') {
               const { state } = line
-              return <tr key={line.key} className="browser-status"><td colSpan={10}><span className="tree-cell">{guides}<span className="tree-spacer" />
-                {state.loading ? <span role="status"><LoaderCircle size={13} className="spin" />하위 instance 조회 중…</span>
-                  : state.error ? <span className="browser-error" role="alert">{state.error} <Button variant="ghost" size="xs" onClick={() => onRequestChildren?.(line.parent, state.rows.length)}>다시 조회</Button></span>
-                  : <Button variant="ghost" size="xs" onClick={() => onRequestChildren?.(line.parent, state.rows.length)}>{(state.total - state.rows.length).toLocaleString()}개 더 보기</Button>}
-              </span></td></tr>
+              const message = state.loading ? <span role="status"><LoaderCircle size={13} className="spin" />하위 instance 조회 중…</span>
+                : state.error ? <span className="browser-error" role="alert">{state.error} <Button variant="ghost" size="xs" onClick={() => onRequestChildren?.(line.parent, state.rows.length)}>다시 조회</Button></span>
+                : <Button variant="ghost" size="xs" onClick={() => onRequestChildren?.(line.parent, state.rows.length)}>{(state.total - state.rows.length).toLocaleString()}개 더 보기</Button>
+              return <tr key={line.key} className="browser-status"><td colSpan={mode === 'split' ? 9 : 10}><span className="tree-cell">{guides}<span className="tree-spacer" />{message}</span></td></tr>
             }
             const { row } = line
             const open = expanded.has(row.key)
             const name = leaf(row.currentPaths, row.current, separator, flat), baseName = leaf(row.baselinePaths, row.baseline, separator, flat)
-            const state = row.result ? overall(row) : 'unavailable'
+            const state = row.result ? overall(row) : hasResult ? 'unavailable' : 'pending'
             const reason = reasonOf(row, hasResult)
+            const diff = diffOf(row, separator)
+            const toggleButton = row.childCount ? <button type="button" tabIndex={-1} className="tree-toggle" aria-label={`${name || baseName} ${open ? '접기' : '펼치기'}`} onClick={event => { event.stopPropagation(); toggle(row) }}>{open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</button> : <span className="tree-spacer" />
+            const number = (metric: Metric, field: Field, extra = '') => {
+              const raw = value(row, metric, field)
+              const direction = field === 'delta' || field === 'relative_change_pct' ? sign(raw) : 0
+              const magnitude = field === 'relative_change_pct' && direction ? Math.min(100, Math.abs(Number(text(raw)))) : 0
+              return <td key={`${metric}.${field}`} className={`numeric${extra ? ` ${extra}` : ''}${direction > 0 ? ' up' : direction < 0 ? ' down' : ''}`} title={raw == null || raw === '' ? undefined : text(raw)}>
+                {field === 'relative_change_pct' ? <span className="pct-cell"><span className="pct-bar" aria-hidden="true"><span style={{ width: `${magnitude}%` }} /></span>{formatPercent(raw)}</span> : field === 'delta' && direction ? `${direction > 0 ? '▲' : '▼'} ${format(raw)}` : format(raw)}
+              </td>
+            }
+            const stateCell = <td className="state" title={reason || undefined}><span className={`state-dot ${state}`} aria-hidden="true" />{stateLabel[state] || state}</td>
+            const attributes = { 'data-key': row.key, tabIndex: selected === row.key || (!selected && line === lines[0]) ? 0 : -1, 'aria-level': line.depth + 1, 'aria-expanded': row.childCount ? open : undefined, 'aria-selected': selected === row.key, onClick: () => setSelected(row.key), onDoubleClick: () => toggle(row), onFocus: () => setSelected(row.key) }
+            if (mode === 'split') {
+              // Both panes share one row, so expanding either side expands both
+              // and corresponding instances stay on the same line.
+              const side = (present: boolean, label: string, paths: string[], kind: 'baseline' | 'current') => present
+                ? <><td className={`instance pane-${kind}`} title={paths.join(' + ')}><span className="tree-cell">{guides}{toggleButton}<span className="instance-name">{label}</span>{row.childCount > 0 && <span className="child-count">{row.childCount.toLocaleString()}</span>}</span></td>{number('area', kind, `pane-${kind}`)}{number('power', kind, `pane-${kind}`)}</>
+                : <><td className={`instance void pane-${kind}`}><span className="tree-cell">{guides}{toggleButton}<span className="void-label">{kind === 'baseline' ? '기준 없음' : '현재 없음'}</span></span></td><td className={`void pane-${kind}`} /><td className={`void pane-${kind}`} /></>
+              return <tr key={row.key} {...attributes} className={`diff-${diff}${selected === row.key ? ' selected' : ''}`}>
+                {side(row.baselinePaths.length > 0, baseName, row.baselinePaths, 'baseline')}
+                {number('area', 'relative_change_pct', 'group-start gutter')}{number('power', 'relative_change_pct', 'gutter')}
+                {side(row.currentPaths.length > 0, name, row.currentPaths, 'current')}
+                {stateCell}
+              </tr>
+            }
             const tooltip = [`현재 ${row.currentPaths.join(' + ') || '없음'}`, `기준 ${row.baselinePaths.join(' + ') || '없음'}`].join('\n')
-            return <tr key={row.key} data-key={row.key} tabIndex={selected === row.key || (!selected && line === lines[0]) ? 0 : -1} aria-level={line.depth + 1} aria-expanded={row.childCount ? open : undefined} aria-selected={selected === row.key} className={selected === row.key ? 'selected' : undefined} onClick={() => setSelected(row.key)} onDoubleClick={() => toggle(row)} onFocus={() => setSelected(row.key)}>
-              <td className="instance" title={tooltip}><span className="tree-cell">{guides}
-                {row.childCount ? <button type="button" tabIndex={-1} className="tree-toggle" aria-label={`${name || baseName} ${open ? '접기' : '펼치기'}`} onClick={event => { event.stopPropagation(); toggle(row) }}>{open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</button> : <span className="tree-spacer" />}
+            return <tr key={row.key} {...attributes} className={selected === row.key ? 'selected' : undefined}>
+              <td className="instance" title={tooltip}><span className="tree-cell">{guides}{toggleButton}
                 <span className="instance-name">{name || baseName}</span>
                 {name && baseName && name !== baseName && <span className="instance-alias">← {baseName}</span>}
                 {!row.currentPaths.length && <span className="side-tag">현재 없음</span>}
                 {!row.baselinePaths.length && <span className="side-tag">기준 없음</span>}
                 {row.childCount > 0 && <span className="child-count">{row.childCount.toLocaleString()}</span>}
               </span></td>
-              {(['area', 'power'] as Metric[]).flatMap(metric => fields.map(([field]) => {
-                const raw = value(row, metric, field)
-                const direction = field === 'delta' || field === 'relative_change_pct' ? sign(raw) : 0
-                const magnitude = field === 'relative_change_pct' && direction ? Math.min(100, Math.abs(Number(text(raw)))) : 0
-                return <td key={`${metric}.${field}`} className={`numeric${field === 'baseline' ? ' group-start' : ''}${direction > 0 ? ' up' : direction < 0 ? ' down' : ''}`} title={raw == null || raw === '' ? undefined : text(raw)}>
-                  {field === 'relative_change_pct' ? <span className="pct-cell"><span className="pct-bar" aria-hidden="true"><span style={{ width: `${magnitude}%` }} /></span>{formatPercent(raw)}</span> : field === 'delta' && direction ? `${direction > 0 ? '▲' : '▼'} ${format(raw)}` : format(raw)}
-                </td>
-              }))}
-              <td className="state" title={reason || undefined}><span className={`state-dot ${state}`} aria-hidden="true" />{stateLabel[state] || state}</td>
+              {(['area', 'power'] as Metric[]).flatMap(metric => fields.map(([field]) => number(metric, field, field === 'baseline' ? 'group-start' : '')))}
+              {stateCell}
             </tr>
           })}
         </tbody>

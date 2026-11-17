@@ -389,7 +389,18 @@ function mergeHierarchy(current: Hierarchy['items'], baseline: Hierarchy['items'
     if (result.baselinePaths.length === 1 && result.currentPaths.length <= 1) baselineKeys.set(result.baselinePaths[0], row.key)
     return row
   })
-  for (const item of current) if (!currentKeys.has(item.path)) { const key = `c:${item.path}`; currentKeys.set(item.path, key); rows.push({ key, parent: '', currentPaths: [item.path], baselinePaths: [], current: item }) }
+  // Before a comparison exists, line up the two trees by path below each
+  // design root (the default correspondence) for display only; values and
+  // explicit mappings are decided when the comparison runs.
+  const currentRoot = current.find(item => item.parent_path === null)?.path, baselineRoot = baseline.find(item => item.parent_path === null)?.path
+  const counterpart = (path: string) => !results.length && currentRoot !== undefined && baselineRoot !== undefined ? baselineRoot + path.slice(currentRoot.length) : undefined
+  for (const item of current) if (!currentKeys.has(item.path)) {
+    const pair = counterpart(item.path), match = pair !== undefined && !baselineKeys.has(pair) ? byBaseline.get(pair) : undefined
+    const key = match ? `p:${item.path}` : `c:${item.path}`
+    currentKeys.set(item.path, key)
+    if (match) baselineKeys.set(match.path, key)
+    rows.push({ key, parent: '', currentPaths: [item.path], baselinePaths: match ? [match.path] : [], current: item, baseline: match })
+  }
   for (const item of baseline) if (!baselineKeys.has(item.path)) { const key = `b:${item.path}`; baselineKeys.set(item.path, key); rows.push({ key, parent: '', currentPaths: [], baselinePaths: [item.path], baseline: item }) }
   const byKey = new Map(rows.map(row => [row.key, row]))
   for (const row of rows) {
