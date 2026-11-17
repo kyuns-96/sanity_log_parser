@@ -48,8 +48,8 @@
 }
 .color-mode-trigger:hover, .color-mode-trigger[data-state='open'] { background: var(--surface-recessed); color: var(--ink); }
 .color-mode-menu { z-index: 70; min-width: 174px; padding: 5px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--ink); box-shadow: 0 8px 28px #0003; font-family: var(--font-sans); }
-.color-mode-label { padding: 7px 9px; font-size: 11px; color: var(--text-muted); }
-.color-mode-option { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 8px 9px; border-radius: 5px; font-size: 12px; cursor: pointer; outline: none; user-select: none; }
+.color-mode-label { padding: 7px 9px; font-size: var(--text-data); color: var(--text-muted); }
+.color-mode-option { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 8px 9px; border-radius: 5px; font-size: var(--text-body); cursor: pointer; outline: none; user-select: none; }
 .color-mode-option[data-highlighted] { background: var(--accent-soft); }
 .color-mode-option[data-state='checked'] { color: var(--ink); font-weight: 600; }
 .color-mode-selected { margin-left: auto; display: flex; }

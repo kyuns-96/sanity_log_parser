@@ -23,7 +23,7 @@
   background-color: var(--surface, var(--background));
   color: var(--ink, var(--foreground));
   font-family: var(--font-sans, inherit);
-  font-size: 12px;
+  font-size: var(--text-body);
   font-weight: 500;
   line-height: 1.5;
   text-align: start;
@@ -99,7 +99,7 @@
     background: var(--surface, var(--popover));
     color: var(--ink, var(--foreground));
     font-family: var(--font-sans, inherit);
-    font-size: 12px;
+    font-size: var(--text-body);
     line-height: 1.5;
     overflow: auto;
     overscroll-behavior: contain;
@@ -168,7 +168,7 @@
   min-height: 36px;
   padding: 9px 32px 9px 11px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: var(--text-body);
   line-height: 1.5;
   white-space: normal;
   overflow-wrap: anywhere;

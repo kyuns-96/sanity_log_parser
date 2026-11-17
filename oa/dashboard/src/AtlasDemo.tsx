@@ -107,7 +107,7 @@ function DemoAccount() {
   const atlas = useAtlas()!
   const navigate = useDashboardNavigation()
   const [error, setError] = useState('')
-  return <main className="atlas-home"><section className="atlas-home-heading"><div><span className="atlas-eyebrow">MEMORY DEMO ACCOUNT</span><h1>내 계정 · 권한</h1><p>상단에서 선택한 합성 계정의 프로젝트 범위입니다. 실제 사내 신원이나 권한을 부여하지 않습니다.</p></div></section>
+  return <main className="atlas-home"><section className="atlas-home-heading"><div><h1>내 계정 · 권한</h1><p>상단에서 선택한 합성 계정의 프로젝트 범위입니다. 실제 사내 신원이나 권한을 부여하지 않습니다.</p></div></section>
     <section className="atlas-panel"><h2>참여 프로젝트</h2><p>프로젝트 멤버는 그 프로젝트의 모든 등록 블록을 같은 공통 범위에서 조회·검토합니다.</p><div className="atlas-project-grid">{atlas.catalog?.projects.map(project => <article key={project.id}><h3>{project.name}</h3><code>{project.id}</code><p>등록 블록 {project.blocks.length}개 · {project.can_write ? '합성 조회·수정 권한' : '합성 조회 권한'}</p></article>)}</div></section>
     <section className="atlas-panel"><h2>실제 서비스와의 경계</h2><p>계정 선택과 카탈로그·로그·수치 수정은 현재 탭의 합성 자료에만 적용됩니다. 사내 SSO 연결·실제 권한 신청/승인·모델 인증값·메일 발송은 이 데모에서 실행하지 않습니다. 새로고침하면 합성 자료가 초기화됩니다.</p>{error && <p role="alert">{error}</p>}<button className="atlas-button" onClick={() => void navigate(atlas.href('/')).catch(cause => setError(cause instanceof Error ? cause.message : '홈을 열지 못했습니다.'))}>공통 홈으로 돌아가기</button></section>
   </main>

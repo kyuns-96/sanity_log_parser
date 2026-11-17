@@ -1,5 +1,5 @@
 .personal-ai-token-dialog { max-width: min(640px, calc(100vw - 48px)); }
-.personal-ai-token-issue-link { display: inline-flex; align-items: center; align-self: flex-start; gap: 6px; min-height: 36px; color: var(--accent); font-size: 13px; text-underline-offset: 3px; }
+.personal-ai-token-issue-link { display: inline-flex; align-items: center; align-self: flex-start; gap: 6px; min-height: 36px; color: var(--accent); font-size: var(--text-body); text-underline-offset: 3px; }
 .personal-ai-token-issue-link:hover { text-decoration: underline; }
 @media (max-width: 640px) {
   .personal-ai-token-trigger > span { display: none; }
