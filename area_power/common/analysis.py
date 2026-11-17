@@ -1,8 +1,12 @@
 """Exact, snapshot-frozen hierarchy comparisons; no provider calls or DDL."""
 from __future__ import annotations
 
+import json
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from decimal import Decimal, localcontext
+from functools import cached_property
 from typing import Any
 from hashlib import sha256
 
@@ -120,8 +124,14 @@ class Group:
     mapping_ids: list[str] = field(default_factory=list)
     declared_kind: str | None = None
 
-    @property
+    @cached_property
     def id(self) -> str:
+        # Paths are fixed once a group exists. The plain-string form below is
+        # byte-identical to the canonical digest (checked over every Unicode
+        # code point) and about four times faster for large hierarchies.
+        if self.target_id is None and all(isinstance(path, str) for path in self.baseline_paths + self.current_paths):
+            encode = lambda paths: json.dumps(sorted(paths), ensure_ascii=False, separators=(',', ':'))
+            return sha256(('{"baseline":%s,"current":%s,"target":null}' % (encode(self.baseline_paths), encode(self.current_paths))).encode()).hexdigest()
         return digest({'baseline': sorted(self.baseline_paths), 'current': sorted(self.current_paths), 'target': self.target_id}).hex()
 
 
@@ -549,7 +559,8 @@ def _power_pair(pc, pb, current, baseline, spec):
 
 def comparison_coverage(db, settings, comparison):
     _reference_contract(comparison)
-    request, cu, bu, current, baseline, cm, bm, groups, chain, full_groups = load_inputs(db, settings, comparison, observations=True)
+    view = observation_view(db, settings, comparison)
+    request, cu, bu, current, baseline, cm, bm, groups = view.request, view.cu, view.bu, view.current, view.baseline, view.cm, view.bm, view.groups
     pairs = _power_pairs(db, settings, comparison, request, cu, bu, current, baseline, cm, bm, observations=True)
     expected = sum(len(group.metrics) + sum(1 for _ in pairs[1:] for metric in group.metrics if metric in POWER) for group in groups)
     return {'scope_validation': 'complete', 'metric_evaluation': 'on_demand',
@@ -628,36 +639,103 @@ def group_tree(groups: list[Group], cs: str, bs: str) -> dict[str, str | None]:
     return parents
 
 
+@dataclass
+class ObservationView:
+    """Immutable inputs of one frozen comparison, prepared once per process."""
+    request: Any
+    cu: dict
+    bu: dict | None
+    current: Any
+    baseline: Any
+    cm: Any
+    bm: Any
+    groups: list[Group]
+    order: list[int]
+    children: dict[str | None, list[int]]
+    child_count: dict[str, int]
+    index: dict[str, int]
+
+
+_VIEW_CACHE: OrderedDict[tuple[str, str], ObservationView] = OrderedDict()
+_VIEW_LOCK = threading.Lock()
+_VIEW_BUILDING: dict[tuple[str, str], threading.Lock] = {}
+VIEW_CACHE_SIZE = 4
+FROZEN_KEYS = ('request', 'frozen', 'result_format', 'calculation_contract', 'correspondence')
+
+
+def _area_key(group: Group, current, baseline):
+    """Largest instance first: current total area, else the baseline's."""
+    for rows, paths in ((current.rows, group.current_paths), (baseline.rows if baseline else {}, group.baseline_paths)):
+        values = [rows[path]['total_area'] for path in paths if path in rows and rows[path].get('total_area') is not None]
+        if values:
+            return (0, -sum(values, D(0)), (group.current_paths or group.baseline_paths or [''])[0])
+    return (1, D(0), (group.current_paths or group.baseline_paths or [''])[0])
+
+
+def observation_view(db, settings, comparison) -> ObservationView:
+    """Parse, correspond and index a frozen comparison once.
+
+    The key covers every frozen input and stored originals are immutable and
+    checksum-verified, so a cached view can only differ from a fresh parse by
+    being older than nothing. Authorization is still checked per request by
+    the caller.
+    """
+    key = (str(comparison['id']), digest({name: comparison['payload'].get(name) for name in FROZEN_KEYS}).hex())
+    with _VIEW_LOCK:
+        if key in _VIEW_CACHE:
+            _VIEW_CACHE.move_to_end(key)
+            return _VIEW_CACHE[key]
+        building = _VIEW_BUILDING.setdefault(key, threading.Lock())
+    with building:  # concurrent expands wait for one build instead of parsing again
+        with _VIEW_LOCK:
+            if key in _VIEW_CACHE:
+                return _VIEW_CACHE[key]
+        request, cu, bu, current, baseline, cm, bm, groups, chain, full_groups = load_inputs(db, settings, comparison, observations=True)
+        parents = group_tree(groups, cm.hierarchy_separator, bm.hierarchy_separator if bm else cm.hierarchy_separator)
+        order = sorted(range(len(groups)), key=lambda position: _area_key(groups[position], current, baseline))
+        children: dict[str | None, list[int]] = {}
+        for position in order:
+            children.setdefault(parents[groups[position].id], []).append(position)
+        view = ObservationView(request, cu, bu, current, baseline, cm, bm, groups, order, children,
+                               {identifier: len(rows) for identifier, rows in children.items() if identifier is not None},
+                               {group.id: position for position, group in enumerate(groups)})
+        with _VIEW_LOCK:
+            _VIEW_CACHE[key] = view
+            while len(_VIEW_CACHE) > VIEW_CACHE_SIZE:
+                _VIEW_CACHE.popitem(last=False)
+            _VIEW_BUILDING.pop(key, None)
+        return view
+
+
 def comparison_observations(db, settings, comparison, offset=0, limit=200, search='', parent=None):
     _reference_contract(comparison)
     if not isinstance(offset, int) or not isinstance(limit, int) or offset < 0 or limit < 1 or limit > 500:
         raise DomainError('Observation pagination requires offset >= 0 and limit 1..500.', code='invalid_pagination')
-    request, cu, bu, current, baseline, cm, bm, groups, chain, full_groups = load_inputs(db, settings, comparison, observations=True)
+    view = observation_view(db, settings, comparison)
+    request, cu, bu, current, baseline, cm, bm = view.request, view.cu, view.bu, view.current, view.baseline, view.cm, view.bm
     needle = search.strip().casefold()
     nodes = None
     if needle:
-        groups = [group for group in groups if any(needle in path.casefold() for path in group.baseline_paths + group.current_paths)]
+        selected = [position for position in view.order if any(needle in path.casefold() for path in view.groups[position].baseline_paths + view.groups[position].current_paths)]
     elif parent is not None:
-        parents = group_tree(groups, cm.hierarchy_separator, bm.hierarchy_separator if bm else cm.hierarchy_separator)
-        if parent and parent not in parents:
+        if parent and parent not in view.index:
             raise DomainError('The requested hierarchy node is not part of this comparison.', code='unknown_hierarchy_node', status_code=404)
-        counts: dict[str, int] = {}
-        for value in parents.values():
-            if value is not None:
-                counts[value] = counts.get(value, 0) + 1
-        groups = [group for group in groups if parents[group.id] == (parent or None)]
-        nodes = {group.id: {'group_id': group.id, 'parent_id': parent or None, 'child_count': counts.get(group.id, 0)} for group in groups}
-    total = len(groups)
+        selected = view.children.get(parent or None, [])
+        nodes = True
+    else:
+        selected = view.order
+    groups = [view.groups[position] for position in selected[offset:offset + limit]]
+    total = len(selected)
     pair = _power_pair(cu, bu, current, baseline, None)
     precision = _pair_precision(current, baseline)
     items = []
     with localcontext() as context:
         context.prec = precision
-        for group in groups[offset:offset + limit]:
+        for group in groups:
             for metric in ('total_area', 'pwr_all_total_mw'):
                 items.append(evaluate_metric(metric, group, current, baseline, cm, bm, cu, bu, request.policy, pair if metric in POWER else None))
     page = {'items': items, 'total_groups': total, 'offset': offset, 'limit': limit, 'search': search}
-    if nodes is not None:
+    if nodes:
         page['parent'] = parent
-        page['nodes'] = [nodes[group.id] for group in groups[offset:offset + limit]]
+        page['nodes'] = [{'group_id': group.id, 'parent_id': parent or None, 'child_count': view.child_count.get(group.id, 0)} for group in groups]
     return page

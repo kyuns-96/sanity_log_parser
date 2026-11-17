@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Check, Download, GitCompareArrows, LoaderCircle, Plus, RefreshCw, Trash2, Upload as UploadIcon } from 'lucide-react'
 import { z } from 'zod'
 import { comparisonCreatedSchema, cornerKey, date, detailSchema, format, formatPercent, object, recordSchema, request, revision, text, uploadName, type AreaAccess, type Auth, type ComparisonDetail, type TrackingRecord, type Upload } from './api'
@@ -21,13 +21,14 @@ export function Comparisons(props: ComparisonProps) {
   const [projectId, setProjectId] = useState('')
   const projects = atlas.catalog?.projects || []
   const project = projects.find(row => row.id === projectId)
-  return <>
-    <section className="panel"><Field label="비교할 현재 프로젝트" hint="이 화면의 선택은 상단 공통 범위와 독립적입니다."><select value={projectId} onChange={event => setProjectId(event.target.value)}><option value="">프로젝트 선택</option>{projects.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field></section>
-    {project ? <ProjectComparison key={project.id} {...props} project={project} /> : <Empty title="비교할 프로젝트를 선택하세요">현재·기준 실행의 Block, NET_VER, REVISION, corner와 파일은 각각 선택합니다.</Empty>}
+  const picker = <label className="setup-project" title="이 화면의 선택은 상단 공통 범위와 독립적입니다."><span>비교할 현재 프로젝트</span><select value={projectId} onChange={event => setProjectId(event.target.value)}><option value="">프로젝트 선택</option>{projects.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
+  return project ? <ProjectComparison key={project.id} {...props} project={project} picker={picker} /> : <>
+    <section className="panel comparison-setup-bar"><div className="baseline-summary">{picker}<small>이 화면의 선택은 상단 공통 범위와 독립적입니다.</small></div></section>
+    <Empty title="비교할 프로젝트를 선택하세요">현재·기준 실행의 Block, NET_VER, REVISION, corner와 파일은 각각 선택합니다.</Empty>
   </>
 }
 
-function ProjectComparison(props: ComparisonProps & { project: AtlasProject }) {
+function ProjectComparison(props: ComparisonProps & { project: AtlasProject; picker: ReactNode }) {
   const atlas = useAtlas()!
   const project = props.project
   const action = useAction()
@@ -58,6 +59,10 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject }) {
   const [resultSearch, setResultSearch] = useState('')
   const [resultQuery, setResultQuery] = useState({ offset: 0, search: '' })
   const [children, setChildren] = useState<Map<string, ChildState>>(() => new Map())
+  // Run selection folds into one line while a result is open, so the result
+  // table keeps most of the viewport.
+  const [setupOpen, setSetupOpen] = useState(true)
+  const resultTop = useRef<HTMLDivElement>(null)
   const treeEpoch = useRef(0)
   const projectRecords = useMemo(() => new Map(props.records.filter(row => row.record_type === 'project').map(row => [text(row.payload.sanity_project_id), row])), [props.records])
   const currentAreaId = project.area_id || projectRecords.get(project.id)?.id || ''
@@ -173,6 +178,10 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject }) {
       if (alive.current) update(state => ({ ...state, loading: false, error: cause instanceof Error ? cause.message : '하위 instance를 조회하지 못했습니다.' }))
     }
   }
+  function showResult() {
+    setSetupOpen(false)
+    window.requestAnimationFrame(() => resultTop.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }))
+  }
   function beginMutation() { mutation.current?.abort(); const controller = new AbortController(); mutation.current = controller; return controller.signal }
   function resetCorrespondence() {
     setMappingId(''); setMappingDraft([]); setMappingDraftPage(0); setBaselinePath(''); setCurrentPath('')
@@ -234,6 +243,7 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject }) {
     const value = await request(props.auth, '/comparisons', comparisonCreatedSchema, { current_upload_id: selectedCurrent.id, baseline_upload_id: selectedBefore?.id || null, comparison_kind: 'previous_project', scope: { kind: 'all' }, mapping_id: mappingId || null }, beginMutation())
     if (!alive.current) return
     setDetail(null); setDetailError(''); setResultSearch(''); setResultQuery({ offset: 0, search: '' }); setComparisonId(value.comparison.id)
+    showResult()
     await props.refresh()
   }
   const filters = { project_id: currentAreaId, block_id: currentBlock?.area_id || '', version_id: currentVersion?.area_id || '', snapshot_id: '' }
@@ -248,8 +258,8 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject }) {
   return <>
     {action.feedback}
     {!project.can_write && <p className="notice">조회 전용 · 기준 설정, 비교 실행과 구조 대응 변경에는 프로젝트 멤버 권한이 필요합니다.</p>}
-    <section className="panel project-baseline" aria-label="프로젝트 기준 설정">
-      <div className="baseline-summary"><div><h2>{project.name} <span aria-hidden="true">→</span> {baseline?.status === 'available' ? text(baseline.baseline_project?.payload.name) || savedProject?.name : baseline?.status === 'unavailable' ? '기준 조회 불가' : '기준 미설정'}</h2></div><Button variant="outline" disabled={baselineLoading || !project.can_write} onClick={() => setBaselineEditing(value => !value)}>{baselineEditing ? '설정 접기' : '기준 변경'}</Button></div>
+    <section className="panel comparison-setup-bar project-baseline" aria-label="프로젝트 기준 설정">
+      <div className="baseline-summary">{props.picker}<span className="setup-arrow" aria-hidden="true">→</span><span className="setup-baseline"><small>기준 프로젝트</small><strong>{baseline?.status === 'available' ? text(baseline.baseline_project?.payload.name) || savedProject?.name : baseline?.status === 'unavailable' ? '기준 조회 불가' : '기준 미설정'}</strong></span><Button variant="outline" size="sm" disabled={baselineLoading || !project.can_write} onClick={() => setBaselineEditing(value => !value)}>{baselineEditing ? '설정 접기' : '기준 변경'}</Button></div>
       {baselineError && <div className="notice error" role="alert">{baselineError}</div>}
       {!currentAreaId ? <div className="notice"><p>프로젝트만 연결하면 CSV·블록·버전 없이 기준을 설정할 수 있습니다.</p><Button disabled={action.busy || !project.can_write} onClick={() => action.run(() => prepare(project))}>현재 프로젝트 연결</Button></div> : baselineEditing && <div className="baseline-editor">
         {baseline?.status === 'unavailable' && <p className="notice warning">저장된 기준은 현재 권한으로 조회할 수 없습니다. 다른 기준으로 교체하거나 해제할 수 있습니다.</p>}
@@ -261,12 +271,12 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject }) {
       </div>}
     </section>
     <section className="panel comparison-workspace">
-      <div className="compare-sides">
+      {setupOpen || (!comparisonId && !selectedCurrent) ? <div className="compare-sides">
         <RunSelector label="현재" project={project} selection={current} onChange={chooseCurrent} uploads={currentUploads} busy={action.busy} onPrepare={(selection, previous) => action.run(() => prepare(project, selection, previous))} />
         {savedProject && baseline?.status === 'available' ? <RunSelector label="기준" project={savedProject} selection={before} onChange={chooseBefore} uploads={beforeUploads} busy={action.busy} onPrepare={(selection, previous) => action.run(() => prepare(savedProject, selection, previous))} /> : <Empty title={baseline?.status === 'unavailable' ? '기준 프로젝트 조회 불가' : '비교 기준을 저장하세요'}>현재 실행의 관측값은 기준이 없어도 볼 수 있습니다. 기준·대응이 없는 Δ/%는 unavailable입니다.</Empty>}
-      </div>
+      </div> : !comparisonId && <p className="setup-summary">현재 {selectedCurrent ? uploadName(selectedCurrent) : '실행 미선택'} <span aria-hidden="true">↔</span> 기준 {selectedBefore ? uploadName(selectedBefore) : '기준 실행 없음'}</p>}
       {selectedCurrent && selectedBefore && cornerKey(selectedCurrent) !== cornerKey(selectedBefore) && <div className="notice warning">양쪽 corner가 다릅니다. Power의 비교 가능성과 조건 차이 사유를 확인하세요. 같은 이름으로 조건을 추정하지 않습니다.</div>}
-      <div className="comparison-actions"><div><h2>Instance Area · Power</h2><small>부모 값에는 자식이 포함됩니다. 행을 다시 합산하지 않습니다.</small></div>{comparisonId ? <><Badge value={referenceComparison && detail?.comparison.state === 'completed' ? '조회 준비 완료' : detail?.comparison.state || 'loading'} /><Button variant="outline" onClick={() => { setComparisonId(''); setDetail(null) }}>현재 선택으로 돌아가기</Button><Button variant="outline" disabled={detailLoading} onClick={() => setDetailRefresh(value => value + 1)}><RefreshCw size={15} />결과 갱신</Button></> : <Button disabled={action.busy || !canCompare} onClick={() => action.run(compare)}><GitCompareArrows size={16} />비교 실행</Button>}</div>
+      <div className="comparison-actions" ref={resultTop}><div><h2 title="부모 값에는 자식이 포함됩니다. 행을 다시 합산하지 않습니다.">Instance Area · Power</h2></div>{(comparisonId || selectedCurrent) && <Button variant="ghost" size="sm" aria-expanded={setupOpen} onClick={() => setSetupOpen(value => !value)}>{setupOpen ? '실행 선택 접기' : '실행 선택 펼치기'}</Button>}{comparisonId ? <><Badge value={referenceComparison && detail?.comparison.state === 'completed' ? '조회 준비 완료' : detail?.comparison.state || 'loading'} /><Button variant="outline" onClick={() => { setComparisonId(''); setDetail(null); setSetupOpen(true) }}>현재 선택으로 돌아가기</Button><Button variant="outline" disabled={detailLoading} onClick={() => setDetailRefresh(value => value + 1)}><RefreshCw size={15} />결과 갱신</Button></> : <Button disabled={action.busy || !canCompare} onClick={() => action.run(compare)}><GitCompareArrows size={16} />비교 실행</Button>}</div>
       {!comparisonId && selectedCurrent && !selectedBefore && baseline?.status === 'available' && <p className="notice">기준 실행을 선택하지 않으면 현재 관측만 보존하고 비교 값은 unavailable로 남깁니다.</p>}
       {!comparisonId && mappingDraft.length > 0 && <p className="notice">작성 중인 대응 {mappingDraft.length.toLocaleString()}개를 저장한 뒤 비교를 실행하세요.</p>}
       {comparisonId && <p className="frozen-inputs">고정 입력 · 현재 {displayedCurrent ? uploadName(displayedCurrent) : displayedCurrentId ? '선택 당시 실행' : '조회 중'} ↔ 기준 {displayedBefore ? uploadName(displayedBefore) : displayedBaselineId ? '선택 당시 실행' : '기준 실행 없음'} · 경로 대응 {savedInput.mapping_id ? '고정 revision' : '미선택'}</p>}
@@ -291,7 +301,7 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject }) {
       </details>}
     </section>
     <details className="panel upload-history"><summary>업로드 이력 · PC CLI 메타데이터</summary><Uploads auth={props.auth} access={props.access} uploads={props.uploads} records={props.records} filters={filters} /></details>
-    <details className="panel comparison-history"><summary>저장된 비교 이력 · {history.length}건</summary><div className="compact-list">{history.map(row => <button key={row.id} onClick={() => { setDetail(null); setDetailError(''); setResultSearch(''); setResultQuery({ offset: 0, search: '' }); setComparisonId(row.id); setDetailRefresh(value => value + 1) }}><span>{date(row.created_at)} · {text(object(row.payload.request).comparison_kind) === 'previous_version' ? '이전 버전' : '프로젝트 비교'}</span><Badge value={row.payload.result_format === 'hierarchy-reference-v1' && row.state === 'completed' ? '조회 준비 완료' : row.state} /></button>)}</div>{!history.length && <p className="muted">저장된 비교가 없습니다.</p>}</details>
+    <details className="panel comparison-history"><summary>저장된 비교 이력 · {history.length}건</summary><div className="compact-list">{history.map(row => <button key={row.id} onClick={() => { setDetail(null); setDetailError(''); setResultSearch(''); setResultQuery({ offset: 0, search: '' }); setComparisonId(row.id); setDetailRefresh(value => value + 1); showResult() }}><span>{date(row.created_at)} · {text(object(row.payload.request).comparison_kind) === 'previous_version' ? '이전 버전' : '프로젝트 비교'}</span><Badge value={row.payload.result_format === 'hierarchy-reference-v1' && row.state === 'completed' ? '조회 준비 완료' : row.state} /></button>)}</div>{!history.length && <p className="muted">저장된 비교가 없습니다.</p>}</details>
   </>
 }
 

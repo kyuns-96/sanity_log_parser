@@ -262,6 +262,9 @@ def read_observations(upload, metadata: UploadMetadata, maximum: int) -> Observe
     reader, header = _csv_reader(original)
     rows, roots = {}, []
     numeric_highest, numeric_lowest = 0, 0
+    # Integers have exponent 0 and adjusted() = digits - 1, so only the largest
+    # magnitude matters; it is folded into the envelope after the loop.
+    largest_integer = 0
     separator = metadata.hierarchy_separator
     corner = None
     try:
@@ -297,13 +300,23 @@ def read_observations(upload, metadata: UploadMetadata, maximum: int) -> Observe
                     context.Emin = min(context.Emin, lowest - precision)
                     row['cts_area_pct'] = Decimal(100) * values['cts_area'] / values['logic_area']
             for value in row.values():
-                if isinstance(value, (Decimal, int)):
-                    number = Decimal(value)
-                    numeric_highest = max(numeric_highest, number.adjusted())
-                    numeric_lowest = min(numeric_lowest, number.as_tuple().exponent)
+                kind = type(value)
+                if kind is Decimal:
+                    adjusted = value.adjusted()
+                    if adjusted > numeric_highest:
+                        numeric_highest = adjusted
+                    exponent = value.as_tuple().exponent
+                    if exponent < numeric_lowest:
+                        numeric_lowest = exponent
+                elif kind is int and value:
+                    magnitude = -value if value < 0 else value
+                    if magnitude > largest_integer:
+                        largest_integer = magnitude
             rows[path] = {key: row[key] for key in ('level', 'total_area', 'pwr_all_total_mw')}
     except (csv.Error, InvalidOperation, ValueError, OverflowError) as exc:
         raise DomainError('Stored upload is not a validated CSV original', code='stored_upload_mismatch') from exc
+    if largest_integer:
+        numeric_highest = max(numeric_highest, len(str(largest_integer)) - 1)
     if (len(rows) != upload['row_count'] or len(roots) != 1
             or any(path != roots[0] and not path.startswith(roots[0] + separator) for path in rows)):
         raise DomainError('Stored upload no longer matches validated snapshot', code='stored_upload_mismatch')

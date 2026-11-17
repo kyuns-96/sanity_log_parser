@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, ChevronsDownUp, LoaderCircle, StepBack, StepForward } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, ChevronsDownUp, LoaderCircle, Maximize2, Minimize2, StepBack, StepForward } from 'lucide-react'
 import { format, formatPercent, text, type TrackingRecord } from './api'
 import { Button } from './components/workspace'
 
@@ -10,7 +10,8 @@ export type ChildState = { rows: BrowserRow[]; total: number; loading: boolean; 
 
 type Metric = 'area' | 'power'
 type Field = 'baseline' | 'current' | 'delta' | 'relative_change_pct'
-type Sort = { key: 'name' | `${Metric}.${Field}`; descending: boolean }
+type Sort = { key: 'size' | 'name' | `${Metric}.${Field}`; descending: boolean }
+const defaultSort: Sort = { key: 'size', descending: true }
 type Line = { kind: 'row'; row: BrowserRow; depth: number; parent: string; parentRow?: BrowserRow } | { kind: 'status'; key: string; depth: number; parent: string; state: ChildState }
 const metricKey: Record<Metric, string> = { area: 'total_area', power: 'pwr_all_total_mw' }
 const fields: [Field, string][] = [['baseline', '기준'], ['current', '현재'], ['delta', 'Δ'], ['relative_change_pct', 'Δ%']]
@@ -86,9 +87,16 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [selected, setSelected] = useState('')
-  const [sort, setSort] = useState<Sort>({ key: 'name', descending: false })
+  const [sort, setSort] = useState<Sort>(defaultSort)
   const [changedOnly, setChangedOnly] = useState(false)
   const [mode, setMode] = useState<'split' | 'single'>('split')
+  const [maximized, setMaximized] = useState(false)
+  useEffect(() => {
+    if (!maximized) return
+    const close = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') setMaximized(false) }
+    window.addEventListener('keydown', close)
+    return () => window.removeEventListener('keydown', close)
+  }, [maximized])
   const body = useRef<HTMLTableSectionElement>(null)
   const rootKeys = roots.map(row => row.key).join('\n')
   useEffect(() => {
@@ -102,9 +110,14 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
 
   function order(rows: BrowserRow[]) {
     const kept = changedOnly ? rows.filter(row => row.childCount > 0 || !unchanged(row)) : rows
-    if (sort.key === 'name') return sort.descending ? [...kept].reverse() : kept
-    const [metric, field] = sort.key.split('.') as [Metric, Field]
-    const numeric = (row: BrowserRow) => { const parsed = Number(text(value(row, metric, field))); return text(value(row, metric, field)) === '' || Number.isNaN(parsed) ? null : parsed }
+    if (sort.key === 'name') {
+      const label = (row: BrowserRow) => row.currentPaths[0] || row.baselinePaths[0] || ''
+      return [...kept].sort((a, b) => (sort.descending ? -1 : 1) * label(a).localeCompare(label(b), undefined, { numeric: true }))
+    }
+    const read = (row: BrowserRow, metric: Metric, field: Field) => { const raw = text(value(row, metric, field)); const parsed = Number(raw); return raw === '' || Number.isNaN(parsed) ? null : parsed }
+    // Default: largest instance first (current area, else baseline area), the
+    // same order the server pages children in.
+    const numeric = sort.key === 'size' ? (row: BrowserRow) => read(row, 'area', 'current') ?? read(row, 'area', 'baseline') : (row: BrowserRow) => read(row, ...(sort.key.split('.') as [Metric, Field]))
     return [...kept].sort((a, b) => {
       const left = numeric(a), right = numeric(b)
       if (left === null || right === null) return left === right ? 0 : left === null ? 1 : -1
@@ -169,15 +182,16 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
   const ariaSort = (key: Sort['key']) => sort.key === key ? (sort.descending ? 'descending' : 'ascending') : 'none'
   const sortHead = (key: Sort['key'], label: string, extra = '') => <th key={key} className={`numeric${extra ? ` ${extra}` : ''}`} aria-sort={ariaSort(key)}><button type="button" onClick={() => sortBy(key)}>{label} {sortMark(key)}</button></th>
 
-  return <div className="hierarchy-browser">
+  return <div className={`hierarchy-browser${maximized ? ' maximized' : ''}`} role={maximized ? 'dialog' : undefined} aria-modal={maximized || undefined} aria-label={maximized ? 'Hierarchy 크게 보기' : undefined}>
     <div className="browser-toolbar" role="toolbar" aria-label="Hierarchy 보기">
       <div className="view-switch" role="group" aria-label="보기 방식">{([['split', '좌우 비교'], ['single', '단일 표']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)}>{label}</button>)}</div>
       <Button variant="outline" size="xs" disabled={!differences} onClick={() => jump(-1)} title="이전 차이 (Alt+↑)"><StepBack size={13} />이전 차이</Button>
       <Button variant="outline" size="xs" disabled={!differences} onClick={() => jump(1)} title="다음 차이 (Alt+↓)"><StepForward size={13} />다음 차이</Button>
       <span className="diff-count">표시 중 차이 {differences.toLocaleString()}</span>
+      <Button variant="outline" size="xs" aria-pressed={maximized} onClick={() => setMaximized(value => !value)} title={maximized ? '원래 크기 (Esc)' : '표만 화면 전체로 보기'}>{maximized ? <><Minimize2 size={13} />원래 크기</> : <><Maximize2 size={13} />크게 보기</>}</Button>
       {!flat && <Button variant="outline" size="xs" onClick={() => setExpanded(new Set())} disabled={!expanded.size}><ChevronsDownUp size={14} />모두 접기</Button>}
       <label className="browser-check"><input type="checkbox" checked={changedOnly} onChange={event => setChangedOnly(event.target.checked)} />변화·미대응만</label>
-      {sort.key !== 'name' && <Button variant="ghost" size="xs" onClick={() => setSort({ key: 'name', descending: false })}>정렬 초기화</Button>}
+      {sort.key === 'size' ? <span className="diff-count">정렬 · Area 큰 순</span> : <Button variant="ghost" size="xs" onClick={() => setSort(defaultSort)}>정렬 초기화 (Area 큰 순)</Button>}
       <small>{flat ? '검색 결과 · instance 전체 경로' : '↑↓ 이동 · → 펼치기 · ← 접기 · Alt+↑↓ 차이 이동'} · 부모 값에는 자식이 포함됩니다 · 수치 비교이며 정상/이상 판정이 아님</small>
     </div>
     <div className="browser-scroll">
