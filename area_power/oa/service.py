@@ -218,21 +218,19 @@ class Service:
         return {"project_id": project["id"], "baseline_project_id": setting["baseline_project_id"],
                 "row_version": project["row_version"]}
 
-    def upload_hierarchy(self, identifier):
-        from area_power.common.analysis import parse_upload
-        with self.db.connect() as conn:
-            upload = self.ready_upload(conn, identifier)
-            upload = self.db.upload(conn, upload["id"], include_blob=True)
+    def upload_hierarchy(self, upload):
+        from area_power.common.csv_input import parse_hierarchy
+        from area_power.common.models import UploadMetadata
+        if upload["state"] != "ready":
+            reject("Only ready uploads may be selected or compared.", "upload_not_ready", 409)
         raw = self.db.raw if self.access is not None else self.db
-        parsed, metadata = parse_upload(upload, raw.settings)
-        separator = metadata.hierarchy_separator
-        items = []
-        for path, row in parsed.rows.items():
-            parent = path.rsplit(separator, 1)[0] if path != parsed.root_path else None
-            items.append({"path": path, "parent_path": parent, "depth": row["level"],
-                          "area": row.get("total_area"), "power_mw": row.get("pwr_all_total_mw")})
+        metadata = UploadMetadata.model_validate(upload["input_contract"]["metadata"])
+        items = parse_hierarchy(bytes(upload["csv_gzip"]), metadata,
+                                raw.settings.max_uncompressed_bytes,
+                                original_sha256=bytes(upload["original_sha256"]),
+                                original_byte_length=upload["original_byte_length"], row_count=upload["row_count"])
         return {"upload_id": upload["id"], "snapshot_id": upload["snapshot_id"],
-                "hierarchy_separator": separator, "items": items}
+                "hierarchy_separator": metadata.hierarchy_separator, "items": items}
 
     def config(self, body, actor):
         with self.db.connect() as conn:

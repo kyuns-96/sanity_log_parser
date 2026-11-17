@@ -1,6 +1,7 @@
 """Area/Power routes for the authenticated Sanity host; no standalone app/login."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 import logging
 import traceback
 from typing import Literal
@@ -16,6 +17,7 @@ from area_power.common.db import Database
 from area_power.common.errors import ConfigurationError, DomainError
 from area_power.common.jsonutil import public
 from area_power.common.models import ComparisonRequest
+from oa.sanity_auth import AuthError
 from .access import AreaAccess
 from .service import (
     AlertStateInput, BaselineInput, ConfigInput, RejudgeInput, RerunInput,
@@ -62,8 +64,9 @@ class SafeAreaRoute(APIRoute):
         return safe
 
 
-def create_area_power_router(authorized_dependency):
+def create_area_power_router(authorized_dependency, authenticated_dependency):
     router = APIRouter(prefix="/api/area-power", route_class=SafeAreaRoute)
+    authorization_scope = contextmanager(authorized_dependency)
 
     def json(value, status_code=200):
         return JSONResponse(public(value), status_code=status_code)
@@ -123,8 +126,31 @@ def create_area_power_router(authorized_dependency):
             return json(context.db.upload(conn, identifier))
 
     @router.get("/uploads/{identifier}/hierarchy")
-    def hierarchy(identifier: UUID, context=Depends(service)):
-        return json(context.upload_hierarchy(identifier))
+    def hierarchy(identifier: UUID, request: Request, actor=Depends(authenticated_dependency)):
+        from area_power.common.analysis import _validate_frozen_upload
+
+        raw = Database(Settings.from_env())
+        with authorization_scope(request, actor) as identity:
+            context = Service(raw, AreaAccess(identity))
+            with context.db.connect() as conn:
+                selected = context.ready_upload(conn, identifier)
+
+        # The host's permission connection must not remain idle while reading
+        # the compressed original, parsing CSV or serializing the response.
+        with raw.connect() as conn:
+            upload = raw.upload(conn, identifier, include_blob=True)
+        _validate_frozen_upload(selected, upload)
+        response = json(Service(raw).upload_hierarchy(upload))
+
+        current_actor = authenticated_dependency(request)
+        if (current_actor.user_id, current_actor.auth_method) != (actor.user_id, actor.auth_method):
+            raise AuthError("UNAUTHORIZED")
+        with authorization_scope(request, current_actor) as identity:
+            context = Service(raw, AreaAccess(identity))
+            with context.db.connect() as conn:
+                current = context.ready_upload(conn, identifier)
+                _validate_frozen_upload(upload, current)
+            return response
 
     @router.get("/uploads/{identifier}/download")
     def download(identifier: UUID, context=Depends(service)):

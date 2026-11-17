@@ -491,7 +491,7 @@ def create_app(*, auth_mode: AuthMode | None = None,
     app.include_router(create_atlas_router(authorized_actor))
     if area_enabled:
         from area_power.oa.app import create_area_power_router
-        app.include_router(create_area_power_router(authorized_actor))
+        app.include_router(create_area_power_router(authorized_actor, authenticated))
     else:
         @app.api_route("/api/area-power", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
         @app.api_route("/api/area-power/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])

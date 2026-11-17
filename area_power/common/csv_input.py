@@ -12,6 +12,7 @@ import re
 import zlib
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, localcontext
+from hashlib import sha256
 from typing import Any
 
 from area_power.common.errors import DomainError
@@ -27,6 +28,13 @@ COUNT_FIELDS = tuple(f"{g}_cells" for g in CELL_GROUPS) + tuple(f"{g}_cnt" for g
 AREA_FIELDS = tuple(f"{g}_area" for g in CELL_GROUPS)
 PCT_FIELDS = ("cts_area_pct",) + tuple(f"{g}_pct" for g in VTH_NAMES + DRIVE_NAMES)
 POWER_FIELDS = tuple(f"pwr_{g}_{c}_mw" for g in POWER_GROUPS for c in POWER_COMPONENTS)
+POWER_IDENTITIES = tuple(
+    (f"pwr_{group}_total_mw", tuple(f"pwr_{group}_{component}_mw" for component in POWER_COMPONENTS[:-1]))
+    for group in POWER_GROUPS
+) + tuple(
+    (f"pwr_all_{component}_mw", tuple(f"pwr_{group}_{component}_mw" for group in POWER_GROUPS[1:]))
+    for component in POWER_COMPONENTS
+)
 STRUCTURE_FIELDS = ("hier_name", "level") + COUNT_FIELDS + AREA_FIELDS + PCT_FIELDS[1:]
 HEADERS = ("hier_name", "level", "process_label", "voltage_v", "temp_c", "pex") + tuple(
     field for g in CELL_GROUPS for field in (f"{g}_cells", f"{g}_area")
@@ -149,9 +157,7 @@ def _unpack(data: bytes, maximum: int) -> tuple[bytes, bytes]:
     return data, gzip.compress(data, compresslevel=6, mtime=0)
 
 
-def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompressed_bytes: int) -> ParsedCSV:
-    """Validate a complete export. Compression is detected by magic, not filename."""
-    original, compressed = _unpack(data, max_uncompressed_bytes)
+def _csv_reader(original: bytes):
     try:
         text = original.decode("utf-8-sig")
     except UnicodeError as exc:
@@ -165,6 +171,69 @@ def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompre
         _invalid("CSV contains duplicate column names.")
     if len(header) != 81 or set(header) != set(HEADERS):
         _invalid("CSV must contain exactly the 81 documented column names, without missing or unknown columns.")
+    return reader, header
+
+
+def parse_hierarchy(
+    data: bytes, metadata: UploadMetadata, max_uncompressed_bytes: int, *,
+    original_sha256: bytes, original_byte_length: int, row_count: int,
+) -> list[dict[str, Any]]:
+    """Project a ready upload whose complete CSV was validated during ingestion."""
+    original, _ = _unpack(data, max_uncompressed_bytes)
+    if len(original) != original_byte_length or sha256(original).digest() != bytes(original_sha256):
+        raise DomainError("Stored upload no longer matches validated snapshot", code="stored_upload_mismatch")
+    reader, header = _csv_reader(original)
+    path_column, depth_column, area_column, power_column = (
+        header.index(key) for key in ("hier_name", "level", "total_area", "pwr_all_total_mw")
+    )
+    separator = metadata.hierarchy_separator
+    paths: set[str] = set()
+    root_paths: list[str] = []
+    items: list[dict[str, Any]] = []
+    try:
+        for fields in reader:
+            line = reader.line_num
+            if len(fields) != len(header):
+                _invalid(f"Row {line}: column count does not match the header.")
+            path = fields[path_column]
+            segments = path.split(separator)
+            if not path or not path.strip() or any(not part for part in segments):
+                _invalid(f"Row {line}: hierarchy path is empty or has an empty segment.")
+            if path in paths:
+                _invalid(f"Row {line}: duplicate hierarchy path.")
+            depth = _number(fields[depth_column], "level", line)
+            if depth < 0 or depth != depth.to_integral_value():
+                _invalid(f"Row {line}: level must be a nonnegative integer.")
+            depth = int(depth)
+            if depth != len(segments) - 1:
+                _invalid(f"Row {line}: level does not match the literal hierarchy path depth.")
+            if depth == 0:
+                root_paths.append(path)
+            area = _number(fields[area_column], "total_area", line)
+            if area < 0:
+                _invalid(f"Row {line}: total_area must be nonnegative.")
+            items.append({
+                "path": path, "parent_path": path.rsplit(separator, 1)[0] if depth else None,
+                "depth": depth, "area": area,
+                "power_mw": _number(fields[power_column], "pwr_all_total_mw", line),
+            })
+            paths.add(path)
+    except csv.Error as exc:
+        raise DomainError("CSV quoting or record syntax is invalid.", code="invalid_csv") from exc
+    if len(root_paths) != 1:
+        _invalid("CSV must contain exactly one level=0 design root.")
+    root_path = root_paths[0]
+    if any(path != root_path and not path.startswith(root_path + separator) for path in paths):
+        _invalid("Every hierarchy path must belong to the single design root.")
+    if len(items) != row_count:
+        raise DomainError("Stored upload no longer matches validated snapshot", code="stored_upload_mismatch")
+    return items
+
+
+def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompressed_bytes: int) -> ParsedCSV:
+    """Validate a complete export. Compression is detected by magic, not filename."""
+    original, compressed = _unpack(data, max_uncompressed_bytes)
+    reader, header = _csv_reader(original)
     rows: dict[str, dict[str, Any]] = {}
     root_paths: list[str] = []
     corner: dict[str, Any] | None = None
@@ -236,8 +305,8 @@ def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompre
                     else:
                         if pct is None:
                             _invalid(f"Row {line}: {key} is required with a nonzero denominator.")
-                        tolerance = metadata.pct_tolerance if metadata.pct_tolerance is not None else _half_unit(pct)
                         if key == "cts_area_pct":
+                            tolerance = metadata.pct_tolerance if metadata.pct_tolerance is not None else _half_unit(pct)
                             if abs(pct * denominator - Decimal(100) * values["cts_area"]) > tolerance * denominator:
                                 _invalid(f"Row {line}: {key} disagrees with its numerator and denominator beyond report precision.")
                             row[key] = Decimal(100) * values["cts_area"] / denominator
@@ -248,16 +317,15 @@ def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompre
                     tolerance = sum((metadata.pct_tolerance if metadata.pct_tolerance is not None else _half_unit(pct) for pct in percentages if pct is not None), Decimal(0))
                     if sum((pct for pct in percentages if pct is not None), Decimal(0)) > Decimal(100) + tolerance:
                         _invalid(f"Row {line}: classified area percentages exceed 100 beyond report precision.")
-                def check_power(lhs: str, rhs: list[str]) -> None:
+                power_half_units = {
+                    key: _half_unit(values[key]) for key in POWER_FIELDS
+                } if metadata.power_tolerance_mw is None else None
+                for lhs, rhs in POWER_IDENTITIES:
                     tolerance = metadata.power_tolerance_mw
                     if tolerance is None:
-                        tolerance = sum((_half_unit(values[key]) for key in [lhs, *rhs]), Decimal(0))
+                        tolerance = sum((power_half_units[key] for key in (lhs, *rhs)), Decimal(0))
                     if abs(values[lhs] - sum((values[key] for key in rhs), Decimal(0))) > tolerance:
                         _invalid(f"Row {line}: power identity for {lhs} exceeds report-rounding tolerance.")
-                for group in POWER_GROUPS:
-                    check_power(f"pwr_{group}_total_mw", [f"pwr_{group}_{c}_mw" for c in POWER_COMPONENTS[:-1]])
-                for component in POWER_COMPONENTS:
-                    check_power(f"pwr_all_{component}_mw", [f"pwr_{g}_{component}_mw" for g in POWER_GROUPS[1:]])
                 row["quality"] = {"vth_unclassified_cnt": logic - vt_sum, "drive_unclassified_cnt": logic - drive_sum, "unavailable_ratios": unavailable}
                 row["reported_pct"] = reported
                 quality_totals["vth_undercoverage_rows"] += int(vt_sum < logic)

@@ -83,8 +83,15 @@ class AreaAccess:
         self.version_bindings = {}
         if not self.development:
             from oa.sanity_workspace import record_id
-            rows = store.db.execute("SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s",
-                                    ("design-atlas-v1.binding.%",)).fetchall()
+            rows = store.db.execute(
+                "SELECT binding.payload, native.record_id AS native_id, "
+                "native.workspace_project_ref, native.workspace_block_ref, "
+                "native.payload AS native_payload FROM {oa} AS binding "
+                "LEFT JOIN {oa} AS native ON native.record_type='WS_VERSION' "
+                "AND jsonb_typeof(binding.payload->'version_id')='string' "
+                "AND native.workspace_key=binding.payload->>'version_id' "
+                "WHERE binding.record_type='WS_CONFIG' AND binding.workspace_key LIKE %s",
+                ("design-atlas-v1.binding.%",)).fetchall()
             for row in rows:
                 binding = row["payload"]
                 project_id, block_id = binding.get("project_id"), binding.get("block_id")
@@ -92,12 +99,9 @@ class AreaAccess:
                     continue
                 if binding.get("namespace") != "design-atlas-v1" or self.blocks.get(block_id) != project_id:
                     hidden()
-                version_id = binding.get("version_id")
-                native = store.db.execute("SELECT * FROM {oa} WHERE record_type='WS_VERSION' AND workspace_key=%s",
-                                          (version_id,)).fetchone()
-                if (not native or native["workspace_project_ref"] != record_id("WS_PROJECT", project_id)
-                        or native["workspace_block_ref"] != record_id("WS_BLOCK", block_id)
-                        or native["payload"].get("project_id") != project_id or native["payload"].get("block_id") != block_id):
+                if (row["native_id"] is None or row["workspace_project_ref"] != record_id("WS_PROJECT", project_id)
+                        or row["workspace_block_ref"] != record_id("WS_BLOCK", block_id)
+                        or row["native_payload"].get("project_id") != project_id or row["native_payload"].get("block_id") != block_id):
                     hidden()
                 key = str(identifier(binding.get("area_version_id")))
                 self.version_bindings.setdefault(key, []).append(binding)
