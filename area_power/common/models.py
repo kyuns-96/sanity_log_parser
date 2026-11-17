@@ -7,6 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 COMPARISON_FORMAT = 'hierarchy-reference-v1'
 CALCULATION_CONTRACT = 'logic-area-v1'
+# Unmapped rows of different projects correspond by path relative to each
+# design root. Absent on comparisons frozen before this policy existed.
+CORRESPONDENCE_POLICY = 'design-root-relative-v1'
 
 
 class ContractModel(BaseModel):

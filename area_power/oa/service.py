@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from area_power.common.errors import DomainError
 from area_power.common.jsonutil import digest
-from area_power.common.models import CALCULATION_CONTRACT, COMPARISON_FORMAT, ComparisonRequest, MappingPayload
+from area_power.common.models import CALCULATION_CONTRACT, COMPARISON_FORMAT, CORRESPONDENCE_POLICY, ComparisonRequest, MappingPayload
 
 CONFIG_TYPES = {"project", "version", "block", "target", "mapping", "change"}
 SCOPE_FIELDS = ("project_id", "version_id", "block_id", "snapshot_id")
@@ -459,6 +459,9 @@ class Service:
             numeric["target_revisions"] = sorted(str(target["id"]) for target in targets)
             if designation is not None:
                 numeric["baseline_project_id"] = designation["baseline_project_id"]
+            correspondence = CORRESPONDENCE_POLICY if baseline and baseline["project_id"] != current["project_id"] else None
+            if correspondence:
+                numeric["correspondence"] = correspondence
             key = digest(numeric)
             self.lock(conn, ["comparison", key])
             old = conn.execute(sql.SQL("SELECT * FROM {} WHERE record_type='comparison' AND dedupe_key=%s FOR UPDATE").format(self.db.table("di_area_power_tracking_record")), (key,)).fetchone()
@@ -474,7 +477,7 @@ class Service:
                            "frozen": {"current_upload": reference(current), "baseline_upload": reference(baseline),
                                       "scope_target_ids": [target['id'] for target in targets],
                                       "power_uploads": [{side: reference(upload) for side, upload in pair.items()} for pair in power_uploads]},
-                           "coverage": {}, "policy_unconfigured": not bool(body.policy.metrics or body.policy.operating_limits), "ai_state": "not_requested"}
+                           "coverage": {}, **({"correspondence": correspondence} if correspondence else {}), "policy_unconfigured": not bool(body.policy.metrics or body.policy.operating_limits), "ai_state": "not_requested"}
                 if designation is not None:
                     payload["frozen"]["baseline_designation"] = designation
                 comparison = self.db.insert_record(conn, "comparison", payload, actor, state="queued", upload_id=current["id"], baseline_upload_id=baseline["id"] if baseline else None, dedupe_key=key, **self.scope(current))
@@ -485,7 +488,7 @@ class Service:
         raw = self.db.raw if self.access is not None else self.db
         row = raw.record(conn, selected['id'], kind='comparison', lock=write)
         self.authorize(conn, row, write=write)
-        keys = ('request', 'frozen', 'result_format', 'calculation_contract')
+        keys = ('request', 'frozen', 'result_format', 'calculation_contract', 'correspondence')
         if any(digest(row['payload'].get(key)) != digest(selected['payload'].get(key)) for key in keys):
             reject('Comparison inputs changed during calculation.', 'frozen_input_mismatch', 409)
         request = ComparisonRequest.model_validate(row['payload']['request'])

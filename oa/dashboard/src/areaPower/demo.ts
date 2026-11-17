@@ -279,8 +279,13 @@ function comparisonGroups(input: Payload, current: DemoUpload, baseline: DemoUpl
     while (candidate) { const found = index.get(candidate); if (found) return found; const offset = candidate.lastIndexOf('/'); candidate = offset < 0 ? '' : candidate.slice(0, offset) }
     return []
   }
+  // Same project: identical paths. Different projects: design root to design
+  // root, then identical relative paths. Explicit rules above take precedence.
+  const root = (upload: DemoUpload) => Object.keys(upload.rows).find(path => !path.includes('/')) || ''
+  const implied = (path: string) => !baseline ? '' : baseline.project_id === current.project_id ? path : root(baseline) + path.slice(root(current).length)
   for (const path of Object.keys(current.rows)) {
     if (consumedCurrent.has(path)) continue
+    const counterpart = implied(path)
     const matches = nearest(subtreeCurrent, path)
     let group: Group
     if (matches.length) {
@@ -290,8 +295,8 @@ function comparisonGroups(input: Payload, current: DemoUpload, baseline: DemoUpl
       const destination = inverseRule ? strings(inverseRule.current_paths)[0] + before.slice(strings(inverseRule.baseline_paths)[0].length) : ''
       const conflict = matches.length !== 1 || inverse.length !== 1 || destination !== path || exactBaseline.has(before) || consumedBaseline.has(before)
       group = { current: [path], baseline: [before], metrics: metricKeys, reason: conflict ? 'mapping_equal_precedence_conflict' : !baseline?.rows[before] ? 'mapping_path_missing' : undefined }
-    } else if (baseline?.project_id === current.project_id && baseline.rows[path] && !exactBaseline.has(path) && !consumedBaseline.has(path) && !nearest(subtreeBaseline, path).length) {
-      group = { current: [path], baseline: [path], metrics: metricKeys }
+    } else if (baseline?.rows[counterpart] && !exactBaseline.has(counterpart) && !consumedBaseline.has(counterpart) && !nearest(subtreeBaseline, counterpart).length) {
+      group = { current: [path], baseline: [counterpart], metrics: metricKeys }
     } else group = { current: [path], baseline: [], metrics: metricKeys, reason: baseline ? 'mapping_unresolved' : 'baseline_missing' }
     groups.push(group); consumedCurrent.add(path); group.baseline.forEach(value => consumedBaseline.add(value))
   }

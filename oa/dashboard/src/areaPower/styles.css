@@ -232,14 +232,15 @@
 .area-power.area-power .hierarchy-table .table-scroll { max-height: 62vh; overflow: auto; margin-top: 7px; }
 .area-power.area-power .hierarchy-table table { min-width: 1250px; width: 100%; }
 .area-power.area-power .hierarchy-table th { position: sticky; top: 0; background: var(--surface-soft); z-index: 1; white-space: nowrap; }
-.area-power.area-power .hierarchy-table td { vertical-align: top; }
-.area-power.area-power .hierarchy-table td:nth-child(-n+2) { min-width: 175px; max-width: 380px; overflow-wrap: anywhere; }
+.area-power.area-power .hierarchy-table td { vertical-align: middle; padding: 5px 12px; }
+.area-power.area-power .hierarchy-table td:nth-child(-n+2) { min-width: 175px; max-width: 380px; }
 .area-power.area-power .hierarchy-table .numeric { white-space: nowrap; text-align: right; }
-.area-power.area-power .hierarchy-path { display: inline-flex; align-items: center; gap: 4px; }
+.area-power.area-power .hierarchy-path { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.area-power.area-power .path-label { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .area-power.area-power .tree-row-toggle { border: 0; background: transparent; color: var(--accent); padding: 2px; flex: none; }
-.area-power.area-power .metric-status { min-width: 170px; }
-.area-power.area-power .metric-status > div { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; font-size: 10px; }
-.area-power.area-power .metric-status small { flex-basis: 100%; overflow-wrap: anywhere; font-size: 9px; }
+.area-power.area-power .metric-status { min-width: 170px; max-width: 360px; }
+.area-power.area-power .metric-status > div { display: flex; gap: 5px; align-items: center; font-size: 10px; white-space: nowrap; min-width: 0; }
+.area-power.area-power .metric-status small { margin: 0 0 0 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 9px; }
 .area-power.area-power .correspondence-settings { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; }
 .area-power.area-power summary { color: var(--ink); font-size: 12px; font-weight: 600; }
 .area-power.area-power .mapping-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; margin-block: 12px; }

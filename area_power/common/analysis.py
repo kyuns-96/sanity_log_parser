@@ -10,7 +10,7 @@ from psycopg import sql
 
 from area_power.common.errors import DomainError
 from area_power.common.jsonutil import digest
-from area_power.common.models import CALCULATION_CONTRACT, COMPARISON_FORMAT, ComparisonRequest, MappingPayload, UploadMetadata
+from area_power.common.models import CALCULATION_CONTRACT, COMPARISON_FORMAT, CORRESPONDENCE_POLICY, ComparisonRequest, MappingPayload, UploadMetadata
 from area_power.common.csv_input import ObservedCSV, parse_csv, read_observations
 
 D = Decimal
@@ -125,10 +125,21 @@ class Group:
         return digest({'baseline': sorted(self.baseline_paths), 'current': sorted(self.current_paths), 'target': self.target_id}).hex()
 
 
-def resolve_groups(current, baseline, cm, bm, mapping: dict | None, mapping_reason: str | None = None) -> list[Group]:
+def resolve_groups(current, baseline, cm, bm, mapping: dict | None, mapping_reason: str | None = None,
+                   correspondence: str | None = None) -> list[Group]:
     cr, br = current.rows, baseline.rows if baseline else {}
     same = bm is not None and cm.project_id == bm.project_id
     cs, bs = cm.hierarchy_separator, bm.hierarchy_separator if bm else cm.hierarchy_separator
+    # Same project: identical paths. Different projects (only when frozen with
+    # the policy): design root to design root, then identical relative paths.
+    relative = not same and baseline is not None and correspondence == CORRESPONDENCE_POLICY
+
+    def implied(path: str) -> str | None:
+        if same:
+            return path
+        if relative:
+            return baseline.root_path + path[len(current.root_path):].replace(cs, bs)
+        return None
     rules = mapping['payload'].get('rules', []) if mapping and not mapping_reason else []
     exact_current, exact_baseline, subtree = {}, {}, []
     rule_groups = []
@@ -185,8 +196,9 @@ def resolve_groups(current, baseline, cm, bm, mapping: dict | None, mapping_reas
                     conflict = destinations != {path}
             reason = 'mapping_equal_precedence_conflict' if conflict else (None if bp[0] in br else 'mapping_path_missing')
             g = Group(bp, [path], reason, mapping_ids=[m[3].mapping_ids[0] for m in best])
-        elif same and not mapping_reason and path in br and path not in exact_baseline and path not in consumed_b and not any(descendant(path, b, bs) or descendant(path, c, cs) for b, c in reservations):
-            g = Group([path], [path])
+        elif (not mapping_reason and (bp := implied(path)) is not None and bp in br and bp not in exact_baseline
+              and bp not in consumed_b and not any(descendant(bp, b, bs) or descendant(path, c, cs) for b, c in reservations)):
+            g = Group([bp], [path])
         else:
             reason = mapping_reason or ('baseline_missing' if baseline is None else 'mapping_unresolved')
             # Missing correspondence is not an implicit pairing of design roots.
@@ -476,7 +488,7 @@ def load_inputs(db, settings, comparison, *, observations=False):
                 through_chain = version_chain(db, conn, payload['valid_through_version_id'])
             if str(cu['version_id']) not in through_chain or start not in through_chain or through_chain.index(str(cu['version_id'])) > through_chain.index(start):
                 mapping_reason = 'mapping_version_interval_unresolved'
-    full_groups = resolve_groups(current, baseline, cm, bm, mapping, mapping_reason)
+    full_groups = resolve_groups(current, baseline, cm, bm, mapping, mapping_reason, comparison['payload'].get('correspondence'))
     groups = select_groups(full_groups, request, targets, cu, bu, cm, bm)
     return request, cu, bu, current, baseline, cm, bm, groups, chain, full_groups
 

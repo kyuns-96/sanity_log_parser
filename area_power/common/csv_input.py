@@ -67,6 +67,7 @@ class ObservedCSV:
     conditions_complete: bool
     numeric_highest: int
     numeric_lowest: int
+    root_path: str
 
 
 def _invalid(message: str) -> None:
@@ -310,7 +311,7 @@ def read_observations(upload, metadata: UploadMetadata, maximum: int) -> Observe
     key = digest(conditions)
     if key != bytes(upload['condition_key']):
         raise DomainError('Stored conditions no longer match validated snapshot', code='stored_upload_mismatch')
-    return ObservedCSV(rows, conditions, key, not missing, numeric_highest, numeric_lowest)
+    return ObservedCSV(rows, conditions, key, not missing, numeric_highest, numeric_lowest, roots[0])
 
 
 def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompressed_bytes: int) -> ParsedCSV:

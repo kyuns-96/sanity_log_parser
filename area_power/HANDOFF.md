@@ -65,7 +65,7 @@
 ## 프로젝트 비교 단순화 — 2026-11-13
 
 - `GET`/`POST /api/area-power/projects/{Area UUID}/baseline`과 nullable `baseline_project_id`·필수 `expected_row_version`으로 단방향 기준을 조회/저장/해제한다. 저장은 기존 project payload/row_version만 갱신하며 추가 DDL·테이블·migration은 없다. 프로젝트만 준비해도 사용할 수 있다.
-- 양쪽 정확한 upload/snapshot·mapping revision과 당시 기준을 고정한다. `/uploads/{id}/hierarchy`는 실제 검증 원본의 경로/부모/깊이·area/power를 제공한다. 서로 다른 프로젝트의 루트·동일 경로도 자동 대응하지 않으며 대응/데이터 누락의 Δ/%는 null/unavailable이다.
+- 양쪽 정확한 upload/snapshot·mapping revision과 당시 기준을 고정한다. `/uploads/{id}/hierarchy`는 실제 검증 원본의 경로/부모/깊이·area/power를 제공한다. 서로 다른 프로젝트는 명시 규칙이 없을 때 루트끼리와 루트 기준 상대 경로가 같은 instance를 자동 대응하며(2026-11-17, 새 비교의 `correspondence` 고정값이 있을 때만) 대응/데이터 누락의 Δ/%는 null/unavailable이다.
 - 자체 폐기 PostgreSQL 18.6·제한 DML 로그인에서 실제 POST/CAS 경쟁·인증/오류·기존 plain/gzip 업로드 보존과 실제 큐 worker의 per-instance Area/Power·누락·과거 결과 불변을 확인했다. 권한 회수·기준 ID 가림·현재 프로젝트 유지·교체는 실제 권한 서비스에 명시적 메모리 grant context를 넣어 확인했으며 회사 SSO/권한 저장소 전체 검증은 아니다. 자세한 실행 증거/한계는 [루트 인계](../HANDOFF.md#프로젝트-비교-단순화--2026-11-13)를 따른다.
 - 자체 DB·로그인은 정리했다. 사용자 DB·설정·실행 서비스·기존 SSO는 유지했고 새 테스트/fixture/mock/harness/검증 스크립트 파일·모바일 검사는 추가/실행하지 않았다. 실제 회사 AI·메일·배포는 미검증이며 commit/push는 별도다.
 
