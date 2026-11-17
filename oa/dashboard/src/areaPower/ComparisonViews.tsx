@@ -1,17 +1,17 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronRight, Download, GitCompareArrows, LoaderCircle, Plus, RefreshCw, Trash2, Upload as UploadIcon } from 'lucide-react'
+import { Check, Download, GitCompareArrows, LoaderCircle, Plus, RefreshCw, Trash2, Upload as UploadIcon } from 'lucide-react'
 import { z } from 'zod'
 import { comparisonCreatedSchema, cornerKey, date, detailSchema, format, formatPercent, object, recordSchema, request, revision, text, uploadName, type AreaAccess, type Auth, type ComparisonDetail, type TrackingRecord, type Upload } from './api'
 import { Badge, Button, Empty, Field, useAction } from './components/workspace'
 import { Uploads } from './UploadViews'
 import { useAtlas, type AtlasProject } from '../atlasContext'
 import { mappingCsv, readMappingCsv, validateMappingDraft, type MappingDraft } from './mappingCsv'
+import { HierarchyBrowser, type BrowserRow, type ChildState, type ResultGroup } from './HierarchyBrowser'
 
 const baselineSchema = z.object({ project_id: z.string(), row_version: z.string(), baseline_project_id: z.string().nullable(), baseline_project: recordSchema.nullable(), status: z.enum(['unset', 'available', 'unavailable']) })
 const hierarchySchema = z.object({ upload_id: z.string(), snapshot_id: z.string().nullable(), hierarchy_separator: z.string(), items: z.array(z.object({ path: z.string(), parent_path: z.string().nullable(), depth: z.string().transform(Number).refine(value => Number.isSafeInteger(value) && value >= 0), area: z.unknown().nullable(), power_mw: z.unknown().nullable() })) })
 type Hierarchy = z.infer<typeof hierarchySchema>
 type Selection = { block: string; net: string; version: string; corner: string; upload: string }
-type ResultGroup = { id: string; baselinePaths: string[]; currentPaths: string[]; metrics: Record<string, TrackingRecord['payload']> }
 type TreeRow = { key: string; parent: string; baselinePaths: string[]; currentPaths: string[]; baseline?: Hierarchy['items'][number]; current?: Hierarchy['items'][number]; result?: ResultGroup }
 const emptySelection: Selection = { block: '', net: '', version: '', corner: '', upload: '' }
 interface ComparisonProps { auth: Auth; access: AreaAccess; records: TrackingRecord[]; uploads: Upload[]; comparisons: TrackingRecord[]; refresh: () => Promise<void>; refreshVersion: number; loading: boolean }
@@ -57,7 +57,8 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject }) {
   const [detailLoading, setDetailLoading] = useState(false)
   const [resultSearch, setResultSearch] = useState('')
   const [resultQuery, setResultQuery] = useState({ offset: 0, search: '' })
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
+  const [children, setChildren] = useState<Map<string, ChildState>>(() => new Map())
+  const treeEpoch = useRef(0)
   const projectRecords = useMemo(() => new Map(props.records.filter(row => row.record_type === 'project').map(row => [text(row.payload.sanity_project_id), row])), [props.records])
   const currentAreaId = project.area_id || projectRecords.get(project.id)?.id || ''
   const candidates = atlas.catalog?.projects || []
@@ -88,9 +89,25 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject }) {
   const validCurrentPath = !currentHierarchy.loading && !currentHierarchy.error && !!currentHierarchy.data?.items.some(row => row.path === currentPath)
   mappingInputs.current = `${selectedBefore?.id || ''}:${selectedCurrent?.id || ''}`
   const results = useMemo(() => groupedResults(detail), [detail])
-  const treeRows = useMemo<TreeRow[]>(() => referenceComparison
-    ? results.map(result => ({ key: `g:${result.id}`, parent: '', baselinePaths: result.baselinePaths, currentPaths: result.currentPaths, result }))
-    : mergeHierarchy(currentHierarchy.data?.items || [], beforeHierarchy.data?.items || [], results), [referenceComparison, currentHierarchy.data, beforeHierarchy.data, results])
+  const treeRows = useMemo<TreeRow[]>(() => referenceComparison ? [] : mergeHierarchy(currentHierarchy.data?.items || [], beforeHierarchy.data?.items || [], results), [referenceComparison, currentHierarchy.data, beforeHierarchy.data, results])
+  // Reference comparisons load one hierarchy level per request; earlier results
+  // and previews already hold every row and nest them locally.
+  const browser = useMemo(() => {
+    if (referenceComparison) return { roots: detail ? referenceRows(detail) : [], local: null }
+    const counts = new Map<string, number>()
+    for (const row of treeRows) counts.set(row.parent, (counts.get(row.parent) || 0) + 1)
+    const local = new Map<string, BrowserRow[]>()
+    for (const row of treeRows) {
+      const item = { ...row, childCount: counts.get(row.key) || 0 }, list = local.get(row.parent)
+      if (list) list.push(item); else local.set(row.parent, [item])
+    }
+    return { roots: local.get('') || [], local }
+  }, [referenceComparison, detail, treeRows])
+  const childrenOf = (row: BrowserRow): ChildState | undefined => {
+    if (browser.local) { const rows = browser.local.get(row.key) || []; return { rows, total: rows.length, loading: false, error: '' } }
+    return children.get(row.key)
+  }
+  const flatResults = referenceComparison && !!resultQuery.search
   const displayedCurrent = props.uploads.find(row => row.id === displayedCurrentId)
   const displayedBefore = props.uploads.find(row => row.id === displayedBaselineId)
   const canCompare = project.can_write && !!selectedCurrent && !!baseline?.baseline_project_id && (!before.upload || !!selectedBefore) && !mappingDraft.length && (!mappingId || mappings.some(row => row.id === mappingId))
@@ -112,7 +129,7 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject }) {
     }).catch(cause => { if (!controller.signal.aborted) { setBaseline(null); setBaselineChoice(''); setBaselineError(cause instanceof Error ? cause.message : '기준을 조회하지 못했습니다.') } }).finally(() => { if (!controller.signal.aborted) setBaselineLoading(false) })
     return () => controller.abort()
   }, [props.auth, currentAreaId, props.refreshVersion])
-  useEffect(() => { setExpanded(new Set()) }, [displayedCurrentId, displayedBaselineId, comparisonId])
+  useEffect(() => { treeEpoch.current += 1; setChildren(new Map()) }, [comparisonId, detailRefresh, props.refreshVersion, resultQuery])
   useEffect(() => {
     if (!comparisonId) { setDetail(null); setDetailError(''); setDetailLoading(false); return }
     const controller = new AbortController()
@@ -125,6 +142,7 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject }) {
         const running = ['queued', 'pending', 'running'].includes(value.comparison.state)
         if (!running) {
           const params = new URLSearchParams({ view: 'hierarchy', offset: String(resultQuery.offset), limit: '200', search: resultQuery.search })
+          if (!resultQuery.search) params.set('parent', '')
           value = await request(props.auth, `${path}?${params}`, detailSchema, undefined, controller.signal)
         }
         if (controller.signal.aborted) return
@@ -138,6 +156,23 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject }) {
     return () => { controller.abort(); window.clearTimeout(timer) }
   }, [props.auth, comparisonId, detailRefresh, props.refreshVersion, resultQuery])
 
+  async function loadChildren(key: string, offset: number) {
+    const epoch = treeEpoch.current, id = comparisonId
+    const update = (change: (state: ChildState) => ChildState) => setChildren(map => {
+      if (epoch !== treeEpoch.current) return map
+      const state = map.get(key) || { rows: [], total: 0, loading: false, error: '' }
+      return new Map(map).set(key, change(state))
+    })
+    update(state => ({ ...state, loading: true, error: '' }))
+    try {
+      const params = new URLSearchParams({ view: 'hierarchy', parent: key, offset: String(offset), limit: '500' })
+      const value = await request(props.auth, `/comparisons/${encodeURIComponent(id)}?${params}`, detailSchema)
+      if (!alive.current) return
+      update(state => ({ rows: [...state.rows.slice(0, offset), ...referenceRows(value)], total: value.result_page?.total_groups ?? 0, loading: false, error: '' }))
+    } catch (cause) {
+      if (alive.current) update(state => ({ ...state, loading: false, error: cause instanceof Error ? cause.message : '하위 instance를 조회하지 못했습니다.' }))
+    }
+  }
   function beginMutation() { mutation.current?.abort(); const controller = new AbortController(); mutation.current = controller; return controller.signal }
   function resetCorrespondence() {
     setMappingId(''); setMappingDraft([]); setMappingDraftPage(0); setBaselinePath(''); setCurrentPath('')
@@ -244,8 +279,8 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject }) {
       {(currentHierarchy.loading || beforeHierarchy.loading) && <p role="status"><LoaderCircle size={16} className="spin" />선택한 실행의 hierarchy 조회 중…</p>}
       {referenceComparison && <form className="comparison-result-search" onSubmit={event => { event.preventDefault(); setResultQuery({ offset: 0, search: resultSearch.trim() }) }}><Field label="비교 경로 검색"><input type="search" value={resultSearch} onChange={event => setResultSearch(event.target.value)} placeholder="기준 또는 현재 instance 경로 검색" autoComplete="off" spellCheck={false} /></Field><Button type="submit" disabled={detailLoading}>검색</Button></form>}
       {detailLoading && <p role="status"><LoaderCircle size={16} className="spin" />비교 수치 조회 중…</p>}
-      {resultPage && <div className="comparison-result-pages"><p role="status">{resultPage.total_groups ? `${(resultPage.offset + 1).toLocaleString()}–${Math.min(resultPage.offset + resultPage.limit, resultPage.total_groups).toLocaleString()} / ${resultPage.total_groups.toLocaleString()}그룹` : '검색 조건에 맞는 경로가 없습니다.'}</p><Button variant="outline" disabled={detailLoading || resultPage.offset === 0} onClick={() => setResultQuery({ offset: Math.max(0, resultPage.offset - resultPage.limit), search: resultPage.search })}>이전</Button><Button variant="outline" disabled={detailLoading || resultPage.offset + resultPage.limit >= resultPage.total_groups} onClick={() => setResultQuery({ offset: resultPage.offset + resultPage.limit, search: resultPage.search })}>다음</Button></div>}
-      {treeRows.length ? <HierarchyTable rows={treeRows} expanded={expanded} onExpanded={setExpanded} hasResult={!!detail} paged={referenceComparison} /> : !currentHierarchy.loading && !beforeHierarchy.loading && !currentHierarchy.error && !beforeHierarchy.error && !pending && !detailLoading && !referenceComparison && <Empty title={comparisonId || selectedCurrent ? '선택한 실행에 표시할 hierarchy가 없습니다' : '현재 실행을 선택하세요'}>Block → NET_VER → REVISION → corner → 실행 파일을 명시적으로 선택하세요. 최신 실행을 자동 선택하지 않습니다.</Empty>}
+      {resultPage && (flatResults || resultPage.total_groups > resultPage.limit) && <div className="comparison-result-pages"><p role="status">{resultPage.total_groups ? `${(resultPage.offset + 1).toLocaleString()}–${Math.min(resultPage.offset + resultPage.limit, resultPage.total_groups).toLocaleString()} / ${resultPage.total_groups.toLocaleString()}그룹` : '검색 조건에 맞는 경로가 없습니다.'}</p><Button variant="outline" disabled={detailLoading || resultPage.offset === 0} onClick={() => setResultQuery({ offset: Math.max(0, resultPage.offset - resultPage.limit), search: resultPage.search })}>이전</Button><Button variant="outline" disabled={detailLoading || resultPage.offset + resultPage.limit >= resultPage.total_groups} onClick={() => setResultQuery({ offset: resultPage.offset + resultPage.limit, search: resultPage.search })}>다음</Button></div>}
+      {browser.roots.length ? <HierarchyBrowser roots={browser.roots} childrenOf={childrenOf} onRequestChildren={referenceComparison ? (key, offset) => void loadChildren(key, offset) : undefined} flat={flatResults} hasResult={!!detail} separator={currentHierarchy.data?.hierarchy_separator} /> : !currentHierarchy.loading && !beforeHierarchy.loading && !currentHierarchy.error && !beforeHierarchy.error && !pending && !detailLoading && !referenceComparison && <Empty title={comparisonId || selectedCurrent ? '선택한 실행에 표시할 hierarchy가 없습니다' : '현재 실행을 선택하세요'}>Block → NET_VER → REVISION → corner → 실행 파일을 명시적으로 선택하세요. 최신 실행을 자동 선택하지 않습니다.</Empty>}
       {!comparisonId && selectedCurrent && selectedBefore && <details className="correspondence-settings"><summary>구조 대응 설정 · 다른 Block / hierarchy 연결</summary><p className="muted">규칙이 없는 instance는 양쪽 design 루트 아래 상대 경로가 같으면 자동으로 대응합니다. 이름이나 위치가 달라진 경로만 규칙을 추가하세요. 경로 일부를 검색하거나 전체 경로를 붙여넣고, ‘하위 트리 전체’는 상대 경로가 같은 자식까지 함께 대응합니다.</p>
         <div className="mapping-actions"><Button variant="outline" onClick={exportMappingTemplate}><Download size={15} />Export template</Button><Button variant="outline" disabled={action.busy || !project.can_write || beforeHierarchy.loading || currentHierarchy.loading || !!beforeHierarchy.error || !!currentHierarchy.error || !beforeHierarchy.data || !currentHierarchy.data} onClick={() => mappingFile.current?.click()}><UploadIcon size={15} />Import mapping CSV</Button><input ref={mappingFile} type="file" accept=".csv,text/csv" hidden aria-label="Mapping CSV 파일" onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; if (file) void action.run(() => importMapping(file), 'CSV 대응을 불러왔습니다. 내용을 확인한 뒤 대응 저장을 누르세요.') }} /></div>
         <p className="muted">UTF-8 CSV · baseline_path,current_path,scope · 한 행에 1:1 대응 하나, scope는 node 또는 subtree입니다. 템플릿에는 작성 중인 대응 또는 선택한 경로가 포함됩니다. 가져오기는 작성 중인 목록 전체를 교체하며, 모든 행을 검증한 뒤 적용합니다. 대응 저장을 눌러야 서버에 저장됩니다.</p>
@@ -376,32 +411,7 @@ function mergeHierarchy(current: Hierarchy['items'], baseline: Hierarchy['items'
   return rows
 }
 
-function HierarchyTable({ rows, expanded, onExpanded, hasResult, paged }: { rows: TreeRow[]; expanded: Set<string>; onExpanded: (value: Set<string>) => void; hasResult: boolean; paged: boolean }) {
-  const children = new Map<string, TreeRow[]>()
-  for (const row of rows) { const list = children.get(row.parent) || []; list.push(row); children.set(row.parent, list) }
-  const visible: { row: TreeRow; depth: number }[] = []
-  const stack = [...(children.get('') || [])].reverse().map(row => ({ row, depth: 0 }))
-  while (stack.length) {
-    const entry = stack.pop()!
-    visible.push(entry)
-    if (expanded.has(entry.row.key)) for (const row of [...(children.get(entry.row.key) || [])].reverse()) stack.push({ row, depth: entry.depth + 1 })
-  }
-  return <div className="hierarchy-table"><small>{paged ? `현재 페이지 ${rows.length}행 · instance 전체 경로 표시` : `${visible.length} / ${rows.length}행 표시 · 가지를 펼쳐 하위 instance를 확인하세요.`} · 수치 비교이며 정상/이상 판정이 아님</small><div className="table-scroll"><table><thead><tr><th>기준 hierarchy</th><th>현재 hierarchy</th><th>기준 Area</th><th>현재 Area</th><th>Δ Area</th><th>Δ Area %</th><th>기준 Power (mW)</th><th>현재 Power (mW)</th><th>Δ Power</th><th>Δ Power %</th><th>비교 가능성 / 사유</th></tr></thead><tbody>{visible.map(({ row, depth }) => {
-    const area = row.result?.metrics.total_area, power = row.result?.metrics.pwr_all_total_mw
-    let areaReason = text(area?.reason), powerReason = text(power?.reason)
-    if (areaReason === 'policy_unconfigured' || areaReason === 'policy_unconfigured · 정상 판정 아님') areaReason = ''
-    if (powerReason === 'policy_unconfigured' || powerReason === 'policy_unconfigured · 정상 판정 아님') powerReason = ''
-    const missingReason = !row.result ? hasResult ? '결과 없음' : '대응 미지정' : ''
-    const areaNote = areaReason || missingReason, powerNote = powerReason || missingReason
-    const note = areaNote === powerNote ? areaNote : [areaNote && `Area ${areaNote}`, powerNote && `Power ${powerNote}`].filter(Boolean).join(' · ')
-    // Nested rows show the instance name; the full path stays in the tooltip.
-    const label = (paths: string[], item: TreeRow['current'], empty: string) => {
-      const full = paths.join(' + ')
-      const leaf = depth && paths.length === 1 && item?.parent_path && full.startsWith(item.parent_path) ? full.slice(item.parent_path.length + 1) : full
-      return <span className="path-label" title={full || empty}>{leaf || empty}</span>
-    }
-    const hasChildren = children.has(row.key)
-    const toggle = () => { const next = new Set(expanded); if (next.has(row.key)) next.delete(row.key); else next.add(row.key); onExpanded(next) }
-    return <tr key={row.key}><td><span className="hierarchy-path" style={{ paddingInlineStart: `${Math.min(depth, 16) * 12}px` }}>{hasChildren && <button type="button" className="tree-row-toggle" aria-label={`${row.baselinePaths.join(' + ') || row.currentPaths.join(' + ')} ${expanded.has(row.key) ? '접기' : '펼치기'}`} aria-expanded={expanded.has(row.key)} onClick={toggle}>{expanded.has(row.key) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button>}{label(row.baselinePaths, row.baseline, '— · 기준 대응 없음')}</span></td><td>{label(row.currentPaths, row.current, '— · 현재 대응 미지정')}</td><td className="numeric">{format(area ? area.baseline : row.baseline?.area)}</td><td className="numeric">{format(area ? area.current : row.current?.area)}</td><td className="numeric">{format(area?.delta)}</td><td className="numeric" title={text(area?.relative_change_pct)} aria-label={`Area 상대 변화율 ${area?.relative_change_pct == null ? '계산 불가' : `${text(area.relative_change_pct)}%`}`}>{formatPercent(area?.relative_change_pct)}</td><td className="numeric">{format(power ? power.baseline : row.baseline?.power_mw)}</td><td className="numeric">{format(power ? power.current : row.current?.power_mw)}</td><td className="numeric">{format(power?.delta)}</td><td className="numeric" title={text(power?.relative_change_pct)} aria-label={`Power 상대 변화율 ${power?.relative_change_pct == null ? '계산 불가' : `${text(power.relative_change_pct)}%`}`}>{formatPercent(power?.relative_change_pct)}</td><td className="metric-status"><div>Area <Badge value={area?.comparability || 'unavailable'} /> Power <Badge value={power?.comparability || 'unavailable'} />{note && <small title={note}>{note}</small>}</div></td></tr>
-  })}</tbody></table></div></div>
+function referenceRows(value: ComparisonDetail): BrowserRow[] {
+  const counts = new Map((value.hierarchy_nodes || []).map(node => [node.group_id, node.child_count]))
+  return groupedResults(value).map(result => ({ key: result.id, baselinePaths: result.baselinePaths, currentPaths: result.currentPaths, result, childCount: counts.get(result.id) || 0 }))
 }

@@ -593,14 +593,60 @@ def iter_comparison_metrics(db, settings, comparison):
                 yield pc, pb, result
 
 
-def comparison_observations(db, settings, comparison, offset=0, limit=200, search=''):
+def group_tree(groups: list[Group], cs: str, bs: str) -> dict[str, str | None]:
+    """Display parent of each group: the nearest ancestor path owned by another group.
+
+    The current side decides placement; baseline-only groups use the baseline
+    side. Correspondence and values are unchanged. Explicit mappings may invert
+    nesting across sides, so display cycles are broken at the root.
+    """
+    owner = ({}, {})
+    for group in groups:
+        for index, paths in enumerate((group.current_paths, group.baseline_paths)):
+            for path in paths:
+                owner[index].setdefault(path, group.id)
+    parents: dict[str, str | None] = {}
+    for group in groups:
+        side = 0 if group.current_paths else 1
+        paths = group.current_paths or group.baseline_paths
+        separator = cs if side == 0 else bs
+        parent = None
+        path = paths[0] if paths else ''
+        while parent is None and separator in path:
+            path = path.rsplit(separator, 1)[0]
+            candidate = owner[side].get(path)
+            if candidate is not None and candidate != group.id:
+                parent = candidate
+        parents.setdefault(group.id, parent)
+    for start in list(parents):
+        trail, node = [], start
+        while node is not None and node not in trail:
+            trail.append(node)
+            node = parents.get(node)
+        if node is not None:
+            parents[node] = None
+    return parents
+
+
+def comparison_observations(db, settings, comparison, offset=0, limit=200, search='', parent=None):
     _reference_contract(comparison)
     if not isinstance(offset, int) or not isinstance(limit, int) or offset < 0 or limit < 1 or limit > 500:
         raise DomainError('Observation pagination requires offset >= 0 and limit 1..500.', code='invalid_pagination')
     request, cu, bu, current, baseline, cm, bm, groups, chain, full_groups = load_inputs(db, settings, comparison, observations=True)
     needle = search.strip().casefold()
+    nodes = None
     if needle:
         groups = [group for group in groups if any(needle in path.casefold() for path in group.baseline_paths + group.current_paths)]
+    elif parent is not None:
+        parents = group_tree(groups, cm.hierarchy_separator, bm.hierarchy_separator if bm else cm.hierarchy_separator)
+        if parent and parent not in parents:
+            raise DomainError('The requested hierarchy node is not part of this comparison.', code='unknown_hierarchy_node', status_code=404)
+        counts: dict[str, int] = {}
+        for value in parents.values():
+            if value is not None:
+                counts[value] = counts.get(value, 0) + 1
+        groups = [group for group in groups if parents[group.id] == (parent or None)]
+        nodes = {group.id: {'group_id': group.id, 'parent_id': parent or None, 'child_count': counts.get(group.id, 0)} for group in groups}
     total = len(groups)
     pair = _power_pair(cu, bu, current, baseline, None)
     precision = _pair_precision(current, baseline)
@@ -610,4 +656,8 @@ def comparison_observations(db, settings, comparison, offset=0, limit=200, searc
         for group in groups[offset:offset + limit]:
             for metric in ('total_area', 'pwr_all_total_mw'):
                 items.append(evaluate_metric(metric, group, current, baseline, cm, bm, cu, bu, request.policy, pair if metric in POWER else None))
-    return {'items': items, 'total_groups': total, 'offset': offset, 'limit': limit, 'search': search}
+    page = {'items': items, 'total_groups': total, 'offset': offset, 'limit': limit, 'search': search}
+    if nodes is not None:
+        page['parent'] = parent
+        page['nodes'] = [nodes[group.id] for group in groups[offset:offset + limit]]
+    return page
