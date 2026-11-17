@@ -605,7 +605,7 @@ class Service:
                 return rows
             offset += len(page)
 
-    def comparison_detail(self, identifier, *, view="full", offset=0, limit=200, search="", parent=None):
+    def comparison_detail(self, identifier, *, view="full", offset=0, limit=200, search="", parent=None, metrics=None, min_area=None):
         with self.db.connect() as conn:
             comparison = self.db.record(conn, identifier, kind="comparison")
             if view == "summary":
@@ -628,7 +628,7 @@ class Service:
                 for run in runs:
                     judgements.extend(self.all_records(conn, "judgement", parent_id=run["id"]))
                 return {"comparison": comparison, "results": results, "judgements": judgements, "ai_runs": runs}
-        observations = comparison_observations(self.db, raw.settings, comparison, offset=offset, limit=limit, search=search, parent=parent)
+        observations = comparison_observations(self.db, raw.settings, comparison, offset=offset, limit=limit, search=search, parent=parent, metrics=metrics, min_area=min_area)
         return {'comparison': comparison, 'results': [], 'judgements': judgements, 'ai_runs': runs,
                 'observations': observations['items'], 'hierarchy_nodes': observations.get('nodes'),
                 'result_page': {key: value for key, value in observations.items() if key not in ('items', 'nodes')}}

@@ -59,6 +59,49 @@ class ParsedCSV:
     row_count: int
 
 
+# Values a comparison view may show besides area and power. They are kept as
+# the stored text and become Decimals only for rows actually displayed, so a
+# large hierarchy does not hold every column as objects in memory.
+OBSERVED_EXTRA = tuple(f"{g}_{kind}" for g in CELL_GROUPS for kind in ("cells", "area") if (g, kind) != ("total", "area")) + PCT_FIELDS[1:] + tuple(field for field in POWER_FIELDS if field != "pwr_all_total_mw")
+_EXTRA_SEPARATOR = "\x1f"
+
+
+class ObservedRow(dict):
+    """Level, total area and total power, plus the other observed values on demand.
+
+    Parsing matches read_observations: counts are integers, areas and power
+    Decimals, and reported ratios are None when blank or when logic area is 0.
+    """
+    __slots__ = ("_extra",)
+
+    def __init__(self, base, extra):
+        super().__init__(base)
+        self._extra = extra
+
+    def _load(self):
+        extra, self._extra = self._extra, None
+        if extra is None:
+            return
+        values = dict(zip(OBSERVED_EXTRA, extra.split(_EXTRA_SEPARATOR)))
+        for key, raw in values.items():
+            if key in PCT_FIELDS:
+                continue
+            self[key] = int(Decimal(raw)) if key.endswith("_cells") else Decimal(raw)
+        for key in PCT_FIELDS[1:]:
+            self[key] = Decimal(values[key]) if values[key] and self["logic_area"] else None
+
+    def __missing__(self, key):
+        if self._extra is None:
+            raise KeyError(key)
+        self._load()
+        return self[key]
+
+    def get(self, key, default=None):
+        if self._extra is not None and not dict.__contains__(self, key):
+            self._load()
+        return dict.get(self, key, default)
+
+
 @dataclass
 class ObservedCSV:
     rows: dict[str, dict[str, Any]]
@@ -312,7 +355,8 @@ def read_observations(upload, metadata: UploadMetadata, maximum: int) -> Observe
                     magnitude = -value if value < 0 else value
                     if magnitude > largest_integer:
                         largest_integer = magnitude
-            rows[path] = {key: row[key] for key in ('level', 'total_area', 'pwr_all_total_mw')}
+            rows[path] = ObservedRow({key: row[key] for key in ('level', 'total_area', 'pwr_all_total_mw')},
+                                     _EXTRA_SEPARATOR.join(raw[key].strip() for key in OBSERVED_EXTRA))
     except (csv.Error, InvalidOperation, ValueError, OverflowError) as exc:
         raise DomainError('Stored upload is not a validated CSV original', code='stored_upload_mismatch') from exc
     if largest_integer:

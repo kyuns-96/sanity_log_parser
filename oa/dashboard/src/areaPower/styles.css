@@ -234,8 +234,9 @@
 .area-power.area-power .browser-toolbar small { margin-left: auto; color: var(--text-muted); font-size: 10px; }
 .area-power.area-power .browser-check { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-secondary); }
 .area-power.area-power .browser-scroll { max-height: max(280px, calc(100vh - 210px)); overflow: auto; }
-.area-power.area-power .hierarchy-browser table { width: 100%; min-width: 1180px; border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 12px; }
-.area-power.area-power .hierarchy-browser .col-instance { width: 30%; }
+.area-power.area-power .hierarchy-browser table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 12px; }
+.area-power.area-power .hierarchy-browser .col-instance { width: 260px; }
+.area-power.area-power .hierarchy-browser .col-number { width: 92px; }
 .area-power.area-power .hierarchy-browser .col-state { width: 92px; }
 .area-power.area-power .hierarchy-browser th { position: sticky; top: 0; z-index: 2; background: var(--surface-soft); color: var(--text-secondary); font-size: 10px; font-weight: 600; padding: 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .area-power.area-power .hierarchy-browser thead tr:first-child th { height: 26px; box-sizing: border-box; }
@@ -310,8 +311,8 @@
 .area-power.area-power .view-switch button + button { border-left: 1px solid var(--line); }
 .area-power.area-power .view-switch button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .area-power.area-power .diff-count { color: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
-.area-power.area-power .split-view .col-pane { width: 21%; }
-.area-power.area-power .split-view .col-gutter { width: 104px; }
+.area-power.area-power .split-view .col-pane { width: 220px; }
+.area-power.area-power .split-view .col-gutter { width: 92px; }
 .area-power.area-power .split-view th.pane-head { text-align: left; padding: 0 12px; color: var(--ink); font-size: 11px; }
 .area-power.area-power .split-view th.pane-head.current-pane, .area-power.area-power .split-view td.instance.pane-current { border-left: 1px solid var(--line); }
 .area-power.area-power .split-view th.gutter-head, .area-power.area-power .split-view td.gutter { background: var(--surface-soft); }
@@ -334,3 +335,13 @@
 .area-power.area-power .comparison-actions h2 { font-size: 15px; }
 .area-power.area-power .hierarchy-browser.maximized { position: fixed; inset: 16px; z-index: 60; margin: 0; display: flex; flex-direction: column; box-shadow: 0 0 0 100vmax rgb(0 0 0 / .35), 0 12px 40px rgb(0 0 0 / .25); }
 .area-power.area-power .hierarchy-browser.maximized .browser-scroll { flex: 1; max-height: none; }
+.area-power.area-power .browser-threshold { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
+.area-power.area-power .browser-threshold input { width: 72px; height: 24px; padding: 0 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink); font-family: var(--font-mono); font-size: 11px; }
+.area-power.area-power .browser-threshold input[aria-invalid="true"] { border-color: var(--danger); }
+.area-power.area-power .column-chooser { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px 16px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.area-power.area-power .column-chooser fieldset { margin: 0; padding: 0; border: 0; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.area-power.area-power .column-chooser legend { margin-bottom: 4px; color: var(--ink); font-size: 11px; font-weight: 650; }
+.area-power.area-power .column-chooser label { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
+.area-power.area-power .column-chooser .chooser-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.area-power.area-power .column-chooser .chooser-actions small { margin-right: auto; color: var(--text-muted); font-size: 10px; }
+.area-power.area-power .hidden-note { margin-left: 8px; color: var(--text-muted); font-size: 10px; font-style: italic; }

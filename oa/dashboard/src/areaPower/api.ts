@@ -37,11 +37,12 @@ export type Dashboard = z.infer<typeof dashboardSchema>
 export const detailSchema = z.object({
   comparison: recordSchema, results: z.array(recordSchema), judgements: z.array(recordSchema), ai_runs: z.array(recordSchema),
   observations: z.array(z.record(z.string(), z.unknown())).optional(),
-  hierarchy_nodes: z.array(z.object({ group_id: z.string(), parent_id: z.string().nullable(), child_count: z.union([z.string(), z.number()]).transform(Number).refine(value => Number.isSafeInteger(value) && value >= 0) })).nullable().optional(),
+  hierarchy_nodes: z.array(z.object({ group_id: z.string(), parent_id: z.string().nullable(), child_count: z.union([z.string(), z.number()]).transform(Number).refine(value => Number.isSafeInteger(value) && value >= 0), hidden_child_count: z.union([z.string(), z.number()]).transform(Number).refine(value => Number.isSafeInteger(value) && value >= 0).optional() })).nullable().optional(),
   result_page: z.object({
     offset: z.string().transform(Number).refine(value => Number.isSafeInteger(value) && value >= 0),
     limit: z.string().transform(Number).refine(value => Number.isSafeInteger(value) && value > 0),
     total_groups: z.string().transform(Number).refine(value => Number.isSafeInteger(value) && value >= 0),
+    hidden_groups: z.union([z.string(), z.number()]).transform(Number).refine(value => Number.isSafeInteger(value) && value >= 0).optional(),
     search: z.string(),
   }).optional(),
 })

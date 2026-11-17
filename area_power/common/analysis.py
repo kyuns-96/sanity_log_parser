@@ -15,7 +15,7 @@ from psycopg import sql
 from area_power.common.errors import DomainError
 from area_power.common.jsonutil import digest
 from area_power.common.models import CALCULATION_CONTRACT, COMPARISON_FORMAT, CORRESPONDENCE_POLICY, ComparisonRequest, MappingPayload, UploadMetadata
-from area_power.common.csv_input import ObservedCSV, parse_csv, read_observations
+from area_power.common.csv_input import OBSERVED_EXTRA, ObservedCSV, parse_csv, read_observations
 
 D = Decimal
 CATEGORIES = ('total', 'logic', 'cts', 'sram', 'io', 'others')
@@ -654,6 +654,7 @@ class ObservationView:
     children: dict[str | None, list[int]]
     child_count: dict[str, int]
     index: dict[str, int]
+    sizes: list[Decimal | None]
 
 
 _VIEW_CACHE: OrderedDict[tuple[str, str], ObservationView] = OrderedDict()
@@ -663,13 +664,30 @@ VIEW_CACHE_SIZE = 4
 FROZEN_KEYS = ('request', 'frozen', 'result_format', 'calculation_contract', 'correspondence')
 
 
+# Metrics an observation page may evaluate: totals, areas, cells, the CTS
+# share and reported Vth/drive shares, and power. Requests name a subset.
+DEFAULT_OBSERVED = ('total_area', 'pwr_all_total_mw')
+OBSERVABLE = tuple(metric for metric in METRICS if metric in DEFAULT_OBSERVED + OBSERVED_EXTRA + ('cts_area_pct',))
+MAX_OBSERVED = 16
+
+
+def _side_area(rows, paths):
+    values = [rows[path]['total_area'] for path in paths if path in rows and rows[path].get('total_area') is not None]
+    return sum(values, D(0)) if values and len(values) == len(paths) else None
+
+
 def _area_key(group: Group, current, baseline):
     """Largest instance first: current total area, else the baseline's."""
-    for rows, paths in ((current.rows, group.current_paths), (baseline.rows if baseline else {}, group.baseline_paths)):
-        values = [rows[path]['total_area'] for path in paths if path in rows and rows[path].get('total_area') is not None]
-        if values:
-            return (0, -sum(values, D(0)), (group.current_paths or group.baseline_paths or [''])[0])
-    return (1, D(0), (group.current_paths or group.baseline_paths or [''])[0])
+    value = _side_area(current.rows, group.current_paths)
+    if value is None:
+        value = _side_area(baseline.rows if baseline else {}, group.baseline_paths)
+    return (value is None, -(value or D(0)), (group.current_paths or group.baseline_paths or [''])[0])
+
+
+def _group_size(group: Group, current, baseline):
+    """The larger side's total area, so a shrunken or removed instance stays visible."""
+    values = [value for value in (_side_area(current.rows, group.current_paths), _side_area(baseline.rows if baseline else {}, group.baseline_paths)) if value is not None]
+    return max(values) if values else None
 
 
 def observation_view(db, settings, comparison) -> ObservationView:
@@ -698,7 +716,8 @@ def observation_view(db, settings, comparison) -> ObservationView:
             children.setdefault(parents[groups[position].id], []).append(position)
         view = ObservationView(request, cu, bu, current, baseline, cm, bm, groups, order, children,
                                {identifier: len(rows) for identifier, rows in children.items() if identifier is not None},
-                               {group.id: position for position, group in enumerate(groups)})
+                               {group.id: position for position, group in enumerate(groups)},
+                               [_group_size(group, current, baseline) for group in groups])
         with _VIEW_LOCK:
             _VIEW_CACHE[key] = view
             while len(_VIEW_CACHE) > VIEW_CACHE_SIZE:
@@ -707,23 +726,34 @@ def observation_view(db, settings, comparison) -> ObservationView:
         return view
 
 
-def comparison_observations(db, settings, comparison, offset=0, limit=200, search='', parent=None):
+def comparison_observations(db, settings, comparison, offset=0, limit=200, search='', parent=None, metrics=None, min_area=None):
     _reference_contract(comparison)
     if not isinstance(offset, int) or not isinstance(limit, int) or offset < 0 or limit < 1 or limit > 500:
         raise DomainError('Observation pagination requires offset >= 0 and limit 1..500.', code='invalid_pagination')
+    metrics = tuple(dict.fromkeys(metrics or DEFAULT_OBSERVED))
+    unknown = [metric for metric in metrics if metric not in OBSERVABLE]
+    if unknown or len(metrics) > MAX_OBSERVED:
+        raise DomainError(f'Observation metrics must be at most {MAX_OBSERVED} of: ' + ', '.join(OBSERVABLE), code='invalid_observation_metrics')
+    if min_area is not None and (not isinstance(min_area, Decimal) or not min_area.is_finite() or min_area < 0):
+        raise DomainError('Area threshold must be a finite number >= 0.', code='invalid_area_threshold')
     view = observation_view(db, settings, comparison)
+    # Rows whose larger side is below the threshold are hidden, not removed:
+    # values and correspondence are unchanged and the hidden count is reported.
+    shown = (lambda position: True) if not min_area else (lambda position: view.sizes[position] is None or view.sizes[position] >= min_area)
     request, cu, bu, current, baseline, cm, bm = view.request, view.cu, view.bu, view.current, view.baseline, view.cm, view.bm
     needle = search.strip().casefold()
     nodes = None
     if needle:
-        selected = [position for position in view.order if any(needle in path.casefold() for path in view.groups[position].baseline_paths + view.groups[position].current_paths)]
+        candidates = [position for position in view.order if any(needle in path.casefold() for path in view.groups[position].baseline_paths + view.groups[position].current_paths)]
     elif parent is not None:
         if parent and parent not in view.index:
             raise DomainError('The requested hierarchy node is not part of this comparison.', code='unknown_hierarchy_node', status_code=404)
-        selected = view.children.get(parent or None, [])
+        candidates = view.children.get(parent or None, [])
         nodes = True
     else:
-        selected = view.order
+        candidates = view.order
+    # Design roots stay visible so a threshold never empties the tree.
+    selected = candidates if nodes and not parent else [position for position in candidates if shown(position)]
     groups = [view.groups[position] for position in selected[offset:offset + limit]]
     total = len(selected)
     pair = _power_pair(cu, bu, current, baseline, None)
@@ -732,10 +762,13 @@ def comparison_observations(db, settings, comparison, offset=0, limit=200, searc
     with localcontext() as context:
         context.prec = precision
         for group in groups:
-            for metric in ('total_area', 'pwr_all_total_mw'):
+            for metric in metrics:
                 items.append(evaluate_metric(metric, group, current, baseline, cm, bm, cu, bu, request.policy, pair if metric in POWER else None))
-    page = {'items': items, 'total_groups': total, 'offset': offset, 'limit': limit, 'search': search}
+    page = {'items': items, 'total_groups': total, 'hidden_groups': len(candidates) - total, 'offset': offset, 'limit': limit, 'search': search,
+            'metrics': list(metrics), 'min_area': min_area}
     if nodes:
         page['parent'] = parent
-        page['nodes'] = [{'group_id': group.id, 'parent_id': parent or None, 'child_count': view.child_count.get(group.id, 0)} for group in groups]
+        page['nodes'] = [{'group_id': group.id, 'parent_id': parent or None,
+                          'child_count': sum(1 for position in view.children.get(group.id, []) if shown(position)),
+                          'hidden_child_count': sum(1 for position in view.children.get(group.id, []) if not shown(position))} for group in groups]
     return page

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from decimal import Decimal
 import logging
 import traceback
 from typing import Literal
@@ -218,7 +219,10 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
     def comparison(identifier: UUID, request: Request, actor=Depends(authenticated_dependency), view: Literal["full", "summary", "hierarchy"] = "full",
                    offset: int = Query(default=0, ge=0), limit: int = Query(default=200, ge=1, le=500),
                    search: str = Query(default="", max_length=1000),
-                   parent: str | None = Query(default=None, max_length=64, pattern="^[0-9a-f]*$")):
+                   parent: str | None = Query(default=None, max_length=64, pattern="^[0-9a-f]*$"),
+                   metrics: str = Query(default="", max_length=2000, pattern="^[a-z0-9_,]*$"),
+                   min_area: Decimal | None = Query(default=None, ge=0)):
+        observed = [name for name in metrics.split(",") if name] or None
         from area_power.common.models import COMPARISON_FORMAT
         raw = Database(Settings.from_env())
         with authorization_scope(request, actor) as identity:
@@ -226,8 +230,8 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
             with context.db.connect() as conn:
                 selected = context.db.record(conn, identifier, kind='comparison')
             if view == 'summary' or selected['payload'].get('result_format') != COMPARISON_FORMAT:
-                return json(context.comparison_detail(identifier, view=view, offset=offset, limit=limit, search=search, parent=parent))
-        value = Service(raw).comparison_detail(identifier, view=view, offset=offset, limit=limit, search=search, parent=parent)
+                return json(context.comparison_detail(identifier, view=view, offset=offset, limit=limit, search=search, parent=parent, metrics=observed, min_area=min_area))
+        value = Service(raw).comparison_detail(identifier, view=view, offset=offset, limit=limit, search=search, parent=parent, metrics=observed, min_area=min_area)
         response = json(value)
         with authorization_scope(request, reauthenticated(request, actor)) as identity:
             context = Service(raw, AreaAccess(identity))
