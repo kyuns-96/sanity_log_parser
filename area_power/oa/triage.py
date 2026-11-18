@@ -10,7 +10,7 @@ from uuid import UUID
 
 from pydantic import Field, field_validator
 
-from oa.sanity_ai_retry import MAX_RETRIES
+from oa.sanity_ai_task_defaults import DEFAULT_AREA_RETRY_LIMIT, TaskDefaults
 from area_power.common.analysis import observation_view
 from area_power.common.models import COMPARISON_FORMAT
 from area_power.common.triage import BATCH_SIZE, ENGINE, MAX_ITEMS, Thresholds, select_items, side_context
@@ -21,7 +21,6 @@ FINISHED = ('completed', 'failed')
 
 
 class TriageInput(Input):
-    retry_limit: int = Field(default=2, ge=0, le=MAX_RETRIES, strict=True)
     thresholds: Thresholds = Field(default_factory=Thresholds)
     labels: dict[str, str] = Field(default_factory=dict)
 
@@ -171,10 +170,12 @@ def request_run(service, prepared, selection, body: TriageInput, actor) -> dict:
         service.authorize(conn, comparison, write=True)
         service.validate_comparison(conn, prepared['comparison'], write=True)
         from area_power.common.ai import capture_context
-        ai_context = capture_context(service.access, tasks=('AREA_TRIAGE',))
+        host = _host_db(service)
+        settings = TaskDefaults(host).current() if host is not None else None
+        ai_context = capture_context(service.access, tasks=('AREA_TRIAGE',), defaults=settings['defaults'] if settings else None)
         if selection.items and ai_context['AREA_TRIAGE'].get('error'):
             reject('The project comparison AI selection is unavailable.', ai_context['AREA_TRIAGE']['error'], 409)
-        payload = {'engine': ENGINE, 'retry_limit': body.retry_limit, 'thresholds': body.thresholds.model_dump(mode='python'),
+        payload = {'engine': ENGINE, 'retry_limit': settings['area_retry_limit'] if settings else DEFAULT_AREA_RETRY_LIMIT, 'thresholds': body.thresholds.model_dump(mode='python'),
                    'notes': prepared['notes'], 'note_warnings': prepared['note_warnings'], 'same_rtl': prepared['same_rtl'],
                    'watched_paths': prepared['watched_paths'], 'process': prepared['process'],
                    'comparison_kind': prepared['comparison_kind'], 'labels': body.labels, 'requested_by': actor,

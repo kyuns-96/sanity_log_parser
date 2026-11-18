@@ -567,7 +567,7 @@ function triageRun(comparison: TrackingRecord, body: Payload, visible: Set<strin
   const selection = triageSelection(comparison, object(body.thresholds), visible)
   if (selection.preview.over_limit) fail('분석 대상이 400개를 넘습니다. 기준을 올리세요.')
   const reason = 'synthetic_demo_model_not_called'
-  const run = record('ai_run', { ...scopeFromRecord(comparison), parent_id: comparison.id }, { engine: TRIAGE_ENGINE, retry_limit: body.retry_limit ?? 2, thresholds: selection.thresholds, notes: selection.notes, note_warnings: [], same_rtl: false,
+  const run = record('ai_run', { ...scopeFromRecord(comparison), parent_id: comparison.id }, { engine: TRIAGE_ENGINE, retry_limit: 2, thresholds: selection.thresholds, notes: selection.notes, note_warnings: [], same_rtl: false,
     watched_paths: selection.preview.watched_paths, comparison_kind: selection.kind, labels: object(body.labels), requested_by: actor, side_context: selection.context, counts: selection.counts,
     missing_watched: selection.missing, coverage: { expected_items: selection.cards.length, processed_items: selection.cards.length, failed_items: selection.cards.length, batches: 0, processed_batches: 0 },
     error: selection.cards.length ? { code: reason } : null, model_called: false, source: 'synthetic_memory_demo', notice }, selection.cards.length ? 'failed' : 'completed')

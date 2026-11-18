@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from common.sanity_clustering import check
 from oa.ai_tokens_api import TokenCommand, RemoveTokenCommand
 from oa.sanity_ai_connections import ConnectionStore
+from oa.sanity_ai_retry import MAX_RETRIES
 
 
 class ConnectionCommand(BaseModel):
@@ -26,6 +27,7 @@ class TaskDefaultsCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_revision: int = Field(ge=0, lt=9999999999, strict=True)
     defaults: dict[str, Any]
+    area_retry_limit: int | None = Field(default=None, strict=True, ge=0, le=MAX_RETRIES)
 
 
 class SchedulerCommand(BaseModel):
@@ -59,7 +61,7 @@ def create_ai_connections_router(authorized_actor):
     @router.post("/api/admin/ai/task-defaults")
     def save_task_defaults(body: TaskDefaultsCommand, actor=Depends(owner)):
         from oa.sanity_ai_task_defaults import TaskDefaults
-        return TaskDefaults(actor.access.db).save(actor,body.defaults,body.expected_revision)
+        return TaskDefaults(actor.access.db).save(actor,body.defaults,body.expected_revision, area_retry_limit=body.area_retry_limit)
 
     @router.get("/api/admin/ai/connections")
     def admin_list(actor=Depends(owner)):

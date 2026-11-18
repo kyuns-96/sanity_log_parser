@@ -243,13 +243,15 @@ class ConnectionStore:
         advisor = OAAdvisor(settings)
         return advisor.for_model(model_id) if model_id is not None else advisor
 
-    def task_selection(self, user_id, task):
+    def task_selection(self, user_id, task, *, defaults=None):
         """The shared log/Area initial connection and model selection."""
         from oa.sanity_ai_task_defaults import TaskDefaults, TASKS
         check(task in TASKS, "INVALID_REQUEST")
         connections = self.user_connections(user_id)
         first = connections[0] if connections else {}
-        default = TaskDefaults(self.db).current()['defaults'][task]
+        if defaults is None:
+            defaults = TaskDefaults(self.db).current()['defaults']
+        default = defaults[task]
         if task == 'AREA_TRIAGE' and default is None:
             return connections, {}, {'applied': False, 'reason': 'AI_TASK_MODEL_REQUIRED'}
         task_default = None

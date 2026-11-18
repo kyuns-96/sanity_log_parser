@@ -22,7 +22,7 @@ def _token_store(store, connection_id, advisor):
     return UserTokenStore(store.db, store.settings) if advisor.settings.token_source == 'user' else None
 
 
-def capture_context(access, *, tasks=('CLUSTER', 'REVIEW')):
+def capture_context(access, *, tasks=('CLUSTER', 'REVIEW'), defaults=None):
     """Capture the same initial choices as log classification and judgment."""
     from oa.sanity_ai_connections import ConnectionStore
 
@@ -33,7 +33,7 @@ def capture_context(access, *, tasks=('CLUSTER', 'REVIEW')):
     result = {}
     for task in tasks:
         try:
-            _, selected, task_default = store.task_selection(actor.user_id, task)
+            _, selected, task_default = store.task_selection(actor.user_id, task, defaults=defaults)
             if task_default is not None:
                 require(task_default.get('applied'), task_default.get('reason') or 'AI_CONNECTION_UNAVAILABLE')
             if selected:

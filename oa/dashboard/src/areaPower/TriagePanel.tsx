@@ -34,7 +34,6 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const [thresholds, setThresholds] = useState({ area_increase_pct: '10', power_increase_pct: '10', min_area: '50' })
-  const [retryLimit, setRetryLimit] = useState(2)
   const [preview, setPreview] = useState<TriagePreview | null>(null)
   const [runs, setRuns] = useState<TriageRun[]>([])
   const [runId, setRunId] = useState('')
@@ -44,7 +43,7 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
   const [recipients, setRecipients] = useState('')
   const [tick, setTick] = useState(0)
   const valid = Object.values(thresholds).every(value => NUMBER.test(value.trim()))
-  const body = () => ({ thresholds: Object.fromEntries(Object.entries(thresholds).map(([key, value]) => [key, value.trim()])), retry_limit: retryLimit, labels })
+  const body = () => ({ thresholds: Object.fromEntries(Object.entries(thresholds).map(([key, value]) => [key, value.trim()])), labels })
 
   useEffect(() => {
     setPreview(null); setRuns([]); setRunId(''); setResult(null); setLoadError(''); setExcluded(new Set()); onItems([])
@@ -123,7 +122,6 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
     <div className="triage-controls">
       <h3><Sparkles size={15} aria-hidden="true" />AI 분석</h3>
       {([['area_increase_pct', 'Area 증가 ≥', '%'], ['power_increase_pct', 'Power 증가 ≥', '%'], ['min_area', 'Area 최소', '']] as const).map(([key, label, unit]) => <label key={key} className="browser-threshold">{label}<input type="text" inputMode="decimal" value={thresholds[key]} aria-invalid={!NUMBER.test(thresholds[key].trim())} onChange={event => { setThresholds({ ...thresholds, [key]: event.target.value }); setPreview(null) }} />{unit}</label>)}
-      <label className="browser-threshold" title="묶음 하나가 실패했을 때 추가로 시도할 최대 횟수입니다.">묶음당 자동 재시도<select value={retryLimit} onChange={event => setRetryLimit(Number(event.target.value))}>{[0, 1, 2, 3, 4, 5].map(count => <option key={count} value={count}>{count}회</option>)}</select></label>
       <Button variant="outline" size="sm" disabled={action.busy || !valid} onClick={() => action.run(loadPreview, '후보를 계산했습니다.')}><Search size={14} />미리보기</Button>
       <Button size="sm" disabled={action.busy || !valid || !canWrite || preview?.over_limit === true} onClick={() => action.run(start, 'AI 분석을 요청했습니다. 완료되면 자동으로 갱신합니다.')}><Sparkles size={14} />AI 분석 실행</Button>
       {runs.length > 0 && <label className="triage-runs">지난 분석<select value={runId} onChange={event => { setExcluded(new Set()); setRunId(event.target.value) }}>{runs.map(row => <option key={row.id} value={row.id}>{date(row.created_at)} · {row.state}</option>)}</select></label>}
