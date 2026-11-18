@@ -1,6 +1,7 @@
 """Transactional OA operations. All cross-server work is represented by DB jobs."""
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from email.headerregistry import Address
 from typing import Any, Literal
@@ -253,21 +254,14 @@ class Service:
                 "row_version": project["row_version"]}
 
     def upload_hierarchy(self, upload):
-        from area_power.common.csv_input import parse_hierarchy
-        from area_power.common.models import UploadMetadata
-        if upload["state"] != "ready":
-            reject("Only ready uploads may be selected or compared.", "upload_not_ready", 409)
+        from area_power.common.csv_input import read_hierarchy
         raw = self.db.raw if self.access is not None else self.db
-        metadata = UploadMetadata.model_validate(upload["input_contract"]["metadata"])
-        items = parse_hierarchy(bytes(upload["csv_gzip"]), metadata,
-                                raw.settings.max_uncompressed_bytes,
-                                original_sha256=bytes(upload["original_sha256"]),
-                                original_byte_length=upload["original_byte_length"], row_count=upload["row_count"])
+        metadata, items = read_hierarchy(upload, raw.settings.max_uncompressed_bytes)
         return {"upload_id": upload["id"], "snapshot_id": upload["snapshot_id"],
                 "hierarchy_separator": metadata.hierarchy_separator, "items": items}
 
-    def config(self, body, actor):
-        with self.db.connect() as conn:
+    def config(self, body, actor, *, conn=None):
+        with (self.db.connect() if conn is None else nullcontext(conn)) as conn:
             scope = {key: getattr(body, key) for key in SCOPE_FIELDS}
             self.validate_scope(conn, scope)
             previous = None
@@ -605,9 +599,11 @@ class Service:
                 if job["created_by"] != actor:
                     reject("Only the original requester can rerun an AI job.", "forbidden", 403)
                 expected_kind = {"compare": "comparison", "judge": "ai_run", "extract": "change"}[job["job_kind"]]
+                if job["job_kind"] == "judge" and parent and parent["record_type"] == "mapping_proposal":
+                    expected_kind = "mapping_proposal"
                 if not parent or parent["record_type"] != expected_kind:
                     reject("Job subject does not match its kind.", "invalid_job_subject")
-                if expected_kind in ("comparison", "ai_run"):
+                if expected_kind in ("comparison", "ai_run", "mapping_proposal"):
                     if parent["state"] != "failed":
                         reject("Subject is not failed; it cannot safely be reset.", "invalid_subject_state", 409)
                     active = conn.execute(sql.SQL("SELECT id FROM {} WHERE record_type='job' AND parent_id=%s AND id<>%s AND state IN ('pending','running')").format(self.db.table("di_area_power_tracking_record")), (parent["id"], identifier)).fetchone()

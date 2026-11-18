@@ -228,6 +228,16 @@ def _csv_reader(original: bytes):
     return reader, header
 
 
+def read_hierarchy(upload, maximum):
+    if upload['state'] != 'ready':
+        raise DomainError('Only ready uploads may be selected or compared.', code='upload_not_ready', status_code=409)
+    metadata = UploadMetadata.model_validate(upload['input_contract']['metadata'])
+    items = parse_hierarchy(bytes(upload['csv_gzip']), metadata, maximum,
+                            original_sha256=bytes(upload['original_sha256']),
+                            original_byte_length=upload['original_byte_length'], row_count=upload['row_count'])
+    return metadata, items
+
+
 def parse_hierarchy(
     data: bytes, metadata: UploadMetadata, max_uncompressed_bytes: int, *,
     original_sha256: bytes, original_byte_length: int, row_count: int,

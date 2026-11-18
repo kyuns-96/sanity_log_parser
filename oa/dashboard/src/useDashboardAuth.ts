@@ -22,6 +22,7 @@ export class DashboardRequestError extends Error {
       REQUEST_CONFLICT: '이미 처리되었거나 같은 요청 번호의 내용이 다릅니다. 최신 상태를 확인해 주세요.',
       AREA_POWER_UNAVAILABLE: '구성·전력 분석 서비스가 설정되지 않았거나 현재 사용할 수 없습니다. 운영 담당자에게 문의해 주세요.',
       INTERNAL_ERROR: '서버 내부 오류가 발생했습니다. 운영 담당자에게 오류가 발생한 작업과 시각을 전달해 주세요.',
+      AI_VWP_CONNECTION_REQUIRED: 'AI 매핑 제안에는 VWP 연결이 필요합니다. 관리자 설정에서 프로젝트 비교 AI 분석의 연결을 확인하세요.',
       AI_TASK_MODEL_REQUIRED: '관리자 설정 → AI 연결·모델 관리에서 프로젝트 비교 AI 분석의 연결과 모델을 지정해 주세요.',
       AI_CONNECTION_UNAVAILABLE: '선택한 AI 연결을 사용할 수 없습니다. 관리자 설정의 연결과 모델을 확인해 주세요.',
       AI_USER_TOKEN_REQUIRED: '선택한 AI 연결에 본인의 인증값을 등록해 주세요.',

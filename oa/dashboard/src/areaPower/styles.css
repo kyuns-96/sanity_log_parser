@@ -428,3 +428,9 @@
 .area-power.area-power .run-selector legend { margin-bottom: 5px; }
 .area-power.area-power .run-fields { gap: 6px 10px; }
 .area-power.area-power .comparison-actions { padding-block: 8px; }
+.mapping-suggestions { display: grid; gap: 8px; margin: 12px 0; }
+.mapping-suggestions details { border-left: 2px solid var(--line); padding-left: 10px; }
+.mapping-suggestions summary { cursor: pointer; }
+.mapping-suggestions ul { list-style: none; padding-left: 12px; }
+.mapping-suggestions li { margin: 8px 0; overflow-wrap: anywhere; }
+.mapping-suggestions li small { display: block; margin-left: 20px; color: var(--text-secondary); }

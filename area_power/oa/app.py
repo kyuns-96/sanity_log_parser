@@ -24,7 +24,8 @@ from .service import (
     AlertStateInput, BaselineInput, ConfigInput, ProcessInput, RejudgeInput, RerunInput,
     SelectionInput, Service, CONFIG_TYPES,
 )
-from . import triage
+from . import mapping_suggestions, triage
+from .mapping_suggestions import Approval, ProposalInput
 from .triage import TriageInput, TriageMailInput
 
 LOG = logging.getLogger('area_power.oa')
@@ -198,6 +199,21 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
     @router.post("/selections")
     def selection(body: SelectionInput, context=Depends(service)):
         return json(context.selection(body, context.access.actor.user_id))
+
+    @router.post("/mapping-proposals")
+    def propose_mapping(body: ProposalInput, context=Depends(service)):
+        return json(mapping_suggestions.submit(context, body, context.access.actor), 202)
+
+    @router.get("/mapping-proposals/{identifier}")
+    def mapping_proposal(identifier: UUID, context=Depends(service)):
+        with context.db.connect() as conn:
+            row = context.db.record(conn, identifier, kind='mapping_proposal')
+        return json({'state': row['state'], 'error': (row.get('error_detail') or {}).get('code'),
+                     'result': row['payload'].get('result')})
+
+    @router.post("/mapping-proposals/{identifier}/approve")
+    def approve_mapping(identifier: UUID, body: Approval, context=Depends(service)):
+        return json(mapping_suggestions.approve(context, identifier, body, context.access.actor.user_id))
 
     @router.post("/comparisons")
     def compare(body: ComparisonRequest, request: Request, actor=Depends(authenticated_dependency)):

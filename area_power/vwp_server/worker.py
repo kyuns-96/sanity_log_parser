@@ -61,8 +61,12 @@ def dispatch(db, settings, job):
                 comparison = db.record(conn, comparison_id, kind='comparison')
             elif subject['record_type'] == 'comparison':
                 run_id, comparison_id, comparison = None, subject['id'], subject
-            else:
-                raise DomainError('Judge job requires an AI run or comparison', code='invalid_job_subject')
+            elif subject['record_type'] != 'mapping_proposal':
+                raise DomainError('Unsupported judgement subject.', code='invalid_job_subject')
+        if subject['record_type'] == 'mapping_proposal':
+            from .mapping_suggestions import run_mapping_proposal
+            run_mapping_proposal(db, subject)
+            return
         if subject['record_type'] == 'ai_run' and subject['payload'].get('engine') == TRIAGE_ENGINE:
             # Instance triage runs carry their own frozen inputs; an explicit
             # rerun repeats the whole run with the same inputs and pins.
@@ -162,6 +166,8 @@ def persist_failure(db, job, error):
             else:
                 payload['ai_state'] = 'failed'
                 db.update_record(conn, subject['id'], ACTOR, payload=payload)
+        elif subject['record_type'] == 'mapping_proposal':
+            db.update_record(conn, subject['id'], ACTOR, state='failed', error_detail=error)
         elif subject['record_type'] == 'ai_run':
             if subject['state'] != 'completed':
                 payload = dict(subject['payload'])
