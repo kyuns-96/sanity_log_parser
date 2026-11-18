@@ -7,6 +7,9 @@ or failing model never becomes a success: affected instances stay
 """
 from __future__ import annotations
 
+from time import sleep
+
+from oa.sanity_ai_retry import receipt, retry_delay_seconds
 from common.sanity_common import ReviewError
 from area_power.common.ai import runtime_for
 from area_power.common.analysis import advisory_lock, existing_dedupe, observation_view
@@ -23,26 +26,29 @@ def _aborts(code: str) -> bool:
     return code in AI_CONTEXT_ERRORS or code.startswith(('AUTHORIZATION_', 'DATABASE_', 'DBAAS_'))
 
 
-def judge(runtime, cards, notes, context, same_rtl, kind, task):
-    """One model call for a batch; a batch over the input limit is halved."""
+def judge(runtime, cards, notes, context, same_rtl, kind, task, retry_limit, coverage):
+    """Retry this batch only after a confirmed, retryable failure."""
     evidence, instructions = batch_request(cards, notes, context, same_rtl, kind)
-    try:
-        response = runtime.infer(task, evidence, instructions, PROMPT_VERSION)
-    except ReviewError as exc:
-        if _aborts(exc.code):
-            raise
-        if exc.code == 'AI_INPUT_LIMIT':
-            if len(cards) > 1:
-                middle = len(cards) // 2
-                return (judge(runtime, cards[:middle], notes, context, same_rtl, kind, task)
-                        + judge(runtime, cards[middle:], notes, context, same_rtl, kind, task))
-            return validate_batch(cards, notes, None, 'ai_context_limit')
-        return validate_batch(cards, notes, None, exc.code)
-    except ConfigurationError:
-        raise
-    except (ValueError, KeyError, IndexError, TypeError):
-        return validate_batch(cards, notes, None, 'ai_invalid_response')
-    return validate_batch(cards, notes, response)
+    retries = 0
+    while True:
+        retry_error = None
+        try:
+            response = runtime.infer(task, evidence, instructions, PROMPT_VERSION)
+        except ReviewError as exc:
+            if _aborts(exc.code) or exc.code == 'AI_INPUT_LIMIT':
+                raise
+            if retries >= retry_limit or receipt(exc) is None:
+                return validate_batch(cards, notes, None, exc.code)
+            retry_error = exc
+        except (ValueError, KeyError, IndexError, TypeError):
+            return validate_batch(cards, notes, None, 'ai_invalid_response')
+        else:
+            results = validate_batch(cards, notes, response)
+            if retries >= retry_limit or not any(item['failed'] for item in results):
+                return results
+        retries += 1
+        sleep(retry_delay_seconds(retries, retry_error))
+        coverage['retry_calls'] += 1
 
 
 def _update(db, run_id, *, state=None, error=None, **payload):
@@ -105,23 +111,31 @@ def _run(db, settings, run, comparison):
                                  'batches': 0, 'processed_batches': 0})
     cards = [build_card(view, item, context, thresholds) for item in selection.items]
     batches = [cards[start:start + BATCH_SIZE] for start in range(0, len(cards), BATCH_SIZE)]
-    coverage = {'expected_items': len(cards), 'processed_items': 0, 'failed_items': 0, 'batches': len(batches), 'processed_batches': 0}
+    coverage = {'expected_items': len(cards), 'processed_items': 0, 'failed_items': 0, 'batches': len(batches), 'processed_batches': 0, 'retry_calls': 0}
     _update(db, run['id'], state='running', error=None, prompt_version=PROMPT_VERSION, side_context=context,
             counts=selection.counts, missing_watched=selection.missing_watched, coverage=coverage)
     for batch in batches:
-        if abort is None:
-            try:
-                results = judge(runtime, batch, notes, context, payload.get('same_rtl', False), payload.get('comparison_kind'), task)
-            except ConfigurationError:
-                raise
-            except ReviewError as exc:
-                # The requester's authority or AI connection changed: stop calling the model.
-                abort = failure_detail(exc)
-        if abort is not None:
-            results = validate_batch(batch, notes, None, abort['code'])
-        _store(db, run, results)
-        coverage['processed_items'] += len(results)
-        coverage['failed_items'] += sum(result['failed'] for result in results)
+        pending = [batch]
+        while pending:
+            part = pending.pop()
+            if abort is None:
+                try:
+                    results = judge(runtime, part, notes, context, payload.get('same_rtl', False),
+                                    payload.get('comparison_kind'), task, payload.get('retry_limit', 0), coverage)
+                except ReviewError as exc:
+                    if exc.code == 'AI_INPUT_LIMIT':
+                        if len(part) > 1:
+                            middle = len(part) // 2
+                            pending.extend((part[middle:], part[:middle]))
+                            continue
+                        results = validate_batch(part, notes, None, 'ai_context_limit')
+                    else:
+                        abort = failure_detail(exc)
+            if abort is not None:
+                results = validate_batch(part, notes, None, abort['code'])
+            _store(db, run, results)
+            coverage['processed_items'] += len(results)
+            coverage['failed_items'] += sum(result['failed'] for result in results)
         coverage['processed_batches'] += 1
         _update(db, run['id'], coverage=dict(coverage))
     failed = coverage['failed_items'] > 0

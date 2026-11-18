@@ -26,7 +26,7 @@ VERDICTS = ('expected', 'unexpected', 'needs_review', 'minor')
 CAUSES = ('note', 'vth_shift', 'drive_shift', 'new_instance', 'unknown')
 AREA, POWER_TOTAL = 'total_area', 'pwr_all_total_mw'
 # Run payload keys an explicit rerun must carry over unchanged.
-RUN_KEYS = ('engine', 'thresholds', 'notes', 'note_warnings', 'same_rtl', 'watched_paths', 'process',
+RUN_KEYS = ('engine', 'retry_limit', 'thresholds', 'notes', 'note_warnings', 'same_rtl', 'watched_paths', 'process',
             'labels', 'comparison_kind', 'requested_by')
 
 

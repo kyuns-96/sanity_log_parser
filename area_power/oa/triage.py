@@ -10,6 +10,7 @@ from uuid import UUID
 
 from pydantic import Field, field_validator
 
+from oa.sanity_ai_retry import MAX_RETRIES
 from area_power.common.analysis import observation_view
 from area_power.common.models import COMPARISON_FORMAT
 from area_power.common.triage import BATCH_SIZE, ENGINE, MAX_ITEMS, Thresholds, select_items, side_context
@@ -20,6 +21,7 @@ FINISHED = ('completed', 'failed')
 
 
 class TriageInput(Input):
+    retry_limit: int = Field(default=2, ge=0, le=MAX_RETRIES, strict=True)
     thresholds: Thresholds = Field(default_factory=Thresholds)
     labels: dict[str, str] = Field(default_factory=dict)
 
@@ -172,7 +174,7 @@ def request_run(service, prepared, selection, body: TriageInput, actor) -> dict:
         ai_context = capture_context(service.access, tasks=('AREA_TRIAGE',))
         if selection.items and ai_context['AREA_TRIAGE'].get('error'):
             reject('The project comparison AI selection is unavailable.', ai_context['AREA_TRIAGE']['error'], 409)
-        payload = {'engine': ENGINE, 'thresholds': body.thresholds.model_dump(mode='python'),
+        payload = {'engine': ENGINE, 'retry_limit': body.retry_limit, 'thresholds': body.thresholds.model_dump(mode='python'),
                    'notes': prepared['notes'], 'note_warnings': prepared['note_warnings'], 'same_rtl': prepared['same_rtl'],
                    'watched_paths': prepared['watched_paths'], 'process': prepared['process'],
                    'comparison_kind': prepared['comparison_kind'], 'labels': body.labels, 'requested_by': actor,
@@ -187,7 +189,7 @@ def request_run(service, prepared, selection, body: TriageInput, actor) -> dict:
 def _summary(run):
     payload = run['payload']
     return {**{key: run.get(key) for key in ('id', 'state', 'created_at', 'updated_at', 'error_detail', 'parent_id')},
-            'payload': {key: payload.get(key) for key in ('engine', 'thresholds', 'coverage', 'missing_watched', 'note_warnings',
+            'payload': {key: payload.get(key) for key in ('engine', 'retry_limit', 'thresholds', 'coverage', 'missing_watched', 'note_warnings',
                                                            'same_rtl', 'requested_by', 'side_context', 'counts', 'labels')},
             'note_count': len(payload.get('notes', []))}
 
@@ -230,14 +232,7 @@ def results(service, identifier) -> dict:
             job = jobs.get(str(mail['id']))
             mail['job_state'] = job['state'] if job else None
             mail['job_error'] = job.get('error_detail') if job else None
-        attempt_job = run['payload'].get('explicit_attempt_job_id')
-        analysis_jobs = ([service.db.record(conn, UUID(str(attempt_job)), kind='job')] if attempt_job else
-                         service.db.records(conn, 'job', parent_id=identifier, limit=1))
-        job = analysis_jobs[0] if analysis_jobs else None
-        retry_job = ({'id': job['id'], 'row_version': job['row_version'], 'state': job['state']}
-                     if job and job['job_kind'] == 'judge' and job['state'] == 'failed' and run['state'] == 'failed'
-                     and job.get('finished_at') and service.access and job['created_by'] == service.access.actor.user_id else None)
-        return {'ai_run': {**_summary(run), 'notes': run['payload'].get('notes', [])}, 'items': items, 'mails': mails, 'retry_job': retry_job}
+        return {'ai_run': {**_summary(run), 'notes': run['payload'].get('notes', [])}, 'items': items, 'mails': mails}
 
 
 def request_mail(service, identifier, body: TriageMailInput, actor) -> dict:

@@ -60,12 +60,16 @@ def valid_receipt(value):
     return receipt(error) == value and receipt(error) is not None
 
 
-def retry_at(now, number, error=None):
+def retry_delay_seconds(number, error=None):
     seconds = min(60, 5 * 2 ** (number - 1))
     supplied = getattr(error, "retry_after_seconds", 0)
     if type(supplied) is int:
         seconds = max(seconds, min(300, max(0, supplied)))
-    return (now + timedelta(seconds=seconds)).isoformat()
+    return seconds
+
+
+def retry_at(now, number, error=None):
+    return (now + timedelta(seconds=retry_delay_seconds(number, error))).isoformat()
 
 
 def resumable(event, *, checkpoint_ready=False):

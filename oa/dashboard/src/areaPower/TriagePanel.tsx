@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { LoaderCircle, Mail, Search, Sparkles } from 'lucide-react'
-import { array, date, format, formatPercent, object, recordSchema, request, revision, text, triagePreviewSchema, triageResultSchema, triageRunsSchema, triageStartedSchema, unknownSchema, type Auth, type TriageItem, type TriagePreview, type TriageResult, type TriageRun } from './api'
+import { array, date, format, formatPercent, object, request, text, triagePreviewSchema, triageResultSchema, triageRunsSchema, triageStartedSchema, unknownSchema, type Auth, type TriageItem, type TriagePreview, type TriageResult, type TriageRun } from './api'
 import { Button, useAction } from './components/workspace'
 
 export const VERDICT_LABEL: Record<string, string> = { unexpected: '이상', needs_review: '확인 필요', expected: '설명됨', minor: '변화 미미' }
@@ -34,6 +34,7 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const [thresholds, setThresholds] = useState({ area_increase_pct: '10', power_increase_pct: '10', min_area: '50' })
+  const [retryLimit, setRetryLimit] = useState(2)
   const [preview, setPreview] = useState<TriagePreview | null>(null)
   const [runs, setRuns] = useState<TriageRun[]>([])
   const [runId, setRunId] = useState('')
@@ -43,7 +44,7 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
   const [recipients, setRecipients] = useState('')
   const [tick, setTick] = useState(0)
   const valid = Object.values(thresholds).every(value => NUMBER.test(value.trim()))
-  const body = () => ({ thresholds: Object.fromEntries(Object.entries(thresholds).map(([key, value]) => [key, value.trim()])), labels })
+  const body = () => ({ thresholds: Object.fromEntries(Object.entries(thresholds).map(([key, value]) => [key, value.trim()])), retry_limit: retryLimit, labels })
 
   useEffect(() => {
     setPreview(null); setRuns([]); setRunId(''); setResult(null); setLoadError(''); setExcluded(new Set()); onItems([])
@@ -90,15 +91,6 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
     if (alive.current) setTick(current => current + 1)
   }
 
-  async function retry() {
-    const job = result?.retry_job
-    if (!job) return
-    const next = await request(auth, `/jobs/${encodeURIComponent(job.id)}/rerun`, recordSchema, { expected_row_version: revision(job.row_version) })
-    if (!alive.current) return
-    setResult(null); onItems([]); setExcluded(new Set())
-    setRunId(next.parent_id || runId); setTick(current => current + 1)
-  }
-
   const run = result?.ai_run
   const coverage = object(run?.payload.coverage), context = object(run?.payload.side_context)
   const items = result?.items || []
@@ -131,6 +123,7 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
     <div className="triage-controls">
       <h3><Sparkles size={15} aria-hidden="true" />AI 분석</h3>
       {([['area_increase_pct', 'Area 증가 ≥', '%'], ['power_increase_pct', 'Power 증가 ≥', '%'], ['min_area', 'Area 최소', '']] as const).map(([key, label, unit]) => <label key={key} className="browser-threshold">{label}<input type="text" inputMode="decimal" value={thresholds[key]} aria-invalid={!NUMBER.test(thresholds[key].trim())} onChange={event => { setThresholds({ ...thresholds, [key]: event.target.value }); setPreview(null) }} />{unit}</label>)}
+      <label className="browser-threshold" title="묶음 하나가 실패했을 때 추가로 시도할 최대 횟수입니다.">묶음당 자동 재시도<select value={retryLimit} onChange={event => setRetryLimit(Number(event.target.value))}>{[0, 1, 2, 3, 4, 5].map(count => <option key={count} value={count}>{count}회</option>)}</select></label>
       <Button variant="outline" size="sm" disabled={action.busy || !valid} onClick={() => action.run(loadPreview, '후보를 계산했습니다.')}><Search size={14} />미리보기</Button>
       <Button size="sm" disabled={action.busy || !valid || !canWrite || preview?.over_limit === true} onClick={() => action.run(start, 'AI 분석을 요청했습니다. 완료되면 자동으로 갱신합니다.')}><Sparkles size={14} />AI 분석 실행</Button>
       {runs.length > 0 && <label className="triage-runs">지난 분석<select value={runId} onChange={event => { setExcluded(new Set()); setRunId(event.target.value) }}>{runs.map(row => <option key={row.id} value={row.id}>{date(row.created_at)} · {row.state}</option>)}</select></label>}
@@ -141,7 +134,7 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
     {loadError && <div className="notice error" role="alert">{loadError}</div>}
     {preview && counts && <div className="triage-preview" role="status">
       {preview.ai_model && <p>분석 모델: {preview.ai_model.model ? `${preview.ai_model.site === 'vwp' ? 'VWP' : 'OA'} · ${preview.ai_model.connection_label} · ${preview.ai_model.model}` : '미설정'}{!preview.ai_model.ready && ` · ${preview.ai_model.error === 'AI_TASK_MODEL_REQUIRED' ? '관리자 → AI 연결·모델 관리 → 프로젝트 비교 AI 분석에서 지정하세요.' : `연결 또는 본인 인증값 확인 필요 (${preview.ai_model.error || 'AI_CONNECTION_UNAVAILABLE'})`}`}</p>}
-      <p><strong>분석 대상 {counts.total?.toLocaleString() ?? 0}개</strong> · Area 증가 {counts.area_increase ?? 0} · Power 증가 {counts.power_increase ?? 0} · 신규 {counts.new_instance ?? 0} · 주요 {counts.watched ?? 0} · 상위로 묶임 {counts.rolled_up ?? 0} · 예상 AI 호출 {preview.estimated_calls}회</p>
+      <p><strong>분석 대상 {counts.total?.toLocaleString() ?? 0}개</strong> · Area 증가 {counts.area_increase ?? 0} · Power 증가 {counts.power_increase ?? 0} · 신규 {counts.new_instance ?? 0} · 주요 {counts.watched ?? 0} · 상위로 묶임 {counts.rolled_up ?? 0} · 최초 예상 AI 호출 {preview.estimated_calls}회</p>
       <p>적용 메모 {preview.notes.length}건{preview.applicable_net_vers.length ? ` (${preview.applicable_net_vers.join(', ')})` : ''}{preview.same_rtl ? ' · 같은 NET_VER(RTL 동일)' : ''} · 주요 instance {preview.watched_paths.length}개 · library {{ same: '같음', unknown: '미확인(공정 미등록)', different: '다름' }[text(previewContext.library)] || text(previewContext.library)}</p>
       {preview.over_limit && <p className="notice warning">분석 대상이 {preview.max_items}개를 넘습니다. 기준을 올린 뒤 다시 미리보기 하세요. 일부만 분석하지 않습니다.</p>}
       {(['power', 'area'] as const).map(part => object(previewContext[part]).analyzed === false && <p className="notice warning" key={part}>{part === 'power' ? 'Power' : 'Area'}는 분석에서 뺍니다 · {EXCLUSION_LABEL[text(object(previewContext[part]).reason)] || text(object(previewContext[part]).reason)}</p>)}
@@ -154,8 +147,8 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
         {running(run.state) ? <><LoaderCircle size={14} className="spin" />분석 중 · 묶음 {format(coverage.processed_batches ?? 0)} / {format(coverage.batches ?? '?')} · instance {format(coverage.processed_items ?? 0)} / {format(coverage.expected_items ?? '?')}</>
           : <><strong>이상 {of('unexpected').length}</strong> · 확인 필요 {of('needs_review').length} · 설명됨 {of('expected').length} · 변화 미미 {of('minor').length} · 적용 메모 {run.note_count ?? 0}건</>}
       </summary>
+      {run.payload.retry_limit != null && <p className="muted">자동 재시도 · 묶음당 최대 {format(run.payload.retry_limit)}회 · 전체 누적 {format(coverage.retry_calls ?? 0)}회</p>}
       {run.state === 'failed' && <p className="notice error">이 분석은 완료되지 않았습니다{object(run.error_detail).code ? ` (${text(object(run.error_detail).code)})` : ''}. AI 판정을 받지 못한 {failedItems}건은 확인 필요로 남았습니다. AI 연결을 확인한 뒤 다시 실행하세요.</p>}
-      {run.state === 'failed' && result.retry_job && <p><Button variant="outline" size="sm" disabled={action.busy || !canWrite} onClick={() => action.run(retry, '같은 입력으로 재시도를 요청했습니다.')}>실패한 분석 재시도</Button><span className="muted"> 당시 입력·모델로 전체 분석을 다시 실행합니다. 모델이나 인증값을 바꿨다면 ‘AI 분석 실행’으로 새 분석을 요청하세요.</span></p>}
       {(['power', 'area'] as const).map(part => object(context[part]).analyzed === false && <p className="notice warning" key={part}>{part === 'power' ? 'Power' : 'Area'}는 분석에서 뺐습니다 · {EXCLUSION_LABEL[text(object(context[part]).reason)] || text(object(context[part]).reason)}</p>)}
       {array(run.payload.missing_watched).length > 0 && <p className="notice warning">현재 실행에 없는 주요 instance · {array(run.payload.missing_watched).map(text).slice(0, 8).join(', ')}</p>}
       {!running(run.state) && items.length === 0 && <p className="muted">기준을 넘는 변화와 주요 instance가 없어 분석할 항목이 없습니다.</p>}
