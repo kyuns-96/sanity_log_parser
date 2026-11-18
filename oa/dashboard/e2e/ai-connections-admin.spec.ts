@@ -20,7 +20,7 @@ async function adminFixture(page: Page, initial: Entry[]) {
     if (path === '/api/access/me') return route.fulfill({ json: { user_id: 'synthetic-user', is_admin: true, revision: 0, grants: [], requests: [] } })
     if (path === '/api/admin/access') return route.fulfill({ json: { revision: 0, requests: [], grants: [], users: [] } })
     if (path === '/api/admin/ai/task-defaults' && request.method() === 'GET') {
-      return route.fulfill({ json: { revision: 0, area_retry_limit: 2, defaults: { CLUSTER: null, REVIEW: null, AREA_TRIAGE: null } } })
+      return route.fulfill({ json: { revision: 0, area_retry_limit: 5, defaults: { CLUSTER: null, REVIEW: null, AREA_TRIAGE: null } } })
     }
     if (path === '/api/admin/ai/scheduler' && request.method() === 'GET') {
       return route.fulfill({ json: { revision: 0, limits: { max_concurrency: 8, max_jobs: 4 } } })

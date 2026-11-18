@@ -11,7 +11,7 @@ from oa.sanity_ai_retry import MAX_RETRIES
 from oa.sanity_workspace import WorkspaceStore, record_id
 
 PREFIX = 'ai.task-defaults.'
-DEFAULT_AREA_RETRY_LIMIT = 2
+DEFAULT_AREA_RETRY_LIMIT = 5
 TASKS = ('CLUSTER', 'REVIEW', 'AREA_TRIAGE')
 
 
