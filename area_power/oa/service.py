@@ -581,6 +581,8 @@ class Service:
 
     def rerun(self, identifier, body, actor):
         with self.db.connect() as conn:
+            job = self.db.record(conn, identifier, kind="job")
+            parent = self.db.record(conn, job["parent_id"], lock=True) if job.get("parent_id") else None
             job = self.db.record(conn, identifier, kind="job", lock=True)
             self.authorize(conn, job, write=True)
             if job["state"] != "failed" or not job.get("finished_at"):
@@ -591,9 +593,6 @@ class Service:
             existing = conn.execute(sql.SQL("SELECT id FROM {} WHERE record_type='job' AND previous_id=%s AND state IN ('pending','running')").format(self.db.table("di_area_power_tracking_record")), (identifier,)).fetchone()
             if existing:
                 reject("A rerun of this job is already pending or running.", "conflict", 409)
-            parent = None
-            if job.get("parent_id"):
-                parent = self.db.record(conn, job["parent_id"], lock=True)
             subject_context = {}
             if job["job_kind"] in ("compare", "judge", "extract"):
                 if job["created_by"] != actor:

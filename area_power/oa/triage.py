@@ -14,6 +14,7 @@ from oa.sanity_ai_task_defaults import DEFAULT_AREA_RETRY_LIMIT, TaskDefaults
 from area_power.common.analysis import observation_view
 from area_power.common.models import COMPARISON_FORMAT
 from area_power.common.triage import BATCH_SIZE, ENGINE, MAX_ITEMS, Thresholds, select_items, side_context
+from .analysis_deletion import request_owner
 from .service import Input, addresses, reject
 
 BINDING_PREFIX = 'design-atlas-v1.binding.'
@@ -187,11 +188,12 @@ def request_run(service, prepared, selection, body: TriageInput, actor) -> dict:
         return {'ai_run': run, 'job': job}
 
 
-def _summary(run):
+def _summary(run, actor):
     payload = run['payload']
     return {**{key: run.get(key) for key in ('id', 'state', 'created_at', 'updated_at', 'error_detail', 'parent_id')},
             'payload': {key: payload.get(key) for key in ('engine', 'retry_limit', 'thresholds', 'coverage', 'missing_watched', 'note_warnings',
                                                            'same_rtl', 'requested_by', 'side_context', 'counts', 'labels')},
+            'can_delete': actor.auth_method == 'sso' and request_owner(run) == actor.user_id,
             'note_count': len(payload.get('notes', []))}
 
 
@@ -200,7 +202,7 @@ def runs(service, identifier) -> dict:
         service.db.record(conn, identifier, kind='comparison')
         rows = [row for row in service.all_records(conn, 'ai_run', parent_id=identifier) if row['payload'].get('engine') == ENGINE]
         rows.sort(key=lambda row: str(row.get('created_at')), reverse=True)
-        return {'runs': [_summary(row) for row in rows]}
+        return {'runs': [_summary(row, service.access.actor) for row in rows]}
 
 
 def _run(service, conn, identifier, *, lock=False):
@@ -233,7 +235,7 @@ def results(service, identifier) -> dict:
             job = jobs.get(str(mail['id']))
             mail['job_state'] = job['state'] if job else None
             mail['job_error'] = job.get('error_detail') if job else None
-        return {'ai_run': {**_summary(run), 'notes': run['payload'].get('notes', [])}, 'items': items, 'mails': mails}
+        return {'ai_run': {**_summary(run, service.access.actor), 'notes': run['payload'].get('notes', [])}, 'items': items, 'mails': mails}
 
 
 def request_mail(service, identifier, body: TriageMailInput, actor) -> dict:

@@ -24,7 +24,7 @@ from .service import (
     AlertStateInput, BaselineInput, ConfigInput, ProcessInput, RejudgeInput, RerunInput,
     SelectionInput, Service, CONFIG_TYPES,
 )
-from . import mapping_suggestions, triage
+from . import analysis_deletion, mapping_suggestions, triage
 from .mapping_suggestions import Approval, ProposalInput
 from .triage import TriageInput, TriageMailInput
 
@@ -199,6 +199,14 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
     @router.post("/selections")
     def selection(body: SelectionInput, context=Depends(service)):
         return json(context.selection(body, context.access.actor.user_id))
+
+    @router.post("/analyses/{identifier}/delete")
+    def delete_analysis(identifier: UUID, context=Depends(service)):
+        return json(analysis_deletion.remove(context, identifier))
+
+    @router.get("/mapping-proposals")
+    def mapping_history(current_upload_id: UUID, baseline_upload_id: UUID, context=Depends(service)):
+        return json(mapping_suggestions.history(context, current_upload_id, baseline_upload_id))
 
     @router.post("/mapping-proposals")
     def propose_mapping(body: ProposalInput, context=Depends(service)):

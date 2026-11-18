@@ -507,8 +507,8 @@ function baselineSetting(project: TrackingRecord, visible: Set<string>) {
 // Synthetic AI triage: the same candidate thresholds as the product, without
 // ancestor roll-up and without any model call. Every item stays needs_review.
 const TRIAGE_ENGINE = 'instance-triage-v1'
-function triageSummary(run: TrackingRecord) {
-  return { id: run.id, state: run.state, created_at: run.created_at, error_detail: run.payload.error ?? null, payload: run.payload, note_count: list(run.payload.notes).length }
+function triageSummary(run: TrackingRecord, actor: string) {
+  return { can_delete: run.payload.requested_by === actor, id: run.id, state: run.state, created_at: run.created_at, error_detail: run.payload.error ?? null, payload: run.payload, note_count: list(run.payload.notes).length }
 }
 function triageSelection(comparison: TrackingRecord, thresholds: Payload, visible: Set<string>) {
   if (comparison.state !== 'completed') fail('수치 계산이 완료된 비교만 분석할 수 있습니다.')
@@ -615,7 +615,17 @@ async function dispatch(path: string, body: Payload | undefined, plain: boolean 
   if (triageRuns) {
     const comparison = scopedRecord(decodeURIComponent(triageRuns[1]), 'comparison', visible)
     if (body) return triageRun(comparison, body, visible, actor)
-    return { runs: accessible().filter(row => row.record_type === 'ai_run' && row.parent_id === comparison.id && row.payload.engine === TRIAGE_ENGINE).sort((a, b) => text(b.created_at).localeCompare(text(a.created_at))).map(triageSummary) }
+    return { runs: accessible().filter(row => row.record_type === 'ai_run' && row.parent_id === comparison.id && row.payload.engine === TRIAGE_ENGINE).sort((a, b) => text(b.created_at).localeCompare(text(a.created_at))).map(row => triageSummary(row, actor)) }
+  }
+  const removeAnalysis = /^\/analyses\/([^/]+)\/delete$/.exec(route)
+  if (removeAnalysis && body) {
+    const id = decodeURIComponent(removeAnalysis[1])
+    if (!records.has(id)) return { removed: [id] }
+    const run = scopedRecord(id, 'ai_run', visible)
+    if (run.payload.engine !== TRIAGE_ENGINE || run.payload.requested_by !== actor) fail('본인의 분석만 삭제할 수 있습니다.')
+    for (const row of accessible()) if (row.parent_id === id && ['triage_mail', 'judgement'].includes(row.record_type)) records.delete(row.id)
+    records.delete(id)
+    return { removed: [id] }
   }
   const triageMail = /^\/triage\/([^/]+)\/mail$/.exec(route)
   if (triageMail && body) {
@@ -628,7 +638,7 @@ async function dispatch(path: string, body: Payload | undefined, plain: boolean 
   if (triageResult && !body) {
     const run = scopedRecord(decodeURIComponent(triageResult[1]), 'ai_run', visible)
     const children = accessible().filter(row => row.parent_id === run.id)
-    return { ai_run: { ...triageSummary(run), notes: list(run.payload.notes) }, items: children.filter(row => row.record_type === 'judgement').map(row => row.payload),
+    return { ai_run: { ...triageSummary(run, actor), notes: list(run.payload.notes) }, items: children.filter(row => row.record_type === 'judgement').map(row => row.payload),
       mails: children.filter(row => row.record_type === 'triage_mail').map(row => ({ id: row.id, created_at: row.created_at, ...row.payload })) }
   }
   const hierarchy = /^\/uploads\/([^/]+)\/hierarchy$/.exec(route)

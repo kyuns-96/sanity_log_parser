@@ -209,10 +209,10 @@ def new_attempt(db, comparison, original, job_id):
 
 def mirror_attempt(db, original_id, attempt_id, error=None):
     with db.connect() as conn:
+        original = db.record(conn, original_id, lock=True, kind='ai_run')
         attempt = db.record(conn, attempt_id, lock=True, kind='ai_run')
         if error and attempt['state'] not in ('completed', 'failed'):
             attempt = db.update_record(conn, attempt_id, ACTOR, state='failed', error_detail=error)
-        original = db.record(conn, original_id, lock=True, kind='ai_run')
         payload = dict(original['payload'])
         payload.update({'rerun_ai_run_id': attempt_id, 'coverage': attempt['payload'].get('coverage', {})})
         db.update_record(conn, original_id, ACTOR, state=attempt['state'], error_detail=attempt.get('error_detail'), payload=payload)

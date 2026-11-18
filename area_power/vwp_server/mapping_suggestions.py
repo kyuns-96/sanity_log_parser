@@ -1,5 +1,4 @@
 """Central VWP judgement of candidate paths. Output is advice, never a saved mapping."""
-from time import sleep
 
 from common.sanity_common import ReviewError
 from oa.sanity_ai_retry import receipt, retry_delay_seconds
@@ -53,7 +52,7 @@ def _choices(runtime, batch, limit):
             error = exc
         if attempt == limit:
             raise error
-        sleep(retry_delay_seconds(attempt + 1, error))
+        runtime.wait_for_retry(retry_delay_seconds(attempt + 1, error))
 
 
 def _tree(db, upload_id):

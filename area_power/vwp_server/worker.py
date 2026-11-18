@@ -183,20 +183,29 @@ def consume_once(db, settings, owner, *, claim_job=None):
     job = claim_job() if claim_job is not None else db.claim_job('vwp_server', owner)
     if job is None:
         return False
+    error = None
     try:
         dispatch(db, settings, job)
     except Exception as exc:
         error = failure_detail(exc)
         if isinstance(exc, DomainError):
-            error['code'] = getattr(exc, 'code', 'validation_error')
-        LOG.error('Job failed: %s', type(exc).__name__)
+            error['code'] = exc.code
         try:
             persist_failure(db, job, error)
         except Exception as persistence_error:
-            LOG.error('Failure persistence failed: %s', type(persistence_error).__name__)
+            if not (job['job_kind'] == 'judge' and isinstance(persistence_error, DomainError)
+                    and persistence_error.code == 'not_found'):
+                LOG.error('Failure persistence failed: %s', type(persistence_error).__name__)
+    try:
         db.finish_job(job['id'], owner, error=error)
-    else:
-        db.finish_job(job['id'], owner)
+    except DomainError as exc:
+        # Removal commits the subject and its claimed job together. Late completion
+        # of this claim must leave the worker available for the next pending job.
+        if job['job_kind'] == 'judge' and exc.code == 'not_found':
+            return True
+        raise
+    if error:
+        LOG.error('Job failed: %s', error['error_class'])
     return True
 
 

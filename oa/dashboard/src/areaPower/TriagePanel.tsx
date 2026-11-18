@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { LoaderCircle, Mail, Search, Sparkles } from 'lucide-react'
 import { array, date, format, formatPercent, object, request, text, triagePreviewSchema, triageResultSchema, triageRunsSchema, triageStartedSchema, unknownSchema, type Auth, type TriageItem, type TriagePreview, type TriageResult, type TriageRun } from './api'
+import { AnalysisDelete } from './AnalysisDelete'
 import { Button, useAction } from './components/workspace'
 
 export const VERDICT_LABEL: Record<string, string> = { unexpected: '이상', needs_review: '확인 필요', expected: '설명됨', minor: '변화 미미' }
@@ -36,6 +37,7 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
   const [thresholds, setThresholds] = useState({ area_increase_pct: '10', power_increase_pct: '10', min_area: '50' })
   const [preview, setPreview] = useState<TriagePreview | null>(null)
   const [runs, setRuns] = useState<TriageRun[]>([])
+  const [historyVersion, setHistoryVersion] = useState(0)
   const [runId, setRunId] = useState('')
   const [result, setResult] = useState<TriageResult | null>(null)
   const [loadError, setLoadError] = useState('')
@@ -53,7 +55,7 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
       setRuns(value.runs); setRunId(value.runs[0]?.id || '')
     }).catch(cause => { if (!controller.signal.aborted) setLoadError(cause instanceof Error ? cause.message : '분석 이력을 조회하지 못했습니다.') })
     return () => controller.abort()
-  }, [auth, comparisonId])
+  }, [auth, comparisonId, historyVersion])
 
   useEffect(() => {
     if (!runId) { setResult(null); onItems([]); return }
@@ -81,7 +83,7 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
   async function start() {
     const value = await request(auth, `/comparisons/${encodeURIComponent(comparisonId)}/triage`, triageStartedSchema, body())
     if (!alive.current) return
-    const created: TriageRun = { id: value.ai_run.id, state: value.ai_run.state, created_at: value.ai_run.created_at, payload: value.ai_run.payload }
+    const created: TriageRun = { can_delete: true, id: value.ai_run.id, state: value.ai_run.state, created_at: value.ai_run.created_at, payload: value.ai_run.payload }
     setRuns(rows => [created, ...rows]); setExcluded(new Set()); setPreview(null); setRunId(created.id); setTick(current => current + 1)
   }
   async function sendMail() {
@@ -90,6 +92,7 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
     if (alive.current) setTick(current => current + 1)
   }
 
+  const selectedRun = runs.find(row => row.id === runId)
   const run = result?.ai_run
   const coverage = object(run?.payload.coverage), context = object(run?.payload.side_context)
   const items = result?.items || []
@@ -125,6 +128,8 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
       <Button variant="outline" size="sm" disabled={action.busy || !valid} onClick={() => action.run(loadPreview, '후보를 계산했습니다.')}><Search size={14} />미리보기</Button>
       <Button size="sm" disabled={action.busy || !valid || !canWrite || preview?.over_limit === true} onClick={() => action.run(start, 'AI 분석을 요청했습니다. 완료되면 자동으로 갱신합니다.')}><Sparkles size={14} />AI 분석 실행</Button>
       {runs.length > 0 && <label className="triage-runs">지난 분석<select value={runId} onChange={event => { setExcluded(new Set()); setRunId(event.target.value) }}>{runs.map(row => <option key={row.id} value={row.id}>{date(row.created_at)} · {row.state}</option>)}</select></label>}
+      {canWrite && selectedRun?.can_delete && <AnalysisDelete key={runId} auth={auth} id={runId} active={running(selectedRun.state)}
+        onDeleted={() => { setRunId(''); setResult(null); onItems([]); setHistoryVersion(v => v + 1) }} />}
     </div>
     {auth.demo && <p className="notice">합성 데모는 AI와 메일을 호출하지 않습니다. 후보 선별만 보여 주고 판정은 모두 확인 필요로 남깁니다.</p>}
     {!canWrite && <p className="notice">조회 전용 · AI 분석 실행과 메일 발송에는 프로젝트 멤버 권한이 필요합니다.</p>}

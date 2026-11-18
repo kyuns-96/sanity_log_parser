@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { z } from 'zod'
-import { request, type Auth } from './api'
+import { AnalysisDelete } from './AnalysisDelete'
+import { date, request, type Auth } from './api'
 import { Button, useAction } from './components/workspace'
 import type { MappingDraft } from './mappingCsv'
 
@@ -14,6 +15,8 @@ const report = z.object({
 const statusSchema = z.object({ state: z.string(), error: z.string().nullable(), result: report.nullable() })
 type Report = z.infer<typeof report>
 
+const historySchema = z.object({ runs: z.array(z.object({ id: z.string(), state: z.string(), created_at: z.string() })) })
+
 export function MappingSuggestions({ auth, current, baseline, mapping, draft, disabled, onSaved, onInspect }: {
   auth: Auth; current: string; baseline: string; mapping: string; draft: MappingDraft[]; disabled: boolean
   onSaved: (id: string) => Promise<void>
@@ -21,6 +24,21 @@ export function MappingSuggestions({ auth, current, baseline, mapping, draft, di
 }) {
   const action = useAction()
   const [run, setRun] = useState('')
+  const [history, setHistory] = useState<z.infer<typeof historySchema>['runs']>([])
+  const [historyVersion, setHistoryVersion] = useState(0)
+  const [historyId, setHistoryId] = useState('')
+  const [historyError, setHistoryError] = useState('')
+  useEffect(() => {
+    if (auth.demo || disabled) return
+    const controller = new AbortController()
+    const query = new URLSearchParams({ current_upload_id: current, baseline_upload_id: baseline })
+    request(auth, '/mapping-proposals?' + query, historySchema, undefined, controller.signal).then(value => {
+      if (controller.signal.aborted) return
+      setHistory(value.runs); setHistoryError('')
+      setHistoryId(id => value.runs.some(row => row.id === id) ? id : value.runs[0]?.id || '')
+    }).catch(err => { if (!controller.signal.aborted) setHistoryError(err instanceof Error ? err.message : '제안 이력 조회 실패') })
+    return () => controller.abort()
+  }, [auth, baseline, current, disabled, historyVersion])
   const [result, setResult] = useState<Report | null>(null)
   const [message, setMessage] = useState('')
   const [checking, setChecking] = useState(false)
@@ -39,7 +57,7 @@ export function MappingSuggestions({ auth, current, baseline, mapping, draft, di
       current_upload_id: current, baseline_upload_id: baseline, mapping_id: mapping || null, request_id: requestId.current,
       draft: draft.map(r => ({ kind: 'one_to_one', scope: r.scope, baseline_paths: [r.baselinePath], current_paths: [r.currentPath] })),
     })
-    if (live.current) { setRun(row.id); setMessage(''); setChecking(true); setResult(null); setSelected(new Set()); setPage(0); setHeldPage(0) }
+    if (live.current) { setRun(row.id); setHistoryId(row.id); setHistoryVersion(v => v + 1); setMessage(''); setChecking(true); setResult(null); setSelected(new Set()); setPage(0); setHeldPage(0) }
   }
   useEffect(() => {
     if (!run) return
@@ -49,6 +67,7 @@ export function MappingSuggestions({ auth, current, baseline, mapping, draft, di
       try {
         const data = await request(auth, '/mapping-proposals/' + run, statusSchema, undefined, controller.signal)
         if (controller.signal.aborted) return
+        setHistory(rows => rows.map(row => row.id === run ? { ...row, state: data.state } : row))
         if (data.state === 'failed') {
           setMessage('분석 실패 · ' + (data.error || 'unknown')); setChecking(false); setRun(''); requestId.current = ''
         } else if (data.result) {
@@ -93,6 +112,14 @@ export function MappingSuggestions({ auth, current, baseline, mapping, draft, di
       {message && <span role="status">{message}</span>}
       {run && !checking && !result && <Button variant="outline" onClick={() => { setChecking(true); setPoll(n => n + 1) }}>결과 다시 조회</Button>}
     </div>{action.feedback}
+    {historyError && <p role="alert">{historyError}</p>}
+    {history.length > 0 && !disabled && <div className="mapping-actions"><label>내 매핑 제안 이력 <select value={historyId} onChange={e => setHistoryId(e.target.value)}>
+      {history.map(row => <option key={row.id} value={row.id}>{date(row.created_at)} · {row.state}</option>)}</select></label>
+      {historyId && <AnalysisDelete key={historyId} auth={auth} id={historyId} mapping active={history.some(row => row.id === historyId && ['queued','running'].includes(row.state))}
+        onDeleted={ids => {
+          if (ids.includes(run)) { setRun(''); setResult(null); setChecking(false); setSelected(new Set()); setMessage(''); requestId.current = '' }
+          setHistory(rows => rows.filter(row => !ids.includes(row.id))); setHistoryId(''); setHistoryVersion(v => v + 1)
+        }} />}</div>}
     {result && <>
       <p>제안 {result.suggestions.length}개 · 선택 적용 시 새로 연결 {gain}쌍 · 남는 미대응 기준 {result.baseline_unmatched - gain}개 / 현재 {result.current_unmatched - gain}개</p>
       {patterns.length > 0 && <><input aria-label="매핑 제안 검색" placeholder="변경 패턴 또는 경로 검색" value={filter} onChange={e => { setFilter(e.target.value); setPage(0) }} />

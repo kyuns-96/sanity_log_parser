@@ -7,7 +7,6 @@ or failing model never becomes a success: affected instances stay
 """
 from __future__ import annotations
 
-from time import sleep
 
 from oa.sanity_ai_retry import receipt, retry_delay_seconds
 from common.sanity_common import ReviewError
@@ -47,7 +46,7 @@ def judge(runtime, cards, notes, context, same_rtl, kind, task, retry_limit, cov
             if retries >= retry_limit or not any(item['failed'] for item in results):
                 return results
         retries += 1
-        sleep(retry_delay_seconds(retries, retry_error))
+        runtime.wait_for_retry(retry_delay_seconds(retries, retry_error))
         coverage['retry_calls'] += 1
 
 

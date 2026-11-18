@@ -60,7 +60,7 @@ export const triagePreviewSchema = z.object({
   ai_model: z.object({ ready: z.boolean(), error: z.string().nullish(), connection_label: z.string().nullish(), model: z.string().nullish(), site: z.string().nullish() }).optional(),
 })
 export type TriagePreview = z.infer<typeof triagePreviewSchema>
-export const triageRunSchema = z.object({ id: z.string(), state: z.string(), created_at: optionalText, error_detail: z.unknown().nullish(), payload: loose, note_count: count.optional(), notes: z.array(triageNoteSchema).optional() }).passthrough()
+export const triageRunSchema = z.object({ can_delete: z.boolean().optional(), id: z.string(), state: z.string(), created_at: optionalText, error_detail: z.unknown().nullish(), payload: loose, note_count: count.optional(), notes: z.array(triageNoteSchema).optional() }).passthrough()
 export type TriageRun = z.infer<typeof triageRunSchema>
 export const triageRunsSchema = z.object({ runs: z.array(triageRunSchema) })
 export const triageItemSchema = z.object({ group_id: z.string(), verdict: z.string(), cause: z.string(), explanation: z.string(), failed: z.boolean(), failure: z.string().nullish(), quotes: z.array(z.string()).optional(), card: loose }).passthrough()

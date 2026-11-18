@@ -4,14 +4,18 @@ Only nonsecret configuration/credential pins cross the Area DB queue. As in
 ``oa.ai_worker --site vwp``, execution uses the logical OA Database on VWP.
 """
 from dataclasses import dataclass, field
+from time import monotonic, sleep
 from types import SimpleNamespace
 from uuid import uuid4
+
+from psycopg import sql
 
 from common.sanity_ai_execution import executing_on
 from common.sanity_common import ReviewError, digest
 from common.sanity_config import load_environment
 from common.sanity_db import Database
 from common.sanity_vwp_ai import require
+from area_power.common.errors import DomainError
 from area_power.common.jsonutil import dumps, loads
 
 
@@ -71,6 +75,18 @@ class Runtime:
     context: dict
     receipts: list = field(default_factory=list)
 
+    def wait_for_retry(self, seconds):
+        deadline = monotonic() + seconds
+        while True:
+            with self.db.connect() as conn:
+                if not conn.execute(sql.SQL('SELECT 1 FROM {} WHERE id=%s').format(
+                        self.db.table('di_area_power_tracking_record')), (self.subject['id'],)).fetchone():
+                    raise DomainError('Analysis removed.', 'analysis_deleted', 410)
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                return
+            sleep(min(1, remaining))
+
     def _resolve(self, host_db, task, *, token=False):
         from oa.sanity_access import AccessStore, access_lock, administrator_id
         from oa.sanity_ai_connections import ConnectionStore
@@ -89,7 +105,8 @@ class Runtime:
         actor = SimpleNamespace(user_id=pin['user_id'], auth_method='sso', access=access)
         permission = AreaAccess(actor)
         with self.db.connect() as conn:
-            permission.row(self.db, conn, self.subject, write=True)
+            current_subject = self.db.record(conn, self.subject['id'])
+            permission.row(self.db, conn, current_subject, write=True)
         store = ConnectionStore(host_db)
         if pin['connection_id'] is not None:
             store.authorize_user(pin['connection_id'], pin['user_id'])

@@ -1,6 +1,7 @@
 """Queue mapping advice for two ready uploads before any numeric comparison."""
 from uuid import UUID
 
+from psycopg import sql
 from pydantic import Field, StrictInt
 
 from area_power.common.ai import capture_context
@@ -102,3 +103,14 @@ def approve(service, identifier, body, actor):
         saved = service.config(config, actor, conn=conn)
         service.db.update_record(conn, identifier, actor, payload={**payload, 'approval': {'mapping_id': saved['id'], 'selected': selected}})
         return {'id': saved['id']}
+
+def history(service, current_id, baseline_id):
+    with service.db.connect() as conn:
+        service.db.upload(conn, current_id)
+        service.db.upload(conn, baseline_id)
+        rows = conn.execute(sql.SQL(
+            "SELECT id, state, created_at FROM {} WHERE record_type='mapping_proposal' AND upload_id=%s "
+            "AND baseline_upload_id=%s AND created_by=%s ORDER BY created_at DESC, id DESC"
+        ).format(service.db.table('di_area_power_tracking_record')),
+            (current_id, baseline_id, service.access.actor.user_id)).fetchall()
+        return {'runs': rows}
