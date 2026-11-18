@@ -13,7 +13,7 @@ import { NotesPanel } from './NotesPanel'
 import { TriagePanel } from './TriagePanel'
 
 const baselineSchema = z.object({ project_id: z.string(), row_version: z.string(), baseline_project_id: z.string().nullable(), baseline_project: recordSchema.nullable(), status: z.enum(['unset', 'available', 'unavailable']), process: z.string().nullish(), baseline_process: z.string().nullish() })
-const hierarchySchema = z.object({ upload_id: z.string(), snapshot_id: z.string().nullable(), hierarchy_separator: z.string(), items: z.array(z.object({ path: z.string(), parent_path: z.string().nullable(), depth: z.string().transform(Number).refine(value => Number.isSafeInteger(value) && value >= 0), area: z.unknown().nullable(), power_mw: z.unknown().nullable() })) })
+const hierarchySchema = z.object({ upload_id: z.string(), snapshot_id: z.string().nullable(), hierarchy_separator: z.string(), items: z.array(z.object({ path: z.string(), parent_path: z.string().nullable(), depth: z.string().transform(Number).refine(value => Number.isSafeInteger(value) && value >= 0), area: z.unknown().nullable(), logic_area: z.unknown().optional(), power_mw: z.unknown().nullable() })) })
 type Hierarchy = z.infer<typeof hierarchySchema>
 type Selection = { block: string; net: string; version: string; corner: string; upload: string }
 type TreeRow = { key: string; parent: string; baselinePaths: string[]; currentPaths: string[]; baseline?: Hierarchy['items'][number]; current?: Hierarchy['items'][number]; result?: ResultGroup }

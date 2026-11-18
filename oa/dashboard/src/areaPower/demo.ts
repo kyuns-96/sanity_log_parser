@@ -635,7 +635,7 @@ async function dispatch(path: string, body: Payload | undefined, plain: boolean 
   if (hierarchy && !body) {
     const upload = scopedUpload(decodeURIComponent(hierarchy[1]), visible)
     const separator = text(upload.metadata.hierarchy_separator)
-    return { upload_id: upload.id, snapshot_id: upload.snapshot_id, hierarchy_separator: separator, items: Object.entries(upload.rows).map(([path, metrics]) => ({ path, parent_path: path.includes(separator) ? path.slice(0, path.lastIndexOf(separator)) : null, depth: String(path.split(separator).length - 1), area: metrics.total_area ?? null, power_mw: metrics.pwr_all_total_mw ?? null })) }
+    return { upload_id: upload.id, snapshot_id: upload.snapshot_id, hierarchy_separator: separator, items: Object.entries(upload.rows).map(([path, metrics]) => ({ path, parent_path: path.includes(separator) ? path.slice(0, path.lastIndexOf(separator)) : null, depth: String(path.split(separator).length - 1), area: metrics.total_area ?? null, logic_area: metrics.logic_area ?? null, power_mw: metrics.pwr_all_total_mw ?? null })) }
   }
   if (route === '/access' && !body) return { actor, is_admin: false, local_mode: false, source: 'synthetic_memory_demo', notice, projects: catalog.projects.filter(project => visible.has(project.area_id || '')).map(project => ({ id: project.id, name: project.name, blocks: project.blocks.map(block => ({ id: block.id, name: block.name })) })) }
   if (route === '/uploads' && !body) return { items: page(filterRows([...uploads.values()].filter(upload => visible.has(upload.project_id)).map(publicUpload), params), params) }

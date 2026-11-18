@@ -247,8 +247,8 @@ def parse_hierarchy(
     if len(original) != original_byte_length or sha256(original).digest() != bytes(original_sha256):
         raise DomainError("Stored upload no longer matches validated snapshot", code="stored_upload_mismatch")
     reader, header = _csv_reader(original)
-    path_column, depth_column, area_column, power_column = (
-        header.index(key) for key in ("hier_name", "level", "total_area", "pwr_all_total_mw")
+    path_column, depth_column, area_column, logic_area_column, power_column = (
+        header.index(key) for key in ("hier_name", "level", "total_area", "logic_area", "pwr_all_total_mw")
     )
     separator = metadata.hierarchy_separator
     paths: set[str] = set()
@@ -278,7 +278,7 @@ def parse_hierarchy(
                 _invalid(f"Row {line}: total_area must be nonnegative.")
             items.append({
                 "path": path, "parent_path": path.rsplit(separator, 1)[0] if depth else None,
-                "depth": depth, "area": area,
+                "depth": depth, "area": area, "logic_area": _number(fields[logic_area_column], "logic_area", line),
                 "power_mw": _number(fields[power_column], "pwr_all_total_mw", line),
             })
             paths.add(path)

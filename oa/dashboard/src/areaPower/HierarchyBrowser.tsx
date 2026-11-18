@@ -4,7 +4,7 @@ import { format, formatPercent, text, type TrackingRecord } from './api'
 import { Button } from './components/workspace'
 import { AREA_THRESHOLD, DEFAULT_COLUMNS, DEFAULT_MIN_AREA, MAX_COLUMNS, METRIC_CATALOG, METRIC_GROUPS, atLeast, metricDef, type MetricDef } from './metricCatalog'
 
-export type HierarchyItem = { path: string; parent_path: string | null; depth: number; area: unknown; power_mw: unknown }
+export type HierarchyItem = { path: string; parent_path: string | null; depth: number; area: unknown; logic_area?: unknown; power_mw: unknown }
 export type ResultGroup = { id: string; baselinePaths: string[]; currentPaths: string[]; metrics: Record<string, TrackingRecord['payload']> }
 export type BrowserRow = { key: string; baselinePaths: string[]; currentPaths: string[]; baseline?: HierarchyItem; current?: HierarchyItem; result?: ResultGroup; childCount: number; hiddenChildren?: number }
 export type ChildState = { rows: BrowserRow[]; total: number; loading: boolean; error: string; hidden?: number }
@@ -35,10 +35,9 @@ function leaf(paths: string[], parentPaths: string[] | undefined, separator: str
 function value(row: BrowserRow, metric: string, field: Field): unknown {
   const result = row.result?.metrics[metric]
   if (result) return result[field]
-  // Previews only know the hierarchy's area and total power.
-  const preview = metric === 'total_area' ? 'area' : metric === 'pwr_all_total_mw' ? 'power_mw' : ''
-  if (preview && field === 'baseline') return row.baseline?.[preview as 'area' | 'power_mw']
-  if (preview && field === 'current') return row.current?.[preview as 'area' | 'power_mw']
+  const preview = metric === 'logic_area' ? 'logic_area' : metric === 'total_area' ? 'area' : metric === 'pwr_all_total_mw' ? 'power_mw' : null
+  if (preview && field === 'baseline') return row.baseline?.[preview]
+  if (preview && field === 'current') return row.current?.[preview]
   return null
 }
 
@@ -60,7 +59,7 @@ function shown(row: BrowserRow, metric: MetricDef, field: Field) {
 }
 
 // Number columns are as wide as their content (the header label or the longest
-// loaded value) instead of a fixed 92px, so the default Area · Power · Vth set
+// loaded value) instead of a fixed 92px, so the default Logic area · Power set
 // fits a 1920px screen side by side. Instance columns share the width that is
 // left and never go below their minimum; past that the table scrolls sideways.
 // DIGIT, CELL_SLACK and HEAD_FONT mirror the cell and header styles in styles.css.
@@ -306,7 +305,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
         const checked = columns.includes(metric.id)
         return <label key={metric.id}><input type="checkbox" checked={checked} disabled={!checked && columns.length >= MAX_COLUMNS} onChange={() => toggleColumn(metric.id)} />{metric.label}{metric.ratio ? ' %' : metric.unit ? ` (${metric.unit})` : ''}</label>
       })}</fieldset>)}
-      <div className="chooser-actions"><small>최대 {MAX_COLUMNS}개 · 선택은 이 브라우저에만 저장됩니다. 비율(%)은 Δ%p로 비교합니다.</small><Button variant="ghost" size="xs" onClick={() => onColumns(DEFAULT_COLUMNS)}>기본값 (Area · Power · Vth)</Button><Button variant="ghost" size="xs" onClick={() => onMinArea(DEFAULT_MIN_AREA)}>Area 임계값 기본 {DEFAULT_MIN_AREA}</Button><Button variant="outline" size="xs" onClick={() => setChoosing(false)}>닫기</Button></div>
+      <div className="chooser-actions"><small>최대 {MAX_COLUMNS}개 · 선택은 이 브라우저에만 저장됩니다. 비율(%)은 Δ%p로 비교합니다.</small><Button variant="ghost" size="xs" onClick={() => onColumns(DEFAULT_COLUMNS)}>기본값 (Logic area · Power)</Button><Button variant="ghost" size="xs" onClick={() => onMinArea(DEFAULT_MIN_AREA)}>Area 임계값 기본 {DEFAULT_MIN_AREA}</Button><Button variant="outline" size="xs" onClick={() => setChoosing(false)}>닫기</Button></div>
     </div>}
     <div className="browser-scroll">
       <table role={flat ? 'grid' : 'treegrid'} aria-label="Instance hierarchy 비교" className={mode === 'split' ? 'split-view' : undefined} style={{ minWidth }}>
