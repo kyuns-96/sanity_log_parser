@@ -147,7 +147,10 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
     </div>}
     {run && <details className="triage-result" open>
       <summary className="triage-summary" role="status">
-        {running(run.state) ? <><LoaderCircle size={14} className="spin" />분석 중 · 묶음 {format(coverage.processed_batches ?? 0)} / {format(coverage.batches ?? '?')} · instance {format(coverage.processed_items ?? 0)} / {format(coverage.expected_items ?? '?')}</>
+        {running(run.state) ? <span className="triage-progress">
+          <LoaderCircle size={14} className="spin" aria-hidden="true" />
+          <span>분석 중 · 묶음 {format(coverage.processed_batches ?? 0)} / {format(coverage.batches ?? '?')} · instance {format(coverage.processed_items ?? 0)} / {format(coverage.expected_items ?? '?')}</span>
+        </span>
           : <><strong>이상 {of('unexpected').length}</strong> · 확인 필요 {of('needs_review').length} · 설명됨 {of('expected').length} · 변화 미미 {of('minor').length} · 적용 메모 {run.note_count ?? 0}건</>}
       </summary>
       {run.payload.retry_limit != null && <p className="muted">자동 재시도 · 묶음당 최대 {format(run.payload.retry_limit)}회 · 전체 누적 {format(coverage.retry_calls ?? 0)}회</p>}

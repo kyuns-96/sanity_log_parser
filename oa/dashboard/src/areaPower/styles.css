@@ -387,7 +387,8 @@
 .area-power.area-power .triage-preview strong { color: var(--ink); }
 .area-power.area-power .triage-result { margin-top: 10px; }
 .area-power.area-power .triage-summary { cursor: pointer; font-size: var(--text-body); color: var(--text-secondary); padding: 2px 0; }
-.area-power.area-power .triage-summary .spin { vertical-align: -2px; margin-right: 6px; }
+.area-power.area-power .triage-progress { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }
+.area-power.area-power .triage-progress .spin { flex-shrink: 0; }
 .area-power.area-power .triage-lists { max-height: 40vh; overflow: auto; margin-top: 4px; padding-right: 4px; }
 .area-power.area-power .triage-summary strong { color: var(--danger); }
 .area-power.area-power .triage-section { margin-top: 6px; }
