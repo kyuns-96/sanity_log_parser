@@ -2,7 +2,7 @@
 
 프로젝트 A가 지정한 기준 프로젝트 B와 Block·hierarchy instance별 Area/Power를 비교하는 수치 엔진이다. 주 화면은 **프로젝트 비교** 하나이며 업로드 이력과 경로 대응도 같은 화면에서 다룬다. 로그 분류·PASS/FAIL과 수치 엔진은 분리하되 공통 프로젝트/블록/버전·인증·탐색은 하나다.
 
-이 안내는 현재 수동 비교·분석·메일 요청의 사용법이다. 업로드를 시작점으로 삼는 자동 추적, NET_VER 현황, 블록 및 TOP 메일의 구현 예정 동작은 [2단계 설계](../docs/superpowers/specs/2026-11-23-area-power-net-ver-tracking-design.md)를 참고한다.
+이 안내는 수동 비교·분석·메일 요청과 2단계 NET_VER별 자동 추적·결과 메일의 사용법이다. 합의된 2단계 제품 규칙은 [2단계 설계](../docs/superpowers/specs/2026-11-23-area-power-net-ver-tracking-design.md)를 참고한다.
 
 ## 코드와 데이터 경계
 
@@ -142,7 +142,8 @@ metadata에는 준비된 실제 Area `project_id`, `version_id`, `block_id` UUID
 - AI·작업·알림·target·변경 설명의 기존 내부 엔진(지표별 판정)은 보존하지만 독립 주 탐색이나 비교의 선행 입력이 아니다.
 - **AI 이상치 분석(instance 단위, `instance-triage-v1`)** 은 비교 화면의 버튼으로 실행한다. 설계는 [설계 문서](../docs/superpowers/specs/2026-11-17-area-power-ai-triage-design.md)를 따른다.
   - 입력: NET_VER 업데이트 메모·프로젝트 변경 메모(`change` 레코드의 `note_kind`·`net_ver`), 주요 instance(`target` 레코드의 `watch`), 프로젝트 공정(공통 프로젝트 등록에서 선택한 이름을 수치 프로젝트 최초 연결 때 Area `project.payload.process`에 저장한다. 기존 지정은 유지하며 `POST /projects/{id}/process`에서 변경할 수 있다). 공정 정의는 OA `POST /api/atlas/processes`로 이름과 양수인 `unit_area`(NAND2_D1 한 셀의 면적, µm²)를 등록하고 `GET /api/atlas/catalog`의 `processes`에서 조회한다. 면적은 정확한 십진 문자열로 전달한다. OA 비교 표에서 Gate Count를 선택하면 각 실행의 원본 Area를 µm²로 환산해 해당 프로젝트의 NAND2_D1 면적으로 나눈다. 원본 단위 미입력은 µm²로 적용하고 표시한다.
-  - 코드가 후보를 고른다: Area/Power 증가율 기준(기본 +10%), Area 최소(기본 50), 신규 instance, 주요 instance(항상). 자식 후보가 증가분의 80% 이상을 차지하는 조상은 자식 항목에 묶는다. 대상이 400개를 넘으면 실행하지 않는다.
+  - 코드가 후보를 고른다: Logic Area(`logic_area`)·Total Power(`pwr_all_total_mw`) 증가율 기준(기본 +10%), Logic Area 최소(기본 50), 신규 instance, 주요 instance(항상). 승인된 Design info 예상 변화 범위(`tracking_expectation`)는 코드가 먼저 대조해 범위 안 변화를 `설명됨`으로 집계한다. 자식 후보가 증가분의 80% 이상을 차지하는 조상은 자식 항목에 묶는다. 대상이 400개를 넘으면 실행하지 않는다.
+  - **NET_VER별 자동 추적과 결과 메일 (2단계):** 프로젝트 비교 첫 화면은 상단 프로젝트 선택을 이어받아 **NET_VER 현황**·**추적 설정**·**블록 결과 · 수동 비교** 세 보기를 제공한다. 프로젝트 기본 필수 corner·마감 기간(기본 실제 netlist 도착일 + 7일, 기본 마감 시각 `18:00` `Asia/Seoul`, 프로젝트별 변경 가능)·TOP 배포 목록·Typical 대표 조건·목표 전력(mW)과 블록별 기준 블록·필수 corner·승인 기준 실행·담당자 개인 주소를 기존 `di_area_power_tracking_record` 테이블에 저장한다(추가 DDL 없음). 같은 프로젝트 내 블록명과 프로젝트명이 같으면 Full-chip으로 인식하며 전체 목표 전력은 Full-chip Typical 루트 값을 사용한다. 검증 성공한 필수 corner CSV가 중앙 VWP에 도착하면 자동 비교·AI 분석(추적 담당자 권한/인증 적용)을 시작하며, 수정본 검증 실패 시 직전 정상본을 유지한다. 블록의 모든 필수 corner 분석이 끝나면 블록 담당자 개인 주소로 1통, Full-chip과 모든 대상 블록 완료 또는 마감 중 빠른 시점에 TOP 배포 목록으로 NET_VER당 1통(DB 중복 키로 단일 발송 보장)을 OA 메일 큐(`job_kind='mail'`)로 요청한다. TOP 발송 후 수정본은 블록 담당자에게 발송하고 현황에 `발송 후 수정`을 표시하며 메일 링크(`?tracking_mail=...`)는 발송 당시 고정 스냅샷을 연다. OA 라우트는 `/api/area-power/tracking/*`이며 `area_power.vwp_server`를 import하지 않는다.
   - `POST /comparisons/{id}/triage/preview`는 후보 수·예상 호출 수·적용 메모를 돌려주고, `POST /comparisons/{id}/triage`는 고정 입력을 담은 `ai_run`과 `judge` job을 만든다. 중앙 VWP가 관리자 지정 `AREA_TRIAGE` 연결·모델과 요청자의 개인 인증값으로 20개씩 묶어 호출하고 instance마다 `judgement`를 저장한다. `GET /comparisons/{id}/triage`, `GET /triage/{run}`으로 조회한다.
   - 판정은 `expected`·`unexpected`·`needs_review`·`minor`(주요 instance 전용)이며 코드는 판정을 낮추는 방향으로만 고친다. 후보가 있는 새 요청에서 모델/인증이 미설정이면 실행 등록 전에 오류를 표시한다. 실행 중 실패·권한 변경은 해당 instance를 `needs_review`로 남기고 실행을 `failed`로 표시한다. 미리보기는 모델 미설정이어도 가능하며 사용할 연결·모델·인증 준비 상태를 표시한다.
   - 비교 조건이 확인되지 않은 Area/Power도 분석하되 표시를 붙이고, corner나 분석 조건이 실제로 다르면 Power를 뺀다. Vth·Drive Δ%p는 분석 모듈이 직접 계산하며 "공정이 같고 corner가 같으면 같은 library" 규칙으로 표시를 정한다. 비교 표의 `comparability`와 수치 규칙은 바꾸지 않는다.

@@ -1,8 +1,24 @@
 # Design Atlas 인계
 
-Canonical 저장소는 **`/home/coder/workspace/design_atlas`** 다. 현재 조회 정책은 2026-11-16 사용자 결정을 따르며 아래 날짜별 검증은 당시 동작의 기록이다.
+Canonical 저장소는 현재 프로젝트 루트다(이전 환경 `/home/coder/workspace/design_atlas`에서 이전). 현재 조회 정책은 2026-11-16 사용자 결정을 따르며 아래 날짜별 검증은 당시 동작의 기록이다.
 
-## 다음 에이전트 인계 · 2026-11-23 · 프로젝트 비교 자동 추적
+## 다음 에이전트 인계 · 2026-11-23 · 프로젝트 비교 2단계 구현 및 역할 명칭 정비
+
+**인계 상태는 2단계 핵심 구현·로컬 검증 완료다.**
+- **역할 명칭 범용화:** 추적 문서 전반에서 `Codex` 역할 호칭을 `외부 설계 AI`로, `WAITING_FOR_CODEX`를 `WAITING_FOR_EXTERNAL_AI`로, `[Codex 디버깅 요청]`을 `[외부 설계 AI 디버깅 요청]`으로 통일했다. 기존 코드 심볼(`devtools/sanity_codex_mock.py`, `codex_mock_enabled` 등), 과거 브랜치명 및 `artifacts/internal-handoff/old/` 이력은 보존했다.
+- **2단계 NET_VER 자동 추적·결과 메일 구현** ([설계서](docs/superpowers/specs/2026-11-23-area-power-net-ver-tracking-design.md)):
+  - **공유 도메인·후보 선별** ([common/tracking.py](area_power/common/tracking.py), [common/triage.py](area_power/common/triage.py)): 자동 후보 선별의 면적 기준(증감률·최소 면적)을 `total_area`에서 **`logic_area` + `pwr_all_total_mw`**로 전환했다. 프로젝트명=블록명 Full-chip 인식, Typical 대표 전력 vs 동일 조건 전력 분리, 목표 전력 초과 독립 판정, 승인된 예상 변화 범위(`tracking_expectation`) 코드 대조, 마감 시각/시간대(기본 실제 netlist 도착일 + 7일, `18:00` `Asia/Seoul`, 프로젝트별 변경 가능) 계산을 구현했다.
+  - **중앙 VWP 자동 실행·마감** ([vwp_server/tracking.py](area_power/vwp_server/tracking.py), [ingest.py](area_power/vwp_server/ingest.py), [triage.py](area_power/vwp_server/triage.py), [worker.py](area_power/vwp_server/worker.py)): 검증된 필수 corner CSV 업로드 즉시 자동 비교·AI 분석(추적 담당자 권한/인증 적용)을 기동하고, 수정본 검증 실패 시 직전 정상본을 유지하며 `last_failed_upload`만 기록한다. `generation` 검사로 늦게 끝난 이전 실행의 덮어쓰기를 차단하고, 매핑이 모호하면 `mapping_review` 대기 후 승인 시 기존 CSV로 이어간다. 블록 모든 필수 corner 완료 시 블록 담당자 개인 주소로 1통, Full-chip·전체 대상 블록 완료 또는 마감 중 빠른 시점에 `dedupe_key` 원자 잠금으로 TOP 요약 메일 1통을 OA 메일 큐에 요청한다. TOP 발송 후 수정본은 블록 담당자에게 재발송하고 현황에 `발송 후 수정`을 표시한다.
+  - **OA API·메일 렌더링** ([oa/tracking.py](area_power/oa/tracking.py), [oa/app.py](area_power/oa/app.py), [oa/mail.py](area_power/oa/mail.py)): `/api/area-power/tracking/*` 라우트(프로젝트·블록 추적 설정, NET_VER 회차 등록/재점검, 활성화 전 미리보기, Design info AI 예상 범위 제안/승인, 발송 스냅샷 조회)를 추가했고 `area_power.vwp_server` import 금지 경계를 유지했다. 새 테이블·DDL 없이 기존 두 테이블(`di_area_power_csv`, `di_area_power_tracking_record`)과 `job_kind` 제약을 그대로 사용한다.
+  - **대시보드 UI** ([TrackingOverview.tsx](oa/dashboard/src/areaPower/TrackingOverview.tsx), [TrackingSettings.tsx](oa/dashboard/src/areaPower/TrackingSettings.tsx), [ComparisonViews.tsx](oa/dashboard/src/areaPower/ComparisonViews.tsx), [demo.ts](oa/dashboard/src/areaPower/demo.ts)): 프로젝트 비교 첫 화면이 상단 프로젝트 선택을 이어받아 **NET_VER 현황** · **추적 설정** · **블록 결과 · 수동 비교** 세 보기를 제공한다. `?tracking_mail=...` 링크는 발송 당시 고정 스냅샷을 열며 최신 현황으로 이동할 수 있다.
+- **검증 기록:**
+  - `npm --prefix oa/dashboard run build` (`tsc --noEmit && vite build`) 통과.
+  - `area_power/oa`의 `area_power.vwp_server` 미참조 정적 검사 통과, `AreaAccess` 권한 경계(읽기/쓰기/비인가 기준 차단) 메모리 검증 통과.
+  - 독립 폐기 PostgreSQL 18 + 비소유 제한 DML 계정 + 기존 두 테이블 SQL(`01..04`)에서 10개 시나리오(schema readiness, GPU TT 즉시 분석·코드 예상 범위 대조·SS 미도착, 수정본 검증 실패 시 직전 정상본 유지, GPU SS 완료 시 블록 메일 1통 멱등성, Full-chip 88mW vs 목표 85mW 3mW 초과, 마감 도달 시 TOP 메일 원자 단일 발송 및 CPU `TT 미도착`, TOP 발송 후 수정본의 블록 메일 및 `발송 후 수정`·TOP 스냅샷 불변, OA `mail.consume_once` 메일 렌더링/접수, 활성화 전 미리보기) 통과. AI·메일은 메모리 대역이며 실제 외부 호출 0건, 폐기 DB는 종료·삭제했다.
+  - 실제 built `?demo=1`을 Chromium 데스크톱 **1920×1080**과 **5120×2160**에서 확인(상단 프로젝트 상속, 3개 탭 전환, 활성화 전 메일 미리보기, 블록 결과 이동, JS 오류 0건, 가로 넘침 0건). 모바일 검증 및 신규 테스트 파일 추가 없음.
+- **남은 운영 확인:** 마감 기본 시각·시간대(`18:00` `Asia/Seoul`)의 사내 정책 확정, 사내 VWP 모델의 판단 품질, 사내 메일 어댑터([corporate_mail.py](oa/integration/corporate_mail.py)) 연결 및 실제 메일 접수, 회사 SSO 실환경 검증.
+
+### 이전 설계 인계 요약 · 2026-11-23 · 프로젝트 비교 자동 추적
 
 **인계 상태는 설계 합의 완료, 2단계 구현 대기다.** 직전 기능 반영은 `873fed3742a4b91a482ef64d2f885cbabb5da445`(Area ↔ Gate Count), 설계 반영은 `9ea074a0e635284c59edad91c69af95174243b66`이다. 두 커밋 사이의 변경은 문서 네 개다. 다음 작업의 기준은 [NET_VER별 자동 추적과 결과 메일 설계](docs/superpowers/specs/2026-11-23-area-power-net-ver-tracking-design.md)이며, 기존 수동 비교·AI 분석은 [현재 제품 사용법](area_power/README.md)에 있다.
 

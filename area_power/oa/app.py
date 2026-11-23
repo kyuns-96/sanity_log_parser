@@ -24,9 +24,18 @@ from .service import (
     AlertStateInput, BaselineInput, ConfigInput, ProcessInput, RejudgeInput, RerunInput,
     SelectionInput, Service, CONFIG_TYPES,
 )
-from . import analysis_deletion, mapping_suggestions, triage
+from . import analysis_deletion, mapping_suggestions, tracking, triage
 from .mapping_suggestions import Approval, ProposalInput
+from .tracking import PreviewInput
 from .triage import TriageInput, TriageMailInput
+from area_power.common.tracking import (
+    BlockTrackingConfigInput,
+    ExpectationApprovalInput,
+    ExpectationInput,
+    ExpectationProposalInput,
+    ProjectTrackingConfigInput,
+    RoundInput,
+)
 
 LOG = logging.getLogger('area_power.oa')
 
@@ -319,5 +328,45 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
     @router.post("/jobs/{identifier}/rerun")
     def rerun(identifier: UUID, body: RerunInput, context=Depends(service)):
         return json(context.rerun(identifier, body, context.access.actor.user_id), 201)
+
+    @router.get("/tracking/projects/{project_id}/overview")
+    def tracking_overview(project_id: UUID, context=Depends(service)):
+        return json(tracking.overview(context, project_id))
+
+    @router.post("/tracking/projects/{project_id}/config")
+    def save_tracking_project_config(project_id: UUID, body: ProjectTrackingConfigInput, context=Depends(service)):
+        return json(tracking.save_project_config(context, project_id, body, context.access.actor.user_id))
+
+    @router.post("/tracking/projects/{project_id}/blocks/{block_id}/config")
+    def save_tracking_block_config(project_id: UUID, block_id: UUID, body: BlockTrackingConfigInput, context=Depends(service)):
+        return json(tracking.save_block_config(context, project_id, block_id, body, context.access.actor.user_id))
+
+    @router.post("/tracking/projects/{project_id}/rounds")
+    def save_tracking_round(project_id: UUID, body: RoundInput, context=Depends(service)):
+        return json(tracking.save_round(context, project_id, body, context.access.actor.user_id))
+
+    @router.post("/tracking/rounds/{round_id}/reconcile")
+    def reconcile_tracking_round(round_id: UUID, context=Depends(service)):
+        return json(tracking.reconcile_round(context, round_id, context.access.actor.user_id), 202)
+
+    @router.post("/tracking/projects/{project_id}/preview")
+    def preview_tracking_project(project_id: UUID, body: PreviewInput, context=Depends(service)):
+        return json(tracking.preview_tracking(context, project_id, body))
+
+    @router.post("/tracking/projects/{project_id}/blocks/{block_id}/expectations")
+    def save_tracking_expectation(project_id: UUID, block_id: UUID, body: ExpectationInput, entity_id: UUID | None = None, context=Depends(service)):
+        return json(tracking.save_expectation(context, project_id, block_id, body, context.access.actor.user_id, entity_id=entity_id), 201)
+
+    @router.post("/tracking/projects/{project_id}/blocks/{block_id}/expectations/propose")
+    def propose_tracking_expectations(project_id: UUID, block_id: UUID, body: ExpectationProposalInput, context=Depends(service)):
+        return json(tracking.propose_expectations(context, project_id, block_id, body, context.access.actor), 202)
+
+    @router.post("/tracking/expectations/proposals/{proposal_id}/approve")
+    def approve_tracking_expectations(proposal_id: UUID, body: ExpectationApprovalInput, context=Depends(service)):
+        return json(tracking.approve_expectations(context, proposal_id, body, context.access.actor.user_id), 201)
+
+    @router.get("/tracking/mails/{mail_id}")
+    def tracking_mail_snapshot(mail_id: UUID, context=Depends(service)):
+        return json(tracking.mail_snapshot(context, mail_id))
 
     return router

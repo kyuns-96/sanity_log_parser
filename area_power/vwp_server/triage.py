@@ -14,6 +14,7 @@ from area_power.common.ai import runtime_for
 from area_power.common.analysis import advisory_lock, existing_dedupe, observation_view
 from area_power.common.errors import ConfigurationError
 from area_power.common.jsonutil import digest
+from area_power.common.tracking import match_approved_expectations
 from area_power.common.triage import (BATCH_SIZE, PROMPT_VERSION, Thresholds, batch_request, build_card, select_items,
                                       side_context, validate_batch)
 from .ai import ACTOR, AI_CONTEXT_ERRORS, failure_detail
@@ -77,13 +78,18 @@ def run_triage(db, settings, run_id):
     if run['state'] in FINISHED:
         return run
     try:
-        return _run(db, settings, run, comparison)
+        final = _run(db, settings, run, comparison)
     except ConfigurationError:
         raise
     except Exception as exc:
         # Never leave a run that looks like it is still working.
-        _update(db, run_id, state='failed', error=failure_detail(exc))
+        failed_run = _update(db, run_id, state='failed', error=failure_detail(exc))
+        from .tracking import on_triage_finished
+        on_triage_finished(db, settings, failed_run)
         raise
+    from .tracking import on_triage_finished
+    on_triage_finished(db, settings, final)
+    return final
 
 
 def _run(db, settings, run, comparison):
@@ -109,10 +115,39 @@ def _run(db, settings, run, comparison):
                        coverage={'expected_items': selection.counts['total'], 'processed_items': 0, 'failed_items': 0,
                                  'batches': 0, 'processed_batches': 0})
     cards = [build_card(view, item, context, thresholds) for item in selection.items]
-    batches = [cards[start:start + BATCH_SIZE] for start in range(0, len(cards), BATCH_SIZE)]
-    coverage = {'expected_items': len(cards), 'processed_items': 0, 'failed_items': 0, 'batches': len(batches), 'processed_batches': 0, 'retry_calls': 0}
+    approved_expectations = payload.get('approved_expectations') or []
+    comparison_condition = payload.get('comparison_condition') or 'same_condition'
+    code_explained_results = []
+    ai_cards = []
+    for card in cards:
+        if approved_expectations:
+            matched = match_approved_expectations(
+                card, approved_expectations, comparison_condition=comparison_condition,
+                separator=view.cm.hierarchy_separator,
+            )
+            card['expectation_matches'] = matched['matches']
+            if matched['fully_explained']:
+                quotes = [ev['quote'] for ev in matched['evidence'] if ev.get('quote')]
+                code_explained_results.append({
+                    'group_id': card['id'], 'card': card, 'verdict': 'expected', 'cause': 'note',
+                    'explanation': '승인된 예상 변화 범위와 일치하는 변화입니다.',
+                    'note_ids': [], 'quotes': quotes[:3], 'failed': False, 'failure': None,
+                    'adjusted': [], 'code_explained': True, 'expectation_matches': matched['matches'],
+                })
+                continue
+        ai_cards.append(card)
+    batches = [ai_cards[start:start + BATCH_SIZE] for start in range(0, len(ai_cards), BATCH_SIZE)]
+    coverage = {
+        'expected_items': len(cards), 'processed_items': 0, 'failed_items': 0,
+        'code_explained_items': len(code_explained_results),
+        'batches': len(batches), 'processed_batches': 0, 'retry_calls': 0,
+    }
     _update(db, run['id'], state='running', error=None, prompt_version=PROMPT_VERSION, side_context=context,
             counts=selection.counts, missing_watched=selection.missing_watched, coverage=coverage)
+    if code_explained_results:
+        _store(db, run, code_explained_results)
+        coverage['processed_items'] += len(code_explained_results)
+        _update(db, run['id'], coverage=dict(coverage))
     for batch in batches:
         pending = [batch]
         while pending:

@@ -52,6 +52,16 @@ def compare(db, settings, comparison_id, requested_run=None, attempt_key=None):
 def dispatch(db, settings, job):
     kind = job['job_kind']
     if kind == 'compare':
+        with db.connect() as conn:
+            subject = db.record(conn, job['parent_id'])
+        if subject['record_type'] == 'tracking_slot':
+            from .tracking import advance_slot
+            advance_slot(db, settings, subject['id'])
+            return
+        if subject['record_type'] == 'tracking_round':
+            from .tracking import reconcile_round
+            reconcile_round(db, settings, subject['id'])
+            return
         compare(db, settings, job['parent_id'], attempt_key=job['id'] if job.get('previous_id') else None)
     elif kind == 'judge':
         with db.connect() as conn:
@@ -61,11 +71,15 @@ def dispatch(db, settings, job):
                 comparison = db.record(conn, comparison_id, kind='comparison')
             elif subject['record_type'] == 'comparison':
                 run_id, comparison_id, comparison = None, subject['id'], subject
-            elif subject['record_type'] != 'mapping_proposal':
+            elif subject['record_type'] not in ('mapping_proposal', 'expected_change_proposal'):
                 raise DomainError('Unsupported judgement subject.', code='invalid_job_subject')
         if subject['record_type'] == 'mapping_proposal':
             from .mapping_suggestions import run_mapping_proposal
             run_mapping_proposal(db, subject)
+            return
+        if subject['record_type'] == 'expected_change_proposal':
+            from .tracking import run_expectation_proposal
+            run_expectation_proposal(db, subject)
             return
         if subject['record_type'] == 'ai_run' and subject['payload'].get('engine') == TRIAGE_ENGINE:
             # Instance triage runs carry their own frozen inputs; an explicit
@@ -166,7 +180,7 @@ def persist_failure(db, job, error):
             else:
                 payload['ai_state'] = 'failed'
                 db.update_record(conn, subject['id'], ACTOR, payload=payload)
-        elif subject['record_type'] == 'mapping_proposal':
+        elif subject['record_type'] in ('mapping_proposal', 'expected_change_proposal'):
             db.update_record(conn, subject['id'], ACTOR, state='failed', error_detail=error)
         elif subject['record_type'] == 'ai_run':
             if subject['state'] != 'completed':
@@ -241,6 +255,11 @@ class ProcessingWorker:
             while not self._stopping.is_set():
                 consumed = consume_once(self.db, self.settings, self.owner, claim_job=self._claim_job)
                 if not consumed:
+                    try:
+                        from .tracking import check_deadlines
+                        check_deadlines(self.db)
+                    except Exception as exc:
+                        LOG.warning('Deadline sweep skipped: %s', type(exc).__name__)
                     self._stopping.wait(self.settings.worker_poll_seconds)
         except BaseException as exc:
             self._failed.set()

@@ -119,11 +119,20 @@ def triage_context(service, conn, comparison) -> dict:
     for row in service.db.records(conn, 'target', project_id=current['project_id'], block_id=current['block_id'], latest=True, limit=500):
         if row['payload'].get('watch'):
             watched.extend(row['payload'].get('paths', []))
+    expectations = []
+    for row in service.db.records(conn, 'tracking_expectation', project_id=current['project_id'], block_id=current['block_id'], latest=True, limit=500):
+        p = row['payload']
+        if p.get('archived') or row.get('state') == 'archived':
+            continue
+        eff = p.get('effective_net_ver')
+        if eff is None or eff in applicable or eff == current_net:
+            expectations.append({'id': str(row['id']), **p})
     raw = service.db.raw if service.access is not None else service.db
     process = {'current': raw.record(conn, current['project_id'], kind='project')['payload'].get('process'),
                'baseline': raw.record(conn, baseline['project_id'], kind='project')['payload'].get('process')}
     return {'comparison_kind': kind, 'notes': notes, 'note_warnings': warnings, 'same_rtl': same_rtl,
-            'applicable_net_vers': applicable, 'watched_paths': list(dict.fromkeys(watched)), 'process': process}
+            'applicable_net_vers': applicable, 'watched_paths': list(dict.fromkeys(watched)),
+            'approved_expectations': expectations, 'process': process}
 
 
 def prepare(service, identifier) -> dict:
@@ -178,7 +187,8 @@ def request_run(service, prepared, selection, body: TriageInput, actor) -> dict:
             reject('The project comparison AI selection is unavailable.', ai_context['AREA_TRIAGE']['error'], 409)
         payload = {'engine': ENGINE, 'retry_limit': settings['area_retry_limit'] if settings else DEFAULT_AREA_RETRY_LIMIT, 'thresholds': body.thresholds.model_dump(mode='python'),
                    'notes': prepared['notes'], 'note_warnings': prepared['note_warnings'], 'same_rtl': prepared['same_rtl'],
-                   'watched_paths': prepared['watched_paths'], 'process': prepared['process'],
+                   'watched_paths': prepared['watched_paths'], 'approved_expectations': prepared.get('approved_expectations', []),
+                   'process': prepared['process'],
                    'comparison_kind': prepared['comparison_kind'], 'labels': body.labels, 'requested_by': actor,
                    'ai_context': ai_context, 'coverage': {'expected_items': selection.counts['total']}}
         run = service.db.insert_record(conn, 'ai_run', payload, actor, state='queued', parent_id=comparison['id'],

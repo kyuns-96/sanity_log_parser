@@ -18,6 +18,7 @@ from area_power.common.db import Database
 from area_power.common.errors import DomainError
 from area_power.common.jsonutil import dumps, public
 from area_power.common.mail import MailMessage, MailNotConfigured, MailReceipt, MailRejected, MailSender
+from area_power.common.tracking import render_block_mail_text, render_top_mail_text
 from .service import addresses, reject
 
 logger = logging.getLogger(__name__)
@@ -213,7 +214,7 @@ def digest_message(settings, job, request, run, comparison, judgements, baseline
         f"비교 대상: {kind} 비교",
         f"  현재: {_execution(current, labels.get('current'))}",
         f"  기준: {_execution(baseline, labels.get('baseline'))}",
-        f"기준 숫자: Area 증가 {_number(thresholds.get('area_increase_pct'), '%')} 이상 · Power 증가 {_number(thresholds.get('power_increase_pct'), '%')} 이상 · Area 최소 {_number(thresholds.get('min_area'))}",
+        f"기준 숫자: Logic Area 증가 {_number(thresholds.get('area_increase_pct'), '%')} 이상 · Power 증가 {_number(thresholds.get('power_increase_pct'), '%')} 이상 · Logic Area 최소 {_number(thresholds.get('min_area'))}",
         f"적용 메모: {len(payload.get('notes', []))}건" + (" · RTL 동일(같은 NET_VER)" if payload.get("same_rtl") else ""),
         f"결과: 이상 {len(by('unexpected'))} · 확인 필요 {len(by('needs_review'))} · 설명됨 {len(by('expected'))} · 변화 미미 {len(by('minor'))}",
     ]
@@ -238,6 +239,32 @@ def digest_message(settings, job, request, run, comparison, judgements, baseline
     body += ["", f"분석 실행: {run['id']}", f"비교: {comparison['id']}", f"요청: {request['payload'].get('requested_by')}",
              "", "이 메일은 검토 대상을 알리는 것이며 정상·이상의 최종 판정이 아닙니다."]
     return MailMessage(job_id=str(job["id"]), attempt_id=attempt_id, recipients=tuple(recipients), subject=subject, text_body="\n".join(body))
+
+
+def tracking_mail_context(db, job, owner, kind):
+    with db.connect() as conn:
+        current_job = owned(db, conn, job["id"], owner)
+        mail_record = db.record(conn, current_job["parent_id"], kind=kind)
+        return current_job, mail_record
+
+
+def tracking_mail_message(settings, job, mail_record, kind, *, attempt_id):
+    payload = mail_record["payload"]
+    recipients = addresses(payload.get("recipients") or []) or addresses(settings.mail_recipients)
+    if not recipients:
+        reject("No mail recipients are configured or requested.", "mail_recipients_missing")
+    snapshot = payload.get("snapshot") or {}
+    if kind == "tracking_block_mail":
+        subject, text_body = render_block_mail_text(snapshot, mail_id=str(mail_record["id"]))
+    else:
+        subject, text_body = render_top_mail_text(snapshot, mail_id=str(mail_record["id"]))
+    return MailMessage(
+        job_id=str(job["id"]),
+        attempt_id=attempt_id,
+        recipients=tuple(recipients),
+        subject=subject,
+        text_body=text_body,
+    )
 
 
 def validate_receipt(receipt, recipients):
@@ -276,6 +303,10 @@ def consume_once(db, settings, sender: MailSender, owner=None):
             context = digest_context(db, job, owner)
             message = digest_message(settings, *context, attempt_id=emission["attempt_id"])
             emission.update(phase="sending", recipients=list(message.recipients), mail_request_id=context[1]["id"], analysis_run_id=context[2]["id"])
+        elif parent_type in ("tracking_block_mail", "tracking_top_mail"):
+            current_job, mail_record = tracking_mail_context(db, job, owner, parent_type)
+            message = tracking_mail_message(settings, current_job, mail_record, parent_type, attempt_id=emission["attempt_id"])
+            emission.update(phase="sending", recipients=list(message.recipients), tracking_mail_id=mail_record["id"], tracking_mail_kind=parent_type)
         else:
             context = mail_context(db, job, owner)
             message = message_for(settings, *context, attempt_id=emission["attempt_id"])

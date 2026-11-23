@@ -47,7 +47,13 @@ def _snapshot_source(snapshot: dict[str, Any], metadata: UploadMetadata) -> UUID
 
 def ingest_upload(db: Any, settings: Any, data: bytes, filename: str, metadata: UploadMetadata, actor: str) -> dict[str, Any]:
     """Every invocation creates an independent execution; no automatic selection."""
-    parsed = parse_csv(data, filename, metadata, settings.max_uncompressed_bytes)
+    try:
+        parsed = parse_csv(data, filename, metadata, settings.max_uncompressed_bytes)
+    except DomainError as exc:
+        if exc.code == "invalid_csv":
+            from area_power.vwp_server.tracking import on_upload_failed
+            on_upload_failed(db, metadata, filename, exc)
+        raise
     upload_id = uuid4()
     snapshot_id = metadata.snapshot_id or uuid4()
     source = None
@@ -113,4 +119,6 @@ def ingest_upload(db: Any, settings: Any, data: bytes, filename: str, metadata: 
                 id=snapshot_id, entity_id=snapshot_id, revision=1, **scope,
                 upload_id=upload_id, state="ready",
             )
+    from area_power.vwp_server.tracking import on_upload_ready
+    on_upload_ready(db, settings, saved)
     return {"upload": saved, "snapshot_id": snapshot_id}

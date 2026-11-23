@@ -11,6 +11,9 @@ import { HierarchyBrowser, type BrowserRow, type ChildState, type ResultGroup } 
 import { AREA_THRESHOLD, atLeast, loadColumns, loadMinArea, requestedMetrics, saveColumns, saveMinArea } from './metricCatalog'
 import { MappingSuggestions } from './MappingSuggestions'
 import { NotesPanel } from './NotesPanel'
+import { TrackingOverview } from './TrackingOverview'
+import { TrackingSettings } from './TrackingSettings'
+import { trackingOverviewSchema, type TrackingOverviewData } from './trackingApi'
 import { TriagePanel } from './TriagePanel'
 
 const baselineSchema = z.object({ project_id: z.string(), row_version: z.string(), baseline_project_id: z.string().nullable(), baseline_project: recordSchema.nullable(), status: z.enum(['unset', 'available', 'unavailable']), process: z.string().nullish(), baseline_process: z.string().nullish() })
@@ -23,15 +26,18 @@ interface ComparisonProps { auth: Auth; access: AreaAccess; records: TrackingRec
 
 export function Comparisons(props: ComparisonProps) {
   const atlas = useAtlas()!
-  const [projectId, setProjectId] = useState('')
+  const [projectId, setProjectId] = useState(() => atlas.scope.projectId || '')
+  useEffect(() => {
+    if (atlas.scope.projectId) setProjectId(atlas.scope.projectId)
+  }, [atlas.scope.projectId])
   const [gateCount, setGateCount] = useState(false)
   const unitSwitch = <button type="button" className="gate-count-switch" role="switch" aria-label="Gate Count 표시" aria-checked={gateCount} onClick={() => setGateCount(value => !value)}><span>Area</span><i aria-hidden="true" /><span>Gate Count</span></button>
   const projects = atlas.catalog?.projects || []
   const project = projects.find(row => row.id === projectId)
-  const picker = <label className="setup-project" title="이 화면의 선택은 상단 공통 범위와 독립적입니다."><span>비교할 현재 프로젝트</span><select value={projectId} onChange={event => setProjectId(event.target.value)}><option value="">프로젝트 선택</option>{projects.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
+  const picker = <label className="setup-project" title="상단 공통 범위에서 선택한 프로젝트를 이어받으며, 이 화면에서도 바꿀 수 있습니다."><span>비교할 현재 프로젝트</span><select value={projectId} onChange={event => setProjectId(event.target.value)}><option value="">프로젝트 선택</option>{projects.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
   return project ? <ProjectComparison key={project.id} {...props} project={project} picker={picker} gateCount={gateCount} unitSwitch={unitSwitch} /> : <>
-    <section className="panel comparison-setup-bar"><div className="baseline-summary">{picker}<small>이 화면의 선택은 상단 공통 범위와 독립적입니다.</small></div></section>
-    <Empty title="비교할 프로젝트를 선택하세요">현재·기준 실행의 Block, NET_VER, REVISION, corner와 파일은 각각 선택합니다.</Empty>
+    <section className="panel comparison-setup-bar"><div className="baseline-summary">{picker}<small>상단 공통 범위의 프로젝트를 이어받거나 여기서 직접 선택하세요.</small></div></section>
+    <Empty title="비교할 프로젝트를 선택하세요">프로젝트를 선택하면 NET_VER 현황, 자동 추적 설정, 블록 결과와 수동 비교를 사용할 수 있습니다.</Empty>
   </>
 }
 
@@ -48,6 +54,13 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
   const [baselineEditing, setBaselineEditing] = useState(false)
   const [baselineChoice, setBaselineChoice] = useState('')
   const lastDesignation = useRef<string | null>(null)
+  const [section, setSection] = useState<'status' | 'settings' | 'compare'>('status')
+  const [settingsBlockId, setSettingsBlockId] = useState<string | undefined>(undefined)
+  const [trackingData, setTrackingData] = useState<TrackingOverviewData | null>(null)
+  const [trackingLoading, setTrackingLoading] = useState(false)
+  const [trackingError, setTrackingError] = useState('')
+  const [trackingRefresh, setTrackingRefresh] = useState(0)
+  const initialMailId = useMemo(() => new URLSearchParams(atlas.routeSearch).get('tracking_mail') || '', [atlas.routeSearch])
   const [current, setCurrent] = useState<Selection>(emptySelection)
   const [before, setBefore] = useState<Selection>(emptySelection)
   // What the current run is compared with: the designated baseline project,
@@ -187,6 +200,55 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
     }).catch(cause => { if (!controller.signal.aborted) { setBaseline(null); setBaselineChoice(''); setBaselineError(cause instanceof Error ? cause.message : '기준을 조회하지 못했습니다.') } }).finally(() => { if (!controller.signal.aborted) setBaselineLoading(false) })
     return () => controller.abort()
   }, [props.auth, currentAreaId, props.refreshVersion])
+  useEffect(() => {
+    if (!currentAreaId) { setTrackingData(null); setTrackingError(''); return }
+    const controller = new AbortController()
+    setTrackingLoading(true)
+    request(props.auth, `/tracking/projects/${encodeURIComponent(currentAreaId)}/overview`, trackingOverviewSchema, undefined, controller.signal)
+      .then(value => {
+        if (!controller.signal.aborted) { setTrackingData(value); setTrackingError('') }
+      })
+      .catch(cause => {
+        if (!controller.signal.aborted) { setTrackingError(cause instanceof Error ? cause.message : 'NET_VER 추적 현황을 조회하지 못했습니다.') }
+      })
+      .finally(() => { if (!controller.signal.aborted) setTrackingLoading(false) })
+    return () => controller.abort()
+  }, [props.auth, currentAreaId, props.refreshVersion, trackingRefresh])
+
+  async function reloadTracking() {
+    setTrackingRefresh(value => value + 1)
+    await props.refresh()
+  }
+
+  function openTrackingResult(target: { comparisonId?: string; uploadId?: string; baselineUploadId?: string; openMapping?: boolean; blockId?: string }) {
+    setSection('compare')
+    if (target.comparisonId) {
+      setDetail(null); setDetailError(''); setResultSearch(''); setResultQuery({ offset: 0, search: '' })
+      setComparisonId(target.comparisonId)
+      setDetailRefresh(value => value + 1)
+      setSetupOpen(false)
+      return
+    }
+    setComparisonId(''); setDetail(null); setSetupOpen(true)
+    if (target.uploadId) {
+      const cu = props.uploads.find(u => u.id === target.uploadId)
+      const blk = cu ? project.blocks.find(b => b.area_id === cu.block_id) : undefined
+      const ver = cu && blk ? blk.versions.find(v => v.area_id === cu.version_id) : undefined
+      if (cu && blk && ver) {
+        setCurrent({ block: blk.id, net: ver.net_ver, version: ver.id, corner: cornerKey(cu), upload: cu.id })
+      }
+    }
+    if (target.baselineUploadId) {
+      const bu = props.uploads.find(u => u.id === target.baselineUploadId)
+      const owner = bu ? candidates.find(c => (c.area_id || projectRecords.get(c.id)?.id) === bu.project_id) : undefined
+      const blk = bu && owner ? owner.blocks.find(b => b.area_id === bu.block_id) : undefined
+      const ver = bu && blk ? blk.versions.find(v => v.area_id === bu.version_id) : undefined
+      if (bu && blk && ver) {
+        setBefore({ block: blk.id, net: ver.net_ver, version: ver.id, corner: cornerKey(bu), upload: bu.id })
+      }
+    }
+  }
+
   useEffect(() => { treeEpoch.current += 1; setChildren(new Map()) }, [comparisonId, detailRefresh, props.refreshVersion, resultQuery, observed])
   useEffect(() => {
     if (!comparisonId) { setDetail(null); setDetailError(''); setDetailLoading(false); return }
@@ -361,6 +423,45 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
         </select></Field><Button variant="outline" disabled={action.busy || baselineLoading || !baseline || !project.can_write || processDraft.trim() === (baseline.process || '')} onClick={() => action.run(saveProcess)}>공정 저장</Button><small>공정과 corner가 같으면 같은 library로 봅니다. AI 분석의 Vth·Drive 비교에 쓰입니다.{baseline?.status === 'available' && <> 기준 프로젝트 공정 · {baseline.baseline_process || '미등록'}</>}</small></div>
       </div>}
     </section>
+    {currentAreaId && <nav className="tracking-view-tabs" role="tablist" aria-label="프로젝트 비교 보기">
+      {([['status', 'NET_VER 현황'], ['settings', '추적 설정'], ['compare', '블록 결과 · 수동 비교']] as const).map(([key, label]) => (
+        <button key={key} type="button" role="tab" aria-selected={section === key} onClick={() => setSection(key)}>{label}</button>
+      ))}
+    </nav>}
+    {currentAreaId && section === 'status' && (
+      <TrackingOverview
+        auth={props.auth}
+        project={project}
+        areaProjectId={currentAreaId}
+        data={trackingData}
+        loading={trackingLoading}
+        error={trackingError}
+        initialMailId={initialMailId}
+        onClearMailId={() => {
+          const next = new URLSearchParams(atlas.routeSearch)
+          next.delete('tracking_mail')
+          atlas.replaceRoute(`${location.pathname}${next.toString() ? `?${next}` : ''}`)
+        }}
+        onReload={reloadTracking}
+        onOpenSettings={blockId => { setSettingsBlockId(blockId); setSection('settings') }}
+        onOpenResult={openTrackingResult}
+      />
+    )}
+    {currentAreaId && section === 'settings' && (
+      <TrackingSettings
+        auth={props.auth}
+        project={project}
+        baselineProject={savedProject}
+        areaProjectId={currentAreaId}
+        baselineAreaProjectId={baseline?.baseline_project_id}
+        uploads={props.uploads}
+        records={props.records}
+        data={trackingData}
+        initialBlockId={settingsBlockId}
+        onReload={reloadTracking}
+      />
+    )}
+    {(!currentAreaId || section === 'compare') && <>
     <section className="panel comparison-workspace">
       {setupOpen || (!comparisonId && !selectedCurrent) ? <div className="compare-sides">
         <RunSelector label="현재" project={project} selection={current} onChange={chooseCurrent} uploads={currentUploads} busy={action.busy} onPrepare={(selection, previous) => action.run(() => prepare(project, selection, previous))} />
@@ -404,6 +505,7 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
       records={props.records} onSaved={props.refresh} />}
     <details className="panel upload-history"><summary>업로드 이력 · PC CLI 메타데이터</summary><Uploads auth={props.auth} access={props.access} uploads={props.uploads} records={props.records} filters={filters} /></details>
     <details className="panel comparison-history"><summary>저장된 비교 이력 · {history.length}건</summary><div className="compact-list">{history.map(row => <button key={row.id} onClick={() => { setDetail(null); setDetailError(''); setResultSearch(''); setResultQuery({ offset: 0, search: '' }); setComparisonId(row.id); setDetailRefresh(value => value + 1); showResult() }}><span>{date(row.created_at)} · {text(object(row.payload.request).comparison_kind) === 'previous_version' ? '이전 버전' : '프로젝트 비교'}</span><Badge value={row.payload.result_format === 'hierarchy-reference-v1' && row.state === 'completed' ? '조회 준비 완료' : row.state} /></button>)}</div>{!history.length && <p className="muted">저장된 비교가 없습니다.</p>}</details>
+    </>}
   </>
 }
 

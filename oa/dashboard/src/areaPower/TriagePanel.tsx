@@ -14,8 +14,8 @@ const signed = (value: unknown, unit: string) => value == null || value === '' ?
 
 function summary(card: Record<string, unknown>) {
   const area = object(card.area), power = object(card.power_mw)
-  const parts = [`Area ${signed(area.delta_pct, '%')}`]
-  if (!('excluded' in power)) parts.unshift(`Power ${signed(power.delta_pct, '%')}`)
+  const parts = [`Logic Area ${signed(area.delta_pct, '%')}`]
+  if (!('excluded' in power)) parts.unshift(`Total Power ${signed(power.delta_pct, '%')}`)
   return parts.join(' · ')
 }
 
@@ -124,7 +124,7 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
   return <section className="triage-panel" aria-label="AI 이상치 분석">
     <div className="triage-controls">
       <h3><Sparkles size={15} aria-hidden="true" />AI 분석</h3>
-      {([['area_increase_pct', 'Area 증가 ≥', '%'], ['power_increase_pct', 'Power 증가 ≥', '%'], ['min_area', 'Area 최소', '']] as const).map(([key, label, unit]) => <label key={key} className="browser-threshold">{label}<input type="text" inputMode="decimal" value={thresholds[key]} aria-invalid={!NUMBER.test(thresholds[key].trim())} onChange={event => { setThresholds({ ...thresholds, [key]: event.target.value }); setPreview(null) }} />{unit}</label>)}
+      {([['area_increase_pct', 'Logic Area 증가 ≥', '%'], ['power_increase_pct', 'Total Power 증가 ≥', '%'], ['min_area', 'Logic Area 최소', '']] as const).map(([key, label, unit]) => <label key={key} className="browser-threshold">{label}<input type="text" inputMode="decimal" value={thresholds[key]} aria-invalid={!NUMBER.test(thresholds[key].trim())} onChange={event => { setThresholds({ ...thresholds, [key]: event.target.value }); setPreview(null) }} />{unit}</label>)}
       <Button variant="outline" size="sm" disabled={action.busy || !valid} onClick={() => action.run(loadPreview, '후보를 계산했습니다.')}><Search size={14} />미리보기</Button>
       <Button size="sm" disabled={action.busy || !valid || !canWrite || preview?.over_limit === true} onClick={() => action.run(start, 'AI 분석을 요청했습니다. 완료되면 자동으로 갱신합니다.')}><Sparkles size={14} />AI 분석 실행</Button>
       {runs.length > 0 && <label className="triage-runs">지난 분석<select value={runId} onChange={event => { setExcluded(new Set()); setRunId(event.target.value) }}>{runs.map(row => <option key={row.id} value={row.id}>{date(row.created_at)} · {row.state}</option>)}</select></label>}

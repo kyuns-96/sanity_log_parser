@@ -444,3 +444,49 @@
 .area-power .gate-count-switch[aria-checked=false] span:first-child, .area-power .gate-count-switch[aria-checked=true] span:last-child { font-weight: 650; color: var(--ink); }
 .area-power .gate-count-basis { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 0; padding: 5px 10px; border-bottom: 1px solid var(--line); color: var(--text-secondary); font-size: var(--text-caption); }
 @media (prefers-reduced-motion: reduce) { .area-power .gate-count-switch i::before { transition: none; } }
+
+/* Phase 2: NET_VER automatic tracking overview and settings */
+.area-power .tracking-view-tabs { display: flex; gap: 6px; margin-bottom: 12px; border-bottom: 1px solid var(--line); }
+.area-power .tracking-view-tabs button { padding: 8px 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-secondary); font-size: var(--text-body); font-weight: 550; }
+.area-power .tracking-view-tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 650; }
+.area-power .tracking-bar-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.area-power .tracking-bar-title { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.area-power .tracking-round-picker { display: inline-flex; align-items: center; gap: 8px; font-size: var(--text-data); color: var(--text-secondary); }
+.area-power .tracking-round-picker select { width: auto; min-width: 260px; height: 32px; font-size: var(--text-data); }
+.area-power .tracking-round-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); font-size: var(--text-data); color: var(--text-secondary); }
+.area-power .tracking-round-summary > span { display: inline-flex; align-items: center; gap: 6px; }
+.area-power .tracking-round-summary strong { color: var(--ink); }
+.area-power .tracking-round-form { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); display: grid; gap: 10px; }
+.area-power .tracking-form-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.area-power .tracking-form-row .field { margin: 0; }
+.area-power .tracking-block-checks > span { display: block; font-size: var(--text-data); font-weight: 600; color: var(--ink); margin-bottom: 6px; }
+.area-power .tracking-check-grid { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.area-power .tracking-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.area-power .tracking-link-inline { border: 0; padding: 0; background: transparent; color: var(--accent); font-size: var(--text-caption); text-decoration: underline; }
+.area-power .tracking-power-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: var(--text-data); margin-bottom: 4px; }
+.area-power .tracking-alert-text { display: inline-flex; align-items: center; gap: 4px; color: var(--danger); font-weight: 600; }
+.area-power .tracking-ok-text { display: inline-flex; align-items: center; gap: 4px; color: var(--success); font-weight: 550; }
+.area-power .tracking-corner-chips, .area-power .tracking-chip-list { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.area-power .tracking-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 5px; font-size: var(--text-caption); background: var(--surface-soft); color: var(--text-secondary); }
+.area-power .tracking-chip button { border: 0; background: transparent; color: var(--text-muted); padding: 0; display: inline-flex; }
+.area-power .tracking-chip.status-completed { border-color: var(--success-line); background: var(--success-soft); color: var(--success); }
+.area-power .tracking-chip.status-waiting_upload, .area-power .tracking-chip.status-mapping_review, .area-power .tracking-chip.status-waiting_baseline { border-color: var(--warning-line); background: var(--warning-soft); color: var(--warning); }
+.area-power .tracking-chip.status-failed, .area-power .tracking-chip.status-auth_error { border-color: var(--danger-line); background: var(--danger-soft); color: var(--danger); }
+.area-power .tracking-status-action { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.area-power .tracking-row-attention { background: color-mix(in srgb, var(--warning-soft) 28%, transparent); }
+.area-power .tracking-snapshot-banner { border-color: var(--accent); }
+.area-power .tracking-snapshot-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.area-power .tracking-snapshot-head strong { display: flex; align-items: center; gap: 6px; font-size: var(--text-lead); color: var(--ink); }
+.area-power .tracking-snapshot-corners ul { margin: 8px 0 0; padding-left: 18px; }
+.area-power .tracking-settings-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 14px; margin-bottom: 12px; }
+.area-power .tracking-settings-grid .field { margin: 0; }
+.area-power .tracking-subblock { padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--line-soft); }
+.area-power .tracking-subblock h3 { font-size: var(--text-body); margin-bottom: 8px; }
+.area-power .tracking-inline-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.area-power .tracking-inline-add input, .area-power .tracking-inline-add select { width: auto; min-width: 120px; flex: 1 1 130px; min-height: 32px; padding: 5px 8px; font-size: var(--text-data); }
+.area-power .tracking-mini-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.area-power .tracking-mini-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border: 1px solid var(--line-soft); border-radius: 6px; font-size: var(--text-data); }
+.area-power .tracking-mini-list li button { border: 0; background: transparent; color: var(--text-muted); padding: 2px; display: inline-flex; }
+.area-power .tracking-ai-propose { display: flex; gap: 10px; align-items: flex-end; margin-top: 10px; }
+.area-power .tracking-ai-propose textarea { flex: 1; }
+.area-power .tracking-preview-grid { display: grid; gap: 12px; margin-top: 10px; }

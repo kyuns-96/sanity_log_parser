@@ -24,10 +24,11 @@ MAX_ITEMS = 400
 ROLLUP_SHARE = D('0.8')
 VERDICTS = ('expected', 'unexpected', 'needs_review', 'minor')
 CAUSES = ('note', 'vth_shift', 'drive_shift', 'new_instance', 'unknown')
-AREA, POWER_TOTAL = 'total_area', 'pwr_all_total_mw'
+AREA, POWER_TOTAL = 'logic_area', 'pwr_all_total_mw'
 # Run payload keys an explicit rerun must carry over unchanged.
 RUN_KEYS = ('engine', 'retry_limit', 'thresholds', 'notes', 'note_warnings', 'same_rtl', 'watched_paths', 'process',
-            'labels', 'comparison_kind', 'requested_by')
+            'labels', 'comparison_kind', 'requested_by', 'approved_expectations', 'tracking_slot_id', 'tracking_generation',
+            'comparison_condition')
 
 
 class Thresholds(BaseModel):
@@ -133,9 +134,16 @@ def _increase(baseline, current, threshold):
     return delta if (pct is None or pct >= threshold) else None
 
 
+def _logic_size(view, group):
+    """Larger side's logic area for minimum-area filtering in Phase 2."""
+    baseline, current = _sides(view, group, AREA)
+    values = [value for value in (baseline, current) if value is not None]
+    return max(values) if values else None
+
+
 def select_items(view, thresholds: Thresholds, watched_paths, context) -> Selection:
     groups = view.groups
-    large = lambda position: view.sizes[position] is not None and view.sizes[position] >= thresholds.min_area
+    large = lambda position: (size := _logic_size(view, groups[position])) is not None and size >= thresholds.min_area
     increases = {AREA: {}, POWER_TOTAL: {}}
     new_instances = set()
     for position, group in enumerate(groups):
@@ -232,7 +240,8 @@ def build_card(view, item: Item, context, thresholds: Thresholds) -> dict:
     group = view.groups[item.position]
     paths = lambda identifier: ' + '.join(view.groups[view.index[identifier]].current_paths or view.groups[view.index[identifier]].baseline_paths)
     area, power = _metric(view, group, AREA), _metric(view, group, POWER_TOTAL)
-    area.update(logic=_metric(view, group, 'logic_area'), sram=_metric(view, group, 'sram_area'))
+    area.update(metric=AREA, logic=_metric(view, group, 'logic_area'), total=_metric(view, group, 'total_area'),
+                sram=_metric(view, group, 'sram_area'))
     if context['power']['analyzed']:
         for part in ('internal', 'switching', 'leakage'):
             power[f'{part}_delta'] = _metric(view, group, f'pwr_all_{part}_mw')['delta']
