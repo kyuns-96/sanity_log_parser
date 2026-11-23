@@ -224,7 +224,7 @@ STALE로 처리하며 토큰을 다른 연결/사용자로 대체하지 않는�
 
 회사 API·인증·발신자·SDK 인코딩은 사내에서 확인한다. 전체/일부 접수·명시 거부·결과 불명을 구분하고 수신/열람으로 표시하지 않는다. 외부 호출 중 DB 잠금을 유지하지 않으며 불명 요청·접수 후 DB 기록 실패는 자동 재발송하지 않는다. `AREA_POWER_MAIL_RECIPIENTS`만 공통 기본 수신자 설정이며 `AREA_POWER_SMTP_*`와 SMTP fallback은 제거했다. 실제 발송·배포는 사용자 승인 범위에서만 한다.
 
-공통 `area_power/common/mail.py`, `area_power/oa/mail.py`, `oa/mail_app.py`·설정·SQL·UI·SSO는 읽기 전용이다. 이번 메일 연동에는 새 테스트/fixture/mock/검증 스크립트 파일을 추가하지 않는다. 기존 역할 검증과 실제 사내 SDK/서비스 확인을 구분하고 오류 시 `WAITING_FOR_EXTERNAL_AI`로 중단한다. 이 추가 허용은 메일 어댑터에만 한정되며 다른 회사 지점의 소유권을 바꾸지 않는다.
+공통 `common/area_power/mail.py`, `oa/area_power/mail.py`, `oa/mail_app.py`·설정·SQL·UI·SSO는 읽기 전용이다. 이번 메일 연동에는 새 테스트/fixture/mock/검증 스크립트 파일을 추가하지 않는다. 기존 역할 검증과 실제 사내 SDK/서비스 확인을 구분하고 오류 시 `WAITING_FOR_EXTERNAL_AI`로 중단한다. 이 추가 허용은 메일 어댑터에만 한정되며 다른 회사 지점의 소유권을 바꾸지 않는다.
 
 
 ## 4. 내부 AI가 절대 수정하지 않는 부분
@@ -239,7 +239,7 @@ STALE로 처리하며 토큰을 다른 연결/사용자로 대체하지 않는�
 | V2 제출·원본 보관·source 수신 | `bin/sanity`, `common/sanity_submission*.py`, `vwp/submission_cli.py`, `vwp_bridge/submission_*.py`, `oa/submission_receiver.py`, `oa/sanity_workspace_sources.py`, 제출 JSON 예제 | 엄격한 설정·V2 schema·신원/범위·원본 hash·원자 인계·분할 staging/공개·receipt·중복/충돌·실행 순서 |
 | AI 호출·분류·규칙·작업자 | `vwp_bridge/sanity_ai.py`, `common/sanity_clustering.py`, `vwp_bridge/sanity_cluster_worker.py`, `oa/sanity_cluster_store.py`, `common/sanity_workers.py`, `vwp_bridge/worker.py`, `oa/worker.py` | strict JSON·근거 검증, scope, 전체 적용, 중단 복구, 불확실 호출 재시도 금지, 사람 확정 |
 | OA AI 판단·검색·작업·기준 | `oa/sanity_ai_*.py`, `oa/ai_worker.py`, `common/sanity_ai_*.py`, `oa/sanity_production_workspace.py`, workbench API | 완전한 모델 입력, schema 2·근거/기준/사례 참조, 현재 유효성·권한·개정, 불변 작업과 결과 불명 재호출 금지 |
-| 사내 메일 Protocol·작업 소비 | `area_power/common/mail.py`, `area_power/oa/mail.py`, `oa/mail_app.py` | 명시적 주입, 발송 전 시도 기록, 전체/일부 접수·거부·불명 구분, DB 잠금 경계와 자동 재발송 금지 |
+| 사내 메일 Protocol·작업 소비 | `common/area_power/mail.py`, `oa/area_power/mail.py`, `oa/mail_app.py` | 명시적 주입, 발송 전 시도 기록, 전체/일부 접수·거부·불명 구분, DB 잠금 경계와 자동 재발송 금지 |
 | 검토·보고서·인증·업무 API | `oa/sanity_oa_store.py`, `oa/sanity_auth.py`, `oa/main.py`, `oa/dashboard_api.py` | 검토 개정·불변 이력·서버 검토자, 신원/권한 검사, API 계약 |
 | 대시보드 전체 | `oa/dashboard/` | 로그인·권한·사용자 범위, 데모와 실데이터 분리, 분류/검토/PoR의 의미 |
 | 설정·의존성·기존 테스트 | `common/sanity_config.py`, 각 서버의 `.env.example`·`requirements.txt`, 루트 `requirements.txt`, 모든 기존 test/runner와 lockfile | 설정/실패 처리, 재현성, 기존 테스트 기대값과 skip 조건 |

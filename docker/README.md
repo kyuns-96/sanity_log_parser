@@ -10,10 +10,6 @@ docker/
   Dockerfile-prod.dockerignore
 oa/
 common/
-area_power/
-  __init__.py
-  common/
-  oa/
 ```
 
 ## 사내에서 지정할 값
@@ -22,9 +18,9 @@ area_power/
 - **실행 포트**: `8080`. 사내 Nginx의 upstream을 이 컨테이너의 8080으로 연결하고 `/`, `/api/`, `/auth/`를 같은 서비스에 전달한다.
 - **`OA_ALLOWED_HOSTS` 실행 환경변수**: 실제 서비스 도메인/IP를 쉼표로 구분한다. URL, 포트, 와일드카드는 넣지 않는다. 미지정 시 localhost만 허용한다. `127.0.0.1`은 상태 확인용으로 항상 허용된다. 앞단 Nginx와 OA에 같은 정확한 서비스 호스트를 설정하고 공개 Host·포트와 Origin을 그대로 전달한다. Origin 비교를 피하려고 Host를 내부 주소로 바꾸거나 Origin을 삭제하지 않는다.
 - **DB·SSO 설정**: [OA 설정 예제](../oa/.env.example)의 기존 키와 회사 SDK 설정을 CI의 비공개 실행 환경으로 주입한다. 비밀번호·토큰·인증서·패키지 저장소 인증 설정을 Dockerfile이나 Git에 넣지 않는다. 사내 npm/pip 저장소와 CA는 승인된 베이스 이미지/CI 구성을 사용한다. TLS 검증은 끄지 않는다.
-- **선택형 Area/Power**: [모듈 환경 예제](../area_power/.env.example)의 OA용 `AREA_POWER_ENABLED`, `AREA_POWER_DB_DSN`, `AREA_POWER_DB_SCHEMA`를 추가 주입한다. 같은 앱의 `/api/area-power/*`를 사용하며 두 테이블은 사용자가 별도 신청한 기존 계약이다. VWP 업로드·수치/AI worker는 이 OA 이미지에 포함하거나 실행하지 않는다. 메일 worker는 OA 관리 프로세스로 별도 실행한다.
+- **선택형 Area/Power**: [모듈 환경 예제](../docs/area_power/.env.example)의 OA용 `AREA_POWER_ENABLED`, `AREA_POWER_DB_DSN`, `AREA_POWER_DB_SCHEMA`를 추가 주입한다. 같은 앱의 `/api/area-power/*`를 사용하며 두 테이블은 사용자가 별도 신청한 기존 계약이다. VWP 업로드·수치/AI worker는 이 OA 이미지에 포함하거나 실행하지 않는다. 메일 worker는 OA 관리 프로세스로 별도 실행한다.
 
-Area 조회의 CSV 파서와 비교 계산은 이미지에 포함되는 `area_power/common/csv_input.py`, `area_power/common/analysis.py`를 사용한다. 해당 공통 소스와 OA 소스를 같은 release로 적용한 뒤 이미지를 다시 빌드한다. `area_power/vwp_server/`를 OA 이미지에 덧붙이는 방식으로 누락을 우회하지 않는다.
+Area 조회의 CSV 파서와 비교 계산은 이미지에 포함되는 `common/area_power/csv_input.py`, `common/area_power/analysis/`를 사용한다. 해당 공통 소스와 OA 소스를 같은 release로 적용한 뒤 이미지를 다시 빌드한다. `vwp_bridge/area_power/`를 OA 이미지에 덧붙이는 방식으로 누락을 우회하지 않는다.
 
 Dockerfile은 전역 Python에 패키지를 설치하므로 회사 SDK도 해당 Python에서 import할 수 있어야 한다. 베이스 이미지의 Python은 pip 설치를 지원해야 한다.
 

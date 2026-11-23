@@ -18,13 +18,13 @@
 | 공통 | `common/` | 사내 AI는 읽기 전용 | 설정·DB·전송 계약·추상 타입·순수 검증 |
 | 개발 시험 | `devtools/`, `tools/`, `tests/` | 외부 설계 AI 관리 | 합성 report·seed·외부 모델 mock·QA |
 | DB 관리 | `db/` | 사용자/DBA 관리 | 기존 SQL·form·권한·접속 인계 |
-| Area/Power | `area_power/`, `oa/dashboard/src/areaPower/` | 기존 host SSO·프로젝트 권한에 연결하는 독립 수치 업무 | PostgreSQL 18.6·이미 신청한 두 테이블 / [설정·실행](area_power/README.md) |
+| Area/Power | `common/area_power/`, `oa/area_power/`, `vwp/area_power/`, `vwp_bridge/area_power/`, `oa/dashboard/src/features/area-power/` | 기존 host SSO·프로젝트 권한에 연결하는 독립 수치 업무 | PostgreSQL 18.6·이미 신청한 두 테이블 / [설정·실행](docs/area_power/README.md) |
 
-`vwp_bridge`는 Python 모듈로 실행할 수 있도록 밑줄을 사용한다. 이전 `vwp-dev/`, `vwp-bridge/`, `oa-bridge/`, 루트 `sanity_*.py`, `site_integration/`의 소스는 위 위치로 이동했다. import도 `common.*`, `vwp.*`, `vwp_bridge.*`, `oa.*`, `devtools.*`로 변경했다.
+`vwp_bridge`는 Python 모듈로 실행할 수 있도록 밑줄을 사용한다. 이전 `vwp-dev/`, `vwp-bridge/`, `oa-bridge/`, 루트 `sanity_*.py`, `site_integration/` 및 최상위 `area_power/`의 소스는 각 서버 역할 디렉터리(`common/`, `vwp/`, `vwp_bridge/`, `oa/`)로 통합·이동했다. import도 `common.*`, `vwp.*`, `vwp_bridge.*`, `oa.*`, `devtools.*`를 사용한다.
 
 각 서버에 저장소 전체가 있어도 **자기 진입점만 실행**한다. VWP-bridge는 OA 앱을 import하지 않고, OA의 일반 실행은 VWP 모델·외부 mock을 import하지 않는다. Sanity 서버 간 통신은 기존 PostgreSQL 네 테이블만 사용한다. 선택형 Area/Power의 통신도 별도 두 테이블을 통한 DB 작업이며 HTTP 중계가 아니다. 수집 snapshot은 VWP 영역 안에서 원천 수집→VWP-bridge로 전달하는 입력이다.
 
-Area CSV 파서·비교 계산은 `area_power/common/`이 소유하며 OA와 중앙 VWP가 직접 사용한다. OA 배포에 `area_power/vwp_server/`를 추가할 필요는 없다. VWP의 로그/Area AI는 기존 논리 OA 작업자 코어를 실행하므로 같은 release의 `oa/*.py`도 필요하다. 이 소스 재사용과 OA 웹 앱 실행을 구분하며, 중앙 Area 설치에는 `vwp_bridge/requirements.txt`의 암호화·tokenizer 의존성까지 적용한다.
+Area CSV 파서·비교 계산은 `common/area_power/`가 소유하며 OA와 중앙 VWP가 직접 사용한다. OA 배포에 `vwp_bridge/area_power/`를 추가할 필요는 없다. VWP의 로그/Area AI는 기존 논리 OA 작업자 코어를 실행하므로 같은 release의 `oa/*.py`도 필요하다. 이 소스 재사용과 OA 웹 앱 실행을 구분하며, 중앙 Area 설치에는 `vwp_bridge/requirements.txt`의 암호화·tokenizer 의존성까지 적용한다.
 
 ## 2. 의존성과 비공개 설정
 
@@ -88,7 +88,7 @@ OA AI 운영 경로의 중앙 서비스는 V2 제출 API와 별도 source worker
 
 ### OA
 
-사내 Nginx 뒤에서 실행하는 간단한 CI/CD 구성은 [루트 Docker 안내](docker/README.md)를 따른다. 사내 OA Git에는 `docker/`, `oa/`, `common/` 및 `area_power/__init__.py`, `area_power/common/`, `area_power/oa/`를 같은 루트에 두고 **`docker/Dockerfile-prod`**를 빌드한다. 통합 모듈의 Python 기준은 3.11 이상이다. 컨테이너는 8080의 OA 앱 한 개만 실행한다. 아래 loopback 명령은 컨테이너 밖의 직접 실행용이다.
+사내 Nginx 뒤에서 실행하는 간단한 CI/CD 구성은 [루트 Docker 안내](docker/README.md)를 따른다. 사내 OA Git에는 `docker/`, `oa/`, `common/`을 같은 루트에 두고 **`docker/Dockerfile-prod`**를 빌드한다. 통합 모듈의 Python 기준은 3.11 이상이다. 컨테이너는 8080의 OA 앱 한 개만 실행한다. 아래 loopback 명령은 컨테이너 밖의 직접 실행용이다.
 
 [담당 AI 지시문](oa/INTERNAL_AI_TASK.md)을 읽는다. 회사 인증/사용자 조회는 `oa/integration/corporate_sso.py`와 `company_sso/`에 구현하고, 기존 `oa/sso_app.py` 주입 지점을 사용한다.
 
@@ -149,6 +149,6 @@ sanity retry 11111111-1111-4111-8111-111111111111
 
 ## 선택형 Area/Power 업무
 
-Canonical 저장소는 `design_atlas/`다. 공통 홈·프로젝트·블록·버전·사이드바·인증을 사용하고 로그와 수치 분석 엔진은 분리한다. 원래 `inst_area_tracking`의 실행 코드는 `area_power/`에 있다. 기존 `SANITY_*`·`AREA_POWER_*` 설정, `bin/sanity`·`bin/area-power` 수집 명령, 네 테이블과 두 테이블의 저장 계약은 유지한다. 제품명 변경 때문에 DB 식별자·기존 데이터를 재작성하지 않는다.
+Canonical 저장소는 `design_atlas/`다. 공통 홈·프로젝트·블록·버전·사이드바·인증을 사용하고 로그와 수치 분석 엔진은 분리한다. 원래 `inst_area_tracking`의 실행 코드는 서버 역할별 패키지(`common/area_power/`, `oa/area_power/`, `vwp/area_power/`, `vwp_bridge/area_power/`)에 통합 배치했다. 기존 `SANITY_*`·`AREA_POWER_*` 설정, `bin/sanity`·`bin/area-power` 수집 명령, 네 테이블과 두 테이블의 저장 계약은 유지한다. 제품명 변경 때문에 DB 식별자·기존 데이터를 재작성하지 않는다.
 
-OA에서 `AREA_POWER_ENABLED=true`와 Area DB 설정을 export한다. 공통 `/api/atlas/*` 카탈로그에서 범위를 등록·준비하며 별도 Area 등록 API는 제거했다. 선언·수치 계보·정확한 UUID binding은 기존 `WS_CONFIG` namespace에 저장하므로 새 테이블·DDL이 없다. VWP는 단일 프로세스에서 `python -m area_power.vwp_server`로 업로드·수치/AI 작업을 처리하며, 사용자 PC는 `python -m area_power.vwp`, OA 메일 소비는 `python -m oa.mail_app`을 실행한다. 실제 명령·역할별 비밀·snapshot은 [모듈 안내](area_power/README.md), 현재 로컬 실행은 [Design Atlas 인계](HANDOFF.md)를 따른다. 앱 자동 DDL·자동 SSO 전환·운영 demo fallback은 없다.
+OA에서 `AREA_POWER_ENABLED=true`와 Area DB 설정을 export한다. 공통 `/api/atlas/*` 카탈로그에서 범위를 등록·준비하며 별도 Area 등록 API는 제거했다. 선언·수치 계보·정확한 UUID binding은 기존 `WS_CONFIG` namespace에 저장하므로 새 테이블·DDL이 없다. VWP는 단일 프로세스에서 `python -m vwp_bridge.area_power`로 업로드·수치/AI 작업을 처리하며, 사용자 PC는 `python -m vwp.area_power`, OA 메일 소비는 `python -m oa.mail_app`을 실행한다. 실제 명령·역할별 비밀·snapshot은 [모듈 안내](docs/area_power/README.md), 현재 로컬 실행은 [Design Atlas 인계](HANDOFF.md)를 따른다. 앱 자동 DDL·자동 SSO 전환·운영 demo fallback은 없다.

@@ -6,7 +6,7 @@
 
 `python -m oa.mail_app` → `oa/integration/corporate_mail.py:create_mail_sender()` → 공통 메일 worker에 `MailSender` 주입 → `send(message)` 한 번 호출.
 
-- 계약: `area_power/common/mail.py`의 `MailSender`, `MailMessage`, `MailReceipt`, `MailNotConfigured`, `MailRejected`.
+- 계약: `common/area_power/mail.py`의 `MailSender`, `MailMessage`, `MailReceipt`, `MailNotConfigured`, `MailRejected`.
 - 회사 구현: `oa/integration/company_mail/`에 승인 SDK wrapper를 작성하고 `create_mail_sender()`의 본문·필요 import에서 명시적으로 생성해 반환한다. 자동 plugin 탐색·환경변수 import 경로·공통 worker monkey patch는 없다.
 - 기본 factory는 `MailNotConfigured`를 발생시킨다. 연결 전 worker는 DB 접속·job 점유 전에 실패한다. 모의 성공·개발용 전송·다른 프로토콜로 대체하지 않는다. `--help`는 회사 연결 없이 확인할 수 있다.
 - 공통 worker, Protocol/모델, SQL, CLI composition root `oa/mail_app.py`, SSO·UI·권한·기존 테스트는 사내 AI에게 읽기 전용이다.
