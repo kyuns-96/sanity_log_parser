@@ -1,12 +1,12 @@
 # 사내 AI 인수인계 — item별 report parser
 
-실제 report는 보안상 **사내 AI와 현장 담당자가 사내에서만 열람·검증**한다. 현재 대화의 Codex는 원문을 받지 않고 공통 인터페이스·검증 엔진·합성 회귀 사례를 관리한다. 이 개발 경계는 기존 사내 OA report 조회 계약과 별개다.
+실제 report는 보안상 **사내 AI와 현장 담당자가 사내에서만 열람·검증**한다. 현재 대화의 외부 설계 AI는 원문을 받지 않고 공통 인터페이스·검증 엔진·합성 회귀 사례를 관리한다. 이 개발 경계는 기존 사내 OA report 조회 계약과 별개다.
 
-먼저 [AGENTS.md](../AGENTS.md)와 [INTERNAL_AI_GUIDE.md](../INTERNAL_AI_GUIDE.md)를 읽는다. 이 문서는 사용자가 요청한 파서 개발 범위를 구체화한다. 내부 AI는 아래 회사 구현 지점만 수정하고 공통 코드·DB·판정·coverage·기존 테스트는 수정하지 않는다. 예상 밖 오류는 자기 어댑터에서도 수정/재시도를 멈추고 `WAITING_FOR_CODEX`로 문의한다.
+먼저 [AGENTS.md](../AGENTS.md)와 [INTERNAL_AI_GUIDE.md](../INTERNAL_AI_GUIDE.md)를 읽는다. 이 문서는 사용자가 요청한 파서 개발 범위를 구체화한다. 내부 AI는 아래 회사 구현 지점만 수정하고 공통 코드·DB·판정·coverage·기존 테스트는 수정하지 않는다. 예상 밖 오류는 자기 어댑터에서도 수정/재시도를 멈추고 `WAITING_FOR_EXTERNAL_AI`로 문의한다.
 
 작업별 선행 정보/공통 연결 의존성은 [INTERNAL_AI_HANDOFF.md](../INTERNAL_AI_HANDOFF.md)의 INT-02/03을 따른다. 파서에 전달할 예상 목록은 [PLAN_INTEGRATION.md](../vwp/PLAN_INTEGRATION.md)의 `SanityPlanProvider`로 기존 plan 계약에 대응한다. 이 provider와 파서가 workspace 버전 수신이나 회사 AI worker를 자동 연결하는 것은 아니다.
 
-파서의 공통 인터페이스·정규화 규약·검증·판정·DB 저장·전송과 전체 흐름의 설계·구현·디버깅은 **현재 대화의 설계 담당 Codex**가 책임진다. [VWP-bridge 담당 AI](INTERNAL_AI_TASK.md)는 확인된 사내 형식을 이 고정 규약에 대응하는 추출 어댑터와 명시적 등록·전용 테스트만 구현한다. VWP 원천 담당자는 실제 형식·의미·정답 자료를 사내에서 준비한다. 실행 코드와 회사 구현은 [소스 구조](../DEPLOYMENT.md)의 `vwp_bridge/`와 `vwp_bridge/integration/`에 둔다.
+파서의 공통 인터페이스·정규화 규약·검증·판정·DB 저장·전송과 전체 흐름의 설계·구현·디버깅은 **현재 대화의 외부 설계 AI**가 책임진다. [VWP-bridge 담당 AI](INTERNAL_AI_TASK.md)는 확인된 사내 형식을 이 고정 규약에 대응하는 추출 어댑터와 명시적 등록·전용 테스트만 구현한다. VWP 원천 담당자는 실제 형식·의미·정답 자료를 사내에서 준비한다. 실행 코드와 회사 구현은 [소스 구조](../DEPLOYMENT.md)의 `vwp_bridge/`와 `vwp_bridge/integration/`에 둔다.
 
 **2026-10-28 수집 전용 구현:** `evaluation="none"`의 공통 등록·검증·전송·OA 연결을 제공한다. [4.1절](#collection-only-parser)의 상태·호환 계약을 따르고 양쪽 bridge에 수정본을 반영한 뒤 기존 회사 등록 지점에서 사용한다. 실제 형식·의미·정확성은 사내에서 별도 검증한다.
 
@@ -27,7 +27,7 @@
 | [parser_example.py](integration/parser_example.py) | 합성 텍스트 형식의 학습용 구현 | 읽기 전용. 실제 item에 등록하지 않음 |
 | [test_parsers.py](../tests/test_parsers.py), [test_corporate_parsers.py](test_corporate_parsers.py) | 순수 계약 테스트와 PostgreSQL 합성 통합 테스트 | 읽기 전용 |
 
-실제 report·fixtures·현장 계약서는 승인된 비공개 작업 폴더 또는 Git 제외 `artifacts/`에 둔다. 회사 어댑터 코드에 원문·객체명·접속값을 하드코딩하거나 실제 자료를 공개 저장소에 commit하지 않는다. 회사 형식 코드 자체의 공개 가능 여부도 현장에서 확인한다. Codex 디버깅에는 형식을 보존한 **합성 재현 입력과 기대값**만 전달한다.
+실제 report·fixtures·현장 계약서는 승인된 비공개 작업 폴더 또는 Git 제외 `artifacts/`에 둔다. 회사 어댑터 코드에 원문·객체명·접속값을 하드코딩하거나 실제 자료를 공개 저장소에 commit하지 않는다. 회사 형식 코드 자체의 공개 가능 여부도 현장에서 확인한다. 외부 설계 AI 디버깅에는 형식을 보존한 **합성 재현 입력과 기대값**만 전달한다.
 
 ## 2. 고정 추상 인터페이스
 
@@ -52,9 +52,9 @@ class ReportParser(ABC):
 
 ### 2.1. 정규화와 저장의 공통 책임
 
-실제 report의 사내 열람·검증과 처리 경로의 개발 책임을 구분한다. 원본이 사내에 있다는 이유로 내부 AI가 정규화 schema·판정·DB protocol을 새로 설계하지 않는다. Codex가 아래 기존 계약과 실행 코드를 제공하고, 회사 어댑터는 확인된 원문 문법을 `ParseEvent`로 대응한다. 이 절은 기존 계약의 책임과 연결을 명확히 하며 새 schema나 수정 권한을 추가하지 않는다.
+실제 report의 사내 열람·검증과 처리 경로의 개발 책임을 구분한다. 원본이 사내에 있다는 이유로 내부 AI가 정규화 schema·판정·DB protocol을 새로 설계하지 않는다. 외부 설계 AI가 아래 기존 계약과 실행 코드를 제공하고, 회사 어댑터는 확인된 원문 문법을 `ParseEvent`로 대응한다. 이 절은 기존 계약의 책임과 연결을 명확히 하며 새 schema나 수정 권한을 추가하지 않는다.
 
-| 경계 | Codex가 제공하는 고정 계약·실행 | 사내 확인/구현 |
+| 경계 | 외부 설계 AI가 제공하는 고정 계약·실행 | 사내 확인/구현 |
 |---|---|---|
 | 원본 → 추출 이벤트 | `ReportParser`, `ReportSource`, `ParseContext`, `ParsedRecord`·metadata·미해석·완료 이벤트 | 실제 GCA 등 지원 버전의 문법·섹션·필드·건수·종료 근거를 허용된 `parse()`에 대응 |
 | 추출 이벤트 → 정규화 근거 | `checked_records`의 원문 위치·EOF·누락·완료/건수 검사, 공통 필드·모드 검사와 방식별 Decimal/명시적 판정 또는 판정 미실행 기록 | 실제 추출 기대값과 정규화 결과가 일치하는지 사내 fixture로 검증 |
@@ -65,7 +65,7 @@ class ReportParser(ABC):
 
 어댑터가 반환한 `fields`와 공통 코드가 생성하는 저장 레코드는 구분한다. ID·원문 추출·해시·위치·범위·전체 건수·parser/규칙 버전은 공통 경로가 결합/검증한다. V2 OA 전달 레코드는 `id`, `fields`, `check_status`, `raw`, `line_start`, `line_end`, `reasons`, `evidence_id`, `source_raw_sha256`, `redacted`와 제공된 경우의 byte 위치·`json_pointer`를 사용하며, 원본 파일 hash·실행/버전·parser 계약은 report header/manifest에 결합한다. 수집 전용의 추가 marker/집계는 4.1절을 따른다. Python 파서 이벤트와 DB 전송 packet을 회사 코드에서 별도로 변환·재정의하지 않는다.
 
-GCA 원문 추출 후에도 이 공통 경로 전체를 합성 입력으로 연결해 검증하는 것은 Codex 책임이다. 공통 검증 성공과 실제 사내 형식·업무 의미의 정확성 검증은 각각 결과를 남긴다. AI 초기 그룹·판정은 이후 OA 단계이며, 파서의 원본 규칙 결과를 AI 또는 사람의 최종 판단으로 저장하지 않는다.
+GCA 원문 추출 후에도 이 공통 경로 전체를 합성 입력으로 연결해 검증하는 것은 외부 설계 AI 책임이다. 공통 검증 성공과 실제 사내 형식·업무 의미의 정확성 검증은 각각 결과를 남긴다. AI 초기 그룹·판정은 이후 OA 단계이며, 파서의 원본 규칙 결과를 AI 또는 사람의 최종 판단으로 저장하지 않는다.
 
 ## 3. 원문과 반환 이벤트
 
@@ -88,7 +88,7 @@ JSON은 `source.lines()`를 끝까지 읽고 전체 문서 span과 `/results/0` 
 
 공통 검증은 원문 전체 읽기 여부와 span으로 설명되지 않은 구간을 확인한다. 누락 구간은 원문 순서로 UNKNOWN evidence에 추가하고 `UNPARSED_CONTENT`를 남긴다. EOF 미확인·마지막 이벤트 누락·건수 불일치는 완료를 막는다. 단, 공통 검사가 metadata 의미나 실제 업무 추출의 정확성을 증명하지는 않는다. 이 부분은 현장 사례·반례와 담당자의 검증이 필요하다.
 
-기본 한도: 물리 줄 UTF-8 bytes 1MiB, 한 원문 span 64MiB, Pointer를 사용하는 JSON 전체 16MiB. 초과하면 `PARSER_SOURCE_LIMIT`로 중단한다. 상한 변경·다른 encoding/바이너리 report·추가 공통 판정 방식이 필요하면 Codex에게 **합성 구조와 필요한 한도/규칙**을 문의한다.
+기본 한도: 물리 줄 UTF-8 bytes 1MiB, 한 원문 span 64MiB, Pointer를 사용하는 JSON 전체 16MiB. 초과하면 `PARSER_SOURCE_LIMIT`로 중단한다. 상한 변경·다른 encoding/바이너리 report·추가 공통 판정 방식이 필요하면 외부 설계 AI에게 **합성 구조와 필요한 한도/규칙**을 문의한다.
 
 ## 4. 추출과 판정의 분리
 
@@ -145,7 +145,7 @@ VWP-bridge에서 새 PASS/FAIL을 계산하지 않고 원문·추출 필드·실
 
 OA는 명시적 `none` 등록의 item·tool/version·규칙 범위, 수치 정책 부재, producer, 결과 집계와 실제 part의 marker 건수를 재검증한다. marker를 다른 방식에 붙이거나 정상 marker/오류 사유를 바꿔 수신·OWNER 확정을 우회할 수 없다. 전체 수집/파싱이 정상이고 기존 접수 범위·권한 검사를 통과하면 OA AI와 사람 검토의 입력이 된다. legacy bundle의 미평가/UNKNOWN 검토 완료 차단은 그대로다. 구체 직렬화는 [PROTOCOL.md](../PROTOCOL.md)를 따른다.
 
-**사내 담당자의 현재 범위:** VWP·OA 양쪽에 수정본을 전달받은 뒤 기존 `create_parser_registry`의 명시적 등록에서 `evaluation="none"`을 사용할 수 있다. 원문 판정의 유무, 추출 필드/누락 의미, 완료·건수·0건 계약과 합성 입력/기대값을 확인하고 실제 report는 사내에서 검증한다. 회사 파일/메서드의 허용 범위는 유지한다. 공통 코드를 직접 바꾸거나 오류 후 등록/분석/제출을 반복하지 않고 기존 중단 규칙대로 `WAITING_FOR_CODEX`로 문의한다.
+**사내 담당자의 현재 범위:** VWP·OA 양쪽에 수정본을 전달받은 뒤 기존 `create_parser_registry`의 명시적 등록에서 `evaluation="none"`을 사용할 수 있다. 원문 판정의 유무, 추출 필드/누락 의미, 완료·건수·0건 계약과 합성 입력/기대값을 확인하고 실제 report는 사내에서 검증한다. 회사 파일/메서드의 허용 범위는 유지한다. 공통 코드를 직접 바꾸거나 오류 후 등록/분석/제출을 반복하지 않고 기존 중단 규칙대로 `WAITING_FOR_EXTERNAL_AI`로 문의한다.
 
 공통 구현의 최소 수용 시나리오:
 
@@ -183,7 +183,7 @@ return registry
 ```
 
 5. 예상 목록 입력 어댑터에서 해당 item의 `parser`를 등록 이름과 일치시키고 실제 `rule_version`, 조건, evaluation, identity를 설정한다. plan에 Python 모듈 경로를 넣거나 미지원 형식을 기존 CSV/JSON 형식으로 위장하지 않는다.
-6. 전용 합성 테스트와 사내 비공개 fixture 검증을 따로 실행한다. 결과를 인계한 뒤 사용자/Codex 검토 절차로 운영 적용한다. 실제 원문은 이 대화에 첨부하지 않는다.
+6. 전용 합성 테스트와 사내 비공개 fixture 검증을 따로 실행한다. 결과를 인계한 뒤 사용자/외부 설계 AI 검토 절차로 운영 적용한다. 실제 원문은 이 대화에 첨부하지 않는다.
 
 등록은 item ID·tool·tool_version·rule_version의 명시적 허용 범위를 요구한다. wildcard·중복 이름·기존 built-in 교체는 거부한다. 회사 registry의 초기값은 비어 있고, 미구현 메서드는 `PARSER_NOT_CONFIGURED`로 실패한다. 미등록 이름은 기존 `UNSUPPORTED`로 남고 다른 형식으로 우회하지 않는다.
 
@@ -214,7 +214,7 @@ return registry
 .venv/bin/python vwp_bridge/corporate_analyze.py analyze --input /path/to/private/run.json
 ```
 
-일반 `main.py`는 회사 코드를 자동 import하지 않는다. 기존 내장 형식은 회사 진입점에서도 종전대로 동작한다. 의존성·새 env 키·새 실행 방식이 필요하면 Codex에게 문의한다.
+일반 `main.py`는 회사 코드를 자동 import하지 않는다. 기존 내장 형식은 회사 진입점에서도 종전대로 동작한다. 의존성·새 env 키·새 실행 방식이 필요하면 외부 설계 AI에게 문의한다.
 
 검증 표에는 최소 다음을 기록한다.
 
@@ -235,7 +235,7 @@ return registry
 
 공통 테스트는 회사 stub의 미구현 상태나 실제 등록 목록에 의존하지 않으며 합성 어댑터로 고정 계약을 검증한다. 공통 DB 검증은 개발 측의 독립 mock PostgreSQL과 합성 report로 수행한다. mock runner는 공개 package/예제만 복사하고 회사 구현/등록 파일 `corporate_parsers.py`, `company_parsers/`, 비공개 fixture, 실제 report, `.env`를 수집하지 않는다. 사내 어댑터의 의미적 정확성과 회사 코드까지 검증한 것으로 해석하지 않는다.
 
-## 7. 오류와 Codex 문의
+## 7. 오류와 외부 설계 AI 문의
 
 확인된 입력 형식 오류는 `UnparsedRegion`과 `ParseFinished(complete=False, blockers=...)`로 표현해 불완전 분석 근거를 보존한다. 예상 밖 코드 예외·잘못된 반환 계약은 다음 고정 코드로 중단하며 원문 예외/traceback을 CLI에 출력하지 않는다.
 
@@ -246,8 +246,8 @@ return registry
 - `PARSER_SOURCE_LIMIT`: 현재 입력/원문 크기 한도 초과.
 - `PARSER_FAILED`: 예상 밖 import/어댑터 예외. 상세 원문은 외부에 보내지 않음.
 
-`INTERNAL_AI_GUIDE.md` 6절의 문의 양식에 parser ID·implementation_version·판정 방식·입력 크기/줄 수·기대/실제 건수·합성 위치/필드 예를 추가한다. 원문·내부 객체명·내부 주소·개인정보·자격증명은 제외한다. 합성 입력으로 재현되지 않으면 재현 불가라고 기록하고 사내 담당자가 원문 검증을 맡는다. Codex가 실제 report를 열람한 것처럼 인계하지 않는다.
+`INTERNAL_AI_GUIDE.md` 6절의 문의 양식에 parser ID·implementation_version·판정 방식·입력 크기/줄 수·기대/실제 건수·합성 위치/필드 예를 추가한다. 원문·내부 객체명·내부 주소·개인정보·자격증명은 제외한다. 합성 입력으로 재현되지 않으면 재현 불가라고 기록하고 사내 담당자가 원문 검증을 맡는다. 외부 설계 AI가 실제 report를 열람한 것처럼 인계하지 않는다.
 
 내부 AI에게 전달할 지시문:
 
-> 먼저 AGENTS.md, INTERNAL_AI_GUIDE.md, vwp_bridge/PARSER_INTEGRATION.md를 읽어라. 실제 report는 사내에서만 확인한다. vwp_bridge/integration/corporate_parsers.py의 parse/등록과 company_parsers/의 전용 구현·테스트만 작성하라. 공통 인터페이스·판정·DB·coverage·기존 테스트는 수정하지 말라. item 한 개의 확인된 형식부터 구현하고 원문 span·EOF·종료/건수·정상 0건·잘림 사례를 검증하라. 공통 코드 문의에는 합성 재현 입력만 사용하라. 예상 밖 오류는 수정/재시도를 멈추고 비식별 Codex 문의를 작성해 WAITING_FOR_CODEX로 대기하라.
+> 먼저 AGENTS.md, INTERNAL_AI_GUIDE.md, vwp_bridge/PARSER_INTEGRATION.md를 읽어라. 실제 report는 사내에서만 확인한다. vwp_bridge/integration/corporate_parsers.py의 parse/등록과 company_parsers/의 전용 구현·테스트만 작성하라. 공통 인터페이스·판정·DB·coverage·기존 테스트는 수정하지 말라. item 한 개의 확인된 형식부터 구현하고 원문 span·EOF·종료/건수·정상 0건·잘림 사례를 검증하라. 공통 코드 문의에는 합성 재현 입력만 사용하라. 예상 밖 오류는 수정/재시도를 멈추고 비식별 외부 설계 AI 문의를 작성해 WAITING_FOR_EXTERNAL_AI로 대기하라.

@@ -50,7 +50,7 @@ flowchart LR
 ```
 
 - **사내 AI:** 확인된 회사 사실에 근거한 SDK wrapper·입력 매핑·item 추출·어댑터 전용 테스트와 사내 검증 결과를 작성한다.
-- **설계 담당 Codex:** 공통 모델/검증·권한·DB/전송·worker·페이지/작업 재개·UI/API와 디버깅을 담당한다. 회사 사실은 비식별 계약과 합성 예제로 전달받는다.
+- **외부 설계 AI:** 공통 모델/검증·권한·DB/전송·worker·페이지/작업 재개·UI/API와 디버깅을 담당한다. 회사 사실은 비식별 계약과 합성 예제로 전달받는다.
 - **사용자/현장 담당자/DBA:** 실제 업무 기준·예상 목록 승인·정답 사례 검증·계정/역할 발급·운영 DB 적용·배포를 관리한다. 이 문서가 운영 쓰기 권한을 부여하지 않는다.
 
 OA 프로그램이 DB에서 허용된 전체 로그·확정 사례를 조회하고 **자기 사내 OpenAI 호환 AI API**를 호출하도록 연결한다. 새 AI용 HTTP 서버는 필수가 아니며 모델에 DB 계정을 주지 않는다. VWP↔OA는 기존 DB 경계로만 전달한다. **기존 VWP legacy worker나 합성 mock의 성공은 OA AI 판단 순환 완료가 아니다.** 모델 호출·검색·최초 직접 근거 판정·작업/저장·운영 workbench 공통 연결은 [OA 실행 계약](oa/AI_RUNTIME.md)을 따른다. 기본 단일 호출과 선택형 전체 로그·확정 그룹 판정·보존 본문 분할을 제공한다. 실제 모델 품질 검증은 남아 있다.
@@ -65,7 +65,7 @@ OA 프로그램이 DB에서 허용된 전체 로그·확정 사례를 조회하�
 | VWP-bridge | INT-03 parser·원본 검증·DB 전달 준비, INT-06 인증된 mount 신원/승인. 기존 VWP SDK는 해당 경로 유지 시만 담당 | 기존 `vwp_bridge/integration/`의 허용 parser·submission·VWP 어댑터와 `company_*/` | [VWP-bridge 지시문](vwp_bridge/INTERNAL_AI_TASK.md) |
 | OA | INT-04·05 OA API 설정·승인 기준·품질 검증, INT-01·06 사용자/source 동일 계정·OA 접속 | 기존 SSO/source 허용 지점 유지. OA 지원 private 설정·기준 catalog·평가 자료만 준비; 모델/검색/작업 공통 코드는 읽기 전용 | [OA 지시문](oa/INTERNAL_AI_TASK.md) |
 
-VWP가 형식/점검 의미·정답을 준비하고 VWP-bridge가 parser를 구현한다. OA는 모델 API·한도와 판단 정답/반례를 확인한다. Codex가 두 단계 prompt·사례 검색·최초 직접 근거 판정·모델 실행/저장·품질 비교를 연결한다. 결과는 역할별 형식으로 인계하며 서로의 파일을 대신 고치거나 자동 연락 채널을 만들지 않는다.
+VWP가 형식/점검 의미·정답을 준비하고 VWP-bridge가 parser를 구현한다. OA는 모델 API·한도와 판단 정답/반례를 확인한다. 외부 설계 AI가 두 단계 prompt·사례 검색·최초 직접 근거 판정·모델 실행/저장·품질 비교를 연결한다. 결과는 역할별 형식으로 인계하며 서로의 파일을 대신 고치거나 자동 연락 채널을 만들지 않는다.
 
 **DB 연결은 두 bridge만 담당한다.** 원천 VWP는 DB 계정이 없고, 기본 모드에서 VWP-bridge는 VWP 로그인/`sanity_vwp_app`, OA는 별도 OA 로그인/`sanity_oa_app`을 사용한다. 별도 제한 계정을 확보할 수 없는 환경은 양쪽에서 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`를 명시해 공유 로그인 계약을 선택한다. 이 모드는 DB의 private/큐 컬럼 격리를 제공하지 않으며 검사 실패 후 자동 선택하지 않는다. 실제 접속값은 비공개 `.env`에 현장 입력한다. 지원 키·우선순위·모드별 권한·읽기 전용 확인 명령·비공개 인계 양식은 [DB 연결 인계](db/CONNECTION_HANDOFF.md)에 있다. 실제 DB 확인·설치·배포와 내부 AI의 공통 코드 보호 범위는 유지한다.
 
@@ -82,9 +82,9 @@ VWP가 형식/점검 의미·정답을 준비하고 VWP-bridge가 parser를 구�
 | INT-05 | OA 승인 기준 catalog·정답/반례는 비공개 위치. schema 2의 공통 loader/검증은 읽기 전용. VWP SDK 경로 유지 시 기존 허용 지점 사용 | [AI 판단 설계](AI_DECISION_DESIGN.md), [REVIEW_INTEGRATION](vwp_bridge/REVIEW_INTEGRATION.md) |
 | INT-06 | bridge `corporate_submission.py` authority의 네 메서드·허용 import/생성자와 `company_submission/`; 자기 `company_*/`의 원천 대응표·비공개 진단 | 위 역할별 지시문, [제출 SDK](vwp/SUBMISSION.md#3-세-사내-ai가-연결할-메서드), [DB 연결 인계](db/CONNECTION_HANDOFF.md) |
 
-표의 `company_*/`는 사내 AI가 추가할 수 있는 위치다. 자동 plugin 탐색·운영 등록 경로가 아니다. `common/sanity_integration_contracts.py`, `common/sanity_integration_examples.py`와 기존 공통 코드/SQL/UI/테스트는 사내 AI에게 읽기 전용이다. 새 의존성·env 키·서명/반환 변경이 필요하면 먼저 Codex에게 문의한다.
+표의 `company_*/`는 사내 AI가 추가할 수 있는 위치다. 자동 plugin 탐색·운영 등록 경로가 아니다. `common/sanity_integration_contracts.py`, `common/sanity_integration_examples.py`와 기존 공통 코드/SQL/UI/테스트는 사내 AI에게 읽기 전용이다. 새 의존성·env 키·서명/반환 변경이 필요하면 먼저 외부 설계 AI에게 문의한다.
 
-**2026-11-11 Area/Power 사내 메일 추가 연동:** OA 담당자는 [MAIL_INTEGRATION.md](oa/MAIL_INTEGRATION.md)의 `MailSender` Protocol에 맞춰 `oa/integration/corporate_mail.py:create_mail_sender`의 본문·필요 import와 `company_mail/`의 승인된 회사 SDK wrapper만 구현한다. 공통 factory/worker 연결은 제공했으며 SMTP 구현·설정·fallback은 제거했다. 미연결은 job 점유 전 실패한다. 공통 Protocol·worker·composition root·SSO·SQL·UI는 읽기 전용이며 이번 연동에는 새 테스트/fixture/mock/검증 스크립트 파일을 추가하지 않는다. 실제 발송/배포는 사용자 승인 범위에서만 수행하고 예상 밖 오류는 기존 `WAITING_FOR_CODEX` 절차로 인계한다.
+**2026-11-11 Area/Power 사내 메일 추가 연동:** OA 담당자는 [MAIL_INTEGRATION.md](oa/MAIL_INTEGRATION.md)의 `MailSender` Protocol에 맞춰 `oa/integration/corporate_mail.py:create_mail_sender`의 본문·필요 import와 `company_mail/`의 승인된 회사 SDK wrapper만 구현한다. 공통 factory/worker 연결은 제공했으며 SMTP 구현·설정·fallback은 제거했다. 미연결은 job 점유 전 실패한다. 공통 Protocol·worker·composition root·SSO·SQL·UI는 읽기 전용이며 이번 연동에는 새 테스트/fixture/mock/검증 스크립트 파일을 추가하지 않는다. 실제 발송/배포는 사용자 승인 범위에서만 수행하고 예상 밖 오류는 기존 `WAITING_FOR_EXTERNAL_AI` 절차로 인계한다.
 
 ## 4. 사내 AI 작업 명세
 
@@ -116,7 +116,7 @@ VWP 내부의 여러 물리 루트는 허용된 회사 launcher에서 byte 동�
 
 **수용 기준:** 정상/위반/경계값/명시적 0건/빈 파일/잘림/새 섹션/encoding 오류/버전 변경, 정확한 span·EOF·전체 건수와 UNKNOWN 보존을 검증한다. 파서는 추출만 하며 최종 수치 판정은 공통 엔진이 담당한다. parser/rule version 변경 기준은 세부 계약을 따른다.
 
-**2026-10-28 수집 전용 구현:** 공통 `none` 등록·검증·미평가 집계·VWP→OA 전달과 검토 입력 연결을 제공한다. 원문 판정이 있으면 `reported`로 보존할 수 있고, 판정 없는 로그는 [parser 4.1절](vwp_bridge/PARSER_INTEGRATION.md#collection-only-parser)의 `none`을 사용한다. 사내 담당자는 양쪽 수정본을 전달받은 뒤 기존 회사 추출/명시적 등록 지점과 전용 테스트만 작성한다. 필드·완료/건수·0건 의미는 현장에서 확인하며 공통 상태·저장·전송·coverage·UI·기존 테스트의 수정은 아래 COMMON-02F의 Codex 책임이다.
+**2026-10-28 수집 전용 구현:** 공통 `none` 등록·검증·미평가 집계·VWP→OA 전달과 검토 입력 연결을 제공한다. 원문 판정이 있으면 `reported`로 보존할 수 있고, 판정 없는 로그는 [parser 4.1절](vwp_bridge/PARSER_INTEGRATION.md#collection-only-parser)의 `none`을 사용한다. 사내 담당자는 양쪽 수정본을 전달받은 뒤 기존 회사 추출/명시적 등록 지점과 전용 테스트만 작성한다. 필드·완료/건수·0건 의미는 현장에서 확인하며 공통 상태·저장·전송·coverage·UI·기존 테스트의 수정은 아래 COMMON-02F의 외부 설계 AI 책임이다.
 
 ### INT-04. 1단계 AI 초기 분류 — OA API 연동 우선
 
@@ -154,7 +154,7 @@ legacy의 자유 `run.project`와 registry ID는 같은 계약이 아니다. 승
 
 Q1 인계에는 제출 대상 REVISION과 각 PRE/POST report의 실제 소속, 예상 슬롯×mode×item과 범위 승인 근거, 원천 실행 ID/순서·다른 PC 재전달 보존 방식, 실제 tool/version을 추가한다. 같은 PRE가 여러 POST 제출에 포함될 때 한 원본을 참조해야 한다. `.done`·REVISION/ECO 문법·임계값/제외 근거의 현장 확인 여부를 구분한다.
 
-## 5. Codex 공통 연결의 상태와 남은 작업
+## 5. 외부 설계 AI 공통 연결의 상태와 남은 작업
 
 아래는 **사내 AI에게 위임한 구현 작업이 아니다.** 사내 AI는 필요한 회사 사실과 검증 결과를 전달하고 보호 파일 수정이 필요한 단계에서 인계한다.
 
@@ -169,7 +169,7 @@ Q1 인계에는 제출 대상 REVISION과 각 PRE/POST report의 실제 소속, 
 
 COMMON-02의 구현 순서와 경계:
 
-| 하위 작업 | Codex 구현 / 수용 기준 |
+| 하위 작업 | 외부 설계 AI 구현 / 수용 기준 |
 |---|---|
 | COMMON-02A | 계획 V2 타입/validator·collection과 개별 원천 메타데이터·schema 1 호환/미지원 거부. NET_VER를 design에, REVISION을 condition에 숨기지 않음 |
 | COMMON-02B | 예상 범위 선언/승인을 정확한 집합 digest·프로필 개정·검증된 블록 권한에 결합. 스캔 자동 승인 금지, 누락/평가 기준 차단과 분리 |
@@ -194,11 +194,11 @@ COMMON-03의 판단 작업은 원본 snapshot·project/block/item/버전 scope·
 
 1. [AI 판단 설계](AI_DECISION_DESIGN.md)의 첫 분류·판정·사례 검색·피드백 순환에서 맡을 부분을 확인한다. 기존 변경과 자기 INT 작업·수정 파일/메서드·확인된 사내 사실을 기록한다. 로그인·DB 연결만으로 핵심 AI 기능 완료를 보고하지 않는다.
 2. 필요한 사실이 없으면 `FACTS_REQUIRED`, 허용된 구현과 모의 검증이 끝나면 `ADAPTER_VERIFIED`로 기록한다. 이 상태는 운영 연결 완료가 아니다.
-3. SDK/형식별 신규 전용 테스트와 비공개 실제 자료 비교를 각각 수행한다. 예상된 실패 입력이 올바르게 거부되어 테스트가 통과하는 것은 정상이다. **예상 밖 오류/테스트 실패/보호 파일 수정 필요는 `WAITING_FOR_CODEX`로 전환**하고 수정·재시도를 중단한다.
+3. SDK/형식별 신규 전용 테스트와 비공개 실제 자료 비교를 각각 수행한다. 예상된 실패 입력이 올바르게 거부되어 테스트가 통과하는 것은 정상이다. **예상 밖 오류/테스트 실패/보호 파일 수정 필요는 `WAITING_FOR_EXTERNAL_AI`로 전환**하고 수정·재시도를 중단한다.
 4. 아래 자기 역할 명령으로 공개 계약과 자기 어댑터 시험 결과를 분리해 인계한다. `--role`만 자기 회사 테스트를 찾아 실행하며 mock snapshot에는 회사 구현/비공개 fixture를 포함하지 않는다.
-5. Codex 검토 후 승인된 공통 연결을 받고, 사용자 관리 아래 사내 전체 흐름을 검증한다. 사내 AI가 보호 코드를 수정하거나 실제 DB/배포를 자동 실행하지 않는다.
+5. 외부 설계 AI 검토 후 승인된 공통 연결을 받고, 사용자 관리 아래 사내 전체 흐름을 검증한다. 사내 AI가 보호 코드를 수정하거나 실제 DB/배포를 자동 실행하지 않는다.
 
-위 상태는 인계 문서의 작업 보고용이며 DB/AI job의 상태 코드를 추가하는 것이 아니다. `READY_FOR_REVIEW`는 변경·검증·남은 의존성을 정리해 Codex 검토에 제출할 준비가 되었다는 뜻이며 운영 사용 가능을 의미하지 않는다.
+위 상태는 인계 문서의 작업 보고용이며 DB/AI job의 상태 코드를 추가하는 것이 아니다. `READY_FOR_REVIEW`는 변경·검증·남은 의존성을 정리해 외부 설계 AI 검토에 제출할 준비가 되었다는 뜻이며 운영 사용 가능을 의미하지 않는다.
 
 전체 개발 의존성을 설치한 Git checkout의 저장소 루트에서 **자기 역할 한 줄만** 실행한다. 공개 검사는 DB·실제 모델을 호출하지 않으며 회사 시험도 모의 SDK/합성 입력으로 작성한다. 상세 선택 범위와 DB 후속은 [역할별 테스트](TESTING.md)를 따른다.
 
@@ -227,7 +227,7 @@ COMMON-03의 판단 작업은 원본 snapshot·project/block/item/버전 scope·
 ```text
 담당 개발 AI: VWP / VWP-bridge / OA 중 하나
 작업 ID / 기준 commit / 작업 전부터 있던 변경:
-현재 상태: FACTS_REQUIRED / ADAPTER_VERIFIED / WAITING_FOR_CODEX / READY_FOR_REVIEW
+현재 상태: FACTS_REQUIRED / ADAPTER_VERIFIED / WAITING_FOR_EXTERNAL_AI / READY_FOR_REVIEW
 수정한 허용 파일·메서드:
 확인한 회사 계약: 사내 문서 식별자·SDK/도구/형식 버전 (접속값 제외)
 추상 입력→SDK/원천 입력→출력 대응 요약:
@@ -237,11 +237,11 @@ COMMON-03의 판단 작업은 원본 snapshot·project/block/item/버전 scope·
 판단·피드백: 실제 모델 호출 여부, 관련 사례 제공/인용, 사람 정정의 다음 입력 반영, 품질 비교 실시 여부
 사내 실제 자료 검증: 미실시 / 실시, 비식별 결과와 현장 확인자
 공통 보호 파일 변경 여부: 없음 / 필요 사유(변경하지 않고 문의)
-남은 COMMON 의존성 / 비식별 Codex 문의:
+남은 COMMON 의존성 / 비식별 외부 설계 AI 문의:
 운영 적용: 미적용 / 사용자 관리하에 승인된 적용(근거)
 ```
 
-예상 밖 오류의 상세 문의는 [가이드 6절](INTERNAL_AI_GUIDE.md#6-디버깅이-필요하면-codex에게-문의)의 양식을 사용한다. 직접 통신 수단이 없으면 사용자가 현재 Codex 대화로 전달한다. 실제 report·SDK 예외 원문·인증 claim·개인정보·주소/토큰/DSN은 외부 대화나 공개 Git에 첨부하지 않는다.
+예상 밖 오류의 상세 문의는 [가이드 6절](INTERNAL_AI_GUIDE.md#6-디버깅이-필요하면-외부-설계-ai에게-문의)의 양식을 사용한다. 직접 통신 수단이 없으면 사용자가 현재 외부 설계 AI 대화로 전달한다. 실제 report·SDK 예외 원문·인증 claim·개인정보·주소/토큰/DSN은 외부 대화나 공개 Git에 첨부하지 않는다.
 
 ## 8. 그대로 전달할 시작 지시문
 
@@ -253,4 +253,4 @@ COMMON-03의 판단 작업은 원본 snapshot·project/block/item/버전 scope·
 | VWP-bridge 개발 AI | [VWP-bridge 전용 지시문](vwp_bridge/INTERNAL_AI_TASK.md) | `vwp` |
 | OA 개발 AI | [OA 전용 지시문](oa/INTERNAL_AI_TASK.md) | `oa` |
 
-공통으로 AGENTS/가이드의 보호 범위와 `WAITING_FOR_CODEX` 중단 규칙을 따른다. 실제 회사 사실은 사내에서 검증하고 Codex에는 합성 입력만 전달한다. SDK 어댑터 검증·공통 운영 연결·실제 적용 승인은 별도다.
+공통으로 AGENTS/가이드의 보호 범위와 `WAITING_FOR_EXTERNAL_AI` 중단 규칙을 따른다. 실제 회사 사실은 사내에서 검증하고 외부 설계 AI에는 합성 입력만 전달한다. SDK 어댑터 검증·공통 운영 연결·실제 적용 승인은 별도다.

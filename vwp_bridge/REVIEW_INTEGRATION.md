@@ -9,7 +9,7 @@
 
 통합 작업과 운영 연결은 [INTERNAL_AI_HANDOFF.md](../INTERNAL_AI_HANDOFF.md)의 INT-05/COMMON-03~05를 따른다. `AdvisorContext`, `ReviewCase`, `ReviewProposal` 타입은 [sanity_integration_contracts.py](../common/sanity_integration_contracts.py), 선택 그룹과 과거 사례 유무별 합성 입력/기대 응답은 [sanity_integration_examples.py](../common/sanity_integration_examples.py)의 `group_review_example`에 있다. 타입 힌트는 기존 dict/JSON 검증이나 운영 연결을 바꾸지 않는다.
 
-현재 VWP 회사 어댑터의 소유자는 [VWP-bridge 담당 AI](INTERNAL_AI_TASK.md)다. OA 모델 API·한도·점검 기준/정답 자료는 [OA 담당자](../oa/INTERNAL_AI_TASK.md)가 준비한다. OA 호출·사례 검색·직접 근거 V2·영속 작업/저장 공통 코드는 Codex가 제공했다. 사내 실제 모델 품질 비교와 대량 모델 분할·통합은 후속 검증/구현 대상이다. SSO 어댑터에 모델 호출을 추가하거나 VWP 파일을 OA로 복사하지 않는다.
+현재 VWP 회사 어댑터의 소유자는 [VWP-bridge 담당 AI](INTERNAL_AI_TASK.md)다. OA 모델 API·한도·점검 기준/정답 자료는 [OA 담당자](../oa/INTERNAL_AI_TASK.md)가 준비한다. OA 호출·사례 검색·직접 근거 V2·영속 작업/저장 공통 코드는 외부 설계 AI가 제공했다. 사내 실제 모델 품질 비교와 대량 모델 분할·통합은 후속 검증/구현 대상이다. SSO 어댑터에 모델 호출을 추가하거나 VWP 파일을 OA로 복사하지 않는다.
 
 ## 현재 제공한 것과 연결 경계
 
@@ -37,7 +37,7 @@ LLM이 아니며 독립 합성 `/workspace`의 일반 `AI review → 판정 제�
 
 OA 공통 경로는 DB에서 선택 그룹의 전체 로그·승인된 점검 기준·관련 확정 사례를 조회해 모델에 제공하고 입력 해시·scope·현재 권한·사례/분류 개정과 직접 근거를 검증해 저장한다. 별도 AI용 HTTP 서버 없이 OA 작업자가 실행하며 전체 입력이 한도에 들어가는 첫 순환을 제공한다. 실제 사내 API·자료·정답 검증은 별도다.
 내부 AI가 이를 위해 SQL/queue worker/API/UI를 직접 수정하거나 OA→VWP HTTP·공유 파일 통신을 추가하지 않는다.
-실제 SDK·처리 시간·인증/응답 계약을 확인해 비식별화한 계약을 Codex에게 전달한다.
+실제 SDK·처리 시간·인증/응답 계약을 확인해 비식별화한 계약을 외부 설계 AI에게 전달한다.
 
 ## 내부 AI의 수정 허용 위치
 
@@ -48,7 +48,7 @@ OA 공통 경로는 DB에서 선택 그룹의 전체 로그·승인된 점검 �
 
 `common/sanity_review_advice.py`, `oa/sanity_workspace_review.py`, DB SQL, 공통 전송/worker, 기존 테스트와 화면은 읽기 전용이다.
 새 환경 키·의존성·공통 인터페이스 변경이 필요하거나 예상 밖 오류/테스트 실패가 발생하면
-수정·재시도를 멈추고 가이드의 템플릿으로 `WAITING_FOR_CODEX` 문의를 남긴다.
+수정·재시도를 멈추고 가이드의 템플릿으로 `WAITING_FOR_EXTERNAL_AI` 문의를 남긴다.
 
 ## 입력 계약
 

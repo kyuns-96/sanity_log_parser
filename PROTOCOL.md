@@ -216,7 +216,7 @@ using fixed `PARSER_*` codes without exception text or automatic retries.
 The common UTF-8 reader limits physical lines to 1MiB, raw spans to 64MiB and JSON
 Pointer documents to 16MiB. See [parser handoff](vwp_bridge/PARSER_INTEGRATION.md)
 for field requirements, source coverage and company-only validation. Real reports
-stay inside the company; external Codex debugging uses synthetic inputs only.
+stay inside the company; external 외부 설계 AI debugging uses synthetic inputs only.
 
 **Collection-only mode (2026-10-28):**
 [`evaluation="none"`](vwp_bridge/PARSER_INTEGRATION.md#collection-only-parser)
@@ -522,7 +522,7 @@ POST는 JSON 객체를 사용하고 추가 필드·잘못된 ID/UUID·범위 밖
 
 ## VWP AI와 분류 계약
 
-아래 키·한도·메시지는 **현재 legacy VWP 실행 계약**이다. OA 모델 실행/설정에는 위 별도 계약과 [AI_RUNTIME.md](oa/AI_RUNTIME.md)를 사용한다. OA의 우선 연동·사례 검색·직접 근거 판정·품질 비교는 [AI 판단 설계](AI_DECISION_DESIGN.md)와 [COMMON-03~06](INTERNAL_AI_HANDOFF.md#5-codex-공통-연결의-상태와-남은-작업)을 따른다.
+아래 키·한도·메시지는 **현재 legacy VWP 실행 계약**이다. OA 모델 실행/설정에는 위 별도 계약과 [AI_RUNTIME.md](oa/AI_RUNTIME.md)를 사용한다. OA의 우선 연동·사례 검색·직접 근거 판정·품질 비교는 [AI 판단 설계](AI_DECISION_DESIGN.md)와 [COMMON-03~06](INTERNAL_AI_HANDOFF.md#5-외부-설계-ai-공통-연결의-상태와-남은-작업)을 따른다.
 
 `SANITY_AI_MODE=api|cli`와 모델을 명시해야 한다. 미설정은 AI_NOT_CONFIGURED 실패이며 합성 응답으로 대체하지 않는다.
 URL은 전체 HTTPS 주소, token은 Bearer, CA는 선택적인 절대 PEM 경로다. redirect·환경 proxy·자동 재시도·API→CLI 우회는 없다.
@@ -624,7 +624,7 @@ PASS 기록에도 후보를 표시하지만 소속은 NOT_TARGET로 남는다. C
 AI는 각 report의 그룹 구성·이름·근거를 새로 제안한다. 과거 그룹과의 필수 일대일 매칭이나 고정 분류 유형 사전의 선택으로 대체하지 않는다.
 확정 사례를 다음 AI 입력 후보로 축적하는 것이 기본 동작이며 별도 재사용 체크/필수 기준 작성이 선행 조건은 아니다.
 독립 합성 일반 화면은 정확한 필드 비교·선택형 사례 재사용 엔진을 유지한다. 운영 workbench는 위 OA AI job·직접 근거 V2·현재 확정 사례 검색을 사용하며 실제 사내 모델 연결/품질은 별도 검증한다.
-외부 Codex의 실제 호출은 [합성 mock 시험](oa/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)에만 추가했다. 이는 회사 VWP/SDK 연결이 아니다.
+Codex 모델의 실제 호출은 [합성 mock 시험](oa/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)에만 추가했다. 이는 회사 VWP/SDK 연결이 아니다.
 명시적으로 켠 합성 workspace의 전용 `/clustering/ai`와 **AI로 그룹 만들기** 버튼은 UUID 예약·고정 입력 검사 후 실제 모델을 호출한다. 기존 제안 API의 mode는 확장하지 않는다. 호출 상태/receipt는 기존 `WS_CLUSTER.state`에 보관하며 새 물리 테이블이나 브리지 간 전송 경로를 만들지 않는다.
 기존 `reusable`/버전 호환 승인·저장 데이터·어댑터 서명이나 내부 AI의 수정 허용 범위는 유지한다.
 

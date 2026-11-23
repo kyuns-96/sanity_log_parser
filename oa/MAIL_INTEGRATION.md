@@ -10,7 +10,7 @@
 - 회사 구현: `oa/integration/company_mail/`에 승인 SDK wrapper를 작성하고 `create_mail_sender()`의 본문·필요 import에서 명시적으로 생성해 반환한다. 자동 plugin 탐색·환경변수 import 경로·공통 worker monkey patch는 없다.
 - 기본 factory는 `MailNotConfigured`를 발생시킨다. 연결 전 worker는 DB 접속·job 점유 전에 실패한다. 모의 성공·개발용 전송·다른 프로토콜로 대체하지 않는다. `--help`는 회사 연결 없이 확인할 수 있다.
 - 공통 worker, Protocol/모델, SQL, CLI composition root `oa/mail_app.py`, SSO·UI·권한·기존 테스트는 사내 AI에게 읽기 전용이다.
-- 새 SDK 의존성·환경변수 키가 필요하면 사용 목적·버전·실패 계약을 비식별화해 Codex에게 문의한다. 비밀값·실제 주소·원문 SDK 예외는 공개하지 않는다.
+- 새 SDK 의존성·환경변수 키가 필요하면 사용 목적·버전·실패 계약을 비식별화해 외부 설계 AI에게 문의한다. 비밀값·실제 주소·원문 SDK 예외는 공개하지 않는다.
 
 ## 요청
 
@@ -60,4 +60,4 @@ OA↔VWP 업무 전달은 기존 DB 행만 사용한다. 외부 메일 호출 �
 
 ## OA 사내 AI에게 전달
 
-`AGENTS.md`, `INTERNAL_AI_GUIDE.md`, `oa/INTERNAL_AI_TASK.md`, 이 계약을 읽고 실제 사내 메일 API/SDK를 확인해 `company_mail/`과 `create_mail_sender()`만 연결한다. 기존 SSO·DB·worker·Protocol은 수정하지 않는다. 이번 연동을 위해 새 테스트/fixture/mock/검증 스크립트 파일을 추가하지 않는다. 기존 역할 검증과 승인된 실환경 확인을 구분하며 예상 밖 오류는 수정·재시도를 중단하고 `WAITING_FOR_CODEX`로 문의한다. 보고에는 기준 commit, 허용 파일 변경, 확인한 API/SDK·한도·접수/거부/불명 계약, 실제 검증 여부와 미확정 사항만 포함한다. 배포·실제 발송은 별도 사용자 승인 범위에서만 수행한다.
+`AGENTS.md`, `INTERNAL_AI_GUIDE.md`, `oa/INTERNAL_AI_TASK.md`, 이 계약을 읽고 실제 사내 메일 API/SDK를 확인해 `company_mail/`과 `create_mail_sender()`만 연결한다. 기존 SSO·DB·worker·Protocol은 수정하지 않는다. 이번 연동을 위해 새 테스트/fixture/mock/검증 스크립트 파일을 추가하지 않는다. 기존 역할 검증과 승인된 실환경 확인을 구분하며 예상 밖 오류는 수정·재시도를 중단하고 `WAITING_FOR_EXTERNAL_AI`로 문의한다. 보고에는 기준 commit, 허용 파일 변경, 확인한 API/SDK·한도·접수/거부/불명 계약, 실제 검증 여부와 미확정 사항만 포함한다. 배포·실제 발송은 별도 사용자 승인 범위에서만 수행한다.

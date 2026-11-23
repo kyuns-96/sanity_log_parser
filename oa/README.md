@@ -20,7 +20,7 @@ V2 수신기는 최종 반영 때 기존 DB staging의 manifest와 모든 part�
 ## 사내 SSO 연동 경계
 
 사내 AI의 수정 허용 범위와 디버깅 중단 규칙은 [INTERNAL_AI_GUIDE.md](../INTERNAL_AI_GUIDE.md)를 먼저 따릅니다.
-SSO의 기술 계약은 [SSO_INTEGRATION.md](SSO_INTEGRATION.md)에 있습니다. 업무 권한·DB 저장·기존 UI 변경은 Codex 담당입니다.
+SSO의 기술 계약은 [SSO_INTEGRATION.md](SSO_INTEGRATION.md)에 있습니다. 업무 권한·DB 저장·기존 UI 변경은 외부 설계 AI 담당입니다.
 `oa/sanity_auth.py`의 인증 검증·내부 사용자 연결 추상 인터페이스를 제공하며,
 [corporate_sso.py](integration/corporate_sso.py)의 두 메서드에 회사 구현을 연결합니다.
 사내용 진입점은 `sso_app.py`이고 `/auth` 로그인·콜백·로그아웃 router 주입을 지원합니다.

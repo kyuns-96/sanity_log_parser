@@ -16,7 +16,7 @@
 | VWP 중앙 수집 서비스 (VWP-bridge) | `vwp_bridge/` | item parser·submission, 기존 VWP SDK는 해당 실행 경로 유지 시 사용 | VWP 제한 로그인 / [예제](vwp_bridge/.env.example) |
 | OA | `oa/`, `oa/dashboard/` | SSO·source 허용 어댑터, OA AI private 설정·승인 기준 catalog·현장 평가 | OA 제한 로그인 / [예제](oa/.env.example). 모델 설정·worker는 [AI 실행 계약](oa/AI_RUNTIME.md) |
 | 공통 | `common/` | 사내 AI는 읽기 전용 | 설정·DB·전송 계약·추상 타입·순수 검증 |
-| 개발 시험 | `devtools/`, `tools/`, `tests/` | 설계 담당 Codex 관리 | 합성 report·seed·외부 모델 mock·QA |
+| 개발 시험 | `devtools/`, `tools/`, `tests/` | 외부 설계 AI 관리 | 합성 report·seed·외부 모델 mock·QA |
 | DB 관리 | `db/` | 사용자/DBA 관리 | 기존 SQL·form·권한·접속 인계 |
 | Area/Power | `area_power/`, `oa/dashboard/src/areaPower/` | 기존 host SSO·프로젝트 권한에 연결하는 독립 수치 업무 | PostgreSQL 18.6·이미 신청한 두 테이블 / [설정·실행](area_power/README.md) |
 
@@ -118,9 +118,9 @@ OA AI 실행은 위 기존 `oa.main work`와 별도다. 같은 release의 [VWP �
 
 ## 4. 세 사내 AI에게 전달할 문서
 
-각 AI에게 루트 [AGENTS.md](AGENTS.md), [작업 가이드](INTERNAL_AI_GUIDE.md), [통합 인계](INTERNAL_AI_HANDOFF.md)와 **자기 역할의 `AGENTS.md`·`INTERNAL_AI_TASK.md`**를 전달한다. 세 역할의 회사 어댑터가 물리적으로 분리되어도 수정 허용 범위는 기존 가이드 그대로다. 공통 코드·SQL·UI·기존 테스트 변경과 디버깅은 설계 담당 Codex가 맡는다.
+각 AI에게 루트 [AGENTS.md](AGENTS.md), [작업 가이드](INTERNAL_AI_GUIDE.md), [통합 인계](INTERNAL_AI_HANDOFF.md)와 **자기 역할의 `AGENTS.md`·`INTERNAL_AI_TASK.md`**를 전달한다. 세 역할의 회사 어댑터가 물리적으로 분리되어도 수정 허용 범위는 기존 가이드 그대로다. 공통 코드·SQL·UI·기존 테스트 변경과 디버깅은 외부 설계 AI가 맡는다.
 
-소스 정리는 회사 SDK·운영 DB·SSO/RBAC·OA AI의 실제 모델 연결·판단 품질 검증 완료를 뜻하지 않는다. 실제 원문과 접속 사실은 사내에서 검증하며, 예상 밖 오류는 비식별 문의와 `WAITING_FOR_CODEX` 상태로 인계한다.
+소스 정리는 회사 SDK·운영 DB·SSO/RBAC·OA AI의 실제 모델 연결·판단 품질 검증 완료를 뜻하지 않는다. 실제 원문과 접속 사실은 사내에서 검증하며, 예상 밖 오류는 비식별 문의와 `WAITING_FOR_EXTERNAL_AI` 상태로 인계한다.
 
 ## 5. 사용자 제출 명령과 데이터 배치
 

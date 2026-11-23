@@ -3,23 +3,23 @@
 SSO 공급자 SDK와 사내 계정 DB만 연결하면 `/api/session`에서 검증된 내부 사용자를 확인할 수 있도록 인증 경계를 구현했다. 실제 SSO 방식·URL·claim은 추정하지 않았다. **사내 AI가 먼저 수정할 파일은 [corporate_sso.py](integration/corporate_sso.py)의 두 메서드다.**
 
 수정 권한은 [INTERNAL_AI_GUIDE.md](../INTERNAL_AI_GUIDE.md)와 [AGENTS.md](../AGENTS.md)를 먼저 따른다.
-이 문서의 운영 권한·DB·UI 후속 계획은 **Codex 담당**이며 사내 AI에게 공통 파일 수정 권한을 주는 지시가 아니다.
+이 문서의 운영 권한·DB·UI 후속 계획은 **외부 설계 AI 담당**이며 사내 AI에게 공통 파일 수정 권한을 주는 지시가 아니다.
 
 개발 소유자는 [OA 담당 AI](INTERNAL_AI_TASK.md)다. [소스 구조](../DEPLOYMENT.md)의 `oa/`와 [OA 설정 예제](.env.example)와 [DB 연결 인계](../db/CONNECTION_HANDOFF.md)를 사용하며 VWP 자격증명/모델은 OA에서 사용하지 않는다.
-사내 AI는 회사 어댑터와 명시적으로 허용된 주입 부분만 구현한다. 자기 코드에서도 예상 밖 오류가 나면 수정/재시도를 멈추고 Codex에게 문의한다.
+사내 AI는 회사 어댑터와 명시적으로 허용된 주입 부분만 구현한다. 자기 코드에서도 예상 밖 오류가 나면 수정/재시도를 멈추고 외부 설계 AI에게 문의한다.
 
 운영 화면은 `/`, 업무 API는 기존 `/api/*`, SSO 세션은 `GET /api/session`을 사용한다. 2026-10-22 [운영 권한·Welcome·관리 계약](ACCESS_MANAGEMENT.md)을 추가했다. `SANITY_ADMIN_USER_ID`와 활성 계정·저장 계약이 준비된 경우에만 대상별 SSO 권한을 적용하며 미설정 상태의 `503 AUTHORIZATION_NOT_IMPLEMENTED`는 유지한다. 별도 합성 `/workspace`와 `/workspace/api/*`는 운영에 마운트하지 않는다. 합성 workspace의 PoR·버전 API를 운영 SSO에 연결한 것은 아니다. 기존 로컬 토큰 모드는 종전처럼 동작한다. 통합 인계는 [INTERNAL_AI_HANDOFF.md](../INTERNAL_AI_HANDOFF.md)를 따른다.
 
-2026-10-20 Codex가 서버 인증 방식 조회와 쿠키 SSO용 로그인·세션 확인·POST 로그아웃 UI를 연결했다. SSO 인증이 성공해도 업무 권한이 준비되지 않았으면 연결 확인 화면을 보여주며 업무 API를 호출하지 않는다. 회사 어댑터·실제 IdP 검증과 workspace 운영 권한 연결은 별도다.
+2026-10-20 외부 설계 AI가 서버 인증 방식 조회와 쿠키 SSO용 로그인·세션 확인·POST 로그아웃 UI를 연결했다. SSO 인증이 성공해도 업무 권한이 준비되지 않았으면 연결 확인 화면을 보여주며 업무 API를 호출하지 않는다. 회사 어댑터·실제 IdP 검증과 workspace 운영 권한 연결은 별도다.
 
 ## 1. 파일과 구현 책임
 
 | 파일 | 현재 제공한 내용 | 사내에서 구현할 부분 |
 |---|---|---|
-| [sanity_auth.py](sanity_auth.py) | 추상 인터페이스, 입력·출력 모델, 모드 선택, 계정 연결·활성 상태 검사, 오류 표준화 | 내부 AI 수정 금지. 운영 범위 검사 확장은 Codex 담당 |
+| [sanity_auth.py](sanity_auth.py) | 추상 인터페이스, 입력·출력 모델, 모드 선택, 계정 연결·활성 상태 검사, 오류 표준화 | 내부 AI 수정 금지. 운영 범위 검사 확장은 외부 설계 AI 담당 |
 | [corporate_sso.py](integration/corporate_sso.py) | `CorporateIdentityProvider`, `CorporateUserDirectory`의 명시적인 미구현 응답 | SSO 검증과 영속 사용자 ID 조회 |
 | [sso_app.py](sso_app.py) | 두 어댑터를 API에 주입하는 사내 실행 진입점 | 회사 모듈 import와 어댑터/router 주입만 허용. 인증 모드·bind·proxy 설정 변경 금지 |
-| [dashboard_api.py](dashboard_api.py) | `create_app` 주입 지점, `authenticated`, `authorized_actor`, `/api/auth-config`, 정규화된 `/api/session` | 내부 AI 수정 금지. 운영 scope 필터·안정 감사 ID·배포 경계 제공/변경은 Codex 담당 |
+| [dashboard_api.py](dashboard_api.py) | `create_app` 주입 지점, `authenticated`, `authorized_actor`, `/api/auth-config`, 정규화된 `/api/session` | 내부 AI 수정 금지. 운영 scope 필터·안정 감사 ID·배포 경계 제공/변경은 외부 설계 AI 담당 |
 | [App.tsx](dashboard/src/App.tsx), [DashboardLogin.tsx](dashboard/src/DashboardLogin.tsx), [useDashboardAuth.ts](dashboard/src/useDashboardAuth.ts) | 서버 설정에 따른 토큰/쿠키 SSO 로그인, 세션·로그아웃, Welcome·관리·범위별 업무 진입 | 내부 AI 수정 금지. 회사 router와 세션 SDK만 허용된 위치에서 연결 |
 | [test_auth.py](../tests/test_auth.py), [test_sso.py](test_sso.py) | 사내망 없이 실행하는 인증·계정 연결·API 계약 테스트 | 기존 테스트 변경 금지. 회사 어댑터 전용 테스트는 `oa/integration/company_sso/`에 새로 추가 |
 
@@ -53,7 +53,7 @@ HTTP 요청
 | `LocalUser` | `user_id`, `display_name`, `active` | 내부 영속 ID는 영문·숫자 시작, 영문·숫자·`_.-` 1~100자. 표시 이름 1~100자, 활성 여부는 bool |
 | `Actor` | `user_id`, `reviewer`, `auth_method` | 앱이 사용하는 신원. `reviewer`는 내부 계정의 표시 이름. 외부 토큰·전체 claims·SSO 역할 없음 |
 
-두 메서드는 **동기 함수**다. FastAPI의 동기 dependency에서 작업 스레드로 호출하므로 기존 동기 SDK/DB 클라이언트를 사용할 수 있다. 네트워크 호출에는 사내 기준의 timeout을 설정한다. `async def`나 dependency 변경이 필요하면 내부 AI가 수정하지 않고 Codex에게 문의하며 coroutine을 그대로 반환하지 않는다. 어댑터 객체는 앱 안에서 공유되므로 사용자별 상태를 인스턴스 변수에 저장하지 않고 동시 요청을 안전하게 처리한다.
+두 메서드는 **동기 함수**다. FastAPI의 동기 dependency에서 작업 스레드로 호출하므로 기존 동기 SDK/DB 클라이언트를 사용할 수 있다. 네트워크 호출에는 사내 기준의 timeout을 설정한다. `async def`나 dependency 변경이 필요하면 내부 AI가 수정하지 않고 외부 설계 AI에게 문의하며 coroutine을 그대로 반환하지 않는다. 어댑터 객체는 앱 안에서 공유되므로 사용자별 상태를 인스턴스 변수에 저장하지 않고 동시 요청을 안전하게 처리한다.
 
 `issuer + subject`를 유일한 외부 계정 키로 사용한다. 다른 issuer의 같은 subject, 같은 이름의 다른 사용자, 이름 변경을 구분한다. 이메일·표시 이름·REVISION 안의 작성자 이름으로 계정을 합치지 않는다. `user_id`는 프로젝트·블록 담당 배정과 감사 이력에서 쓰는 내부 ID다. DB 로그인 계정과 다르다.
 
@@ -76,7 +76,7 @@ HTTP 요청
 
 이 조회 인터페이스는 사용자 DB 생성이나 자동 가입을 수행하지 않는다. 2026-10-22 전달된 사내 정책은 단일 issuer·불변/비재사용 LoginId·검증된 전사 계정 등록이며 [009 계정 저장 계약](SSO_IDENTITY.md)에 반영했다. 009는 DB 구조만 제공하고 등록/조회 저장부와 ACS 연결은 아직 미구현이다. 내부 AI가 독자 저장부·자동 가입/권한 부여를 구현하지 않는다. 향후 등록 경로도 `(issuer, subject)` 확인과 DB 중복 방지를 유지하고 프로젝트/TOP/블록 권한을 자동 부여하지 않는다.
 
-`db/005_workspace.sql`로 기존 네 테이블 안에 `WS_USER` 등 관리 레코드는 추가되어 있다. 이것은 `(issuer, subject)`의 실제 영속 매핑·회사 사용자 등록이나 SSO 운영 연결 완료를 뜻하지 않는다. 이름을 임시 ID로 저장하거나 가짜 run/bundle에 계정을 넣지 않는다. 승인된 매핑 저장소가 없으면 기존 workspace와의 연결 요구를 Codex에게 인계한다. 내부 AI는 SQL을 새로 만들거나 DB 제약을 완화하지 않는다. 프로세스 재시작 후에도 같은 계정은 같은 내부 ID에 연결되어야 한다.
+`db/005_workspace.sql`로 기존 네 테이블 안에 `WS_USER` 등 관리 레코드는 추가되어 있다. 이것은 `(issuer, subject)`의 실제 영속 매핑·회사 사용자 등록이나 SSO 운영 연결 완료를 뜻하지 않는다. 이름을 임시 ID로 저장하거나 가짜 run/bundle에 계정을 넣지 않는다. 승인된 매핑 저장소가 없으면 기존 workspace와의 연결 요구를 외부 설계 AI에게 인계한다. 내부 AI는 SQL을 새로 만들거나 DB 제약을 완화하지 않는다. 프로세스 재시작 후에도 같은 계정은 같은 내부 ID에 연결되어야 한다.
 
 009의 `SSO_IDENTITY`와 기존 workspace의 `WS_USER`는 서로 다른 레코드다. 자동 생성된 인증 계정은 담당 배정이나 workspace 업무 접근을 뜻하지 않는다. 조회는 매 요청에서 enabled와 issuer를 다시 확인하고, 최근 로그인 시각은 향후 성공한 세션 발급 경로에서만 갱신한다. 실제 회사 인증 값 없이 준비한 SQL과 회사 IdP 실검증 결과는 구분한다.
 
@@ -106,7 +106,7 @@ app = create_app(
 )
 ```
 
-`company_sso.login_routes`는 사내에서 추가할 모듈 이름 예시이며 현재 파일이 아니다. 로그인 시작·콜백 검증·세션 생성/폐기와 해당 SSO에 필요한 state/nonce/PKCE 또는 SAML 검증은 여기서 구현한다. callback을 `SSOIdentityProvider.authenticate` 안에서 매번 처리하지 않는다. 쿠키 인증은 안전한 쿠키 설정과 상태 변경 요청의 CSRF 검증을 포함해야 한다. 공통 API/UI 변경이 필요한 부분은 요구 계약을 Codex에게 전달하며, 연결되기 전 업무 API 차단을 유지한다.
+`company_sso.login_routes`는 사내에서 추가할 모듈 이름 예시이며 현재 파일이 아니다. 로그인 시작·콜백 검증·세션 생성/폐기와 해당 SSO에 필요한 state/nonce/PKCE 또는 SAML 검증은 여기서 구현한다. callback을 `SSOIdentityProvider.authenticate` 안에서 매번 처리하지 않는다. 쿠키 인증은 안전한 쿠키 설정과 상태 변경 요청의 CSRF 검증을 포함해야 한다. 공통 API/UI 변경이 필요한 부분은 요구 계약을 외부 설계 AI에게 전달하며, 연결되기 전 업무 API 차단을 유지한다.
 
 직접 실행하는 `python -m oa.sso_app`은 loopback 8000을 유지한다. 사용자가 요청한 사내 Nginx 뒤의 컨테이너 실행은 [루트 Docker 구성](../docker/README.md)이 담당하며, uvicorn 한 개를 컨테이너의 8080에 실행한다. `sso_app.py`는 `OA_ALLOWED_HOSTS`의 정확한 도메인/IP를 적용하고 미지정 시 기존 localhost 목록만 허용한다. 회사 어댑터 주입 시 이 배포 설정을 보존한다. 사내 AI는 실제 proxy·TLS·SSO callback 계약을 확인하되 공통 bind·Host 검증을 변경하지 않는다. 무조건적인 forwarded header 신뢰나 모든 Host 허용으로 대체하지 않는다.
 
@@ -173,7 +173,7 @@ UI 동작은 다음 계약을 따른다.
 
 ## 6. 운영 권한 연결과 사내 반영
 
-Codex 공통 구현과 사내 SDK 구현을 분리한다. 상세 API·저장·검증·반영 순서는 [ACCESS_MANAGEMENT.md](ACCESS_MANAGEMENT.md)를 따른다. 내부 AI는 이 목록을 근거로 공통 코드를 직접 수정하지 않는다.
+외부 설계 AI 공통 구현과 사내 SDK 구현을 분리한다. 상세 API·저장·검증·반영 순서는 [ACCESS_MANAGEMENT.md](ACCESS_MANAGEMENT.md)를 따른다. 내부 AI는 이 목록을 근거로 공통 코드를 직접 수정하지 않는다.
 
 1. 사내 두 인증 어댑터와 기존 회사 router를 유지하고 `/api/session`의 검증된 user_id·활성/미연결·만료를 확인한다. 등록은 별도 승인된 로그인 경로에서만 수행하며 조회가 계정을 자동 생성하지 않는다.
 2. OA 비공개 `SANITY_ADMIN_USER_ID`에 관리자 한 명의 정확한 user_id를 설정한다. env는 SSO를 대신하지 않고 report 권한도 자동 부여하지 않는다. 빈 값이면 기존 보호 차단을 유지한다.
@@ -195,7 +195,7 @@ Codex 공통 구현과 사내 SDK 구현을 분리한다. 상세 API·저장·�
 ```
 
 마지막 명령의 PostgreSQL 통합 테스트는 별도 테스트 DB 설정이 없으면 skip된다. skip을 DB 검증 성공으로 보고하지 않는다. 실제 어댑터 구현 후에는 회사 SDK/mock transport로 아래를 검증한다.
-어댑터 전용 테스트는 신규 허용 위치에 추가하며 기존 테스트는 수정하지 않는다. 아래 중 UI·업무 권한 검증은 Codex 공통 구현의 수용 기준이며 실제 사내 배포 검증과 구분한다. 예상하지 못한 실패는 자체 수정하지 않고 문의한다.
+어댑터 전용 테스트는 신규 허용 위치에 추가하며 기존 테스트는 수정하지 않는다. 아래 중 UI·업무 권한 검증은 외부 설계 AI 공통 구현의 수용 기준이며 실제 사내 배포 검증과 구분한다. 예상하지 못한 실패는 자체 수정하지 않고 문의한다.
 
 - 검증 성공, 자격증명 없음·위조·만료·폐기, 잘못된 issuer/audience, 인증 서비스 장애.
 - 같은 subject의 다른 issuer, 동명이인, 이름 변경, 미연결·비활성 계정, 계정 저장소 장애.
@@ -206,11 +206,11 @@ Codex 공통 구현과 사내 SDK 구현을 분리한다. 상세 API·저장·�
 
 ## 8. 사내 AI에게 전달할 작업 요청문
 
-> 먼저 루트 `AGENTS.md`, `INTERNAL_AI_GUIDE.md`와 이 SSO 문서를 읽어라. 너의 수정 범위는 `corporate_sso.py`의 회사 검증·영속 계정 조회 어댑터, `sso_app.py`의 허용된 주입 부분, 새 `company_sso/` 지원 모듈과 테스트다. 회사 문서로 확인된 SDK와 승인된 계정 연결 저장소만 사용하라. 저장소가 없거나 새 의존성/핵심 코드 변경이 필요하면 Codex에게 문의하라. `oa/sanity_auth.py`, `dashboard_api.py`, DB SQL, 기존 테스트와 UI는 수정하지 말라. 특히 `AUTHORIZATION_NOT_IMPLEMENTED`를 해제하지 말라. 어댑터 테스트가 예상과 다르게 실패하면 수정/재시도를 멈추고 비식별 `[Codex 디버깅 요청]`을 작성하라. 직접 연결 수단이 없으면 사용자가 현재 Codex 대화로 전달하도록 요청하고 답변 전에는 `WAITING_FOR_CODEX`로 대기하라. 인증 성공과 업무 권한/운영 배포 완료를 구분하라.
+> 먼저 루트 `AGENTS.md`, `INTERNAL_AI_GUIDE.md`와 이 SSO 문서를 읽어라. 너의 수정 범위는 `corporate_sso.py`의 회사 검증·영속 계정 조회 어댑터, `sso_app.py`의 허용된 주입 부분, 새 `company_sso/` 지원 모듈과 테스트다. 회사 문서로 확인된 SDK와 승인된 계정 연결 저장소만 사용하라. 저장소가 없거나 새 의존성/핵심 코드 변경이 필요하면 외부 설계 AI에게 문의하라. `oa/sanity_auth.py`, `dashboard_api.py`, DB SQL, 기존 테스트와 UI는 수정하지 말라. 특히 `AUTHORIZATION_NOT_IMPLEMENTED`를 해제하지 말라. 어댑터 테스트가 예상과 다르게 실패하면 수정/재시도를 멈추고 비식별 `[외부 설계 AI 디버깅 요청]`을 작성하라. 직접 연결 수단이 없으면 사용자가 현재 외부 설계 AI 대화로 전달하도록 요청하고 답변 전에는 `WAITING_FOR_EXTERNAL_AI`로 대기하라. 인증 성공과 업무 권한/운영 배포 완료를 구분하라.
 
 ## 9. 인증 UI 공통 수정본의 사내 반영
 
-회사 어댑터와 `sso_app.py`의 기존 SDK/router 주입을 유지하면서 사용자가 Codex의 공통 수정본을 반영한다. 이 목록은 2026-10-20 인증 UI 변경의 기록이며, 최신 Welcome·관리 기능의 파일/API·반영 순서는 [운영 권한 계약](ACCESS_MANAGEMENT.md)을 함께 따른다. 내부 AI의 공통 설계 변경 권한을 추가하지 않는다.
+회사 어댑터와 `sso_app.py`의 기존 SDK/router 주입을 유지하면서 사용자가 외부 설계 AI의 공통 수정본을 반영한다. 이 목록은 2026-10-20 인증 UI 변경의 기록이며, 최신 Welcome·관리 기능의 파일/API·반영 순서는 [운영 권한 계약](ACCESS_MANAGEMENT.md)을 함께 따른다. 내부 AI의 공통 설계 변경 권한을 추가하지 않는다.
 
 - 서버: `oa/sanity_auth.py`, `oa/dashboard_api.py`.
 - 화면: `oa/dashboard/src/App.tsx`, `DashboardLogin.tsx`, `useDashboardAuth.ts`, `types.ts`, `demo.ts`. Node 20.18에서 프런트엔드를 다시 빌드한다.
@@ -220,7 +220,7 @@ Codex 공통 구현과 사내 SDK 구현을 분리한다. 상세 API·저장·�
 
 ## 10. 승인된 SSO 의존성
 
-2026-10-20 사용자 요청과 Codex 검토로 OA의 SAML/XML 서명 검증에 다음 고정 버전을 추가했다. [OA 런타임 requirements](requirements.txt)와 [전체 개발용 requirements](../requirements.txt)에 같은 pin을 사용한다. VWP·VWP-bridge에는 추가하지 않는다.
+2026-10-20 사용자 요청과 외부 설계 AI 검토로 OA의 SAML/XML 서명 검증에 다음 고정 버전을 추가했다. [OA 런타임 requirements](requirements.txt)와 [전체 개발용 requirements](../requirements.txt)에 같은 pin을 사용한다. VWP·VWP-bridge에는 추가하지 않는다.
 
 | 패키지 | 고정 버전 | 용도 / 공식 배포 정보 |
 |---|---|---|
@@ -241,4 +241,4 @@ Codex 공통 구현과 사내 SDK 구현을 분리한다. 상세 API·저장·�
 
 회사 어댑터 전용 시험은 작성된 `oa/integration/company_sso/`에서 별도로 실행한다. 설치·import와 합성 서명 검증은 실제 SAML 검증·회사 IdP/SP 등록·세션/CSRF·업무 권한 연결을 대신하지 않는다. 사내에서는 기존 정상/위조/만료/재전송/폐기 검증을 유지한다.
 
-**보호 범위의 예외는 [가이드 3.1절](../INTERNAL_AI_GUIDE.md#31-oa-sso-고정-의존성-추가-승인--2026-10-20)뿐이다.** OA 담당 내부 AI는 사내 `oa/requirements.txt`에 없는 위 세 pin만 추가할 수 있다. 이미 같은 pin이 있으면 그대로 두며, 다른 pin이 있거나 설치·기존 시험이 예상 밖으로 실패하면 버전 조정·공통 코드/테스트 수정 없이 `WAITING_FOR_CODEX`로 문의한다. 인증 보호 해제·TLS 검증 생략·SSO 실패 fallback은 허용하지 않는다.
+**보호 범위의 예외는 [가이드 3.1절](../INTERNAL_AI_GUIDE.md#31-oa-sso-고정-의존성-추가-승인--2026-10-20)뿐이다.** OA 담당 내부 AI는 사내 `oa/requirements.txt`에 없는 위 세 pin만 추가할 수 있다. 이미 같은 pin이 있으면 그대로 두며, 다른 pin이 있거나 설치·기존 시험이 예상 밖으로 실패하면 버전 조정·공통 코드/테스트 수정 없이 `WAITING_FOR_EXTERNAL_AI`로 문의한다. 인증 보호 해제·TLS 검증 생략·SSO 실패 fallback은 허용하지 않는다.

@@ -173,11 +173,11 @@ PRE의 `eco`는 `null`이다. 물리 export 경로의 `pre/`를 업무 ECO 값�
 |---|---|
 | 회사 프로필·원천 대응 | VWP AI: 허용된 `company_plan/`에서 directory 후보 탐색·승인된 선언 입력 대응·로컬 export·전용 합성 테스트·원천 ID/완료 의미 자료 |
 | parser 의미 확인 | VWP AI가 정답·의미를 사내 인계하고 VWP-bridge AI가 허용된 parser/등록/전용 테스트 구현 |
-| COMMON-02A | Codex: V2 타입/validator, collection과 원천 실행 분리, versioned 계약과 schema 1 호환/거부 경계 |
-| COMMON-02B | Codex: 예상 선언/승인 검증·내용 결합·권한 연결. 회사 증거는 VWP/OA 담당자가 제공 |
-| COMMON-02C | Codex: VWP 봉인/DB 전달과 OA 원자 import·논리 키·중복/재검사/충돌·PRE 참조 보존 |
-| COMMON-02D | Codex: workspace source/분석 개정·누락 상태·감사 연결과 기존 UI 흐름 연결 |
-| COMMON-02E | Codex: 사용자 CLI·설치/설정, VWP 내부 제출 폴더 접수·영속 원본 보관·DB 접수/응답·receipt 조회/재개. [제출 설계](SUBMISSION_DESIGN.md) 기준 |
+| COMMON-02A | 외부 설계 AI: V2 타입/validator, collection과 원천 실행 분리, versioned 계약과 schema 1 호환/거부 경계 |
+| COMMON-02B | 외부 설계 AI: 예상 선언/승인 검증·내용 결합·권한 연결. 회사 증거는 VWP/OA 담당자가 제공 |
+| COMMON-02C | 외부 설계 AI: VWP 봉인/DB 전달과 OA 원자 import·논리 키·중복/재검사/충돌·PRE 참조 보존 |
+| COMMON-02D | 외부 설계 AI: workspace source/분석 개정·누락 상태·감사 연결과 기존 UI 흐름 연결 |
+| COMMON-02E | 외부 설계 AI: 사용자 CLI·설치/설정, VWP 내부 제출 폴더 접수·영속 원본 보관·DB 접수/응답·receipt 조회/재개. [제출 설계](SUBMISSION_DESIGN.md) 기준 |
 
 COMMON-02A~E의 공통 구현은 제공했다. 실제 원천/신원·승인 SDK, 인증된 VWP mount/ACL, OA 계정/담당 준비와 운영 DB 적용은 남아 있다. SSO 업무 연결은 COMMON-01, 회사 모델 job은 COMMON-03~05와 함께 관리한다. 회사 wrapper가 공통 작업자를 대체하지 않으며 운영 쓰기·SQL 적용·배포는 기존 사용자 관리 절차를 따른다.
 
@@ -189,7 +189,7 @@ COMMON-02A~E의 공통 구현은 제공했다. 실제 원천/신원·승인 SDK,
 - **동일 버전 재검사를 구별하는 원천 `execution_ref`와 순서** 및 다른 PC 재전달 시의 보존 방식.
 - 범위 선언을 승인할 담당 권한/검증 경로, 평가 임계값·단위·적용 제외의 실제 승인 근거.
 
-사실 미확정은 `FACTS_REQUIRED`, 예상 밖 구현 오류는 `WAITING_FOR_CODEX`다. 이 문서는 내부 AI의 보호 파일 수정·사내 원문 외부 공개·자체 인증 구현 권한을 추가하지 않는다.
+사실 미확정은 `FACTS_REQUIRED`, 예상 밖 구현 오류는 `WAITING_FOR_EXTERNAL_AI`다. 이 문서는 내부 AI의 보호 파일 수정·사내 원문 외부 공개·자체 인증 구현 권한을 추가하지 않는다.
 
 ## 8. 수용 시나리오
 

@@ -8,7 +8,7 @@
 
 통합 작업/운영 연결 의존성은 [INTERNAL_AI_HANDOFF.md](../INTERNAL_AI_HANDOFF.md)의 INT-04/COMMON-03~05다. 메서드의 `AdvisorContext`, `ClusteringCase`, `ClusteringProposalV2` 타입은 [sanity_integration_contracts.py](../common/sanity_integration_contracts.py)에 있다. 키/저장 형식은 유지하며 타입 힌트가 연결/검증을 대신하지 않는다. [합성 예제](../common/sanity_integration_examples.py)의 `clustering_example(with_history=False/True)`로 최초/과거 정정 입력과 V2 기대 출력을 확인할 수 있다.
 
-현재 VWP 회사 어댑터의 소유자는 [VWP-bridge 담당 AI](INTERNAL_AI_TASK.md)다. OA API·품질 자료 준비는 [OA 담당자](../oa/INTERNAL_AI_TASK.md), OA 모델 어댑터·사례 검색/실행/검증 공통 코드는 Codex가 맡는다. 분류 추상/순수 validator는 [sanity_clustering_advice.py](../common/sanity_clustering_advice.py)에 있고 OA store 없이 import할 수 있다. `oa/sanity_workspace_clustering.py`도 같은 계약을 사용한다. 사내 AI는 이 공통 파일을 수정하지 않는다.
+현재 VWP 회사 어댑터의 소유자는 [VWP-bridge 담당 AI](INTERNAL_AI_TASK.md)다. OA API·품질 자료 준비는 [OA 담당자](../oa/INTERNAL_AI_TASK.md), OA 모델 어댑터·사례 검색/실행/검증 공통 코드는 외부 설계 AI가 맡는다. 분류 추상/순수 validator는 [sanity_clustering_advice.py](../common/sanity_clustering_advice.py)에 있고 OA store 없이 import할 수 있다. `oa/sanity_workspace_clustering.py`도 같은 계약을 사용한다. 사내 AI는 이 공통 파일을 수정하지 않는다.
 
 ## 사용자 확정 동작 — 2026-10-15 정정
 
@@ -35,10 +35,10 @@ AI가 매 report의 초기 그룹 구성·이름·근거를 제안한다. 과거
 이는 모델이 아니며, 사람의 소속 수정·분리·병합 사례를 보존해 다음 초안의 참고 입력으로 사용한다.
 기존 legacy VWP 분류 worker와 공통 matcher를 재사용하지만 workspace의 새 분류 상태를 legacy job으로 위장하지 않는다.
 이 기존 `CORPORATE` 경로는 503 `AI_NOT_CONFIGURED`다. 운영 OA에는 별도 모델 호출·현재 확정 사례 검색·영속 작업·결과 검증/저장·SSO 화면 경로를 제공한다. [OA AI 실행 안내](../oa/AI_RUNTIME.md)에 따라 설정하며 VWP 어댑터를 복사하거나 기존 차단을 해제하지 않는다. 실제 회사 API/자료의 연결·정확도 검증은 별도다.
-사용자 요청의 외부 Codex `gpt-6-luna` [합성 mock 시험](../oa/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)은 이 사내 어댑터와 별도다.
+사용자 요청의 Codex 모델 `gpt-6-luna` [합성 mock 시험](../oa/WORKSPACE.md#codex-모델을-사용하는-합성-mock-시험)은 이 사내 어댑터와 별도다.
 합성 8/12/12건의 실제 분류 호출·DB 확정 사례 피드백을 검증하지만 운영 연결·대용량 모델 처리·2단계 모델 판정을 구현한 것은 아니다. 내부 AI가 mock 호출 경로를 회사 자료에 재사용하지 않는다.
 합성 화면의 AI 버튼과 `devtools/sanity_workspace_codex.py`는 외부 모델·합성 자료 전용이다. 사내 OA API 사용 승인과 별개로 회사 자료를 이 경로에 연결하지 않는다. OA 운영 호출은 제공된 `/api/workbench`의 AI 작업 경로와 `oa.ai_worker`를 사용한다.
-확인한 SDK/입출력/호출 제한을 비식별화해 Codex에게 전달하고 공통 전송 연결을 검토받는다.
+확인한 SDK/입출력/호출 제한을 비식별화해 외부 설계 AI에게 전달하고 공통 전송 연결을 검토받는다.
 내부 AI가 이를 위해 SQL/공통 worker/API/UI/설정을 직접 수정하거나 망 간 HTTP·공유 파일을 추가하지 않는다.
 
 ## 입력과 출력
@@ -52,7 +52,7 @@ AI가 매 report의 초기 그룹 구성·이름·근거를 제안한다. 과거
   근거 없는 구형 case는 MISSING으로 명시하고 사람이 그룹별 근거를 확인한 사례로 취급하지 않는다. 사례는 이번 초안의 예시·수정 피드백으로 읽는다. 이전 그룹 목록을 이번 출력의 허용 그룹 목록으로 해석하지 않는다.
   `reusable`은 기존 참고 엔진의 선택형 자동 적용 승인 필드다. 운영 OA 검색에서 유효한 사람 확정 사례의 후보 자격과 구분하며 SDK 어댑터가 범위/호환 승인을 자체 우회하지 않는다.
 - `identity_fields`: 현재 공통 계약에서 전달하는 구분 필드. 코드/심각도와 확인된 모드·범위 정보는 보존한다.
-  현 참고 엔진의 정확한 필드 일치 알고리즘을 실제 AI의 초기 그룹 생성 알고리즘으로 그대로 구현하라는 뜻은 아니다. 계약과 충돌하는 구분/병합이 필요하면 비식별 사례로 Codex에게 문의한다.
+  현 참고 엔진의 정확한 필드 일치 알고리즘을 실제 AI의 초기 그룹 생성 알고리즘으로 그대로 구현하라는 뜻은 아니다. 계약과 충돌하는 구분/병합이 필요하면 비식별 사례로 외부 설계 AI에게 문의한다.
 
 **현재 출력 계약 V2**는 정확히 네 개의 최상위 필드를 사용한다. 그룹의 세 필드는 유지하며 그룹별 근거를 별도 배열로 반환한다.
 
@@ -120,5 +120,5 @@ SDK 인증/timeout/응답 오류와 입력 불변을 확인한다. 사내 실제
 V2의 그룹별 설명·자기 그룹의 대표 ID·사례 group 참조, 사람 정정의 다음 입력 반영과 변경된 구성의 오래된 근거 거부를 검증한다.
 기존 합성 mock의 전체 분류 사유/이력 시험은 그룹별 분류 근거 검증 완료를 뜻하지 않는다.
 서버가 실제로 DB 확정 사례를 공급하는 연결 검증과 모의 SDK 입력 테스트는 구분한다.
-예상 밖 오류나 계약 변경 필요 시 수정/재시도를 멈추고 가이드의 비식별 템플릿으로 `WAITING_FOR_CODEX` 문의를 남긴다.
-원본 report·회사 endpoint·계정·비밀값은 외부 Codex/공개 Git에 전달하지 않는다.
+예상 밖 오류나 계약 변경 필요 시 수정/재시도를 멈추고 가이드의 비식별 템플릿으로 `WAITING_FOR_EXTERNAL_AI` 문의를 남긴다.
+원본 report·회사 endpoint·계정·비밀값은 외부 설계 AI/공개 Git에 전달하지 않는다.

@@ -53,7 +53,7 @@
 - 잘못된 config/argv/경로·혼용·누락 metadata/CSV·export 실패 18건은 exit 2 및 exporter 부작용/HTTP 없음, 잘못된 token은 실제 HTTP 401/exit 1이었다. 두 canonical help에 `--config`가 표시됐다. 검증 데이터/DB/계정/자체 서버는 제거했고 기존 사용자 DB·서비스·broken `.venv`는 보존했다. 새 테스트/fixture/mock/harness/검증 스크립트 파일·모바일 검사는 추가/실행하지 않았다.
 - 후속 실제 Python exporter는 빈 문자열·공백 인자 `["", " ", "tail"]`의 원형 전달과 의도한 exit 7 → CLI exit 2/HTTP 없음, 잘못된 argv 경계 5건의 실행 전 거부를 확인했다.
 - 매 POST는 새 행이며 결과 불명은 commit됐을 수 있다. 접수 확인 전 무작정 재전송하지 않는다. 자동 retry/발견/스케줄러·PC DB/모델 접속은 없다.
-- 실제 발행 SHA·push/병합 상태와 배포 기준별 delta는 비공개 `artifacts/internal-handoff/LATEST.md`의 최신 독립 역할 인계를 따른다. 대상 feature 브랜치는 `codex/area-power-pc-upload`다. [자동 발행 정책](../AGENTS.md#설계-담당-codex의-자동-발행)에 따라 전용 검증 후 문제가 없는 통상 규모 변경은 추가 확인 없이 feature push와 main 병합·push까지 수행한다. 이전 main 기준 `ad5337c930c771ac2e68ef263a5200bc91f0f508`에는 이 prototype이 없으므로 feature 대비 delta와 기존 main 배포 대비 delta를 구분한다. Git 병합은 회사 배포 승인이 아니다.
+- 실제 발행 SHA·push/병합 상태와 배포 기준별 delta는 비공개 `artifacts/internal-handoff/LATEST.md`의 최신 독립 역할 인계를 따른다. 대상 feature 브랜치는 `codex/area-power-pc-upload`다. [자동 발행 정책](../AGENTS.md#외부-설계-ai의-git-발행)에 따라 전용 검증 후 문제가 없는 통상 규모 변경은 추가 확인 없이 feature push와 main 병합·push까지 수행한다. 이전 main 기준 `ad5337c930c771ac2e68ef263a5200bc91f0f508`에는 이 prototype이 없으므로 feature 대비 delta와 기존 main 배포 대비 delta를 구분한다. Git 병합은 회사 배포 승인이 아니다.
 
 ## 실제 테이블 이름 cutover — 2026-11-12
 

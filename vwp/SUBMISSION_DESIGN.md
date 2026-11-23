@@ -212,13 +212,13 @@ delivery와 별도로 `review_readiness=READY/BLOCKED`, `blockers`, 예상/수�
 | VWP 사내 AI / INT-02·06 | 허용된 `company_plan/`의 원천 경로·프로필·예상 범위 입력·byte 동일 export. 실제 제출 파일시스템/신원/완료/실행 ID 대응 자료와 전용 합성 테스트 |
 | VWP-bridge 사내 AI / INT-03~06 | item parser·회사 모델 SDK의 기존 허용 구현, private DB/원본 보관 정책과 실행 환경 자료. 공통 제출 감시/DB 코드는 수정하지 않음 |
 | OA 사내 AI / INT-01·06 | 검증된 신원·배정 원천과 접수 결과에 적용할 권한 자료. 자체 수신 API/파일 업로드/worker를 추가하지 않음 |
-| Codex / COMMON-01 | 회사 검증 신원·블록 권한 연결. CLI 확인을 범위 승인으로 오인하지 않도록 검증 |
-| Codex / COMMON-02A·B | V2 타입·validator·예상 범위/승인, 전체 REVISION 예상 목록과 source 소속 |
-| Codex / COMMON-02C·D | 증분 SQL·원천/분석 저장·분할 송수신/원자 import, 대용량 페이지·두 단계 UI/감사 연결 |
-| Codex / **COMMON-02E** | 사용자 `sanity submit/status/retry`, 설치 진입점·별도 배포 설정, VWP 내부 spool 공개/접수·원본 보관·receipt/응답·복구 연결 |
+| 외부 설계 AI / COMMON-01 | 회사 검증 신원·블록 권한 연결. CLI 확인을 범위 승인으로 오인하지 않도록 검증 |
+| 외부 설계 AI / COMMON-02A·B | V2 타입·validator·예상 범위/승인, 전체 REVISION 예상 목록과 source 소속 |
+| 외부 설계 AI / COMMON-02C·D | 증분 SQL·원천/분석 저장·분할 송수신/원자 import, 대용량 페이지·두 단계 UI/감사 연결 |
+| 외부 설계 AI / **COMMON-02E** | 사용자 `sanity submit/status/retry`, 설치 진입점·별도 배포 설정, VWP 내부 spool 공개/접수·원본 보관·receipt/응답·복구 연결 |
 | 사용자/배포 담당자·DBA | 승인된 파일시스템/ACL/영속 volume, PATH·service 배포, 제한 로그인·증분 SQL·백업/보존 설정 |
 
-소스 소유권은 사용자 CLI=`vwp/`, 접수·분석/receipt 작업자=`vwp_bridge/`, 수신/API/UI=`oa/`, 순수 계약/DB 접속=`common/`다. CLI·spool 공통 코드와 새 메시지/SQL은 Codex가 제공하며 회사 입력 어댑터에 DB 비밀·작업자·전송 프로토콜을 넣지 않는다. 새 회사 입력/신원 메서드의 허용 지점은 [실행 안내](SUBMISSION.md#3-세-사내-ai가-연결할-메서드)와 공통 가이드에 한정한다.
+소스 소유권은 사용자 CLI=`vwp/`, 접수·분석/receipt 작업자=`vwp_bridge/`, 수신/API/UI=`oa/`, 순수 계약/DB 접속=`common/`다. CLI·spool 공통 코드와 새 메시지/SQL은 외부 설계 AI가 제공하며 회사 입력 어댑터에 DB 비밀·작업자·전송 프로토콜을 넣지 않는다. 새 회사 입력/신원 메서드의 허용 지점은 [실행 안내](SUBMISSION.md#3-세-사내-ai가-연결할-메서드)와 공통 가이드에 한정한다.
 
 구현은 A/B·COMMON-01의 계약과 권한을 먼저 고정하고, E의 CLI/접수·C의 봉인/송수신·D의 화면을 연결한다. 모든 단계를 구현하고 아래 합성 수용 기준 및 사내 마운트/SSO 검증을 마치기 전에는 운영 제출 완료로 안내하지 않는다.
 

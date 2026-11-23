@@ -12,7 +12,7 @@
 
 `003` 역할 준비는 기본 제한 계정 모드의 조건이다. 명시적 `SANITY_DB_ALLOW_SINGLE_ACCOUNT=true`는 [별도 공유 로그인 계약](../CONNECTION_HANDOFF.md#31-단일-계정-모드)을 사용하며 역할 생성을 요구하지 않는다. DB의 private/큐 컬럼 격리가 없다는 제약을 기록한다. 포털 구조 계획·원본 SQL·기존 완료 단계와 기능별 `002`, `004`~`009` 조건은 그대로이며 이 모드 선택 때문에 DDL을 반복하지 않는다.
 
-대상은 **기존 네 테이블이 모두 비어 있고, 양쪽 bridge·대시보드·수신/제출 작업자의 DB 작업이 중지된 초기 설치**다. 데이터가 생긴 DB의 일반 업그레이드 도구가 아니다. 실제 스키마 이름·catalog·생성된 실행본은 사내 비공개 폴더에 보관한다. 공개 Git이나 외부 Codex 대화에 올리지 않는다.
+대상은 **기존 네 테이블이 모두 비어 있고, 양쪽 bridge·대시보드·수신/제출 작업자의 DB 작업이 중지된 초기 설치**다. 데이터가 생긴 DB의 일반 업그레이드 도구가 아니다. 실제 스키마 이름·catalog·생성된 실행본은 사내 비공개 폴더에 보관한다. 공개 Git이나 외부 설계 AI 대화에 올리지 않는다.
 
 ## 1. 제공 파일과 책임
 
@@ -20,9 +20,9 @@
 |---|---|
 | `runbook.py` | Python 표준 라이브러리만 사용하는 오프라인 도구. 조회 SQL 생성·catalog 비교·실행본 생성·결과 검증만 수행. DB 연결·DDL 실행·자동 재시도 없음 |
 | `plan.json` | 원본 form·`002/004/005/006/007/008/009`의 구조 변경 계획. 기존 54단계/55개 구조를 보존하고 009의 단일 ALTER를 추가한 55단계/56개 구조. 원본 SHA-256과 기존 제약을 보존 |
-| `build_reference.py` | Codex/개발자 전용 기준 계획 생성기. 새 로컬 소켓 전용 합성 DB에서만 실행. 사내 운영 연결 인자를 받지 않음 |
+| `build_reference.py` | 외부 설계 AI/개발자 전용 기준 계획 생성기. 새 로컬 소켓 전용 합성 DB에서만 실행. 사내 운영 연결 인자를 받지 않음 |
 
-사내 AI는 승인된 읽기 전용 접속으로 확인한 catalog를 비공개 파일로 준비하고 `runbook.py`를 실행할 수 있다. 원본 SQL·도구·계획 JSON·기존 테스트를 수정하지 않는다. 실제 DDL 포털 적용과 DBA 권한 변경은 사용자/승인된 운영 담당자가 수행한다. 실패하거나 예상한 기준 상태와 다르면 `WAITING_FOR_CODEX`로 문의한다.
+사내 AI는 승인된 읽기 전용 접속으로 확인한 catalog를 비공개 파일로 준비하고 `runbook.py`를 실행할 수 있다. 원본 SQL·도구·계획 JSON·기존 테스트를 수정하지 않는다. 실제 DDL 포털 적용과 DBA 권한 변경은 사용자/승인된 운영 담당자가 수행한다. 실패하거나 예상한 기준 상태와 다르면 `WAITING_FOR_EXTERNAL_AI`로 문의한다.
 
 ## 2. 실행 전 확인
 
@@ -86,7 +86,7 @@ SQL 파일 hash와 전후 구조를 검사한다. 포털 접수 성공·HTTP 200
 
 한 ALTER의 추가 제약이 실패하면 같은 문장 안의 CHECK 삭제·컬럼 추가도 함께 취소된다. 그러나 이전에 성공한 다른 문장까지 되돌아가지는 않는다. **실패/취소/timeout 후 다음 DDL이나 동일 DDL을 바로 재실행하지 않는다.**
 
-쓰기 중지 상태를 유지하고 읽기 전용 SELECT로 현재 catalog를 다시 확인한다. 기존 before/after 검증 중 어느 상태인지 대조한다. 사내 AI는 예상 밖 실패를 비식별 문의로 인계하고 답변 전까지 대기한다. Codex 검토와 사용자 승인 후, 확인된 상태로 새 비공개 bundle을 생성하면 이미 완료된 문장을 제외한 나머지만 나온다.
+쓰기 중지 상태를 유지하고 읽기 전용 SELECT로 현재 catalog를 다시 확인한다. 기존 before/after 검증 중 어느 상태인지 대조한다. 사내 AI는 예상 밖 실패를 비식별 문의로 인계하고 답변 전까지 대기한다. 외부 설계 AI 검토와 사용자 승인 후, 확인된 상태로 새 비공개 bundle을 생성하면 이미 완료된 문장을 제외한 나머지만 나온다.
 
 ```bash
 python3 db/portal/runbook.py prepare --snapshot /private/rechecked.json --out /private/resume-bundle
@@ -146,4 +146,4 @@ PG15의 NULLS NOT DISTINCT 플래그는 [PG12 catalog](https://www.postgresql.or
 .venv/bin/python db/tests/run_mock.py --profile full --pg-bin /path/to/postgresql12/bin
 ```
 
-원본 증분을 바꿔야 할 때의 `build_reference.py`/`plan.json` 갱신은 Codex 담당이다. 사내 AI가 계획 hash나 비교 조건을 바꿔 불일치를 통과시키지 않는다.
+원본 증분을 바꿔야 할 때의 `build_reference.py`/`plan.json` 갱신은 외부 설계 AI 담당이다. 사내 AI가 계획 hash나 비교 조건을 바꿔 불일치를 통과시키지 않는다.

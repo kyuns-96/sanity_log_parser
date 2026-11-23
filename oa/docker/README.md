@@ -83,7 +83,7 @@ Nginx는 기존 OA 앱으로 `/`, `/api/*`, `/auth/*`를 전달한다. `proxy_se
 
 백엔드 접속 주소는 loopback을 유지한다. 전달된 신원/proxy 헤더로 사용자를 인증하지 않으며 `Forwarded`/`X-Forwarded-*` 소거와 OA의 `proxy_headers=False`도 유지한다. Host 보존은 TLS scheme 신뢰를 추가하지 않는다. 실제 SSO의 외부 callback URL·Secure cookie·CSRF·TLS ingress 계약은 인증 어댑터 연동 시 별도로 확인해야 한다. 이 HTTP 8080 예제가 TLS 종료나 SSO 운영 연결을 구현한 것은 아니다.
 
-SSO 변경 API는 JSON·`X-Sanity-Request: 1`을 요구하며, 제공된 Origin의 호스트·포트와 공개 Host를 비교한다. Fetch Metadata와 쿠키 SameSite는 추가 방어로 유지한다. `/auth/logout`의 Origin/Referer 검증도 유지하며 전역 헤더 삭제로 우회하지 않는다. 반영 후 정상 공개 Host·Origin의 POST, 다른 Origin·미허용 Host·잘못된 포트의 거부와 loopback health를 합성 입력으로 확인한다. 원본 설정·테스트·문서 수정은 Codex 담당이며 배포 환경 AI는 승인된 Host 설정과 현장 검증만 수행한다.
+SSO 변경 API는 JSON·`X-Sanity-Request: 1`을 요구하며, 제공된 Origin의 호스트·포트와 공개 Host를 비교한다. Fetch Metadata와 쿠키 SameSite는 추가 방어로 유지한다. `/auth/logout`의 Origin/Referer 검증도 유지하며 전역 헤더 삭제로 우회하지 않는다. 반영 후 정상 공개 Host·Origin의 POST, 다른 Origin·미허용 Host·잘못된 포트의 거부와 loopback health를 합성 입력으로 확인한다. 원본 설정·테스트·문서 수정은 외부 설계 AI 담당이며 배포 환경 AI는 승인된 Host 설정과 현장 검증만 수행한다.
 
 `start.py`는 두 프로세스를 함께 관리한다. 하나가 종료되면 다른 프로세스도 정리하고 컨테이너를 실패로 종료한다. Docker 종료 신호는 두 프로세스 그룹에 전달되며 제한 시간 후 강제 정리한다. 요청 URL/토큰이 로그로 남지 않도록 Nginx/uvicorn access log를 끈다.
 

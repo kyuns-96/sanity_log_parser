@@ -92,7 +92,7 @@ VWP 담당자는 원문 PASS/FAIL 유무, 수치 평가 대상 여부, 판정 �
 | 실행/report/item | 실행 ID·결과 단위·파일·item·tool/parser/rule version 관계 | 미수신·여러 보고서·다른 버전·중복 import |
 | PoR | 실제 기준 버전 지정 절차·권한과 PRE/POST 정책 | 외부 실행 성공을 PoR 자동 변경으로 취급하지 않음 |
 
-Codex가 이 표로 공통 import·scope·감사 연결을 검토한다. 사내 AI는 DB SQL·workspace store·전송 payload/worker·UI를 수정하지 않는다.
+외부 설계 AI가 이 표로 공통 import·scope·감사 연결을 검토한다. 사내 AI는 DB SQL·workspace store·전송 payload/worker·UI를 수정하지 않는다.
 
 ## 5. 검증과 인계
 
@@ -117,7 +117,7 @@ Codex가 이 표로 공통 import·scope·감사 연결을 검토한다. 사내 
 .venv/bin/python -m unittest discover -s vwp/integration/company_plan -p 'test_*.py' -v
 ```
 
-기존 runner는 회사 provider나 비공개 테스트/fixture를 자동 수집하지 않는다. 실환경 검증·운영 적용과 모의 테스트를 나눠 기록한다. 예상 밖 실패 시 수정/재시도를 멈추고 가이드의 비식별 문의를 남긴다. 실제 실행 메타데이터·report·SDK/접속 정보는 공개 저장소와 외부 Codex 대화에 넣지 않는다.
+기존 runner는 회사 provider나 비공개 테스트/fixture를 자동 수집하지 않는다. 실환경 검증·운영 적용과 모의 테스트를 나눠 기록한다. 예상 밖 실패 시 수정/재시도를 멈추고 가이드의 비식별 문의를 남긴다. 실제 실행 메타데이터·report·SDK/접속 정보는 공개 저장소와 외부 설계 AI 대화에 넣지 않는다.
 
 ## 6. Q1 이후의 회사 launcher 작업
 
