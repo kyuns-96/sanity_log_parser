@@ -491,6 +491,7 @@
 .area-power .tracking-block-name { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .area-power .tracking-cell-stack { display: flex; flex-direction: column; gap: 2px; }
 .area-power .tracking-cell-stack small { color: var(--text-secondary); font-size: var(--text-caption); }
+.area-power .tracking-version-tag { font-family: var(--font-mono); color: var(--ink); font-weight: 550; }
 .area-power .tracking-metric-lines { display: flex; flex-direction: column; gap: 1px; font-family: var(--font-mono); }
 .area-power .tracking-verdict-summary { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
 .area-power .verdict-pill { display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }

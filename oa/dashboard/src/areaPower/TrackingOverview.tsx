@@ -28,7 +28,6 @@ interface TrackingOverviewProps {
   error: string
   initialMailId: string
   onClearMailId: () => void
-  onEditBaseline: () => void
   onOpenResult: (target: { comparisonId?: string; uploadId?: string; baselineUploadId?: string; openMapping?: boolean; blockId?: string }) => void
 }
 
@@ -53,7 +52,6 @@ export function TrackingOverview({
   error,
   initialMailId,
   onClearMailId,
-  onEditBaseline,
   onOpenResult,
 }: TrackingOverviewProps) {
   const [selectedRoundId, setSelectedRoundId] = useState('')
@@ -90,8 +88,6 @@ export function TrackingOverview({
     [uploads, areaProjectId],
   )
 
-  const defaultCornersCount = array(object(data?.project_config).default_required_corners).length
-
   const blockConfigMap = useMemo(() => {
     const map = new Map<string, Record<string, unknown>>()
     for (const cfg of data?.block_configs || []) {
@@ -101,37 +97,54 @@ export function TrackingOverview({
     return map
   }, [data?.block_configs])
 
+  function resolveBaselineVersionLabel(cfg: Record<string, unknown> | undefined, targetProject: AtlasProject | undefined, targetBlockAreaId: string): string {
+    if (!cfg) return ''
+    const info = object(cfg.baseline_version_info)
+    if (text(info.net_ver)) {
+      const rev = [text(info.revision), text(info.layout)].filter(Boolean).join(' ')
+      return rev ? `${text(info.net_ver)} · ${rev}` : text(info.net_ver)
+    }
+    const bvid = text(cfg.baseline_version_id)
+      || text(object(array(cfg.approved_baselines)[0]).version_id)
+    if (!bvid || !targetProject) return ''
+    const blk = targetProject.blocks.find(b => b.area_id === targetBlockAreaId)
+    const ver = blk?.versions.find(v => v.area_id === bvid)
+    if (!ver) return ''
+    const rev = [ver.revision, ver.layout].filter(Boolean).join(' ')
+    return rev ? `${ver.net_ver} · ${rev}` : ver.net_ver
+  }
+
   function describeBlockBaseline(blockAreaId: string) {
     const cfg = blockConfigMap.get(blockAreaId)
     const kind = text(cfg?.comparison_kind)
-    const requiredCorners = array(cfg?.required_corners).length || defaultCornersCount
-    const pinnedCount = array(cfg?.approved_baselines).filter(item => Boolean(text(object(item).upload_id))).length
     if (kind === 'previous_version') {
+      const versionLabel = resolveBaselineVersionLabel(cfg, project, blockAreaId)
       return {
         label: '같은 블록 이전 버전',
-        pinnedText: requiredCorners ? `기준 ${pinnedCount}/${requiredCorners} 고정` : '',
-        configured: requiredCorners > 0 && pinnedCount >= requiredCorners,
+        versionLabel: versionLabel || '기준 버전 미지정',
+        configured: Boolean(versionLabel),
       }
     }
     const baseBlockId = text(cfg?.baseline_block_id)
     const baseBlock = baselineProject?.blocks.find(b => b.area_id === baseBlockId)
     if (baseBlock) {
+      const versionLabel = resolveBaselineVersionLabel(cfg, baselineProject, baseBlockId)
       return {
         label: `${baselineProject?.name || baselineName} · ${baseBlock.name}`,
-        pinnedText: requiredCorners ? `기준 ${pinnedCount}/${requiredCorners} 고정` : '',
-        configured: requiredCorners > 0 && pinnedCount >= requiredCorners,
+        versionLabel: versionLabel || '기준 버전 미지정',
+        configured: Boolean(versionLabel),
       }
     }
     if (baselineStatus === 'available') {
       return {
-        label: `${baselineName}`,
-        pinnedText: pinnedCount ? `기준 ${pinnedCount}건 고정` : '',
-        configured: pinnedCount > 0,
+        label: baselineName,
+        versionLabel: '블록 기준 미지정',
+        configured: false,
       }
     }
     return {
       label: '기준 프로젝트 미설정',
-      pinnedText: '',
+      versionLabel: '',
       configured: false,
     }
   }
@@ -311,19 +324,16 @@ export function TrackingOverview({
         </section>
       )}
 
-      {/* 3-card at-a-glance project summary strip (pure user view) */}
+      {/* 3-card at-a-glance project summary strip (read-only user view) */}
       <section className="project-summary-strip cols-3" aria-label="프로젝트 핵심 요약">
         <article className="summary-card">
           <div className="summary-card-head">
             <span>비교 기준</span>
-            {project.can_write && (
-              <button type="button" className="tracking-link-inline" onClick={onEditBaseline}>변경</button>
-            )}
           </div>
           <strong className={baselineStatus !== 'available' ? 'is-muted' : ''}>{baselineName}</strong>
           <small>
             공정 {currentProcess}
-            {baselineStatus === 'available' ? ` ↔ 기준 ${baselineProcess || '미등록'}` : ' · 기준 프로젝트를 연결하세요'}
+            {baselineStatus === 'available' ? ` ↔ 기준 ${baselineProcess || '미등록'}` : ' · 관리자가 기준 프로젝트를 설정합니다'}
           </small>
         </article>
 
@@ -392,7 +402,7 @@ export function TrackingOverview({
                 {activeRound.has_post_top_revisions && <Badge value="발송 후 수정" />}
               </h2>
               <small>
-                <CalendarClock size={13} aria-hidden="true" /> 마감 {activeRound.deadline_date || '—'} {activeRound.deadline_time || ''} · 각 블록의 기준, 현재 리비전, 코너별 분석 결과를 확인합니다.
+                <CalendarClock size={13} aria-hidden="true" /> 마감 {activeRound.deadline_date || '—'} {activeRound.deadline_time || ''} · 각 블록의 기준 버전, 현재 리비전, 코너별 분석 결과를 확인합니다.
               </small>
             </div>
           </div>
@@ -401,7 +411,7 @@ export function TrackingOverview({
               <thead>
                 <tr>
                   <th>블록</th>
-                  <th>비교 기준</th>
+                  <th>비교 기준 (블록 · NET_VER · REV)</th>
                   <th>현재 버전</th>
                   <th>코너 진행</th>
                   <th>Area · Power 요약</th>
@@ -434,7 +444,11 @@ export function TrackingOverview({
                       <td>
                         <div className="tracking-cell-stack">
                           <span className={baseInfo.configured ? '' : 'text-muted'}>{baseInfo.label}</span>
-                          {baseInfo.pinnedText && <small>{baseInfo.pinnedText}</small>}
+                          {baseInfo.versionLabel && (
+                            <small className={baseInfo.configured ? 'tracking-version-tag' : 'text-muted'}>
+                              {baseInfo.versionLabel}
+                            </small>
+                          )}
                         </div>
                       </td>
                       <td>
@@ -526,7 +540,7 @@ export function TrackingOverview({
                 <thead>
                   <tr>
                     <th>블록</th>
-                    <th>비교 기준</th>
+                    <th>비교 기준 (블록 · NET_VER · REV)</th>
                     <th>최신 버전 · 리비전</th>
                     <th>업로드된 코너</th>
                     <th>바로가기</th>
@@ -536,7 +550,7 @@ export function TrackingOverview({
                   {project.blocks.map(block => {
                     const isFc = block.name.trim() === project.name.trim()
                     const latest = latestUploadByBlock.get(block.area_id || block.id)
-                    const baseInfo = block.area_id ? describeBlockBaseline(block.area_id) : { label: '미연결', pinnedText: '', configured: false }
+                    const baseInfo = block.area_id ? describeBlockBaseline(block.area_id) : { label: '미연결', versionLabel: '', configured: false }
                     return (
                       <tr key={block.id}>
                         <td>
@@ -548,7 +562,11 @@ export function TrackingOverview({
                         <td>
                           <div className="tracking-cell-stack">
                             <span className={baseInfo.configured ? '' : 'text-muted'}>{baseInfo.label}</span>
-                            {baseInfo.pinnedText && <small>{baseInfo.pinnedText}</small>}
+                            {baseInfo.versionLabel && (
+                              <small className={baseInfo.configured ? 'tracking-version-tag' : 'text-muted'}>
+                                {baseInfo.versionLabel}
+                              </small>
+                            )}
                           </div>
                         </td>
                         <td>

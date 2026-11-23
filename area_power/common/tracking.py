@@ -215,6 +215,7 @@ class BlockTrackingConfigInput(ContractModel):
     comparison_kind: Literal["previous_project", "previous_version"] = "previous_project"
     baseline_project_id: UUID | None = None
     baseline_block_id: UUID | None = None
+    baseline_version_id: UUID | None = None
     design_stage: str | None = Field(default=None, max_length=200)
     required_corners: list[CornerSpec] = Field(default_factory=list)
     recipients: list[str] = Field(default_factory=list)

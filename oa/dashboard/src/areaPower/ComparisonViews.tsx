@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Check, Download, GitCompareArrows, LoaderCircle, Plus, RefreshCw, Trash2, Upload as UploadIcon } from 'lucide-react'
 import { z } from 'zod'
-import { comparisonCreatedSchema, cornerKey, date, detailSchema, format, object, recordSchema, request, revision, text, uploadName, type AreaAccess, type Auth, type ComparisonDetail, type TrackingRecord, type TriageItem, type Upload } from './api'
+import { comparisonCreatedSchema, cornerKey, date, detailSchema, format, object, recordSchema, request, text, uploadName, type AreaAccess, type Auth, type ComparisonDetail, type TrackingRecord, type TriageItem, type Upload } from './api'
 import { Badge, Button, Empty, Field, useAction } from './components/workspace'
 import { Uploads } from './UploadViews'
 import { useAtlas, type AtlasProject } from '../atlasContext'
@@ -49,9 +49,6 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
   useEffect(() => { alive.current = true; return () => { alive.current = false; mutation.current?.abort() } }, [])
   const [baseline, setBaseline] = useState<z.infer<typeof baselineSchema> | null>(null)
   const [baselineError, setBaselineError] = useState('')
-  const [baselineLoading, setBaselineLoading] = useState(false)
-  const [baselineEditing, setBaselineEditing] = useState(false)
-  const [baselineChoice, setBaselineChoice] = useState('')
   const lastDesignation = useRef<string | null>(null)
   const [section, setSection] = useState<'status' | 'compare'>('status')
   const [trackingData, setTrackingData] = useState<TrackingOverviewData | null>(null)
@@ -63,7 +60,6 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
   // What the current run is compared with: the designated baseline project,
   // or an earlier version of the same project and block (an RTL update).
   const [mode, setMode] = useState<'project' | 'version'>('project')
-  const [processDraft, setProcessDraft] = useState('')
   const [triageItems, setTriageItems] = useState<TriageItem[]>([])
   const [locate, setLocate] = useState<{ ancestors: string[]; id: string; nonce: number } | null>(null)
   const [mappingId, setMappingId] = useState('')
@@ -100,10 +96,7 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
   const projectRecords = useMemo(() => new Map(props.records.filter(row => row.record_type === 'project').map(row => [text(row.payload.sanity_project_id), row])), [props.records])
   const currentAreaId = project.area_id || projectRecords.get(project.id)?.id || ''
   const candidates = atlas.catalog?.projects || []
-  const baselineCandidates = candidates.filter(row => row.id !== project.id)
   const savedProject = candidates.find(row => (row.area_id || projectRecords.get(row.id)?.id) === baseline?.baseline_project_id)
-  const choiceProject = baselineCandidates.find(row => row.id === baselineChoice)
-  const choiceAreaId = choiceProject?.area_id || (choiceProject ? projectRecords.get(choiceProject.id)?.id : '') || ''
   const currentBlock = project.blocks.find(row => row.id === current.block)
   const baselineSide = mode === 'version' ? project : savedProject
   const baselineAreaId = mode === 'version' ? currentAreaId : baseline?.baseline_project_id
@@ -183,18 +176,16 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
   useEffect(() => {
     if (!currentAreaId) { setBaseline(null); return }
     const controller = new AbortController()
-    setBaselineLoading(true); setBaselineError('')
+    setBaselineError('')
     request(props.auth, `/projects/${encodeURIComponent(currentAreaId)}/baseline`, baselineSchema, undefined, controller.signal).then(value => {
       if (controller.signal.aborted) return
-      setBaseline(value); setProcessDraft(value.process || '')
+      setBaseline(value)
       const designation = `${value.status}:${value.baseline_project_id || ''}`
       if (lastDesignation.current !== designation) {
         lastDesignation.current = designation
-        setBaselineChoice(candidates.find(row => (row.area_id || projectRecords.get(row.id)?.id) === value.baseline_project_id)?.id || '')
         setBefore(emptySelection); resetCorrespondence()
-        setBaselineEditing(false)
       }
-    }).catch(cause => { if (!controller.signal.aborted) { setBaseline(null); setBaselineChoice(''); setBaselineError(cause instanceof Error ? cause.message : '기준을 조회하지 못했습니다.') } }).finally(() => { if (!controller.signal.aborted) setBaselineLoading(false) })
+    }).catch(cause => { if (!controller.signal.aborted) { setBaseline(null); setBaselineError(cause instanceof Error ? cause.message : '기준을 조회하지 못했습니다.') } })
     return () => controller.abort()
   }, [props.auth, currentAreaId, props.refreshVersion])
   useEffect(() => {
@@ -295,23 +286,49 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
   function resetCorrespondence() {
     setMappingId(''); setMappingDraft([]); setMappingDraftPage(0); setBaselinePath(''); setCurrentPath('')
   }
+  function configuredBaselineSelection(blockNativeId: string, activeMode: 'project' | 'version', preferCorner = ''): Selection | null {
+    const blk = project.blocks.find(b => b.id === blockNativeId)
+    if (!blk?.area_id) return null
+    const cfg = (trackingData?.block_configs || []).find(row => text(row.block_id) === blk.area_id)
+    if (!cfg) return null
+    const cfgKind = text(cfg.comparison_kind) === 'previous_version' ? 'version' : 'project'
+    if (cfgKind !== activeMode) return null
+    const sideProj = activeMode === 'version' ? project : savedProject
+    const sideAreaProjId = activeMode === 'version' ? currentAreaId : baseline?.baseline_project_id
+    if (!sideProj || !sideAreaProjId) return null
+    const targetBlkAreaId = activeMode === 'version' ? blk.area_id : text(cfg.baseline_block_id)
+    const baseBlk = sideProj.blocks.find(b => b.area_id === targetBlkAreaId)
+    if (!baseBlk) return null
+    const targetVerAreaId = text(cfg.baseline_version_id)
+    const baseVer = targetVerAreaId ? baseBlk.versions.find(v => v.area_id === targetVerAreaId) : undefined
+    if (!baseVer) return { ...emptySelection, block: baseBlk.id }
+    const readyUploads = props.uploads.filter(
+      u => u.state === 'ready' && u.project_id === sideAreaProjId && u.block_id === baseBlk.area_id && u.version_id === baseVer.area_id,
+    )
+    const matched = (preferCorner && readyUploads.find(u => cornerKey(u) === preferCorner))
+      || (readyUploads.length === 1 ? readyUploads[0] : undefined)
+    return {
+      block: baseBlk.id,
+      net: baseVer.net_ver,
+      version: baseVer.id,
+      corner: matched ? cornerKey(matched) : '',
+      upload: matched?.id || '',
+    }
+  }
   function chooseCurrent(selection: Selection) {
     if (selection.block !== current.block || selection.net !== current.net || selection.version !== current.version || selection.corner !== current.corner || selection.upload !== current.upload) resetCorrespondence()
-    // A version comparison stays inside the current block.
-    if (mode === 'version' && selection.block !== current.block) setBefore({ ...emptySelection, block: selection.block })
+    if (selection.block !== current.block) {
+      const preset = configuredBaselineSelection(selection.block, mode, selection.corner)
+      if (preset) setBefore(preset)
+      else if (mode === 'version') setBefore({ ...emptySelection, block: selection.block })
+    }
     setCurrent(selection)
   }
   function chooseMode(next: 'project' | 'version') {
     if (next === mode) return
     setMode(next); resetCorrespondence()
-    setBefore(next === 'version' ? { ...emptySelection, block: current.block } : emptySelection)
-  }
-  async function saveProcess() {
-    if (!currentAreaId || !baseline) throw new Error('현재 프로젝트 연결과 기준 조회가 필요합니다.')
-    const value = await request(props.auth, `/projects/${encodeURIComponent(currentAreaId)}/process`, baselineSchema, { process: processDraft.trim() || null, expected_row_version: revision(baseline.row_version) }, beginMutation())
-    if (!alive.current) return
-    setBaseline(value); setProcessDraft(value.process || '')
-    await atlas.reload()
+    const preset = current.block ? configuredBaselineSelection(current.block, next, current.corner) : null
+    setBefore(preset || (next === 'version' ? { ...emptySelection, block: current.block } : emptySelection))
   }
   // Open the tree down to one analysed instance. Reference results are keyed
   // by group id; earlier results and previews nest rows locally.
@@ -339,13 +356,6 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
     await props.auth.request('/api/atlas/area-scope', { project_id: nativeProject.id, ...(selection?.block ? { block_id: selection.block } : {}), ...(selection?.version ? { version_id: selection.version } : {}), ...(previous !== undefined ? { previous_version_id: previous } : {}) }, false, signal)
     if (!alive.current) return
     await atlas.reload(); if (alive.current) await props.refresh()
-  }
-  async function saveBaseline(target: string | null) {
-    if (!currentAreaId || !baseline) throw new Error('현재 프로젝트 연결과 기준 조회가 필요합니다.')
-    const value = await request(props.auth, `/projects/${encodeURIComponent(currentAreaId)}/baseline`, baselineSchema, { baseline_project_id: target, expected_row_version: revision(baseline.row_version) }, beginMutation())
-    if (!alive.current) return
-    setBaseline(value); setBaselineEditing(false)
-    await props.refresh()
   }
   async function saveMapping() {
     if (!selectedCurrent || !selectedBefore || !mappingDraft.length) throw new Error('양쪽 실행과 대응 경로를 선택하세요.')
@@ -424,24 +434,9 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
             <strong>{latestNetVer}</strong>
           </span>
         )}
-        <Button variant="outline" size="sm" disabled={baselineLoading || !project.can_write} onClick={() => setBaselineEditing(value => !value)}>
-          {baselineEditing ? '기준 닫기' : '기준 · 공정 변경'}
-        </Button>
       </div>
       {baselineError && <div className="notice error" role="alert">{baselineError}</div>}
-      {!currentAreaId ? <div className="notice"><p>프로젝트만 연결하면 CSV·블록·버전 없이 기준을 설정할 수 있습니다.</p><Button disabled={action.busy || !project.can_write} onClick={() => action.run(() => prepare(project))}>현재 프로젝트 연결</Button></div> : baselineEditing && <div className="baseline-editor">
-        {baseline?.status === 'unavailable' && <p className="notice warning">저장된 기준은 현재 권한으로 조회할 수 없습니다. 다른 기준으로 교체하거나 해제할 수 있습니다.</p>}
-        <Field label="기준 프로젝트"><select value={baselineChoice} onChange={event => setBaselineChoice(event.target.value)}><option value="">기준 프로젝트 선택</option>{baselineCandidates.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field>
-        {choiceProject && !choiceAreaId && <Button disabled={action.busy || !choiceProject.can_write} onClick={() => action.run(() => prepare(choiceProject))}>선택한 기준 프로젝트 연결</Button>}
-        <Button disabled={action.busy || baselineLoading || !baseline || !choiceAreaId || !project.can_write} onClick={() => action.run(() => saveBaseline(choiceAreaId))}>기준 저장</Button>
-        <Button variant="outline" disabled={action.busy || !baseline || baseline.status === 'unset' || !project.can_write} onClick={() => action.run(() => saveBaseline(null))}>기준 해제</Button>
-        <small>기준 프로젝트는 현재 프로젝트에만 저장됩니다.</small>
-        <div className="process-editor"><Field label="현재 프로젝트 공정"><select value={processDraft} onChange={event => setProcessDraft(event.target.value)}>
-          <option value="">미지정</option>
-          {baseline?.process && !atlas.catalog?.processes?.some(item => item.name === baseline.process) && <option value={baseline.process}>{baseline.process} · 기존 공정</option>}
-          {atlas.catalog?.processes?.map(item => <option key={item.name} value={item.name}>{item.name} · {item.unit_area} µm²</option>)}
-        </select></Field><Button variant="outline" disabled={action.busy || baselineLoading || !baseline || !project.can_write || processDraft.trim() === (baseline.process || '')} onClick={() => action.run(saveProcess)}>공정 저장</Button><small>공정과 corner가 같으면 같은 library로 판단합니다.{baseline?.status === 'available' && <> 기준 공정 · {baseline.baseline_process || '미등록'}</>}</small></div>
-      </div>}
+      {!currentAreaId && <div className="notice"><p>프로젝트가 아직 수치 분석 서비스에 연결되지 않았습니다.</p><Button disabled={action.busy || !project.can_write} onClick={() => action.run(() => prepare(project))}>현재 프로젝트 연결</Button></div>}
     </section>
     {currentAreaId && <nav className="tracking-view-tabs" role="tablist" aria-label="프로젝트 비교 보기">
       <div className="tracking-tabs-primary">
@@ -470,7 +465,6 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
           next.delete('tracking_mail')
           atlas.replaceRoute(`${location.pathname}${next.toString() ? `?${next}` : ''}`)
         }}
-        onEditBaseline={() => setBaselineEditing(true)}
         onOpenResult={openTrackingResult}
       />
     )}

@@ -674,7 +674,14 @@ function demoTrackingOverview(projectId: string, visible: Set<string>, catalog: 
     project_id: projectId,
     project_name: projectName,
     project_config: { id: projCfgRow?.id || null, row_version: projCfgRow?.row_version || null, ...projCfg },
-    block_configs: blockCfgRows.map(r => ({ id: r.id, block_id: r.block_id, row_version: r.row_version, ...r.payload })),
+    block_configs: blockCfgRows.map(r => {
+      const bvid = text(r.payload.baseline_version_id)
+      const bver = bvid ? records.get(bvid) : undefined
+      return {
+        id: r.id, block_id: r.block_id, row_version: r.row_version, ...r.payload,
+        ...(bver ? { baseline_version_info: { id: bver.id, net_ver: text(bver.payload.net_ver), revision: text(bver.payload.revision), layout: text(bver.payload.layout) } } : {}),
+      }
+    }),
     rounds,
     expectations,
     expectation_proposals: [],

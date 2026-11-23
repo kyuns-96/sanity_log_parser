@@ -348,6 +348,31 @@ def _match_approved_baseline(block_cfg: dict, corner: CornerSpec) -> dict | None
     return None
 
 
+def _resolve_baseline_upload(db, conn, block_cfg: dict, corner: CornerSpec) -> dict | None:
+    """Resolve the pinned baseline upload for a corner: explicit approved_baselines first,
+    then automatic corner match inside the block's pinned baseline_version_id (NET_VER/REVISION)."""
+    ref = _match_approved_baseline(block_cfg, corner)
+    if ref and ref.get("upload_id"):
+        return db.upload(conn, UUID(str(ref["upload_id"])))
+    bvid = block_cfg.get("baseline_version_id")
+    bpid = block_cfg.get("baseline_project_id")
+    bbid = block_cfg.get("baseline_block_id")
+    if bvid and bpid and bbid:
+        candidates = db.uploads(
+            conn,
+            project_id=UUID(str(bpid)),
+            block_id=UUID(str(bbid)),
+            version_id=UUID(str(bvid)),
+            state="ready",
+            limit=50,
+        )
+        matched = [u for u in candidates if corner.matches_upload(u)]
+        if matched:
+            matched.sort(key=lambda u: str(u.get("created_at") or ""), reverse=True)
+            return matched[0]
+    return None
+
+
 def _slot_identity(upload: dict) -> dict[str, Any]:
     meta = (upload.get("input_contract") or {}).get("metadata") or {}
     return {
@@ -457,15 +482,14 @@ def advance_slot(db, settings, slot_id: UUID, *, host_db=None) -> dict | None:
         corner_spec = next((c for c in corners if c.corner_id() == cid), None)
         if corner_spec is None:
             return slot
-        baseline_ref = _match_approved_baseline(block_cfg, corner_spec)
-        if not baseline_ref or not baseline_ref.get("upload_id"):
+        baseline_upload = _resolve_baseline_upload(db, conn, block_cfg, corner_spec)
+        if baseline_upload is None:
             with db.connect() as wconn:
                 locked = db.record(wconn, slot_id, kind="tracking_slot", lock=True)
                 if locked["payload"].get("generation") != slot["payload"].get("generation"):
                     return locked
                 payload = {**locked["payload"], "status": "waiting_baseline", "status_reason": "baseline_not_approved"}
                 return db.update_record(wconn, slot_id, ACTOR, state="waiting_baseline", payload=payload)
-        baseline_upload = db.upload(conn, UUID(str(baseline_ref["upload_id"])))
         mapping_id = UUID(str(block_cfg["approved_mapping_id"])) if block_cfg.get("approved_mapping_id") else None
         mapping_row = db.record(conn, mapping_id, kind="mapping") if mapping_id else None
         project_row = db.record(conn, slot["project_id"], kind="project")

@@ -348,6 +348,19 @@ def overview(service, project_id: UUID) -> dict[str, Any]:
             entry = {"id": row["id"], "block_id": row["block_id"], "row_version": row["row_version"], **row["payload"]}
             if not is_admin:
                 entry["recipients"] = []
+            bvid = entry.get("baseline_version_id")
+            if bvid:
+                try:
+                    bver = service.db.record(conn, UUID(str(bvid)), kind="version")
+                    bp = bver.get("payload") or {}
+                    entry["baseline_version_info"] = {
+                        "id": bver["id"],
+                        "net_ver": bp.get("net_ver") or "",
+                        "revision": bp.get("revision") or "",
+                        "layout": bp.get("layout") or "",
+                    }
+                except Exception:
+                    entry["baseline_version_info"] = None
             public_block_cfgs.append(entry)
 
         result: dict[str, Any] = {
@@ -425,7 +438,7 @@ def save_block_config(service, project_id: UUID, block_id: UUID, body: BlockTrac
         elif body.expected_row_version is not None:
             reject("Expected row version requires an existing configuration.", "conflict", 409)
 
-        # Allow linking baseline block before any CSV exists; validate ownership cleanly.
+        # Allow linking baseline block & version before any CSV exists; validate ownership cleanly.
         baseline_project_id = body.baseline_project_id
         if body.comparison_kind == "previous_project":
             if baseline_project_id is not None:
@@ -441,6 +454,19 @@ def save_block_config(service, project_id: UUID, block_id: UUID, body: BlockTrac
             if body.baseline_block_id is not None and body.baseline_block_id != block_id:
                 reject("Previous-version tracking must compare within the same block.", "scope_mismatch")
 
+        if body.baseline_version_id is not None:
+            bver = service.db.record(conn, body.baseline_version_id, kind="version")
+            if body.comparison_kind == "previous_project":
+                if baseline_project_id and bver["project_id"] != baseline_project_id:
+                    reject("Baseline version does not belong to baseline project.", "scope_mismatch")
+                baseline_project_id = bver["project_id"]
+                service.designated_baseline(conn, project_id, baseline_project_id)
+            else:
+                if bver["project_id"] != project_id:
+                    reject("Previous-version baseline must belong to the current project.", "scope_mismatch")
+            if body.baseline_block_id and bver.get("block_id") and bver["block_id"] != body.baseline_block_id:
+                reject("Baseline version does not belong to the chosen baseline block.", "scope_mismatch")
+
         # Validate approved baseline executions and populate full scope fields for AreaAccess
         normalized_baselines = []
         for ref in body.approved_baselines:
@@ -449,6 +475,8 @@ def save_block_config(service, project_id: UUID, block_id: UUID, body: BlockTrac
                 reject("Approved baseline upload belongs to another project.", "scope_mismatch")
             if body.baseline_block_id and bu["block_id"] != body.baseline_block_id:
                 reject("Approved baseline upload belongs to another block.", "scope_mismatch")
+            if body.baseline_version_id and bu["version_id"] != body.baseline_version_id:
+                reject("Approved baseline upload belongs to another baseline version.", "scope_mismatch")
             normalized_baselines.append({
                 "corner_id": ref.corner_id,
                 "upload_id": bu["id"],
@@ -466,7 +494,7 @@ def save_block_config(service, project_id: UUID, block_id: UUID, body: BlockTrac
 
         proj_cfg_row = _latest_one(service, conn, "tracking_project_config", project_id=project_id)
         proj_cfg = proj_cfg_row["payload"] if proj_cfg_row else {}
-        if body.enabled:
+        if proj_cfg.get("enabled") and body.enabled:
             eff = body.required_corners or [CornerSpec.model_validate(c) for c in (proj_cfg.get("default_required_corners") or [])]
             if not eff:
                 reject("At least one required corner must be specified on the project or block.", "required_corner_missing")

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronRight, Eye, LoaderCircle, Mail, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react'
+import { CheckCircle2, ChevronRight, Eye, LoaderCircle, Mail, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react'
 import { z } from 'zod'
-import { allRecords, allUploads, array, date, format, object, recordSchema, request, text, unknownSchema, uploadName, type Auth, type TrackingRecord, type Upload } from './api'
+import { allRecords, allUploads, array, date, format, object, recordSchema, request, revision, text, unknownSchema, uploadName, type Auth, type TrackingRecord, type Upload } from './api'
 import { Badge, Button, Empty, Field, useAction } from './components/workspace'
 import { useAtlas, type AtlasCatalog, type AtlasProject } from '../atlasContext'
 import { useDashboardAuth } from '../useDashboardAuth'
@@ -27,7 +27,15 @@ const baselineSchema = z.object({
   baseline_process: z.string().nullish(),
 })
 
-/** Admin-only Area/Power automation, NET_VER rounds, and mail recipient management. */
+function uploadMatchesCorner(u: Upload, c: CornerSpec): boolean {
+  if ((u.process_label || '').trim() !== c.process_label.trim()) return false
+  if (c.voltage_v && (u.voltage_v || '').trim() !== c.voltage_v.trim()) return false
+  if (c.temp_c && (u.temp_c || '').trim() !== c.temp_c.trim()) return false
+  if (c.pex && (u.pex || '').trim() !== c.pex.trim()) return false
+  return true
+}
+
+/** Admin-only Area/Power baseline, NET_VER round, automation, and mail recipient management. */
 export function AreaTrackingAdmin() {
   const host = useDashboardAuth(true)
   const atlas = useAtlas()
@@ -63,15 +71,14 @@ export function AreaTrackingAdmin() {
         if (!signal?.aborted) setFallbackCatalog(currentCatalog)
       }
       if (currentCatalog?.area_enabled === true && currentCatalog.area_status !== 'unavailable') {
-        const [u, projRecs, blkRecs, mapRecs] = await Promise.all([
+        const [u, projRecs, blkRecs] = await Promise.all([
           allUploads(auth, signal),
           allRecords(auth, 'project', { latest: 'false' }, signal),
           allRecords(auth, 'block', { latest: 'false' }, signal),
-          allRecords(auth, 'mapping', { latest: 'false' }, signal),
         ])
         if (!signal?.aborted) {
           setUploads(u)
-          setRecords([...projRecs, ...blkRecs, ...mapRecs])
+          setRecords([...projRecs, ...blkRecs])
         }
       }
     } catch (cause) {
@@ -95,6 +102,9 @@ export function AreaTrackingAdmin() {
   const areaProjectId = project?.area_id || (project ? projectRecords.get(project.id)?.id : '') || ''
 
   const [baseline, setBaseline] = useState<z.infer<typeof baselineSchema> | null>(null)
+  const [baselineChoice, setBaselineChoice] = useState('')
+  const [processDraft, setProcessDraft] = useState('')
+  const [baselineEditing, setBaselineEditing] = useState(false)
   const [trackingData, setTrackingData] = useState<TrackingOverviewData | null>(null)
   const [trackingLoading, setTrackingLoading] = useState(false)
   const [trackingError, setTrackingError] = useState('')
@@ -119,6 +129,9 @@ export function AreaTrackingAdmin() {
       ])
       if (!controller.signal.aborted) {
         setBaseline(b)
+        setProcessDraft(b.process || '')
+        const matched = projects.find(row => (row.area_id || projectRecords.get(row.id)?.id) === b.baseline_project_id)
+        setBaselineChoice(matched?.id || '')
         setTrackingData(ov)
       }
     } catch (cause) {
@@ -128,20 +141,46 @@ export function AreaTrackingAdmin() {
     } finally {
       if (!controller.signal.aborted) setTrackingLoading(false)
     }
-  }, [auth, areaProjectId])
+  }, [auth, areaProjectId, projects, projectRecords])
 
   useEffect(() => {
     void reloadProjectTracking()
     return () => ctrlRef.current?.abort()
   }, [reloadProjectTracking, refreshTick])
 
+  const baselineCandidates = projects.filter(row => row.id !== project?.id)
   const baselineProject = useMemo(
     () => projects.find(row => (row.area_id || projectRecords.get(row.id)?.id) === baseline?.baseline_project_id),
     [projects, projectRecords, baseline?.baseline_project_id],
   )
+  const choiceProject = baselineCandidates.find(row => row.id === baselineChoice)
+  const choiceAreaId = choiceProject?.area_id || (choiceProject ? projectRecords.get(choiceProject.id)?.id : '') || ''
 
   async function prepareProject(target: AtlasProject) {
     await auth.request('/api/atlas/area-scope', { project_id: target.id }, false)
+    if (atlas) await atlas.reload()
+    setRefreshTick(v => v + 1)
+  }
+
+  async function saveBaselineProject(targetAreaId: string | null) {
+    if (!areaProjectId || !baseline) throw new Error('현재 프로젝트 연결과 기준 조회가 필요합니다.')
+    const value = await request(auth, `/projects/${encodeURIComponent(areaProjectId)}/baseline`, baselineSchema, {
+      baseline_project_id: targetAreaId,
+      expected_row_version: revision(baseline.row_version),
+    })
+    setBaseline(value)
+    setBaselineEditing(false)
+    setRefreshTick(v => v + 1)
+  }
+
+  async function saveProjectProcess() {
+    if (!areaProjectId || !baseline) throw new Error('현재 프로젝트 연결과 기준 조회가 필요합니다.')
+    const value = await request(auth, `/projects/${encodeURIComponent(areaProjectId)}/process`, baselineSchema, {
+      process: processDraft.trim() || null,
+      expected_row_version: revision(baseline.row_version),
+    })
+    setBaseline(value)
+    setProcessDraft(value.process || '')
     if (atlas) await atlas.reload()
     setRefreshTick(v => v + 1)
   }
@@ -157,15 +196,15 @@ export function AreaTrackingAdmin() {
       {workspaceError && <div className="notice error" role="alert">{workspaceError}</div>}
       {!available && !workspaceLoading ? (
         <Empty title="Area/Power 수치 분석 서비스가 비활성 상태입니다">
-          Area/Power DB 및 서비스 연결이 준비되면 여기에서 프로젝트별 자동 분석·회차·메일 수신자를 관리할 수 있습니다.
+          Area/Power DB 및 서비스 연결이 준비되면 여기에서 프로젝트별 비교 기준, 자동 분석, 회차, 메일 수신자를 관리할 수 있습니다.
         </Empty>
       ) : (
         <>
-          <section className="panel comparison-setup-bar project-context-bar" aria-label="관리 대상 프로젝트 선택">
+          <section className="panel comparison-setup-bar project-context-bar" aria-label="관리 대상 프로젝트 및 비교 기준">
             <div className="baseline-summary">
               <label className="setup-project">
                 <span>대상 프로젝트</span>
-                <select value={projectId} onChange={e => setProjectId(e.target.value)}>
+                <select value={projectId} onChange={e => { setProjectId(e.target.value); setBaselineEditing(false) }}>
                   <option value="">프로젝트 선택</option>
                   {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
@@ -181,17 +220,67 @@ export function AreaTrackingAdmin() {
                         ? text(baseline.baseline_project?.payload.name) || baselineProject?.name
                         : baseline?.status === 'unavailable' ? '기준 조회 불가' : '미설정'}
                     </strong>
+                    {baseline?.status === 'available' && baseline.baseline_process && (
+                      <span className="context-pill subtle">{baseline.baseline_process}</span>
+                    )}
                   </span>
                 </>
+              )}
+              {project && areaProjectId && (
+                <Button variant="outline" size="sm" disabled={trackingLoading || !project.can_write} onClick={() => setBaselineEditing(v => !v)}>
+                  {baselineEditing ? '기준 닫기' : '기준 프로젝트 · 공정 변경'}
+                </Button>
               )}
               <Button variant="outline" size="sm" disabled={workspaceLoading || trackingLoading} onClick={() => setRefreshTick(v => v + 1)}>
                 <RefreshCw size={14} className={workspaceLoading || trackingLoading ? 'spin' : ''} />새로고침
               </Button>
             </div>
+
+            {project && areaProjectId && baselineEditing && (
+              <div className="baseline-editor">
+                {baseline?.status === 'unavailable' && (
+                  <p className="notice warning">저장된 기준 프로젝트에 접근할 수 없습니다. 다른 기준으로 교체하거나 해제하세요.</p>
+                )}
+                <Field label="기준 프로젝트">
+                  <select value={baselineChoice} onChange={e => setBaselineChoice(e.target.value)}>
+                    <option value="">기준 프로젝트 선택</option>
+                    {baselineCandidates.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}
+                  </select>
+                </Field>
+                {choiceProject && !choiceAreaId && (
+                  <Button size="sm" disabled={action.busy || !choiceProject.can_write} onClick={() => action.run(() => prepareProject(choiceProject), '기준 프로젝트를 연결했습니다.')}>
+                    선택한 기준 프로젝트 연결
+                  </Button>
+                )}
+                <Button size="sm" disabled={action.busy || trackingLoading || !baseline || !choiceAreaId || !project.can_write} onClick={() => action.run(() => saveBaselineProject(choiceAreaId), '기준 프로젝트를 저장했습니다.')}>
+                  기준 저장
+                </Button>
+                <Button variant="outline" size="sm" disabled={action.busy || !baseline || baseline.status === 'unset' || !project.can_write} onClick={() => action.run(() => saveBaselineProject(null), '기준 프로젝트를 해제했습니다.')}>
+                  기준 해제
+                </Button>
+                <div className="process-editor">
+                  <Field label="현재 프로젝트 공정">
+                    <select value={processDraft} onChange={e => setProcessDraft(e.target.value)}>
+                      <option value="">미지정</option>
+                      {baseline?.process && !catalog?.processes?.some(item => item.name === baseline.process) && (
+                        <option value={baseline.process}>{baseline.process} · 기존 공정</option>
+                      )}
+                      {catalog?.processes?.map(item => (
+                        <option key={item.name} value={item.name}>{item.name} · {item.unit_area} µm²</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Button variant="outline" size="sm" disabled={action.busy || trackingLoading || !baseline || !project.can_write || processDraft.trim() === (baseline.process || '')} onClick={() => action.run(saveProjectProcess, '공정을 저장했습니다.')}>
+                    공정 저장
+                  </Button>
+                  <small>공정과 코너가 같으면 같은 library로 판단합니다.{baseline?.status === 'available' && <> 기준 공정 · {baseline.baseline_process || '미등록'}</>}</small>
+                </div>
+              </div>
+            )}
           </section>
 
           {!project ? (
-            <Empty title="관리할 프로젝트를 선택하세요">프로젝트를 선택하면 버전 회차, 자동 분석, 메일 수신자, 블록별 기준 실행을 관리할 수 있습니다.</Empty>
+            <Empty title="관리할 프로젝트를 선택하세요">프로젝트를 선택하면 기준 프로젝트·블록별 기준 버전, 버전 회차, 자동 분석, 메일 수신자를 관리할 수 있습니다.</Empty>
           ) : !areaProjectId ? (
             <section className="panel">
               <p className="notice">이 프로젝트는 아직 Area/Power 서비스에 연결되지 않았습니다.</p>
@@ -217,7 +306,6 @@ export function AreaTrackingAdmin() {
                   areaProjectId={areaProjectId}
                   baselineAreaProjectId={baseline?.baseline_project_id}
                   uploads={uploads}
-                  records={records}
                   data={trackingData}
                   onReload={reloadAll}
                 />
@@ -237,7 +325,6 @@ interface TrackingSettingsProps {
   areaProjectId: string
   baselineAreaProjectId?: string | null
   uploads: Upload[]
-  records: TrackingRecord[]
   data: TrackingOverviewData | null
   initialBlockId?: string
   onReload: () => Promise<void>
@@ -250,7 +337,6 @@ export function TrackingSettings({
   areaProjectId,
   baselineAreaProjectId,
   uploads,
-  records,
   data,
   initialBlockId,
   onReload,
@@ -258,7 +344,7 @@ export function TrackingSettings({
   const action = useAction()
   const projCfg = object(data?.project_config)
 
-  // Round management (admin-only)
+  // Round management
   const rounds = data?.rounds || []
   const areaBlocks = useMemo(() => project.blocks.filter(b => Boolean(b.area_id)), [project.blocks])
   const knownNetVers = useMemo(() => {
@@ -372,7 +458,7 @@ export function TrackingSettings({
     }))
   }, [data?.project_config?.id, data?.project_config?.row_version])
 
-  // Block-level settings
+  // Block-level settings (with explicit baseline_block_id -> baseline NET_VER -> baseline REVISION)
   const [selectedBlockId, setSelectedBlockId] = useState(initialBlockId || '')
   useEffect(() => {
     if (initialBlockId) setSelectedBlockId(initialBlockId)
@@ -393,20 +479,48 @@ export function TrackingSettings({
   const [blockEnabled, setBlockEnabled] = useState(true)
   const [blockKind, setBlockKind] = useState<'previous_project' | 'previous_version'>('previous_project')
   const [baselineBlockId, setBaselineBlockId] = useState('')
-  const [designStage, setDesignStage] = useState('')
+  const [baselineNetVer, setBaselineNetVer] = useState('')
+  const [baselineVersionId, setBaselineVersionId] = useState('')
   const [blockRecipients, setBlockRecipients] = useState('')
   const [blockCorners, setBlockCorners] = useState<CornerSpec[]>([])
   const [blockCornerName, setBlockCornerName] = useState('')
   const [approvedBaselines, setApprovedBaselines] = useState<Record<string, string>>({})
-  const [approvedMappingId, setApprovedMappingId] = useState('')
-  const [noChangeNets, setNoChangeNets] = useState('')
+
+  const baselineSideProject = blockKind === 'previous_version' ? project : baselineProject
+  const effectiveBaselineBlockId = blockKind === 'previous_version' ? selectedBlockId : baselineBlockId
+  const selectedBaselineBlock = useMemo(
+    () => baselineSideProject?.blocks.find(b => b.area_id === effectiveBaselineBlockId),
+    [baselineSideProject, effectiveBaselineBlockId],
+  )
+  const baselineNetVerOptions = useMemo(
+    () => [...new Set((selectedBaselineBlock?.versions || []).filter(v => Boolean(v.area_id)).map(v => v.net_ver))],
+    [selectedBaselineBlock],
+  )
+  const baselineRevisionOptions = useMemo(
+    () => (selectedBaselineBlock?.versions || []).filter(v => Boolean(v.area_id) && v.net_ver === baselineNetVer),
+    [selectedBaselineBlock, baselineNetVer],
+  )
 
   useEffect(() => {
     const cfg = object(blockCfg)
+    const kind = text(cfg.comparison_kind) === 'previous_version' ? 'previous_version' : 'previous_project'
     setBlockEnabled(cfg.enabled !== false)
-    setBlockKind(text(cfg.comparison_kind) === 'previous_version' ? 'previous_version' : 'previous_project')
-    setBaselineBlockId(text(cfg.baseline_block_id))
-    setDesignStage(text(cfg.design_stage))
+    setBlockKind(kind)
+    // Auto-suggest same-name baseline block when unset
+    const savedBaseBlkId = text(cfg.baseline_block_id)
+    const sameNameBase = kind === 'previous_project' && !savedBaseBlkId && selectedBlock
+      ? baselineProject?.blocks.find(b => b.area_id && b.name.trim() === selectedBlock.name.trim())?.area_id || ''
+      : ''
+    const resolvedBlkId = kind === 'previous_version' ? selectedBlockId : (savedBaseBlkId || sameNameBase)
+    setBaselineBlockId(kind === 'previous_version' ? '' : resolvedBlkId)
+
+    const sideProj = kind === 'previous_version' ? project : baselineProject
+    const bBlk = sideProj?.blocks.find(b => b.area_id === resolvedBlkId)
+    const savedVerId = text(cfg.baseline_version_id) || text(object(array(cfg.approved_baselines)[0]).version_id)
+    const savedVer = bBlk?.versions.find(v => v.area_id === savedVerId)
+    setBaselineNetVer(savedVer?.net_ver || text(object(cfg.baseline_version_info).net_ver) || '')
+    setBaselineVersionId(savedVerId)
+
     setBlockRecipients(array(cfg.recipients).map(text).join(', '))
     setBlockCorners(array(cfg.required_corners).map(item => {
       const o = object(item)
@@ -423,9 +537,7 @@ export function TrackingSettings({
       if (text(item.corner_id) && text(item.upload_id)) baseMap[text(item.corner_id)] = text(item.upload_id)
     }
     setApprovedBaselines(baseMap)
-    setApprovedMappingId(text(cfg.approved_mapping_id))
-    setNoChangeNets(array(cfg.no_change_net_vers).map(text).join(', '))
-  }, [selectedBlockId, blockCfg?.id, blockCfg?.row_version])
+  }, [selectedBlockId, blockCfg?.id, blockCfg?.row_version, baselineProject, project, selectedBlock])
 
   const effectiveBlockCorners = blockCorners.length ? blockCorners : defaultCorners
   const candidateBaselineUploads = useMemo(() => {
@@ -434,14 +546,10 @@ export function TrackingSettings({
     return uploads.filter(u =>
       u.state === 'ready'
       && (!targetProjId || u.project_id === targetProjId)
-      && (!targetBlkId || u.block_id === targetBlkId),
+      && (!targetBlkId || u.block_id === targetBlkId)
+      && (!baselineVersionId || u.version_id === baselineVersionId),
     )
-  }, [uploads, blockKind, areaProjectId, baselineAreaProjectId, selectedBlockId, baselineBlockId])
-
-  const blockMappings = useMemo(
-    () => records.filter(row => row.record_type === 'mapping' && text(row.payload.current_block_id) === selectedBlockId),
-    [records, selectedBlockId],
-  )
+  }, [uploads, blockKind, areaProjectId, baselineAreaProjectId, selectedBlockId, baselineBlockId, baselineVersionId])
 
   // Design change notes (expected changes)
   const [expText, setExpText] = useState('')
@@ -504,20 +612,35 @@ export function TrackingSettings({
 
   async function saveBlockSettings() {
     if (!selectedBlockId) throw new Error('설정할 블록을 선택하세요.')
-    const baselines = Object.entries(approvedBaselines)
-      .filter(([, uploadId]) => Boolean(uploadId))
-      .map(([corner_id, upload_id]) => ({ corner_id, upload_id }))
+    // Auto-pin matching uploads inside baselineVersionId when available, respecting explicit overrides
+    const resolvedMap: Record<string, string> = {}
+    for (const c of effectiveBlockCorners) {
+      const cid = cornerSpecId(c)
+      const explicit = approvedBaselines[cid]
+      const validExplicit = explicit && candidateBaselineUploads.some(u => u.id === explicit) ? explicit : ''
+      if (validExplicit) {
+        resolvedMap[cid] = validExplicit
+      } else if (baselineVersionId) {
+        const autoMatch = candidateBaselineUploads.find(u => uploadMatchesCorner(u, c))
+        if (autoMatch) resolvedMap[cid] = autoMatch.id
+      }
+    }
+    const baselines = Object.entries(resolvedMap).map(([corner_id, upload_id]) => ({ corner_id, upload_id }))
+
+    // Preserve backend-compatible legacy fields without exposing confusing inputs in UI
+    const existingCfg = object(blockCfg)
     await request(auth, `/tracking/projects/${encodeURIComponent(areaProjectId)}/blocks/${encodeURIComponent(selectedBlockId)}/config`, unknownSchema, {
       enabled: blockEnabled,
       comparison_kind: blockKind,
       baseline_project_id: blockKind === 'previous_version' ? areaProjectId : (baselineAreaProjectId || null),
       baseline_block_id: blockKind === 'previous_version' ? selectedBlockId : (baselineBlockId || null),
-      design_stage: designStage.trim() || null,
+      baseline_version_id: baselineVersionId || null,
+      design_stage: text(existingCfg.design_stage) || null,
       required_corners: blockCorners,
       recipients: blockRecipients.split(/[,;\s]+/).filter(Boolean),
       approved_baselines: baselines,
-      approved_mapping_id: approvedMappingId || null,
-      no_change_net_vers: noChangeNets.split(/[,;\s]+/).filter(Boolean),
+      approved_mapping_id: text(existingCfg.approved_mapping_id) || null,
+      no_change_net_vers: array(existingCfg.no_change_net_vers).map(text).filter(Boolean),
       ...(blockCfg?.row_version ? { expected_row_version: Number(blockCfg.row_version) } : {}),
     })
     await onReload()
@@ -559,6 +682,21 @@ export function TrackingSettings({
     setPreview(value)
   }
 
+  function formatBlockBaselineVersion(cfg: Record<string, unknown>, blockAreaId: string): string {
+    const info = object(cfg.baseline_version_info)
+    if (text(info.net_ver)) {
+      const rev = [text(info.revision), text(info.layout)].filter(Boolean).join(' ')
+      return rev ? `${text(info.net_ver)} · ${rev}` : text(info.net_ver)
+    }
+    const kind = text(cfg.comparison_kind)
+    const sideProj = kind === 'previous_version' ? project : baselineProject
+    const blkId = kind === 'previous_version' ? blockAreaId : text(cfg.baseline_block_id)
+    const verId = text(cfg.baseline_version_id) || text(object(array(cfg.approved_baselines)[0]).version_id)
+    const ver = sideProj?.blocks.find(b => b.area_id === blkId)?.versions.find(v => v.area_id === verId)
+    if (!ver) return '미지정'
+    return `${ver.net_ver} · ${ver.revision} ${ver.layout}`.trim()
+  }
+
   const aiModel = data?.ai_model
   const latestPowerTarget = powerTargets[powerTargets.length - 1]
 
@@ -566,7 +704,7 @@ export function TrackingSettings({
     <div className="tracking-settings">
       {action.feedback}
 
-      {/* Card 1: Version Round Management (Admin-only) */}
+      {/* Card 1: Version Round Management */}
       <section className="panel" aria-label="버전 회차 관리">
         <div className="section-heading">
           <div>
@@ -894,12 +1032,12 @@ export function TrackingSettings({
         </section>
       )}
 
-      {/* Card 3: Per-block summary table + compact editor for selected block */}
+      {/* Card 3: Per-block Baseline (Block -> NET_VER -> REVISION) & Owner */}
       <section className="panel" aria-label="블록별 비교 기준 및 담당자">
         <div className="section-heading">
           <div>
-            <h2>블록별 비교 기준 · 담당자</h2>
-            <p>블록 행을 선택해 비교 기준 블록, 고정할 기준 실행, 결과 메일 담당자를 설정하세요.</p>
+            <h2>블록별 비교 기준 (NET_VER · REVISION) · 담당자</h2>
+            <p>블록 행을 선택해 기준 블록, 기준 NET_VER·REVISION, 결과 메일 담당자를 설정하세요. 선택한 기준 버전의 코너 CSV가 자동으로 연결됩니다.</p>
           </div>
         </div>
 
@@ -908,8 +1046,8 @@ export function TrackingSettings({
             <thead>
               <tr>
                 <th>블록</th>
-                <th>비교 기준</th>
-                <th>기준 실행 고정</th>
+                <th>기준 블록</th>
+                <th>기준 NET_VER · REVISION</th>
                 <th>담당자 메일</th>
                 <th>자동 분석</th>
               </tr>
@@ -925,8 +1063,7 @@ export function TrackingSettings({
                 const baseLabel = kind === 'previous_version'
                   ? '같은 블록 이전 버전'
                   : baseBlk ? `${baselineProject?.name} · ${baseBlk.name}` : '미지정'
-                const reqCount = array(cfg.required_corners).length || defaultCorners.length
-                const pinCount = array(cfg.approved_baselines).filter(item => Boolean(text(object(item).upload_id))).length
+                const baseVerLabel = formatBlockBaselineVersion(cfg, bid)
                 const recips = array(cfg.recipients).map(text).filter(Boolean)
                 const isEnabled = cfg.enabled !== false
                 return (
@@ -940,7 +1077,7 @@ export function TrackingSettings({
                       {isFc && <span className="side-tag">Full-chip</span>}
                     </td>
                     <td className={baseLabel === '미지정' ? 'text-muted' : ''}>{baseLabel}</td>
-                    <td>{reqCount ? `${pinCount}/${reqCount}` : '—'}</td>
+                    <td className={baseVerLabel === '미지정' ? 'text-muted' : 'tracking-version-tag'}>{baseVerLabel}</td>
                     <td className={!recips.length ? 'text-muted' : ''}>{recips.length ? recips.join(', ') : '미지정'}</td>
                     <td><Badge value={isEnabled ? '사용' : '제외'} /></td>
                   </tr>
@@ -958,7 +1095,7 @@ export function TrackingSettings({
             <div className="section-heading">
               <h3>
                 {selectedBlock.name}
-                {selectedBlock.name.trim() === project.name.trim() ? ' (Full-chip)' : ''} 편집
+                {selectedBlock.name.trim() === project.name.trim() ? ' (Full-chip)' : ''} 기준 설정
               </h3>
               <label className="checkbox">
                 <input type="checkbox" checked={blockEnabled} disabled={!project.can_write} onChange={e => setBlockEnabled(e.target.checked)} />
@@ -968,14 +1105,33 @@ export function TrackingSettings({
 
             <div className="tracking-settings-grid">
               <Field label="비교 방식">
-                <select value={blockKind} disabled={!project.can_write} onChange={e => setBlockKind(e.target.value as 'previous_project' | 'previous_version')}>
+                <select
+                  value={blockKind}
+                  disabled={!project.can_write}
+                  onChange={e => {
+                    const nextKind = e.target.value as 'previous_project' | 'previous_version'
+                    setBlockKind(nextKind)
+                    setBaselineNetVer('')
+                    setBaselineVersionId('')
+                    setApprovedBaselines({})
+                  }}
+                >
                   <option value="previous_project">기준 프로젝트 ({baselineProject?.name || '미설정'})</option>
                   <option value="previous_version">같은 프로젝트의 이전 버전</option>
                 </select>
               </Field>
               {blockKind === 'previous_project' && (
                 <Field label="기준 블록">
-                  <select value={baselineBlockId} disabled={!project.can_write || !baselineProject} onChange={e => setBaselineBlockId(e.target.value)}>
+                  <select
+                    value={baselineBlockId}
+                    disabled={!project.can_write || !baselineProject}
+                    onChange={e => {
+                      setBaselineBlockId(e.target.value)
+                      setBaselineNetVer('')
+                      setBaselineVersionId('')
+                      setApprovedBaselines({})
+                    }}
+                  >
                     <option value="">기준 블록 선택</option>
                     {(baselineProject?.blocks || []).filter(b => Boolean(b.area_id)).map(b => (
                       <option key={b.area_id!} value={b.area_id!}>{b.name}</option>
@@ -983,95 +1139,127 @@ export function TrackingSettings({
                   </select>
                 </Field>
               )}
+              <Field label="기준 NET_VER">
+                <select
+                  value={baselineNetVer}
+                  disabled={!project.can_write || !selectedBaselineBlock}
+                  onChange={e => {
+                    const nextNet = e.target.value
+                    setBaselineNetVer(nextNet)
+                    const matching = (selectedBaselineBlock?.versions || []).filter(v => Boolean(v.area_id) && v.net_ver === nextNet)
+                    setBaselineVersionId(matching.length === 1 ? matching[0].area_id! : '')
+                    setApprovedBaselines({})
+                  }}
+                >
+                  <option value="">기준 NET_VER 선택</option>
+                  {baselineNetVerOptions.map(nv => <option key={nv} value={nv}>{nv}</option>)}
+                </select>
+              </Field>
+              <Field label="기준 REVISION">
+                <select
+                  value={baselineVersionId}
+                  disabled={!project.can_write || !baselineNetVer}
+                  onChange={e => {
+                    setBaselineVersionId(e.target.value)
+                    setApprovedBaselines({})
+                  }}
+                >
+                  <option value="">기준 REVISION 선택</option>
+                  {baselineRevisionOptions.map(v => (
+                    <option key={v.area_id!} value={v.area_id!}>
+                      {v.revision} · {v.layout}
+                    </option>
+                  ))}
+                </select>
+              </Field>
               <Field label="블록 담당자 메일 (쉼표 구분)">
                 <input type="text" value={blockRecipients} disabled={!project.can_write} onChange={e => setBlockRecipients(e.target.value)} placeholder="owner@company.com" />
               </Field>
             </div>
 
-            <div className="tracking-subblock">
-              <h3>코너별 기준 실행 고정</h3>
-              <div className="tracking-settings-grid">
-                {effectiveBlockCorners.map(c => {
-                  const cid = cornerSpecId(c)
-                  return (
-                    <Field key={cid} label={`${c.label} 기준 실행`}>
-                      <select
-                        value={approvedBaselines[cid] || ''}
-                        disabled={!project.can_write}
-                        onChange={e => setApprovedBaselines(prev => ({ ...prev, [cid]: e.target.value }))}
-                      >
-                        <option value="">기준 실행 미고정</option>
-                        {candidateBaselineUploads.map(u => (
-                          <option key={u.id} value={u.id}>{uploadName(u)}</option>
-                        ))}
-                      </select>
-                    </Field>
-                  )
-                })}
-                {!effectiveBlockCorners.length && <small className="text-muted">위 ‘기본 설정’에서 필수 코너를 먼저 하나 이상 추가하세요.</small>}
+            {effectiveBlockCorners.length > 0 && (
+              <div className="tracking-subblock">
+                <h3>기준 버전의 코너 매칭 상태</h3>
+                <div className="tracking-corner-chips">
+                  {effectiveBlockCorners.map(c => {
+                    const cid = cornerSpecId(c)
+                    const pinned = candidateBaselineUploads.find(u => u.id === approvedBaselines[cid])
+                    const matched = pinned || (baselineVersionId ? candidateBaselineUploads.find(u => uploadMatchesCorner(u, c)) : undefined)
+                    return (
+                      <span key={cid} className={`tracking-chip ${matched ? 'status-completed' : 'status-waiting_upload'}`}>
+                        {matched && <CheckCircle2 size={12} aria-hidden="true" />}
+                        {c.label}: {matched ? uploadName(matched) : baselineVersionId ? '해당 버전에 CSV 없음 (도착 시 자동 매칭)' : '기준 NET_VER·REVISION을 선택하세요'}
+                      </span>
+                    )
+                  })}
+                </div>
               </div>
-            </div>
+            )}
+
+            {effectiveBlockCorners.length > 0 && candidateBaselineUploads.length > 1 && (
+              <details className="settings-advanced">
+                <summary>
+                  <ChevronRight size={15} className="chevron" aria-hidden="true" />
+                  <span>코너별 기준 파일 직접 지정 (같은 코너에 파일이 여러 개일 때)</span>
+                  <small>{candidateBaselineUploads.length}개 후보</small>
+                </summary>
+                <div className="settings-advanced-body">
+                  <div className="tracking-settings-grid">
+                    {effectiveBlockCorners.map(c => {
+                      const cid = cornerSpecId(c)
+                      return (
+                        <Field key={cid} label={`${c.label} 기준 파일`}>
+                          <select
+                            value={approvedBaselines[cid] || ''}
+                            disabled={!project.can_write}
+                            onChange={e => setApprovedBaselines(prev => ({ ...prev, [cid]: e.target.value }))}
+                          >
+                            <option value="">선택한 기준 버전에서 자동 매칭</option>
+                            {candidateBaselineUploads.map(u => (
+                              <option key={u.id} value={u.id}>{uploadName(u)}</option>
+                            ))}
+                          </select>
+                        </Field>
+                      )
+                    })}
+                  </div>
+                </div>
+              </details>
+            )}
 
             <details className="settings-advanced">
               <summary>
                 <ChevronRight size={15} className="chevron" aria-hidden="true" />
-                <span>블록 세부 설정</span>
-                <small>
-                  {blockCorners.length ? `전용 코너 ${blockCorners.length}개` : '기본 코너 상속'}
-                  {designStage ? ` · 단계 ${designStage}` : ''}
-                  {approvedMappingId ? ' · 계층 매핑 고정' : ''}
-                  {noChangeNets ? ` · 변경 없음 확인` : ''}
-                </small>
+                <span>이 블록 전용 필수 코너</span>
+                <small>{blockCorners.length ? `전용 코너 ${blockCorners.length}개` : `프로젝트 기본 코너 상속 (${defaultCorners.map(c => c.label).join(', ') || '없음'})`}</small>
               </summary>
               <div className="settings-advanced-body">
-                <div className="tracking-settings-grid">
-                  <Field label="설계 단계 필터 (선택)">
-                    <input type="text" value={designStage} disabled={!project.can_write} onChange={e => setDesignStage(e.target.value)} placeholder="예: post_route (비우면 전체)" />
-                  </Field>
-                  <Field label="고정 계층 매핑">
-                    <select value={approvedMappingId} disabled={!project.can_write} onChange={e => setApprovedMappingId(e.target.value)}>
-                      <option value="">기본 상대 경로 매핑 사용</option>
-                      {blockMappings.map(m => (
-                        <option key={m.id} value={m.id}>
-                          r{m.revision} · 규칙 {array(m.payload.rules).length}개 ({m.id.slice(0, 8)})
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="변경 없음 확인 버전">
-                    <input type="text" value={noChangeNets} disabled={!project.can_write} onChange={e => setNoChangeNets(e.target.value)} placeholder="예: NET_022, NET_023" />
-                  </Field>
+                <div className="tracking-chip-list">
+                  {blockCorners.map((c, idx) => (
+                    <span key={cornerSpecId(c)} className="tracking-chip">
+                      {c.label}
+                      {project.can_write && (
+                        <button type="button" onClick={() => setBlockCorners(rows => rows.filter((_, i) => i !== idx))}>
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                  {!blockCorners.length && <small className="text-muted">비워 두면 프로젝트 기본 필수 코너를 그대로 사용합니다.</small>}
                 </div>
-
-                <div className="tracking-subblock">
-                  <h3>이 블록 전용 필수 코너 (비우면 프로젝트 기본 코너 사용)</h3>
-                  <div className="tracking-chip-list">
-                    {blockCorners.map((c, idx) => (
-                      <span key={cornerSpecId(c)} className="tracking-chip">
-                        {c.label}
-                        {project.can_write && (
-                          <button type="button" onClick={() => setBlockCorners(rows => rows.filter((_, i) => i !== idx))}>
-                            <Trash2 size={12} />
-                          </button>
-                        )}
-                      </span>
-                    ))}
-                    {!blockCorners.length && <small className="text-muted">프로젝트 기본 코너({defaultCorners.map(c => c.label).join(', ') || '없음'}) 사용 중</small>}
+                {project.can_write && (
+                  <div className="settings-corner-add">
+                    <input
+                      placeholder="블록 전용 코너명 (예: SS)"
+                      value={blockCornerName}
+                      onChange={e => setBlockCornerName(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addBlockCorner() } }}
+                    />
+                    <Button variant="outline" size="sm" onClick={addBlockCorner}>
+                      <Plus size={14} />추가
+                    </Button>
                   </div>
-                  {project.can_write && (
-                    <div className="settings-corner-add">
-                      <input
-                        placeholder="블록 전용 코너명 (예: SS)"
-                        value={blockCornerName}
-                        onChange={e => setBlockCornerName(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addBlockCorner() } }}
-                      />
-                      <Button variant="outline" size="sm" onClick={addBlockCorner}>
-                        <Plus size={14} />추가
-                      </Button>
-                    </div>
-                  )}
-                </div>
+                )}
               </div>
             </details>
 
@@ -1134,7 +1322,7 @@ export function TrackingSettings({
             </details>
 
             <div className="form-actions">
-              <Button size="sm" disabled={action.busy || !project.can_write} onClick={() => action.run(saveBlockSettings, '블록 설정을 저장했습니다.')}>
+              <Button size="sm" disabled={action.busy || !project.can_write} onClick={() => action.run(saveBlockSettings, '블록 기준 설정을 저장했습니다.')}>
                 {selectedBlock.name} 설정 저장
               </Button>
             </div>
