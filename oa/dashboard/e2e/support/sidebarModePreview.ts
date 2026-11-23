@@ -1,7 +1,7 @@
 // Synthetic browser/server fixture for mode navigation. No company SDK, DB, or model.
-import { makeWorkspaceDemo } from '../../src/workspaceDemo'
-import { WorkspaceError } from '../../src/workspaceApi'
-import type { WorkspaceSession } from '../../src/workspaceApi'
+import { makeWorkspaceDemo } from '../../src/features/demo/workspaceDemo'
+import { WorkspaceError } from '../../src/features/workspace/workspaceApi'
+import type { WorkspaceSession } from '../../src/features/workspace/workspaceApi'
 
 export class SidebarModePreview {
   admin = true

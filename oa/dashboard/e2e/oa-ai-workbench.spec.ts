@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import type { CodexJob, RationaleContent, ReviewCase, ReviewProposal } from '../src/workspaceApi';
+import type { CodexJob, RationaleContent, ReviewCase, ReviewProposal } from '../src/features/workspace/workspaceApi';
 
 // All identities, reports and model replies here are synthetic network fixtures.
 const user = { id: 'synthetic-owner', name: '합성 검토자', username: 'synthetic-owner', role: 'MEMBER' }

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import { makeDemo } from '../src/demo'
+import { makeDemo } from '../src/features/demo/demo'
 
 // Synthetic UI contracts: no company accounts, models or database are used.
 const profile = { id: 'synthetic-vwp', label: '합성 프로필', api: 'chat_completions',

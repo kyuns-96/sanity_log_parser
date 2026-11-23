@@ -1,0 +1,207 @@
+/* --- ai-connections.css --- */
+.ai-connections-admin { margin-bottom: 24px; }
+.ai-connections-admin h2 { display: flex; align-items: center; gap: 8px; }
+.ai-connections-admin .am-panel-heading { align-items: flex-start; gap: 20px; padding: 22px; }
+.ai-connections-admin .am-panel-heading > div:first-child { min-width: 0; }
+.ai-connections-admin .am-panel-heading > .am-row-actions { align-items: center; padding-top: 1px; }
+.ai-connections-admin .am-panel-heading p { margin: 6px 0 0; font-size: var(--text-body); line-height: 1.65; color: var(--text-secondary); }
+.ai-connections-admin > .am-error, .ai-connections-admin > .am-notice { margin: 18px 22px; }
+.ai-availability-note { margin: 16px 22px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-soft); color: var(--text-secondary); font-size: var(--text-body); line-height: 1.7; }
+.ai-connection-loading { padding: 32px 22px; color: var(--text-muted); font-size: var(--text-body); }
+.ai-catalog-summary { display: flex; flex-wrap: wrap; gap: 24px; padding: 18px 22px; color: var(--text-muted); font-size: var(--text-body); }
+.ai-catalog-summary strong { margin-left: 5px; color: var(--ink); font-weight: 600; }
+.ai-task-defaults { display: grid; gap: 14px; padding: 20px 22px; border-bottom: 1px solid var(--line); }
+.ai-task-defaults header { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
+.ai-task-defaults h3 { margin: 0; color: var(--ink); font-size: var(--text-lead); font-weight: 600; }
+.ai-task-defaults header p { margin: 5px 0 0; color: var(--text-muted); font-size: var(--text-body); line-height: 1.6; }
+.ai-task-default-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.ai-task-default-grid fieldset { min-width: 0; margin: 0; padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
+.ai-task-default-grid legend { padding: 0 5px; color: var(--ink); font-size: var(--text-body); font-weight: 600; }
+.ai-task-default-grid fieldset > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ai-task-default-grid label { display: grid; gap: 6px; min-width: 0; color: var(--text-secondary); font-size: var(--text-body); }
+.ai-task-default-grid select { min-width: 0; width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); text-overflow: ellipsis; }
+.ai-task-default-grid p { grid-column: 1 / -1; margin: 0; color: var(--warning); font-size: var(--text-data); }
+.ai-task-default-actions { display: flex; justify-content: flex-end; }
+.ai-list-heading, .ai-connections-admin .ai-connection-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr) 86px 230px; gap: 20px; align-items: center; }
+.ai-list-heading { padding: 11px 22px; border-block: 1px solid var(--line-soft); color: var(--text-muted); background: var(--surface-soft); font-size: var(--text-data); }
+.ai-list-heading > :last-child { text-align: right; }
+.ai-connection-list { margin: 0; }
+.ai-connections-admin .ai-connection-row { padding: 20px 22px; }
+.ai-connection-row > div { min-width: 0; }
+.ai-connection-row .am-row-actions { justify-content: flex-end; }
+.ai-connection-row .ai-connection-delete { color: var(--danger); }
+.ai-delete-details { display: grid; gap: 5px; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-soft); overflow-wrap: anywhere; }
+.ai-delete-details strong { color: var(--ink); font-size: var(--text-lead); }
+.ai-delete-details span, .ai-delete-explanation { color: var(--text-secondary); font-size: var(--text-body); line-height: 1.7; }
+.ai-delete-explanation { margin: 0; }
+.ai-delete-dialog .ai-delete-confirm { background: var(--danger); color: var(--surface); }
+.ai-connection-row[data-enabled='false'] { background: var(--surface-soft); }
+.ai-connection-title { display: flex; align-items: center; gap: 9px; margin-bottom: 5px; }
+.ai-connection-list .ai-connection-title strong { font-size: var(--text-lead); }
+.ai-provider-badge { flex-shrink: 0; padding: 3px 7px; border-radius: 5px; background: var(--surface-soft); border-color: var(--line); font-size: var(--text-caption); font-weight: 650; letter-spacing: .3px; }
+.ai-connection-model code { display: block; color: var(--ink); font-size: var(--text-body); line-height: 1.65; overflow-wrap: anywhere; }
+.ai-connections-admin .ai-connection-row-status .ai-connection-status { display: inline-flex; margin: 0; }
+.ai-connection-status, .ai-credential-status { flex-shrink: 0; font-size: var(--text-data); font-weight: 550; padding: 3px 8px; background: var(--surface-soft); color: var(--text-secondary); border-color: var(--line); }
+.ai-connection-list [data-enabled='true'] .ai-connection-status, .ai-credential-status.is-registered { background: var(--success-soft); color: var(--success); border-color: var(--success-line); }
+.ai-connections-admin .ai-connection-form { margin: 0; padding: 22px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+.ai-connection-form-heading { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 7px; background: var(--surface-soft); }
+.ai-connection-form-heading p { margin: 0; font-size: var(--text-body); color: var(--text-secondary); line-height: 1.65; }
+.ai-form-section { min-width: 0; margin: 0; padding: 18px; border: 1px solid var(--line); border-radius: 8px; }
+.ai-form-section > legend { padding: 0 7px; font-size: var(--text-body); font-weight: 600; color: var(--ink); }
+.ai-section-content { display: grid; gap: 20px; min-width: 0; }
+.ai-connections-admin .ai-connection-form label { min-width: 0; gap: 8px; line-height: 1.6; font-size: var(--text-body); }
+.ai-connections-admin .ai-connection-form :is([data-slot='input'], select, textarea) { min-width: 0; max-width: 100%; width: 100%; font-size: var(--text-body); }
+.ai-connections-admin .ai-connection-form :is([data-slot='input'], select) { height: 40px; min-height: 40px; }
+.ai-connections-admin .ai-connection-form textarea { min-height: 126px; resize: vertical; font-family: var(--font-mono); font-size: var(--text-body); line-height: 1.7; }
+.ai-connections-admin .ai-connection-form select { text-overflow: ellipsis; }
+.ai-connections-admin .ai-connection-form label small { font-size: var(--text-data); line-height: 1.7; }
+.ai-form-feedback { grid-column: 1 / -1; margin: 0; }
+.ai-connection-form > .am-row-actions { grid-column: 1 / -1; justify-content: flex-end; padding-top: 18px; border-top: 1px solid var(--line); }
+.ai-connection-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.ai-connection-gateway { grid-column: 1 / -1; }
+.ai-gateway-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ai-gateway-fields > p { grid-column: 1 / -1; }
+.ai-connection-gateway p { margin: 0; font-size: var(--text-body); line-height: 1.7; color: var(--text-secondary); }
+.ai-connections-admin .ai-connection-form .ai-checkbox { display: flex; align-items: center; gap: 10px; min-height: 28px; font-weight: 500; }
+.ai-checkbox input { width: 15px; height: 15px; flex-shrink: 0; margin: 0; accent-color: var(--accent); }
+.ai-checkbox > span { min-width: 0; overflow-wrap: anywhere; }
+.ai-processing-limits { grid-column: 1 / -1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; }
+.ai-processing-limits > summary { padding: 16px 18px; cursor: pointer; color: var(--text-secondary); font-size: var(--text-body); }
+.ai-limits-summary { display: inline-grid; gap: 4px; max-width: calc(100% - 20px); vertical-align: top; }
+.ai-limits-summary strong { color: var(--ink); font-size: var(--text-body); font-weight: 600; }
+.ai-limits-summary-description { color: var(--text-muted); font-size: var(--text-data); }
+.ai-limits-content { display: grid; gap: 16px; padding: 18px; border-top: 1px solid var(--line-soft); }
+.ai-connections-admin .ai-limits-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ai-option-row { padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 6px; background: var(--surface-soft); }
+.ai-limits-content > p, .ai-limits-section > p { margin: 0; color: var(--text-muted); font-size: var(--text-data); line-height: 1.7; }
+.ai-limits-section { display: grid; gap: 12px; padding-top: 18px; border-top: 1px solid var(--line); }
+.ai-limits-section h4 { margin: 0; color: var(--ink); font-size: var(--text-body); font-weight: 600; }
+.ai-personal-connections { display: grid; gap: 16px; }
+.ai-personal-connection { border: 1px solid var(--line); border-radius: 9px; padding: 18px; display: grid; gap: 12px; }
+.ai-personal-connection[data-enabled='false'] { background: var(--surface-soft); }
+.ai-personal-connection header { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 10px; }
+.ai-personal-connection header strong { font-size: var(--text-lead); font-weight: 600; }
+.ai-personal-connection small { color: var(--text-secondary); font-size: var(--text-body); line-height: 1.65; overflow-wrap: anywhere; }
+.ai-personal-connection form { display: grid; gap: 10px; }
+.ai-personal-connection form label { font-size: var(--text-body); font-weight: 550; }
+.ai-personal-connection :is(.ws-notice, .ws-error) { margin: 0; padding: 10px 12px; border-radius: 6px; font-size: var(--text-body); line-height: 1.65; }
+.ai-personal-connection .am-row-actions { justify-content: flex-end; }
+.ai-personal-connection .am-row-actions > button:first-child:not(:last-child) { margin-right: auto; }
+.ai-connection-selectors { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+.personal-ai-token-dialog { max-height: 90dvh; overflow-y: auto; }
+@media (max-width: 1000px) {
+  .ai-connections-admin .ai-connection-form { grid-template-columns: minmax(0, 1fr); }
+  .ai-connections-admin .am-panel-heading { flex-wrap: wrap; }
+}
+.vwp-ai-profile-details { display: grid; gap: 9px; margin: 0; padding: 14px; border-radius: 6px; background: var(--surface-soft); font-size: var(--text-body); }
+.vwp-ai-profile-details > div { display: flex; justify-content: space-between; gap: 16px; }
+.vwp-ai-profile-details dt { color: var(--text-muted); }
+.vwp-ai-profile-details dd { margin: 0; color: var(--ink); }
+.ai-model-heading { font-size: var(--text-body); font-weight: 600; color: var(--ink); }
+.ai-model-help { margin: 4px 0 0; color: var(--text-muted); font-size: var(--text-data); line-height: 1.7; }
+.vwp-ai-model-options { display: grid; gap: 8px; min-width: 0; max-height: 18rem; overflow: auto; }
+.ai-connections-admin .ai-connection-form .ai-model-option { align-items: flex-start; padding: 11px 12px; border: 1px solid var(--line); border-radius: 6px; }
+.ai-model-option input { margin-top: 2px; }
+.ai-model-option:has(input:checked) { background: var(--accent-soft); border-color: var(--accent-line); }
+.ai-model-option[data-unavailable='true'] { border-style: dashed; background: var(--surface-soft); }
+.vwp-ai-model-options .ai-checkbox span { min-width: 0; overflow-wrap: anywhere; }
+
+/* --- ai-jobs.css --- */
+.ai-jobs { margin: 24px 0; color: var(--foreground); }
+.ai-jobs-header, .ai-jobs-tools, .ai-job-top, .ai-job-stage, .ai-job-card footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ai-jobs-header { margin-bottom: 18px; align-items: flex-end; }
+.ai-jobs-eyebrow { display: inline-flex; gap: 6px; align-items: center; color: var(--muted-foreground); font-size: var(--text-caption); font-weight: 650; letter-spacing: .1em; }
+.ai-jobs-header h2 { font-size: 19px; font-weight: 650; margin: 6px 0; letter-spacing: -.025em; }
+.ai-jobs-header h2 span { font-size: var(--text-body); font-weight: 500; margin-left: 8px; color: var(--muted-foreground); }
+.ai-jobs-header p, .ai-job-note { font-size: var(--text-body); color: var(--muted-foreground); line-height: 1.6; }
+.ai-worker-health { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-size: var(--text-data); color: var(--muted-foreground); }
+.ai-worker-health i, .ai-job-status i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.ai-worker-health i { color: var(--warning); }
+.ai-worker-health.online i { color: var(--success); }
+.ai-jobs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px; }
+.ai-job-card { min-width: 0; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 19px 20px 0; box-shadow: 0 2px 5px #00000003; }
+.ai-job-top { font-size: var(--text-data); }
+.ai-job-kind { color: var(--muted-foreground); }
+.ai-job-top-actions { display: flex; align-items: center; gap: 8px; }
+.ai-job-delete { width: 28px; height: 28px; color: var(--muted-foreground); }
+.ai-job-delete:not(:disabled):hover { color: var(--danger); background: var(--danger-soft); }
+.ai-job-status { display: inline-flex; align-items: center; gap: 5px; color: var(--ai); background: var(--ai-soft); padding: 4px 7px; border-radius: 5px; }
+.ai-job-completed .ai-job-status { color: var(--success); background: var(--success-soft); }
+.ai-job-failed .ai-job-status { color: var(--danger); background: var(--danger-soft); }
+.ai-job-unknown .ai-job-status, .ai-job-stale .ai-job-status { color: var(--warning); background: var(--warning-soft); }
+.ai-job-cancelled .ai-job-status { color: var(--text-muted); background: var(--surface-soft); }
+.ai-job-card h3 { font-size: 16px; font-weight: 650; margin: 16px 0 4px; overflow-wrap: anywhere; }
+.ai-job-model { color: var(--muted-foreground); font-size: var(--text-data); overflow-wrap: anywhere; margin-bottom: 19px; }
+.ai-job-stage { font-size: var(--text-data); margin-bottom: 8px; }
+.ai-job-stage strong { color: var(--muted-foreground); font-size: var(--text-data); font-weight: 500; }
+.ai-job-progress { position: relative; overflow: hidden; border-radius: 4px; }
+.ai-job-progress-motion { position: absolute; inset: 0 auto 0 0; overflow: hidden; border-radius: inherit; pointer-events: none; transition: width .3s ease; }
+.ai-job-progress-motion::after { content: ''; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 15%, #ffffff99 50%, transparent 85%); transform: translateX(-100%); animation: ai-job-progress-shimmer 1.8s ease-in-out infinite; }
+.ai-job-progress progress:not([value]) + .ai-job-progress-motion::after,
+.ai-job-progress progress[value="0"] + .ai-job-progress-motion::after { background: linear-gradient(100deg, transparent 15%, var(--ai) 50%, transparent 85%); opacity: .4; }
+@keyframes ai-job-progress-shimmer { to { transform: translateX(100%); } }
+.ai-job-card progress { appearance: none; width: 100%; height: 5px; display: block; overflow: hidden; border: 0; border-radius: 4px; background: var(--muted); accent-color: var(--ai); }
+.ai-job-card progress::-webkit-progress-bar { background: var(--muted); border-radius: 4px; }
+.ai-job-card progress::-webkit-progress-value { background: var(--ai); border-radius: 4px; transition: width .3s ease; }
+.ai-job-card progress::-moz-progress-bar { background: var(--ai); border-radius: 4px; }
+.ai-job-card progress:indeterminate { background: repeating-linear-gradient(100deg, var(--muted) 0 10px, var(--ai-soft) 10px 20px); }
+.ai-job-card progress:indeterminate::-webkit-progress-bar { background: repeating-linear-gradient(100deg, var(--muted) 0 10px, var(--ai-soft) 10px 20px); }
+.ai-job-completed progress { accent-color: var(--success); }
+.ai-job-completed progress::-webkit-progress-value { background: var(--success); }
+.ai-job-completed progress::-moz-progress-bar { background: var(--success); }
+@media (prefers-reduced-motion: reduce) {
+  .ai-job-progress-motion { display: none; transition: none; }
+  .ai-job-progress-motion::after { animation: none; }
+  .ai-job-card progress::-webkit-progress-value { transition: none; }
+}
+.ai-job-coverage { font-size: var(--text-caption); color: var(--muted-foreground); margin: 9px 0 17px; line-height: 1.5; }
+.ai-job-metrics { display: grid; grid-template-columns: 1fr 1fr 1.3fr; gap: 10px; padding: 14px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.ai-job-metrics dt { font-size: var(--text-caption); color: var(--muted-foreground); display: flex; align-items: center; gap: 3px; margin-bottom: 7px; }
+.ai-job-metrics dd { font-size: var(--text-body); font-variant-numeric: tabular-nums; font-weight: 550; margin: 0; }
+.ai-job-note { margin: 13px 0; min-height: 38px; font-size: var(--text-data); }
+.ai-job-error { display: block; margin-bottom: 10px; font-size: var(--text-caption); color: var(--danger); }
+.ai-job-card footer { border-top: 1px solid var(--border); padding: 10px 0; font-size: var(--text-caption); color: var(--muted-foreground); }
+.ai-job-card footer div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+.ai-jobs-warning { padding: 10px 13px; background: var(--warning-soft); border: 1px solid var(--warning-line); color: var(--foreground); font-size: var(--text-body); border-radius: 7px; display: flex; align-items: center; gap: 7px; margin-bottom: 12px; }
+.ai-jobs-empty { display: flex; gap: 15px; align-items: center; border: 1px dashed var(--border); border-radius: 10px; padding: 26px; color: var(--muted-foreground); font-size: var(--text-body); }
+.ai-jobs-empty strong { font-weight: 500; color: var(--foreground); }
+.ai-jobs-empty p { margin-top: 6px; font-size: var(--text-body); }
+.ai-job-card { animation: ai-job-enter .22s ease-out both; }
+.ai-job-card[data-moving] .ai-job-status i { animation: ai-job-pulse 1.5s ease-in-out infinite; }
+.ai-job-structure { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 0; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.ai-job-structure dt { color: var(--muted-foreground); font-size: var(--text-caption); margin-bottom: 5px; }
+.ai-job-structure dd { margin: 0; font-size: var(--text-lead); font-weight: 600; font-variant-numeric: tabular-nums; }
+@keyframes ai-job-enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes ai-job-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) {
+  .ai-job-card, .ai-job-card[data-moving] .ai-job-status i { animation: none; }
+}
+
+/* --- ai-model-select.css --- */
+.ws-ai-model-select { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; max-width: 100%; font-size: var(--text-data); color: var(--text-muted); }
+.ws-ai-model-select select { box-sizing: border-box; max-width: min(260px, 100%); min-width: 0; height: var(--ws-ai-control-height, 2rem); min-height: var(--ws-ai-control-height, 2rem); border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; color: var(--ink); background: var(--surface); font: inherit; }
+.ws-ai-model-select select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.ws-ai-model-select select:disabled { opacity: .6; }
+.ws-workbench-stage-actions { flex-wrap: wrap; max-width: 100%; }
+.ws-workbench .ws-workbench-stage-actions { --ws-ai-control-height: 2.25rem; align-items: flex-start; }
+.ws-workbench-stage-actions > .ws-workbench-ai > [data-slot=button],
+.ws-workbench-stage-actions > [data-slot=button] { height: var(--ws-ai-control-height); min-height: var(--ws-ai-control-height); }
+.ws-ai-model-select > span { white-space: nowrap; }
+
+/* --- personal-ai-token.css --- */
+.personal-ai-token-dialog { max-width: min(640px, calc(100vw - 48px)); }
+.personal-ai-token-issue-link { display: inline-flex; align-items: center; align-self: flex-start; gap: 6px; min-height: 36px; color: var(--accent); font-size: var(--text-body); text-underline-offset: 3px; }
+.personal-ai-token-issue-link:hover { text-decoration: underline; }
+@media (max-width: 640px) {
+  .personal-ai-token-trigger > span { display: none; }
+  .personal-ai-token-trigger { min-width: 32px; padding-inline: 8px; }
+}
+
+/* --- unknown-batch-recovery.css --- */
+.unknown-batch-details { display: grid; gap: 10px; margin: 0; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
+.unknown-batch-details > div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 12px; font-size: var(--text-body); }
+.unknown-batch-details dt { color: var(--text-muted); }
+.unknown-batch-details dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.unknown-batch-list { display: grid; gap: 5px; margin: 0; padding-left: 16px; }
+.unknown-batch-warning { padding: 12px 14px; border: 1px solid var(--warning-line); border-radius: 7px; background: var(--warning-soft); color: var(--warning); font-size: var(--text-body); line-height: 1.7; }
+.unknown-batch-inline-error { color: var(--danger); font-size: var(--text-data); }
