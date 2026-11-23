@@ -1,5 +1,5 @@
 """OA mail composition root: explicit company adapter, no transport fallback."""
-from area_power.oa.mail import main as run_mail_worker
+from oa.area_power.mail import main as run_mail_worker
 from oa.integration.corporate_mail import create_mail_sender
 
 

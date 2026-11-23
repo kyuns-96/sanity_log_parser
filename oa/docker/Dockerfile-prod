@@ -68,6 +68,7 @@ ENV PATH="/opt/venv/bin:/usr/sbin:${PATH}" \
 COPY --from=python-dependencies /opt/venv/ /opt/venv/
 COPY common/ ./common/
 COPY oa/*.py ./oa/
+COPY oa/area_power/ ./oa/area_power/
 COPY oa/integration/ ./oa/integration/
 # Only the build-side directory moves. Keep the Python runtime package path.
 COPY ${OA_DOCKER_DIR}/start.py ${OA_DOCKER_DIR}/nginx-main.conf ${OA_DOCKER_DIR}/nginx.conf ./oa/docker/

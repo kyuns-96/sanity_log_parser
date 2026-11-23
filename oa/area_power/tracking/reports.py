@@ -1,0 +1,151 @@
+"""Read-only web report viewer and frozen mail snapshot queries for NET_VER tracking."""
+from __future__ import annotations
+
+from typing import Any
+from uuid import UUID
+
+from common.area_power.tracking import render_block_mail_text, render_top_mail_text
+from ..schemas import reject
+from .overview import is_tracking_admin, mail_delivery_info, overview
+
+
+def _render_report_text(kind: str, snapshot: dict[str, Any]) -> tuple[str, str]:
+    if kind == "tracking_top_mail":
+        return render_top_mail_text(snapshot)
+    return render_block_mail_text(snapshot)
+
+
+def project_reports(service, project_id: UUID) -> dict[str, Any]:
+    """Read-only web view of sent TOP/block reports and live round summaries."""
+    data = overview(service, project_id)
+    is_admin = is_tracking_admin(service)
+    with service.db.connect() as conn:
+        top_rows = service.all_records(conn, "tracking_top_mail", project_id=project_id)
+        block_rows = service.all_records(conn, "tracking_block_mail", project_id=project_id)
+        all_rows = sorted(
+            [*top_rows, *block_rows],
+            key=lambda r: str(r.get("created_at") or ""),
+            reverse=True,
+        )
+        rounds_by_id = {str(r["id"]): r for r in data["rounds"]}
+        sent_reports = []
+        for row in all_rows:
+            snap = row.get("payload", {}).get("snapshot") or {}
+            delivery = mail_delivery_info(service, conn, row, include_recipients=is_admin)
+            subject, body = _render_report_text(row["record_type"], snap)
+            rid = str(row.get("parent_id") or "")
+            round_info = rounds_by_id.get(rid)
+            has_newer = False
+            if round_info:
+                if row["record_type"] == "tracking_top_mail":
+                    has_newer = bool(round_info.get("has_post_top_revisions"))
+                else:
+                    blk = next((b for b in round_info["blocks"] if str(b["block_id"]) == str(row.get("block_id"))), None)
+                    has_newer = bool(blk and blk.get("post_top_mail_revised"))
+            sent_reports.append({
+                "id": row["id"],
+                "kind": row["record_type"],
+                "round_id": row.get("parent_id"),
+                "net_ver": snap.get("net_ver") or (round_info["net_ver"] if round_info else ""),
+                "block_id": row.get("block_id"),
+                "block_name": snap.get("block_name") or ("Full-chip · TOP 요약" if row["record_type"] == "tracking_top_mail" else ""),
+                "is_full_chip": bool(snap.get("is_full_chip")) if row["record_type"] == "tracking_block_mail" else True,
+                "revision_label": snap.get("revision_label") or "",
+                "trigger": row.get("payload", {}).get("trigger") or snap.get("trigger") or "",
+                "created_at": row.get("created_at"),
+                "frozen_at": snap.get("frozen_at") or row.get("created_at"),
+                "delivery": delivery,
+                "has_newer_results": has_newer,
+                "subject": subject,
+                "body": body,
+                "snapshot": snap,
+            })
+
+    live_reports = []
+    for chosen in data["rounds"]:
+        full_chip = next((b for b in chosen["blocks"] if b["is_full_chip"]), None)
+        top_snapshot = {
+            "project_name": data["project_name"],
+            "net_ver": chosen["net_ver"],
+            "trigger": "all_completed" if all(b["all_completed"] for b in chosen["blocks"]) and chosen["blocks"] else "deadline",
+            "netlist_arrived_at": chosen["netlist_arrived_at"],
+            "deadline_display": f"{chosen.get('deadline_date') or ''} {chosen.get('deadline_time') or ''} ({chosen.get('deadline_timezone') or ''})".strip(),
+            "full_chip": full_chip,
+            "full_chip_counts": chosen["full_chip_counts"],
+            "sub_block_counts": chosen["sub_block_counts"],
+            "blocks": chosen["blocks"],
+        }
+        top_subject, top_body = render_top_mail_text(top_snapshot)
+        block_items = []
+        for block in chosen["blocks"]:
+            bsnap = {
+                "project_name": data["project_name"],
+                "block_name": block["block_name"],
+                "is_full_chip": block["is_full_chip"],
+                "net_ver": chosen["net_ver"],
+                "revision_label": block["revision_label"],
+                "totals": block["totals"],
+                "power_evaluation": block["power_evaluation"],
+                "corners": block["corners"],
+                "revised": False,
+                "post_top_mail_revised": block["post_top_mail_revised"],
+            }
+            b_subj, b_body = render_block_mail_text(bsnap)
+            block_items.append({
+                "block_id": block["block_id"],
+                "block_name": block["block_name"],
+                "is_full_chip": block["is_full_chip"],
+                "revision_label": block["revision_label"],
+                "mail_sent": bool((block.get("block_mail") or {}).get("mail_id")),
+                "subject": b_subj,
+                "body": b_body,
+                "snapshot": bsnap,
+            })
+        live_reports.append({
+            "round_id": chosen["id"],
+            "net_ver": chosen["net_ver"],
+            "deadline_date": chosen.get("deadline_date"),
+            "deadline_time": chosen.get("deadline_time"),
+            "top_mail_sent": bool((chosen.get("top_mail") or {}).get("mail_id")),
+            "top_report": {"subject": top_subject, "body": top_body, "snapshot": top_snapshot},
+            "block_reports": block_items,
+        })
+
+    return {
+        "project_id": project_id,
+        "project_name": data["project_name"],
+        "sent_reports": sent_reports,
+        "live_reports": live_reports,
+    }
+
+
+def mail_snapshot(service, mail_id: UUID) -> dict[str, Any]:
+    """Open a frozen mail snapshot (block or TOP) alongside pointers to the latest live status."""
+    is_admin = is_tracking_admin(service)
+    with service.db.connect() as conn:
+        row = service.db.record(conn, mail_id)
+        if row["record_type"] not in ("tracking_block_mail", "tracking_top_mail"):
+            reject("Record is not a tracking mail snapshot.", "not_found", 404)
+        delivery = mail_delivery_info(service, conn, row, include_recipients=is_admin)
+        round_row = service.db.record(conn, row["parent_id"], kind="tracking_round")
+        latest_slots = service.all_records(conn, "tracking_slot", parent_id=round_row["id"])
+        has_newer = any(
+            s["payload"].get("post_top_mail_revised")
+            for s in latest_slots
+            if row["record_type"] == "tracking_top_mail" or str(s["block_id"]) == str(row.get("block_id"))
+        )
+        snap = row["payload"].get("snapshot") or {}
+        subject, body = _render_report_text(row["record_type"], snap)
+        return {
+            "id": row["id"],
+            "kind": row["record_type"],
+            "project_id": row["project_id"],
+            "block_id": row.get("block_id"),
+            "round_id": round_row["id"],
+            "created_at": row.get("created_at"),
+            "delivery": delivery,
+            "subject": subject,
+            "body": body,
+            "snapshot": snap,
+            "has_newer_results": has_newer,
+        }

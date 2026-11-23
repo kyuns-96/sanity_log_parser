@@ -219,7 +219,7 @@ class AreaAdapters:
     PREFIX = "design-atlas-v1.binding."
 
     def __init__(self, catalog):
-        from area_power.common.db import Database
+        from common.area_power.db import Database
         self.catalog = catalog
         self.db = Database()
 

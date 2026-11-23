@@ -18,8 +18,9 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE_PATTERNS = ("*.py", "common/*.py", "devtools/*.py", "tests/*.py", "vwp/*.py", "vwp_bridge/*.py", "oa/*.py",
-                   "bin/sanity",
+SOURCE_PATTERNS = ("*.py", "common/*.py", "common/area_power/**/*.py", "devtools/*.py", "tests/*.py",
+                   "vwp/*.py", "vwp/area_power/**/*.py", "vwp_bridge/*.py", "vwp_bridge/area_power/**/*.py",
+                   "oa/*.py", "oa/area_power/**/*.py", "bin/sanity", "bin/area-power",
                    "vwp/integration/__init__.py", "oa/integration/__init__.py",
                    "vwp_bridge/integration/__init__.py", "vwp_bridge/integration/parser_example.py",
                    "vwp_bridge/integration/public_parsers.py",
@@ -60,8 +61,8 @@ def stage_source(source, target):
                 dest = target / path.relative_to(source)
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(path, dest)
-                if path.relative_to(source).as_posix() == 'bin/sanity':
-                    shutil.copymode(path,dest)
+                if path.relative_to(source).as_posix() in ('bin/sanity', 'bin/area-power'):
+                    shutil.copymode(path, dest)
 
 
 def pg_binaries(explicit):

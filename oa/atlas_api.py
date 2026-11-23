@@ -96,7 +96,7 @@ def create_atlas_router(authorized_dependency):
             fail("AREA_POWER_UNAVAILABLE")
 
     def area_error(exc):
-        from area_power.common.errors import ConfigurationError, DomainError
+        from common.area_power.errors import ConfigurationError, DomainError
         if isinstance(exc, ConfigurationError):
             return JSONResponse({"code": "AREA_POWER_UNAVAILABLE", "status": "NOT_PREPARED"}, 503)
         if isinstance(exc, DomainError):
@@ -119,12 +119,12 @@ def create_atlas_router(authorized_dependency):
                 except ReviewError:
                     raise
                 except Exception as exc:
-                    from area_power.common.errors import ConfigurationError, DomainError
+                    from common.area_power.errors import ConfigurationError, DomainError
                     if not isinstance(exc, (ConfigurationError, DomainError)):
                         raise
                     result.update(area_status="unavailable", area_error="AREA_POWER_UNAVAILABLE")
             if result["area_enabled"]:
-                from area_power.common.jsonutil import public
+                from common.area_power.jsonutil import public
                 return JSONResponse(public(result))
             return result
     @router.get("/reports")

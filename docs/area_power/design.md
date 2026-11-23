@@ -32,7 +32,7 @@
 
 현재 비교 화면은 상단 범위와 독립적으로 양쪽 Block·NET_VER·REVISION·corner·CSV 실행을 선택한다. instance별 AI 분석과 요약 메일은 사용자가 요청한다. NET_VER 현황, 업로드에 따른 자동 분석, 블록 완료 메일과 TOP 마감 요약은 2단계 구현 대상이다.
 
-Design Atlas 저장소의 `area_power.vwp` CLI, `area_power.vwp_server` 업로드 API·분석/AI worker, `area_power.oa` DB API·추상 메일 worker와 호스트 Dashboard의 프로젝트 비교를 제공한다. 기준은 기존 project payload의 `baseline_project_id` 하나로 저장하며 새 DDL·테이블·migration을 추가하지 않는다. 회사 메일 전송은 [MailSender Protocol](../../oa/MAIL_INTEGRATION.md)의 사내 어댑터 경계이고, 비교 자체에는 AI·메일 설정이 필요하지 않다. 경로 대응은 프로젝트 비교의 선택/입력 컨트롤로 기존 불변 mapping 계약을 사용한다. 실행·API 계약은 [README](../../area_power/README.md)를 따른다.
+Design Atlas 저장소의 `vwp.area_power` CLI, `vwp_bridge.area_power` 업로드 API·분석/AI worker, `oa.area_power` DB API·추상 메일 worker와 호스트 Dashboard의 프로젝트 비교를 제공한다. 기준은 기존 project payload의 `baseline_project_id` 하나로 저장하며 새 DDL·테이블·migration을 추가하지 않는다. 회사 메일 전송은 [MailSender Protocol](../../oa/MAIL_INTEGRATION.md)의 사내 어댑터 경계이고, 비교 자체에는 AI·메일 설정이 필요하지 않다. 경로 대응은 프로젝트 비교의 선택/입력 컨트롤로 기존 불변 mapping 계약을 사용한다. 실행·API 계약은 [README](README.md)를 따른다.
 
 로컬 PostgreSQL 18.6에서 실제 API·worker·화면과 이전 SMTP 구현의 수락을 확인한 기록이 있다. 현재 SMTP 구현은 제거됐으며 실제 사내 메일 연결 검증은 아니다. AI 미설정은 수치 결과를 보존한 채 needs_review로 남긴다. 실제 사내 DB·report_export·AI 제공자·메일 서비스·실데이터 연결을 완료했다고 간주하지 않는다. Area/Power API는 호스트의 인증 세션·서버 측 프로젝트 권한을 사용한다. 사내 SSO 어댑터 미설정 보호는 유지하며, 명시적인 local_token 개발 모드는 운영 SSO의 대체 경로가 아니다.
 
