@@ -779,6 +779,35 @@ async function dispatch(path: string, body: Payload | undefined, plain: boolean 
   if (trackingExpPropRoute && body) {
     return fail('합성 데모에서는 중앙 VWP AI 제안을 호출하지 않습니다. 아래 승인 등록 폼으로 직접 추가해 확인할 수 있습니다.')
   }
+  const trackingReportsRoute = /^\/tracking\/projects\/([^/]+)\/reports$/.exec(route)
+  if (trackingReportsRoute && !body) {
+    const pid = decodeURIComponent(trackingReportsRoute[1])
+    const ov = demoTrackingOverview(pid, visible, catalog)
+    const live_reports = ov.rounds.map(r => ({
+      round_id: r.id,
+      net_ver: r.net_ver,
+      deadline_date: r.deadline_date,
+      deadline_time: r.deadline_time,
+      top_mail_sent: false,
+      top_report: {
+        subject: `[Design Atlas] TOP 요약 · ${ov.project_name} · ${r.net_ver}`,
+        body: `프로젝트: ${ov.project_name} · NET_VER: ${r.net_ver}\n마감: ${r.deadline_date} ${r.deadline_time} (${r.deadline_timezone})\n\n` +
+          r.blocks.map(b => `- ${b.is_full_chip ? `${ov.project_name} · Full-chip` : b.block_name} | 도착 ${b.arrived_corners}/${b.required_corners} | 완료 ${b.completed_corners}/${b.required_corners} | ${b.status_summary}`).join('\n'),
+        snapshot: { project_name: ov.project_name, net_ver: r.net_ver, blocks: r.blocks },
+      },
+      block_reports: r.blocks.map(b => ({
+        block_id: b.block_id,
+        block_name: b.block_name,
+        is_full_chip: b.is_full_chip,
+        revision_label: b.revision_label,
+        mail_sent: false,
+        subject: `[Design Atlas] ${ov.project_name} · ${b.block_name} · ${r.net_ver}`,
+        body: `블록: ${b.block_name} (${r.net_ver} ${b.revision_label})\n도착 ${b.arrived_corners}/${b.required_corners} · 완료 ${b.completed_corners}/${b.required_corners}\n상태: ${b.status_summary}`,
+        snapshot: { project_name: ov.project_name, block_name: b.block_name, net_ver: r.net_ver, revision_label: b.revision_label, corners: b.corners },
+      })),
+    }))
+    return { project_id: pid, project_name: ov.project_name, sent_reports: [], live_reports }
+  }
   const trackingMailSnapRoute = /^\/tracking\/mails\/([^/]+)$/.exec(route)
   if (trackingMailSnapRoute && !body) {
     const id = decodeURIComponent(trackingMailSnapRoute[1])

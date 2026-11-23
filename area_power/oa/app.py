@@ -365,6 +365,10 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
     def approve_tracking_expectations(proposal_id: UUID, body: ExpectationApprovalInput, context=Depends(service)):
         return json(tracking.approve_expectations(context, proposal_id, body, context.access.actor.user_id), 201)
 
+    @router.get("/tracking/projects/{project_id}/reports")
+    def tracking_project_reports(project_id: UUID, context=Depends(service)):
+        return json(tracking.project_reports(context, project_id))
+
     @router.get("/tracking/mails/{mail_id}")
     def tracking_mail_snapshot(mail_id: UUID, context=Depends(service)):
         return json(tracking.mail_snapshot(context, mail_id))

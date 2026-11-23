@@ -11,6 +11,7 @@ import { HierarchyBrowser, type BrowserRow, type ChildState, type ResultGroup } 
 import { AREA_THRESHOLD, atLeast, loadColumns, loadMinArea, requestedMetrics, saveColumns, saveMinArea } from './metricCatalog'
 import { MappingSuggestions } from './MappingSuggestions'
 import { NotesPanel } from './NotesPanel'
+import { ComparisonHistoryView, ReportsView } from './ReportsAndHistory'
 import { TrackingOverview } from './TrackingOverview'
 import { trackingOverviewSchema, type TrackingOverviewData } from './trackingApi'
 import { TriagePanel } from './TriagePanel'
@@ -50,7 +51,7 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
   const [baseline, setBaseline] = useState<z.infer<typeof baselineSchema> | null>(null)
   const [baselineError, setBaselineError] = useState('')
   const lastDesignation = useRef<string | null>(null)
-  const [section, setSection] = useState<'status' | 'compare'>('status')
+  const [section, setSection] = useState<'status' | 'compare' | 'reports' | 'history'>('status')
   const [trackingData, setTrackingData] = useState<TrackingOverviewData | null>(null)
   const [trackingLoading, setTrackingLoading] = useState(false)
   const [trackingError, setTrackingError] = useState('')
@@ -440,8 +441,16 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
     </section>
     {currentAreaId && <nav className="tracking-view-tabs" role="tablist" aria-label="프로젝트 비교 보기">
       <div className="tracking-tabs-primary">
-        {([['status', '프로젝트 현황'], ['compare', '직접 비교']] as const).map(([key, label]) => (
-          <button key={key} type="button" role="tab" aria-selected={section === key} onClick={() => setSection(key)}>{label}</button>
+        {([
+          ['status', '프로젝트 현황', null],
+          ['compare', '직접 비교', null],
+          ['reports', '발송 리포트', null],
+          ['history', '비교 이력', history.length],
+        ] as const).map(([key, label, badgeCount]) => (
+          <button key={key} type="button" role="tab" aria-selected={section === key} onClick={() => setSection(key)}>
+            <span>{label}</span>
+            {badgeCount !== null && <span className="tab-count">{badgeCount}</span>}
+          </button>
         ))}
       </div>
     </nav>}
@@ -466,6 +475,25 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
           atlas.replaceRoute(`${location.pathname}${next.toString() ? `?${next}` : ''}`)
         }}
         onOpenResult={openTrackingResult}
+      />
+    )}
+    {currentAreaId && section === 'reports' && (
+      <ReportsView
+        auth={props.auth}
+        areaProjectId={currentAreaId}
+        refreshVersion={props.refreshVersion}
+        onOpenComparison={id => openTrackingResult({ comparisonId: id })}
+      />
+    )}
+    {currentAreaId && section === 'history' && (
+      <ComparisonHistoryView
+        project={project}
+        candidates={candidates}
+        projectRecords={projectRecords}
+        uploads={props.uploads}
+        comparisons={history}
+        trackingData={trackingData}
+        onOpenComparison={id => openTrackingResult({ comparisonId: id })}
       />
     )}
     {(!currentAreaId || section === 'compare') && <>
@@ -515,7 +543,12 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
       baselineProject={mode === 'project' && baseline?.status === 'available' && baseline.baseline_project_id ? { areaId: baseline.baseline_project_id, name: savedProject?.name || text(baseline.baseline_project?.payload.name) } : null}
       records={props.records} onSaved={props.refresh} />}
     <details className="panel upload-history"><summary>업로드 이력 · PC CLI 메타데이터</summary><Uploads auth={props.auth} access={props.access} uploads={props.uploads} records={props.records} filters={filters} /></details>
-    <details className="panel comparison-history"><summary>저장된 비교 이력 · {history.length}건</summary><div className="compact-list">{history.map(row => <button key={row.id} onClick={() => { setDetail(null); setDetailError(''); setResultSearch(''); setResultQuery({ offset: 0, search: '' }); setComparisonId(row.id); setDetailRefresh(value => value + 1); showResult() }}><span>{date(row.created_at)} · {text(object(row.payload.request).comparison_kind) === 'previous_version' ? '이전 버전' : '프로젝트 비교'}</span><Badge value={row.payload.result_format === 'hierarchy-reference-v1' && row.state === 'completed' ? '조회 준비 완료' : row.state} /></button>)}</div>{!history.length && <p className="muted">저장된 비교가 없습니다.</p>}</details>
+    {currentAreaId && (
+      <section className="panel history-shortcut-bar">
+        <span>이 프로젝트에 저장된 비교 이력 <strong>{history.length}건</strong>을 블록·버전·코너별로 검색해 다시 열 수 있습니다.</span>
+        <Button variant="outline" size="sm" onClick={() => setSection('history')}>비교 이력 열기 →</Button>
+      </section>
+    )}
     </>}
   </>
 }

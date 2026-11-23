@@ -125,10 +125,60 @@ export const trackingMailSnapshotSchema = z.object({
   round_id: z.string(),
   created_at: optionalText,
   delivery: mailDeliverySchema,
+  subject: optionalText,
+  body: optionalText,
   snapshot: loose,
   has_newer_results: z.boolean(),
 }).passthrough()
 export type TrackingMailSnapshot = z.infer<typeof trackingMailSnapshotSchema>
+
+export const sentReportSchema = z.object({
+  id: z.string(),
+  kind: z.string(),
+  round_id: optionalText,
+  net_ver: z.string(),
+  block_id: optionalText,
+  block_name: z.string(),
+  is_full_chip: z.boolean(),
+  revision_label: z.string().optional(),
+  trigger: z.string().optional(),
+  created_at: optionalText,
+  frozen_at: optionalText,
+  delivery: mailDeliverySchema,
+  has_newer_results: z.boolean(),
+  subject: z.string(),
+  body: z.string(),
+  snapshot: loose,
+}).passthrough()
+export type SentReport = z.infer<typeof sentReportSchema>
+
+export const liveRoundReportsSchema = z.object({
+  round_id: z.string(),
+  net_ver: z.string(),
+  deadline_date: optionalText,
+  deadline_time: optionalText,
+  top_mail_sent: z.boolean(),
+  top_report: z.object({ subject: z.string(), body: z.string(), snapshot: loose }),
+  block_reports: z.array(z.object({
+    block_id: z.string(),
+    block_name: z.string(),
+    is_full_chip: z.boolean(),
+    revision_label: z.string().optional(),
+    mail_sent: z.boolean(),
+    subject: z.string(),
+    body: z.string(),
+    snapshot: loose,
+  })),
+}).passthrough()
+export type LiveRoundReports = z.infer<typeof liveRoundReportsSchema>
+
+export const trackingReportsSchema = z.object({
+  project_id: z.string(),
+  project_name: z.string(),
+  sent_reports: z.array(sentReportSchema),
+  live_reports: z.array(liveRoundReportsSchema),
+}).passthrough()
+export type TrackingReportsData = z.infer<typeof trackingReportsSchema>
 
 export const MAIL_STATE_LABEL: Record<string, string> = {
   waiting: '발송 대기',

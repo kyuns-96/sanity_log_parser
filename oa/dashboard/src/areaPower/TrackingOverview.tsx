@@ -321,6 +321,14 @@ export function TrackingOverview({
               </ul>
             </div>
           )}
+          {mailSnapshot.body && (
+            <details className="settings-advanced">
+              <summary><span>메일 원문 보기</span>{mailSnapshot.subject && <small>{mailSnapshot.subject}</small>}</summary>
+              <div className="settings-advanced-body">
+                <pre className="report-mail-body">{mailSnapshot.body}</pre>
+              </div>
+            </details>
+          )}
         </section>
       )}
 

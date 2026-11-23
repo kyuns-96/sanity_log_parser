@@ -556,3 +556,35 @@
 .area-power .tracking-ai-propose { display: flex; gap: 10px; align-items: flex-end; margin-top: 10px; }
 .area-power .tracking-ai-propose textarea { flex: 1; }
 .area-power .tracking-preview-grid { display: grid; gap: 12px; margin-top: 10px; }
+
+/* Web report viewer & searchable comparison history */
+.area-power .tab-count { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 18px; padding: 0 6px; border-radius: 999px; background: var(--surface-soft); border: 1px solid var(--line); font-size: 11px; font-weight: 650; color: var(--text-secondary); }
+.area-power .tracking-view-tabs button[aria-selected="true"] .tab-count { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.area-power .history-filter-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 12px; padding-block: 10px; }
+.area-power .history-filter-bar select { width: auto; min-width: 150px; height: 32px; font-size: var(--text-data); }
+.area-power.area-power .history-search { display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; height: 32px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); flex: 1 1 220px; max-width: 340px; color: var(--text-muted); }
+.area-power.area-power .history-search input { border: 0; outline: 0; box-shadow: none; background: transparent; width: 100%; height: auto; min-height: 0; font-size: var(--text-data); color: var(--ink); padding: 0; }
+.area-power.area-power .history-time { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text-secondary); font-size: var(--text-data); }
+.area-power .history-count { margin-left: auto; color: var(--text-secondary); font-size: var(--text-caption); white-space: nowrap; }
+.area-power .history-clickable-row { cursor: pointer; }
+.area-power .history-clickable-row:hover { background: var(--surface-soft); }
+.area-power .history-shortcut-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 10px; }
+.area-power .history-shortcut-bar span { color: var(--text-secondary); font-size: var(--text-data); }
+
+.area-power .reports-layout { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 12px; align-items: start; }
+.area-power .report-list { display: flex; flex-direction: column; gap: 6px; padding: 10px; max-height: 72vh; overflow: auto; }
+.area-power .report-list-item { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface); cursor: pointer; }
+.area-power .report-list-item:hover { background: var(--surface-soft); border-color: var(--line); }
+.area-power .report-list-item.is-selected { background: var(--accent-soft); border-color: var(--accent); }
+.area-power .report-item-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.area-power .report-item-top strong { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-body); color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.area-power .report-item-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: var(--text-caption); color: var(--text-secondary); }
+.area-power .report-revised-hint { color: var(--warning); font-size: var(--text-micro); font-weight: 600; }
+
+.area-power .report-detail { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.area-power .report-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.area-power .report-detail-head h2 { margin: 6px 0 4px; font-size: 16px; color: var(--ink); }
+.area-power .report-detail-head small { color: var(--text-secondary); font-size: var(--text-caption); }
+.area-power .report-structured { border: 1px solid var(--line-soft); border-radius: 8px; }
+.area-power .report-body-wrap h3 { margin: 0 0 8px; font-size: var(--text-data); color: var(--text-secondary); }
+.area-power .report-mail-body { margin: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); color: var(--ink); font-family: var(--font-mono); font-size: var(--text-data); line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
