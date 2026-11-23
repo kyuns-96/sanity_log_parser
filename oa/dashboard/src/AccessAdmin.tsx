@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { AccessLayout } from './AccessWelcome'
 import AIConnectionsAdmin from './AIConnectionsAdmin'
 import UserGrants from './UserGrants'
+import ProjectProcessField from './ProjectProcessField'
 import type { AccessScreenProps } from './AccessWelcome'
 import { accessError, requestStatus, roleLabel, scopeName } from './accessApi'
 import type { AccessCatalog, AccessGrant, AccessRequest, AdminAccess } from './accessApi'
@@ -26,6 +27,7 @@ export default function AccessAdmin(props: AccessScreenProps) {
   const [showAI, setShowAI] = useState(false)
   const viewId = useId()
   const [projectName, setProjectName] = useState('')
+  const [process, setProcess] = useState('')
   const [description, setDescription] = useState('')
   const [blockProject, setBlockProject] = useState('')
   const [blockName, setBlockName] = useState('')
@@ -57,8 +59,8 @@ export default function AccessAdmin(props: AccessScreenProps) {
   function createProject(event: FormEvent) {
     event.preventDefault()
     void command(async () => {
-      const result = await api<{ project_id: string }>('/api/admin/projects', { request_id: projectRequest, name: projectName.trim(), description: description.trim() })
-      await refresh(); setBlockProject(result.project_id); setProjectName(''); setDescription(''); setProjectRequest(crypto.randomUUID()); setNotice('프로젝트를 등록했습니다. 이어서 블록을 추가해 주세요.')
+      const result = await api<{ project_id: string }>('/api/admin/projects', { request_id: projectRequest, name: projectName.trim(), description: description.trim(), process: process || null })
+      await refresh(); setBlockProject(result.project_id); setProjectName(''); setDescription(''); setProcess(''); setProjectRequest(crypto.randomUUID()); setNotice('프로젝트를 등록했습니다. 이어서 블록을 추가해 주세요.')
     })
   }
   function createBlock(event: FormEvent) {
@@ -97,6 +99,7 @@ export default function AccessAdmin(props: AccessScreenProps) {
       {access && <UserGrants access={access} catalog={catalog} busy={busy} onRevoke={value => openDecision({ kind: 'revoke', value })} />}
       <div className="am-columns am-admin-columns"><section className="am-panel"><div className="am-panel-heading"><div><h2>프로젝트 등록</h2><p className="studio-section-description">프로젝트를 만든 뒤 담당 블록을 추가하세요.</p></div><FolderKanban size={18} /></div><form className="am-form" onSubmit={createProject}>
         <label>프로젝트 이름<Input aria-label="프로젝트 이름" value={projectName} required maxLength={100} disabled={busy} onChange={event => { setProjectName(event.target.value); setProjectRequest(crypto.randomUUID()) }} /><small>같은 이름은 기존 프로젝트를 사용합니다. 앞뒤 공백만 제거하고 대소문자와 내부 공백은 구분합니다.</small></label>
+        <ProjectProcessField processes={catalog.processes || []} value={process} onChange={name => { setProcess(name); setProjectRequest(crypto.randomUUID()) }} api={api} reload={refresh} disabled={busy} />
         <label>설명<Textarea aria-label="설명" value={description} maxLength={1000} disabled={busy} rows={2} onChange={event => { setDescription(event.target.value); setProjectRequest(crypto.randomUUID()) }} /></label><Button type="submit" disabled={busy || !projectName.trim()}><Plus size={15} />프로젝트 등록</Button>
       </form></section>
       <section className="am-panel"><div className="am-panel-heading"><div><h2>블록 등록</h2><p className="studio-section-description">선택한 프로젝트에 검토 단위를 등록하세요.</p></div><Plus size={18} /></div><form className="am-form" onSubmit={createBlock}>

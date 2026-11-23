@@ -1,7 +1,8 @@
+export type ProcessDefinition = { name: string; unit_area: string }
 export type AccessRole = 'MEMBER' | 'TOP' | 'OWNER'
 export type AccessProject = { id: string; name: string; description: string }
 export type AccessBlock = { id: string; project_id: string; name: string }
-export type AccessCatalog = { projects: AccessProject[]; blocks: AccessBlock[] }
+export type AccessCatalog = { processes?: ProcessDefinition[]; projects: AccessProject[]; blocks: AccessBlock[] }
 export type AccessGrant = { grant_id: string; user_id: string; role: AccessRole; project_id: string; block_id: string | null }
 export type AccessRequest = { request_id: string; user_id: string; role: AccessRole; project_id: string; block_id: string | null; reason: string; status: 'PENDING' | 'APPROVED' | 'REJECTED'; created_at: string; decided_by?: string; decision_reason?: string }
 export type MyAccess = { user_id: string; is_admin: boolean; revision: number; grants: AccessGrant[]; requests: AccessRequest[] }

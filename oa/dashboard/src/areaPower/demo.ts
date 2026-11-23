@@ -14,6 +14,9 @@ const now = () => new Date().toISOString()
 const fail = (message: string): never => { throw new Error(`합성 Area 데모: ${message}`) }
 const uuid = () => crypto.randomUUID()
 const records = new Map<string, TrackingRecord>()
+export function demoProjectProcess(areaId: string) {
+  return records.get(areaId)?.payload.process as string | null | undefined
+}
 const uploads = new Map<string, DemoUpload>()
 const versions = new Map<string, AtlasVersion>()
 const seeded = new Set<string>()
@@ -423,7 +426,7 @@ async function synchronize(): Promise<{ catalog: AtlasCatalog; visible: Set<stri
     if (!project.can_write) continue
     if (!project.area_id) continue
     visible.add(project.area_id)
-    if (!records.has(project.area_id)) record('project', { project_id: project.area_id }, { name: project.name, sanity_project_id: project.id, source: 'synthetic_memory_demo' }, 'active', project.area_id)
+    if (!records.has(project.area_id)) record('project', { project_id: project.area_id }, { name: project.name, process: project.process, sanity_project_id: project.id, source: 'synthetic_memory_demo' }, 'active', project.area_id)
     for (const block of project.blocks) {
       if (!block.area_id) continue
       if (!records.has(block.area_id)) record('block', { project_id: project.area_id, block_id: block.area_id }, { name: block.name, sanity_block_id: block.id, source: 'synthetic_memory_demo' }, 'active', block.area_id)
@@ -605,7 +608,9 @@ async function dispatch(path: string, body: Payload | undefined, plain: boolean 
   if (processRoute && body) {
     const project = scopedRecord(decodeURIComponent(processRoute[1]), 'project', visible)
     cas(project, body.expected_row_version)
-    project.payload.process = text(body.process).trim() || null
+    const process = text(body.process).trim() || null
+    if (process && process !== project.payload.process && !catalog.processes?.some(item => item.name === process)) fail('등록된 공정을 선택하세요.')
+    project.payload.process = process
     touch(project)
     return baselineSetting(project, visible)
   }

@@ -250,6 +250,7 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
     const value = await request(props.auth, `/projects/${encodeURIComponent(currentAreaId)}/process`, baselineSchema, { process: processDraft.trim() || null, expected_row_version: revision(baseline.row_version) }, beginMutation())
     if (!alive.current) return
     setBaseline(value); setProcessDraft(value.process || '')
+    await atlas.reload()
   }
   // Open the tree down to one analysed instance. Reference results are keyed
   // by group id; earlier results and previews nest rows locally.
@@ -337,7 +338,7 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
     {action.feedback}
     {!project.can_write && <p className="notice">조회 전용 · 기준 설정, 비교 실행과 구조 대응 변경에는 프로젝트 멤버 권한이 필요합니다.</p>}
     <section className="panel comparison-setup-bar project-baseline" aria-label="프로젝트 기준 설정">
-      <div className="baseline-summary">{props.picker}<div className="view-switch" role="group" aria-label="비교 대상">{([['project', '기준 프로젝트와 비교'], ['version', '같은 프로젝트의 이전 버전과 비교']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={mode === value} disabled={!!comparisonId} onClick={() => chooseMode(value)}>{label}</button>)}</div><span className="setup-arrow" aria-hidden="true">→</span><span className="setup-baseline"><small>기준 프로젝트</small><strong>{baseline?.status === 'available' ? text(baseline.baseline_project?.payload.name) || savedProject?.name : baseline?.status === 'unavailable' ? '기준 조회 불가' : '기준 미설정'}</strong></span><span className="setup-process"><small>공정</small>{baseline?.process || '미등록'}</span><Button variant="outline" size="sm" disabled={baselineLoading || !project.can_write} onClick={() => setBaselineEditing(value => !value)}>{baselineEditing ? '설정 접기' : '기준 변경'}</Button></div>
+      <div className="baseline-summary">{props.picker}<div className="view-switch" role="group" aria-label="비교 대상">{([['project', '기준 프로젝트와 비교'], ['version', '같은 프로젝트의 이전 버전과 비교']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={mode === value} disabled={!!comparisonId} onClick={() => chooseMode(value)}>{label}</button>)}</div><span className="setup-arrow" aria-hidden="true">→</span><span className="setup-baseline"><small>기준 프로젝트</small><strong>{baseline?.status === 'available' ? text(baseline.baseline_project?.payload.name) || savedProject?.name : baseline?.status === 'unavailable' ? '기준 조회 불가' : '기준 미설정'}</strong></span><span className="setup-process"><small>공정</small>{(baseline ? baseline.process : project.process) || '미등록'}</span><Button variant="outline" size="sm" disabled={baselineLoading || !project.can_write} onClick={() => setBaselineEditing(value => !value)}>{baselineEditing ? '설정 접기' : '기준 변경'}</Button></div>
       {baselineError && <div className="notice error" role="alert">{baselineError}</div>}
       {!currentAreaId ? <div className="notice"><p>프로젝트만 연결하면 CSV·블록·버전 없이 기준을 설정할 수 있습니다.</p><Button disabled={action.busy || !project.can_write} onClick={() => action.run(() => prepare(project))}>현재 프로젝트 연결</Button></div> : baselineEditing && <div className="baseline-editor">
         {baseline?.status === 'unavailable' && <p className="notice warning">저장된 기준은 현재 권한으로 조회할 수 없습니다. 다른 기준으로 교체하거나 해제할 수 있습니다.</p>}
@@ -346,7 +347,11 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
         <Button disabled={action.busy || baselineLoading || !baseline || !choiceAreaId || !project.can_write} onClick={() => action.run(() => saveBaseline(choiceAreaId))}>기준 저장</Button>
         <Button variant="outline" disabled={action.busy || !baseline || baseline.status === 'unset' || !project.can_write} onClick={() => action.run(() => saveBaseline(null))}>기준 해제</Button>
         <small>A→B는 현재 프로젝트에만 저장됩니다. 다른 프로젝트의 기준을 바꾸지 않습니다.</small>
-        <div className="process-editor"><Field label="현재 프로젝트 공정"><input type="text" value={processDraft} maxLength={100} onChange={event => setProcessDraft(event.target.value)} placeholder="예: 공정 이름" autoComplete="off" /></Field><Button variant="outline" disabled={action.busy || baselineLoading || !baseline || !project.can_write || processDraft.trim() === (baseline.process || '')} onClick={() => action.run(saveProcess)}>공정 저장</Button><small>공정과 corner가 같으면 같은 library로 봅니다. AI 분석의 Vth·Drive 비교에 쓰입니다.{baseline?.status === 'available' && <> 기준 프로젝트 공정 · {baseline.baseline_process || '미등록'}</>}</small></div>
+        <div className="process-editor"><Field label="현재 프로젝트 공정"><select value={processDraft} onChange={event => setProcessDraft(event.target.value)}>
+          <option value="">미지정</option>
+          {baseline?.process && !atlas.catalog?.processes?.some(item => item.name === baseline.process) && <option value={baseline.process}>{baseline.process} · 기존 공정</option>}
+          {atlas.catalog?.processes?.map(item => <option key={item.name} value={item.name}>{item.name} · {item.unit_area} µm²</option>)}
+        </select></Field><Button variant="outline" disabled={action.busy || baselineLoading || !baseline || !project.can_write || processDraft.trim() === (baseline.process || '')} onClick={() => action.run(saveProcess)}>공정 저장</Button><small>공정과 corner가 같으면 같은 library로 봅니다. AI 분석의 Vth·Drive 비교에 쓰입니다.{baseline?.status === 'available' && <> 기준 프로젝트 공정 · {baseline.baseline_process || '미등록'}</>}</small></div>
       </div>}
     </section>
     <section className="panel comparison-workspace">

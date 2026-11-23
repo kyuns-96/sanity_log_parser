@@ -233,11 +233,17 @@ class Service:
     def project_process(self, identifier, body, actor):
         """The project's process name; same process and corner mean the same library."""
         with self.db.connect() as conn:
-            project = self.db.record(conn, identifier, kind="project", lock=True)
+            raw = self.db.raw if self.access is not None else self.db
+            project = raw.record(conn, identifier, kind="project", lock=True)
             self.authorize(conn, project, write=True)
             if project["row_version"] != body.expected_row_version:
                 reject("Project settings were changed; reload before editing.", "conflict", 409)
-            raw = self.db.raw if self.access is not None else self.db
+            if body.process and body.process != project["payload"].get("process"):
+                from common.sanity_db import Database
+                from oa.sanity_workspace import WorkspaceStore
+                store = getattr(getattr(self.access, "actor", None), "access", None)
+                with (nullcontext(store.db) if store else Database("oa")) as host:
+                    WorkspaceStore(host).require_process(body.process)
             updated = raw.update_record(conn, project["id"], actor, expected_row_version=body.expected_row_version,
                                         payload={**project["payload"], "process": body.process})
             return self.baseline_setting(conn, self.authorize(conn, updated))

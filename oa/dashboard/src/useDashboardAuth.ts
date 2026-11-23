@@ -19,6 +19,8 @@ export class DashboardRequestError extends Error {
       ACCESS_DENIED: '이 작업에 필요한 권한이 없습니다. 현재 담당 범위를 확인해 주세요.',
       AUTHORIZATION_FORBIDDEN: '이 작업에 필요한 권한이 없습니다. 현재 담당 범위를 확인해 주세요.',
       RESOURCE_NOT_FOUND: '현재 권한으로 이 검사 결과를 열 수 없습니다. 담당 범위를 확인해 주세요.',
+      PROCESS_NOT_FOUND: '목록에서 등록된 공정을 선택해 주세요.',
+      PROCESS_AREA_CONFLICT: '같은 이름의 공정에 다른 Unit area가 이미 등록되어 있습니다.',
       REQUEST_CONFLICT: '이미 처리되었거나 같은 요청 번호의 내용이 다릅니다. 최신 상태를 확인해 주세요.',
       AREA_POWER_UNAVAILABLE: '구성·전력 분석 서비스가 설정되지 않았거나 현재 사용할 수 없습니다. 운영 담당자에게 문의해 주세요.',
       INTERNAL_ERROR: '서버 내부 오류가 발생했습니다. 운영 담당자에게 오류가 발생한 작업과 시각을 전달해 주세요.',

@@ -1,9 +1,11 @@
 // Product demo catalog over the native workspace's exact objects; page memory only.
 import { WorkspaceError } from './workspaceApi'
+import { compareNumber, isNumber, splitNumber } from 'lossless-json'
+import type { ProcessDefinition } from './accessApi'
 import type { WorkspaceEvent, WorkspacePor, WorkspaceReport, WorkspaceUser, WorkspaceVersion } from './workspaceApi'
 
 export type DemoVersion = WorkspaceVersion & { source_namespace: string; previous_version_id: string | null; area_id: string | null; declared_ecos?: (string | null)[] }
-export type DemoProject = { id: string; name: string; description: string; tops: WorkspaceUser[]; area_id: string | null }
+export type DemoProject = { id: string; name: string; description: string; process?: string; tops: WorkspaceUser[]; area_id: string | null }
 export type DemoBlock = { id: string; project_id: string; name: string; owner: WorkspaceUser; versions: DemoVersion[]; por: WorkspacePor; events: WorkspaceEvent[]; area_id: string | null }
 type Input = Record<string, unknown>
 type VersionIdentity = { project_id: string; block_id: string; source_namespace: string; net_ver: string; revision: string; layout: 'PRE' | 'POST' }
@@ -38,6 +40,7 @@ export function makeWorkspaceDemoCatalog(state: {
   reports: (block: DemoBlock, version: DemoVersion) => WorkspaceReport[];
 }) {
   const { projects, blocks } = state
+  const processes = new Map<string, ProcessDefinition>()
   const receipts = new Map<string, { actor: string; operation: string; data: string; result: Input }>()
   // Owner/TOP associations grant the whole project, not individual blocks.
   const canAccess = (projectId: string) => projects.some(project => project.id === projectId &&
@@ -87,8 +90,8 @@ export function makeWorkspaceDemoCatalog(state: {
       authorization_ready: true, access_mode: 'memory_demo', writable: true,
       notice: '합성 데이터 · 브라우저 메모리 데모입니다. 변경은 새로고침하면 초기화됩니다.', can_read_business: true, can_receive: false, is_admin: false }
     if (path === '/atlas/catalog' && body === undefined) return { product: 'Design Atlas', local_mode: false, can_manage_catalog: true,
-      area_enabled: true, area_status: 'ready', data_origin: 'SYNTHETIC_MEMORY_DEMO', projects: projects.filter(project => canAccess(project.id)).map(project => ({
-        id: project.id, name: project.name, description: project.description, can_write: true, area_id: project.area_id,
+      area_enabled: true, area_status: 'ready', data_origin: 'SYNTHETIC_MEMORY_DEMO', processes: [...processes.values()].sort((a, b) => a.name.localeCompare(b.name)), projects: projects.filter(project => canAccess(project.id)).map(project => ({
+        id: project.id, name: project.name, description: project.description, process: project.process, can_write: true, area_id: project.area_id,
         blocks: blocks.filter(block => block.project_id === project.id).map(block => ({ id: block.id, name: block.name, area_id: block.area_id, versions: block.versions })),
       })) }
     if (path === '/atlas/reports' && body === undefined) {
@@ -104,9 +107,25 @@ export function makeWorkspaceDemoCatalog(state: {
       const rows = state.reports(block!, version!).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
       return { items: rows.slice(offset, offset + limit), total: rows.length, offset, limit }
     }
+    if (path === '/atlas/processes') {
+      const fields = input(body, ['name', 'unit_area'])
+      const name = text(fields.name)
+      // HTML number inputs also accept .5 and leading zeroes.
+      const area = String(fields.unit_area).replace(/^\+/, '').replace(/^0+(?=\d)/, '').replace(/^\./, '0.').replace(/\.(?=e|$)/i, '')
+      if (!isNumber(area) || !(Number(area) > 0)) return fail()
+      const { digits, exponent } = splitNumber(area)
+      if (exponent >= 14 || digits.length - 1 - exponent > 24) return fail()
+      const existing = processes.get(name)
+      if (existing && compareNumber(existing.unit_area, area) !== 0) return fail('PROCESS_AREA_CONFLICT')
+      const definition = existing || { name, unit_area: area }
+      processes.set(name, definition)
+      return definition
+    }
     if (path === '/atlas/projects') {
-      const bodyFields = input(body, ['request_id', 'name', 'description'])
-      const data = { name: text(bodyFields.name), description: text(bodyFields.description ?? '', 1000, true, true) }
+      const bodyFields = input(body, ['request_id', 'name', 'description', 'process'])
+      const process = bodyFields.process == null ? undefined : text(bodyFields.process)
+      if (process && !processes.has(process)) return fail('NOT_FOUND')
+      const data = { name: text(bodyFields.name), description: text(bodyFields.description ?? '', 1000, true, true), ...(process && { process }) }
       const projectId = await nameId('project-', ['atlas-project-v1', data.name])
       return command(bodyFields, 'PROJECT', data, () => {
         const existing = projects.filter(project => project.name === data.name)
@@ -114,11 +133,11 @@ export function makeWorkspaceDemoCatalog(state: {
         if (existing.length) {
           const project = existing[0]
           scope(project.id)
-          if (data.description && data.description !== project.description) return fail('REQUEST_CONFLICT')
+          if ((data.description && data.description !== project.description) || (process && process !== project.process)) return fail('REQUEST_CONFLICT')
           return { status: 'ALREADY_CREATED', project_id: project.id }
         }
         if (projects.some(project => project.id === projectId)) return fail('REQUEST_CONFLICT')
-        projects.push({ id: projectId, name: data.name, description: data.description, tops: [state.user()], area_id: null })
+        projects.push({ id: projectId, ...data, tops: [state.user()], area_id: null })
         return { status: 'CREATED', project_id: projectId }
       })
     }

@@ -6,6 +6,7 @@ The local deployment is an explicitly isolated synthetic workspace, not SSO fall
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 import hashlib
 import secrets
 
@@ -57,6 +58,47 @@ class WorkspaceStore:
 
     def rows(self, kind):
         return self.db.execute("SELECT * FROM {oa} WHERE record_type=%s ORDER BY workspace_key", (kind,)).fetchall()
+
+    def processes(self):
+        rows = self.db.execute("SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' "
+                               "AND workspace_key LIKE 'atlas.process.%' ORDER BY payload->>'name'").fetchall()
+        return [row["payload"] for row in rows]
+
+    def require_process(self, name):
+        if not self.db.execute("SELECT 1 FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key=%s",
+                               ("atlas.process." + digest(name),)).fetchone():
+            raise ReviewError("PROCESS_NOT_FOUND", "Select a registered process")
+
+    def initial_process(self, project_id):
+        key = "atlas.project-process." + str(record_id("WS_PROJECT", project_id))
+        row = self.db.execute("SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key=%s",
+                              (key,)).fetchone()
+        return row["payload"]["process"] if row else None
+
+    def select_initial_process(self, project_id, process, *, existing):
+        # The caller holds the named catalog lock in the project creation transaction.
+        if process is None:
+            return
+        self.require_process(process)
+        if existing:
+            if self.initial_process(project_id) != process:
+                raise ReviewError("REQUEST_CONFLICT", "The existing project was registered with a different process")
+            return
+        self.put("WS_CONFIG", "atlas.project-process." + str(record_id("WS_PROJECT", project_id)),
+                 {"project_id": project_id, "process": process})
+
+    def register_process(self, name, unit_area):
+        key = "atlas.process." + digest(name)
+        self.db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key(key),))
+        existing = self.db.execute("SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key=%s",
+                                   (key,)).fetchone()
+        if existing:
+            if Decimal(existing["payload"]["unit_area"]) != unit_area:
+                raise ReviewError("PROCESS_AREA_CONFLICT", "A different NAND2_D1 area is registered for this process")
+            return existing["payload"]
+        payload = {"name": name, "unit_area": format(unit_area, "f")}
+        self.put("WS_CONFIG", key, payload)
+        return payload
 
     def named_catalog(self, kind, name, project_id=None):
         """Resolve legacy business names before deriving an ID; never mutate rows."""

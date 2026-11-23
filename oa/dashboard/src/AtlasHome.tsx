@@ -5,6 +5,7 @@ import type { UnboundArea } from './atlasContext'
 import { useDashboardAuth } from './useDashboardAuth'
 import { useDashboardNavigation } from './dashboardMode'
 import AtlasPrepare from './AtlasPrepare'
+import ProjectProcessField from './ProjectProcessField'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './components/ui/dialog'
 
 export default function AtlasHome() {
@@ -40,7 +41,7 @@ export default function AtlasHome() {
       <div className="atlas-picker-column">
         <header><h2>프로젝트{catalog && <span>{catalog.projects.length}</span>}</h2>{catalog?.can_manage_catalog && <button className="atlas-button secondary" onClick={() => setKind('project')}><FolderPlus size={15} />프로젝트 등록</button>}</header>
         {atlas.loading && !catalog ? <p className="atlas-picker-empty" role="status">불러오는 중…</p> : !catalog ? <p className="atlas-picker-empty">프로젝트를 조회할 수 없습니다. 연결 상태를 확인하고 새로고침하세요.</p> : !catalog.projects.length ? <p className="atlas-picker-empty">등록된 프로젝트가 없습니다. {catalog.can_manage_catalog ? '프로젝트를 등록하세요.' : '관리자에게 프로젝트 등록을 요청하세요.'}</p> : <ul>{catalog.projects.map(project => <li key={project.id}><button type="button" className="atlas-picker-item" aria-pressed={atlas.scope.projectId === project.id} onClick={() => select({ projectId: project.id, blockId: '', versionId: '' })}>
-          <Boxes size={18} /><span className="atlas-picker-text"><strong>{project.name}</strong>{project.description && <small>{project.description}</small>}<small>블록 {project.blocks.length} · 버전 {project.blocks.reduce((count, block) => count + block.versions.length, 0)}</small></span><em>{project.can_write ? '읽기 · 쓰기' : '읽기'}</em><ChevronRight size={16} />
+          <Boxes size={18} /><span className="atlas-picker-text"><strong>{project.name}</strong>{project.description && <small>{project.description}</small>}<small>{project.process && `공정 ${project.process} · `}블록 {project.blocks.length} · 버전 {project.blocks.reduce((count, block) => count + block.versions.length, 0)}</small></span><em>{project.can_write ? '읽기 · 쓰기' : '읽기'}</em><ChevronRight size={16} />
         </button></li>)}</ul>}
       </div>
       <div className="atlas-picker-column">
@@ -64,7 +65,7 @@ export default function AtlasHome() {
 function CatalogForm({ kind, onClose, onCreated }: { kind: 'project' | 'block' | 'version'; onClose: () => void; onCreated: (message: string) => void }) {
   const atlas = useAtlas()!
   const auth = useDashboardAuth(true)
-  const [fields, setFields] = useState({ name: '', description: '', source_namespace: '', net_ver: '', revision: '', layout: 'PRE', ecos: '', source_pre_id: '', previous_version_id: '' })
+  const [fields, setFields] = useState({ name: '', description: '', process: '', source_namespace: '', net_ver: '', revision: '', layout: 'PRE', ecos: '', source_pre_id: '', previous_version_id: '' })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [requestId] = useState(() => crypto.randomUUID())
@@ -73,7 +74,7 @@ function CatalogForm({ kind, onClose, onCreated }: { kind: 'project' | 'block' |
     event.preventDefault(); setBusy(true); setError('')
     try {
       let path: string; let body: Record<string, unknown>
-      if (kind === 'project') { path = '/api/atlas/projects'; body = { request_id: requestId, name: fields.name, description: fields.description } }
+      if (kind === 'project') { path = '/api/atlas/projects'; body = { request_id: requestId, name: fields.name, description: fields.description, process: fields.process || null } }
       else if (kind === 'block') { path = '/api/atlas/blocks'; body = { request_id: requestId, project_id: atlas.scope.projectId, name: fields.name } }
       else {
         const identity = { project_id: atlas.scope.projectId, block_id: atlas.scope.blockId, source_namespace: fields.source_namespace, net_ver: fields.net_ver, revision: fields.revision, layout: fields.layout }
@@ -91,7 +92,7 @@ function CatalogForm({ kind, onClose, onCreated }: { kind: 'project' | 'block' |
     {kind !== 'version' ? <>
       {kind === 'block' && <p>프로젝트: {atlas.project?.name}</p>}
       <label>{kind === 'project' ? '프로젝트 이름' : '블록 이름'}<input autoFocus required maxLength={100} value={fields.name} onChange={event => field('name', event.target.value)} /><small>같은 프로젝트 이름은 같은 프로젝트이며, 같은 프로젝트의 같은 블록 이름은 기존 블록을 사용합니다. 앞뒤 공백만 제거하고 대소문자와 내부 공백은 구분합니다.</small></label>
-      {kind === 'project' && <label>설명<textarea value={fields.description} onChange={event => field('description', event.target.value)} /></label>}
+      {kind === 'project' && <><ProjectProcessField processes={atlas.catalog?.processes || []} value={fields.process} onChange={name => field('process', name)} api={auth.request} reload={atlas.reload} disabled={busy} /><label>설명<textarea value={fields.description} onChange={event => field('description', event.target.value)} /></label></>}
     </> : <>
       <p>소속: {atlas.project?.name} / {atlas.block?.name}</p>
       <label>Source namespace<input autoFocus required maxLength={1000} value={fields.source_namespace} onChange={event => field('source_namespace', event.target.value)} /><small>실제 수집 소스의 namespace와 일치해야 합니다.</small></label>

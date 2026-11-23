@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -11,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 
 from common.sanity_common import ReviewError
 from common.sanity_db import Database
+from oa.access_api import ProjectCommand
 from oa.atlas_catalog import AtlasCatalog, AreaAdapters, AreaPreparationError, fail
 from oa.sanity_access import require_mutation_request
 
@@ -23,10 +25,9 @@ class Input(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class Project(Input):
-    request_id: UUID
+class Process(Input):
     name: Text
-    description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
+    unit_area: Decimal = Field(gt=0, max_digits=38, decimal_places=24)
 
 
 class Block(Input):
@@ -106,7 +107,8 @@ def create_atlas_router(authorized_dependency):
     def catalog(request: Request, actor=Depends(authorized_dependency, scope="function")):
         with context(actor, readonly=True) as store:
             result = {"product": "Design Atlas", "local_mode": store.local, "can_manage_catalog": store.can_manage,
-                      "area_enabled": bool(getattr(request.app.state, "area_power_enabled", False)), "projects": store.catalog()}
+                      "area_enabled": bool(getattr(request.app.state, "area_power_enabled", False)), "projects": store.catalog(),
+                      "processes": store.ws.processes()}
             result["area_status"] = "disabled"
             if result["area_enabled"]:
                 try:
@@ -139,8 +141,15 @@ def create_atlas_router(authorized_dependency):
             return {"items": [r["payload"] for r in rows], "total": total, "offset": offset, "limit": limit}
 
 
+    @router.post("/processes")
+    def register_process(body: Process, actor=Depends(mutation)):
+        with context(actor) as store:
+            if not store.can_manage:
+                fail("FORBIDDEN")
+            return store.ws.register_process(body.name, body.unit_area)
+
     @router.post("/projects")
-    def project(body: Project, actor=Depends(mutation)):
+    def project(body: ProjectCommand, actor=Depends(mutation)):
         with context(actor) as store:
             return store.create_project(body)
 

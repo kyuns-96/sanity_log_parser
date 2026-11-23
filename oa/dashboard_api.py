@@ -216,7 +216,7 @@ def create_app(*, auth_mode: AuthMode | None = None,
                                   "AI_TOKEN_STORE_NOT_CONFIGURED", "AI_TOKEN_UNAVAILABLE", "AI_JOB_DELETE_NOT_CONFIGURED",
                                   "DATA_DELETE_NOT_CONFIGURED","AI_SCHEDULER_CONFIG","AI_SCHEDULER_CORRUPT","AI_EVIDENCE_CORRUPT"} else
                   503 if code.startswith(("DATABASE_", "DBAAS_", "DASHBOARD_", "AUTH_", "AUTHORIZATION_")) else
-                  409 if code in {"REVISION_CONFLICT", "REQUEST_CONFLICT", "REVIEW_BLOCKED", "FAIL_CANNOT_PASS",
+                  409 if code in {"PROCESS_AREA_CONFLICT", "REVISION_CONFLICT", "REQUEST_CONFLICT", "REVIEW_BLOCKED", "FAIL_CANNOT_PASS",
                                  "STATE_CORRUPT", "STATE_CONFLICT", "EVIDENCE_NOT_RECEIVED", "LEASE_LOST",
                                  "CLUSTER_NOT_READY", "CLUSTER_BLOCKED", "STALE_REFERENCE", "CANDIDATES_UNRESOLVED",
                                  "POR_UNCHANGED", "PROPOSAL_STALE", "CLUSTER_NOT_CONFIRMED", "CLUSTER_TASK_ACTIVE",

@@ -139,7 +139,7 @@ metadata에는 준비된 실제 Area `project_id`, `version_id`, `block_id` UUID
 - 서로 다른 Block·경로는 같은 화면의 명시적 대응으로 연결한다. 매핑 없는 행은 한쪽의 관측값만 보여 주며 상대 값·Δ·%는 unavailable이다. 부모 수치와 자식을 다시 합산하지 않는다.
 - AI·작업·알림·target·변경 설명의 기존 내부 엔진(지표별 판정)은 보존하지만 독립 주 탐색이나 비교의 선행 입력이 아니다.
 - **AI 이상치 분석(instance 단위, `instance-triage-v1`)** 은 비교 화면의 버튼으로 실행한다. 설계는 [설계 문서](../docs/superpowers/specs/2026-11-17-area-power-ai-triage-design.md)를 따른다.
-  - 입력: NET_VER 업데이트 메모·프로젝트 변경 메모(`change` 레코드의 `note_kind`·`net_ver`), 주요 instance(`target` 레코드의 `watch`), 프로젝트 공정(Area `project` payload의 `process`, `POST /projects/{id}/process`).
+  - 입력: NET_VER 업데이트 메모·프로젝트 변경 메모(`change` 레코드의 `note_kind`·`net_ver`), 주요 instance(`target` 레코드의 `watch`), 프로젝트 공정(공통 프로젝트 등록에서 선택한 이름을 수치 프로젝트 최초 연결 때 Area `project.payload.process`에 저장한다. 기존 지정은 유지하며 `POST /projects/{id}/process`에서 변경할 수 있다). 공정 정의는 OA `POST /api/atlas/processes`로 이름과 양수인 `unit_area`(NAND2_D1 한 셀의 면적, µm²)를 등록하고 `GET /api/atlas/catalog`의 `processes`에서 조회한다. 면적은 정확한 십진 문자열로 전달하며 현재 비교는 보고서의 Area 단위를 그대로 사용한다.
   - 코드가 후보를 고른다: Area/Power 증가율 기준(기본 +10%), Area 최소(기본 50), 신규 instance, 주요 instance(항상). 자식 후보가 증가분의 80% 이상을 차지하는 조상은 자식 항목에 묶는다. 대상이 400개를 넘으면 실행하지 않는다.
   - `POST /comparisons/{id}/triage/preview`는 후보 수·예상 호출 수·적용 메모를 돌려주고, `POST /comparisons/{id}/triage`는 고정 입력을 담은 `ai_run`과 `judge` job을 만든다. 중앙 VWP가 관리자 지정 `AREA_TRIAGE` 연결·모델과 요청자의 개인 인증값으로 20개씩 묶어 호출하고 instance마다 `judgement`를 저장한다. `GET /comparisons/{id}/triage`, `GET /triage/{run}`으로 조회한다.
   - 판정은 `expected`·`unexpected`·`needs_review`·`minor`(주요 instance 전용)이며 코드는 판정을 낮추는 방향으로만 고친다. 후보가 있는 새 요청에서 모델/인증이 미설정이면 실행 등록 전에 오류를 표시한다. 실행 중 실패·권한 변경은 해당 instance를 `needs_review`로 남기고 실행을 `failed`로 표시한다. 미리보기는 모델 미설정이어도 가능하며 사용할 연결·모델·인증 준비 상태를 표시한다.

@@ -391,16 +391,20 @@ class AccessStore:
             _error("REQUEST_CONFLICT")
         return existing is not None
 
-    def create_project(self, actor, request_id, name, description=""):
+    def create_project(self, actor, request_id, name, description="", process=None):
         self._admin(actor)
         name = name.strip() if isinstance(name, str) else name
         description = description.strip() if isinstance(description, str) else description
         if not _text(name, 100) or not _text(description, 1000, empty=True):
             _error("INVALID_REQUEST")
         command_id = _uuid(request_id)
-        project_id, existing = WorkspaceStore(self.db).named_catalog("WS_PROJECT", name)
+        ws = WorkspaceStore(self.db)
+        project_id, existing = ws.named_catalog("WS_PROJECT", name)
+        ws.select_initial_process(project_id, process, existing=existing is not None)
         data = {"project_id": project_id, "name": name, "description": description}
         if self._catalog_retry(command_id, "PROJECT", actor, data):
+            if self._state()["commands"][command_id]["kind"] == "PROJECT" and ws.initial_process(project_id) != process:
+                _error("REQUEST_CONFLICT")
             return {"status": "ALREADY_CREATED", "project_id": project_id, "revision": self._state()["revision"]}
         if existing:
             if (project_id not in self._state()["projects"]

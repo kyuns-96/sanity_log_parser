@@ -110,9 +110,10 @@ class AtlasCatalog:
         if not self.can_manage:
             fail("FORBIDDEN")
         if not self.local:
-            return self.access.create_project(self.actor, body.request_id, body.name, body.description)
+            return self.access.create_project(self.actor, **body.model_dump())
         def create():
             project_id, existing = self.ws.named_catalog("WS_PROJECT", body.name)
+            self.ws.select_initial_process(project_id, body.process, existing=existing is not None)
             if existing:
                 if body.description and existing["payload"].get("description", "") != body.description:
                     fail()
@@ -120,7 +121,7 @@ class AtlasCatalog:
             self.ws.put("WS_PROJECT", project_id, {"id": project_id, "project_id": project_id,
                         "name": body.name, "description": body.description, "tops": []})
             return {"status": "CREATED", "project_id": project_id}
-        return self.command(body.request_id, "PROJECT", body.model_dump(mode="json", exclude={"request_id"}), create)
+        return self.command(body.request_id, "PROJECT", body.model_dump(mode="json", exclude={"request_id"}, exclude_none=True), create)
 
     def create_block(self, body):
         if not self.can_manage:
@@ -184,6 +185,9 @@ class AtlasCatalog:
         writable = None if self.local else {g["project_id"] for g in self.access.snapshot(self.actor.user_id)["grants"]}
         blocks = self.ws.rows("WS_BLOCK")
         versions = self.ws.rows("WS_VERSION")
+        process_by_project = {row["payload"]["project_id"]: row["payload"]["process"] for row in self.db.execute(
+            "SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s",
+            ("atlas.project-process.%",)).fetchall()}
         result = []
         for project in self.ws.rows("WS_PROJECT"):
             pid = project["workspace_key"]
@@ -191,7 +195,7 @@ class AtlasCatalog:
                 continue
             value = project["payload"]
             item = {"id": pid, "name": value["name"], "description": value.get("description", ""),
-                    "can_write": writable is None or pid in writable, "blocks": []}
+                    "process": process_by_project.get(pid), "can_write": writable is None or pid in writable, "blocks": []}
             for block in blocks:
                 if block["workspace_project_ref"] != project["record_id"]:
                     continue
@@ -271,6 +275,8 @@ class AreaAdapters:
             for project in projects:
                 p = self.match(rows, "project", project["id"])
                 project["area_id"] = str(p["id"]) if p else None
+                if p:
+                    project["process"] = p["payload"].get("process")
                 for block in project["blocks"]:
                     b = self.match(rows, "block", block["id"])
                     if b and (not p or b["project_id"] != p["id"]):
@@ -333,18 +339,24 @@ class AreaAdapters:
                     if kind == "block" and old["project_id"] != parent["id"]:
                         fail("AREA_BINDING_CONFLICT")
                     if chosen_id and self.binding(old) is None:
+                        payload = {**old["payload"], "sanity_" + kind + "_id": native_id}
+                        initial_process = catalog.ws.initial_process(native_id) if kind == "project" else None
+                        if initial_process:
+                            if payload.get("process") not in (None, initial_process):
+                                fail("AREA_BINDING_CONFLICT")
+                            payload["process"] = initial_process
                         old = self.db.update_record(conn, old["id"], catalog.actor.user_id,
-                            expected_row_version=old["row_version"],
-                            payload={**old["payload"], "sanity_" + kind + "_id": native_id})
+                            expected_row_version=old["row_version"], payload=payload)
                         rows[:] = [old if r["id"] == old["id"] else r for r in rows]
                     return old
                 identifier = uuid4()
                 fields = {"id": identifier, "entity_id": identifier}
                 if kind == "block":
                     fields.update(project_id=parent["id"], parent_id=parent["id"], block_id=identifier)
-                new = self.db.insert_record(conn, kind,
-                    {"name": native["payload"]["name"], "sanity_" + kind + "_id": native_id},
-                    catalog.actor.user_id, **fields)
+                payload = {"name": native["payload"]["name"], "sanity_" + kind + "_id": native_id}
+                if kind == "project" and (initial_process := catalog.ws.initial_process(native_id)):
+                    payload["process"] = initial_process
+                new = self.db.insert_record(conn, kind, payload, catalog.actor.user_id, **fields)
                 rows.append(new)
                 return new
             p = adapter("project", project)

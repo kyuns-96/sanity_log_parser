@@ -12,6 +12,7 @@ from common.sanity_config import load_environment
 from common.sanity_common import ReviewError
 from common.sanity_db import Database
 from oa.sanity_auth import Actor
+from oa.sanity_workspace import WorkspaceStore
 from oa.sanity_access import AccessStore, access_lock, administrator_id, require_mutation_request
 
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")]
@@ -26,6 +27,7 @@ class AccessCommand(BaseModel):
 class ProjectCommand(AccessCommand):
     request_id: UUID
     name: Name
+    process: Name | None = None
     description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
 
 
@@ -78,7 +80,7 @@ def create_access_router(authenticated_dependency):
     @router.get("/api/access/catalog")
     def catalog(actor=Depends(authenticated_dependency)):
         with _access(actor) as store:
-            return store.catalog()
+            return {**store.catalog(), "processes": WorkspaceStore(store.db).processes()}
 
     @router.get("/api/access/me")
     def me(actor=Depends(authenticated_dependency)):

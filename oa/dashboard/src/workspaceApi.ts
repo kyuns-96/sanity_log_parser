@@ -43,6 +43,7 @@ const messages: Record<string, string> = {
   UNAUTHORIZED: '로그인 정보가 올바르지 않거나 세션이 만료되었습니다.',
   FORBIDDEN: '이 블록의 담당자에게만 허용되는 작업입니다.',
   REVISION_CONFLICT: '다른 사용자가 PoR을 변경했습니다. 최신 내용을 불러왔으니 다시 확인해 주세요.',
+  PROCESS_AREA_CONFLICT: '같은 이름의 공정에 다른 Unit area가 이미 등록되어 있습니다.',
   REQUEST_CONFLICT: '저장 요청 내용이 달라졌습니다. 화면을 새로고침한 뒤 확인해 주세요.',
   POR_UNCHANGED: '이미 현재 PoR로 지정된 버전입니다.',
   NOT_FOUND: '이 계정의 담당 범위에서 요청한 항목을 찾을 수 없습니다.',

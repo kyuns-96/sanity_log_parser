@@ -9,7 +9,7 @@ import type { AtlasCatalog } from './atlasContext'
 import { useDashboardNavigation } from './dashboardMode'
 import { workspaceDemoRequest } from './workspaceDemo'
 import { workspaceDemoUsers } from './workspaceDemoAccounts'
-import { areaDemoRequest } from './areaPower/demo'
+import { areaDemoRequest, demoProjectProcess } from './areaPower/demo'
 
 /** Imported only by the explicit demo entry. No real authentication or business transport. */
 async function demoRequest<T>(path: string, body?: Record<string, unknown> | string, plain: boolean | 'blob' = false, signal?: AbortSignal): Promise<T> {
@@ -23,6 +23,12 @@ async function demoRequest<T>(path: string, body?: Record<string, unknown> | str
   else if (url.pathname.startsWith('/api/atlas/')) target = url.pathname.slice('/api'.length) + url.search
   else throw new Error('이 작업은 실제 서비스에서만 지원합니다. 합성 데모에서는 서버를 호출하지 않습니다.')
   const value = await workspaceDemoRequest<unknown>(target, { body: payload, signal })
+  if (target === '/atlas/catalog') {
+    for (const project of (value as AtlasCatalog).projects) {
+      const current = project.area_id ? demoProjectProcess(project.area_id) : undefined
+      if (current !== undefined) project.process = current
+    }
+  }
   signal?.throwIfAborted()
   if (plain === 'blob') throw new Error('이 데모 응답은 다운로드 파일이 아닙니다.')
   return (plain ? JSON.stringify(value) : value) as T
