@@ -435,3 +435,12 @@
 .mapping-suggestions ul { list-style: none; padding-left: 12px; }
 .mapping-suggestions li { margin: 8px 0; overflow-wrap: anywhere; }
 .mapping-suggestions li small { display: block; margin-left: 20px; color: var(--text-secondary); }
+
+.area-power .gate-count-switch { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text-secondary); font: inherit; font-size: var(--text-data); cursor: pointer; }
+.area-power .gate-count-switch i { display: inline-flex; align-items: center; width: 28px; height: 16px; padding: 2px; box-sizing: border-box; border-radius: 10px; background: var(--text-muted); }
+.area-power .gate-count-switch i::before { content: ''; width: 12px; height: 12px; border-radius: 50%; background: white; transition: transform .16s ease; }
+.area-power .gate-count-switch[aria-checked=true] i { background: var(--accent); }
+.area-power .gate-count-switch[aria-checked=true] i::before { transform: translateX(12px); }
+.area-power .gate-count-switch[aria-checked=false] span:first-child, .area-power .gate-count-switch[aria-checked=true] span:last-child { font-weight: 650; color: var(--ink); }
+.area-power .gate-count-basis { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 0; padding: 5px 10px; border-bottom: 1px solid var(--line); color: var(--text-secondary); font-size: var(--text-caption); }
+@media (prefers-reduced-motion: reduce) { .area-power .gate-count-switch i::before { transition: none; } }

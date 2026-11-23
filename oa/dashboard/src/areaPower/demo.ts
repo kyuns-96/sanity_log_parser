@@ -1,6 +1,7 @@
 // Explicit product demo: synthetic inputs and mutations live only in this page's memory.
 // Catalog UUIDs and visibility come exclusively from the shared native demo catalog.
 import { isLosslessNumber, parse } from 'lossless-json'
+import { add, compare, display, divide, fraction, magnitude, multiply, parseDecimal, subtract, type Fraction } from './lib/fraction'
 import type { AtlasCatalog, AtlasVersion } from '../atlasContext'
 import { workspaceDemoRequest } from '../workspaceDemo'
 import type { Payload, TrackingRecord, Upload } from './api'
@@ -33,41 +34,8 @@ const metricKeys = [...groups.flatMap(group => [`${group}_cells`, `${group}_area
 const csvHeaders = ['hier_name', 'level', 'process_label', 'voltage_v', 'temp_c', 'pex', ...metricKeys]
 type Metrics = Record<string, string>
 type DemoUpload = Upload & { rows: Record<string, Metrics>; metadata: Payload }
-type Fraction = { n: bigint; d: bigint }
-const abs = (value: bigint) => value < 0n ? -value : value
-function fraction(n: bigint, d = 1n): Fraction {
-  if (!d) return fail('0으로 나눌 수 없습니다.')
-  if (d < 0n) { n = -n; d = -d }
-  let a = abs(n), b = d
-  while (b) { const next = a % b; a = b; b = next }
-  return { n: n / a, d: d / a }
-}
 function decimal(value: unknown): Fraction {
-  const match = /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(text(value))
-  if (!match) return fail(`유한 십진수가 아닙니다: ${text(value)}`)
-  const exponent = Number(match[4] || 0) - (match[3]?.length || 0)
-  if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > 1000) return fail('십진수 지수가 지원 범위를 벗어났습니다.')
-  const n = BigInt(`${match[1]}${match[2]}${match[3] || ''}`)
-  return exponent >= 0 ? fraction(n * 10n ** BigInt(exponent)) : fraction(n, 10n ** BigInt(-exponent))
-}
-const add = (a: Fraction, b: Fraction) => fraction(a.n * b.d + b.n * a.d, a.d * b.d)
-const subtract = (a: Fraction, b: Fraction) => fraction(a.n * b.d - b.n * a.d, a.d * b.d)
-const multiply = (a: Fraction, b: Fraction) => fraction(a.n * b.n, a.d * b.d)
-const divide = (a: Fraction, b: Fraction) => fraction(a.n * b.d, a.d * b.n)
-const compare = (a: Fraction, b: Fraction) => a.n * b.d < b.n * a.d ? -1 : a.n * b.d === b.n * a.d ? 0 : 1
-const magnitude = (a: Fraction) => fraction(abs(a.n), a.d)
-// All arithmetic is rational BigInt. Only repeating decimal DISPLAY is rounded,
-// half-up at 30 fractional places; exact numerator/denominator remain in evidence.
-function display(value: Fraction | null): string | null {
-  if (value === null) return null
-  let denominator = value.d, twos = 0, fives = 0
-  while (denominator % 2n === 0n) { denominator /= 2n; twos++ }
-  while (denominator % 5n === 0n) { denominator /= 5n; fives++ }
-  const places = denominator === 1n ? Math.max(twos, fives) : 30
-  const scale = 10n ** BigInt(places)
-  const scaled = (abs(value.n) * scale * 2n + value.d) / (2n * value.d)
-  const digits = (scaled % scale).toString().padStart(places, '0').replace(/0+$/, '')
-  return `${value.n < 0n && scaled ? '-' : ''}${scaled / scale}${digits ? `.${digits}` : ''}`
+  return parseDecimal(value) ?? fail('지원되는 유한 십진수가 아닙니다.')
 }
 const exactEvidence = (value: Fraction | null) => value && ({ numerator: String(value.n), denominator: String(value.d) })
 function sum(values: string[]): Fraction { return values.reduce((result, value) => add(result, decimal(value)), fraction(0n)) }

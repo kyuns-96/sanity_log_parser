@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, ChevronsDownUp, Columns3, LoaderCircle, Maximize2, Minimize2, StepBack, StepForward } from 'lucide-react'
+import { compareNumber, isNumber } from 'lossless-json'
+import { gateCountRow, type GateBases } from './gateCount'
 import { format, formatPercent, text, type TrackingRecord } from './api'
 import { Button } from './components/workspace'
 import { AREA_THRESHOLD, DEFAULT_COLUMNS, DEFAULT_MIN_AREA, MAX_COLUMNS, METRIC_CATALOG, METRIC_GROUPS, atLeast, metricDef, type MetricDef } from './metricCatalog'
@@ -16,7 +18,7 @@ type Line = { kind: 'row'; row: BrowserRow; depth: number; parent: string; paren
 // Amounts show Δ and Δ%; shares (Vth, drive, CTS) show the percentage-point change.
 const fieldsOf = (metric: MetricDef): [Field, string][] => metric.ratio ? [['baseline', '기준'], ['current', '현재'], ['pct_point_change', 'Δ%p']] : [['baseline', '기준'], ['current', '현재'], ['delta', 'Δ'], ['relative_change_pct', 'Δ%']]
 const changeOf = (metric: MetricDef): [Field, string] => metric.ratio ? ['pct_point_change', 'Δ%p'] : ['relative_change_pct', 'Δ%']
-const unitOf = (metric: MetricDef) => metric.unit ? ` ${metric.unit}` : ''
+const unitOf = (metric: MetricDef) => metric.unit && metric.unit !== 'GE' ? ` ${metric.unit}` : ''
 const ABS_PERCENT_FIELDS = new Set<Field>(['relative_change_pct', 'pct_point_change'])
 const MARK_LABEL: Record<string, string> = { unexpected: '이상', needs_review: '확인', expected: '설명됨', minor: '미미' }
 const stateLabel: Record<string, string> = { comparable: '비교', contextual: '조건 차이', unavailable: '불가', pending: '실행 전' }
@@ -50,12 +52,16 @@ function sign(input: unknown) {
 }
 
 // The text a number cell shows. Column widths are measured from the same text.
+function amount(input: unknown, metric: MetricDef) {
+  return metric.unit === 'GE' ? formatPercent(input).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1') : format(input)
+}
+
 function shown(row: BrowserRow, metric: MetricDef, field: Field) {
   const raw = value(row, metric.id, field)
   if (ABS_PERCENT_FIELDS.has(field)) return formatPercent(raw)
   const direction = field === 'delta' ? sign(raw) : 0
-  if (direction) return `${direction > 0 ? '▲' : '▼'} ${format(raw)}`
-  return metric.ratio ? formatPercent(raw) : format(raw)
+  if (direction) return `${direction > 0 ? '▲' : '▼'} ${amount(raw, metric)}`
+  return metric.ratio ? formatPercent(raw) : amount(raw, metric)
 }
 
 // Number columns are as wide as their content (the header label or the longest
@@ -118,7 +124,7 @@ function unchanged(row: BrowserRow) {
   return !!row.result && overall(row) === 'comparable' && ['total_area', 'pwr_all_total_mw'].every(metric => sign(value(row, metric, 'delta')) === 0)
 }
 
-export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, hasResult, separator, columns, onColumns, minArea, onMinArea, labels, marks, locate }: {
+export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, hasResult, separator, columns, onColumns, minArea, onMinArea, labels, gateBases, unitSwitch, marks, locate }: {
   roots: BrowserRow[]
   childrenOf: (row: BrowserRow) => ChildState | undefined
   onRequestChildren?: (key: string, offset: number) => void
@@ -130,13 +136,17 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
   minArea: string
   onMinArea: (value: string) => void
   labels: { baseline: string; current: string }
+  gateBases: GateBases | null
+  unitSwitch: ReactNode
   /** AI analysis verdict per result group id. */
   marks?: Map<string, string>
   /** Open these ancestor rows, then select the row `id`. */
   locate?: { ancestors: string[]; id: string; nonce: number } | null
 }) {
   const sideName = (side: 'baseline' | 'current') => `${side === 'baseline' ? '기준' : '현재'}${labels[side] ? ` · ${labels[side]}` : ''}`
-  const metrics = columns.map(id => metricDef.get(id)).filter((metric): metric is MetricDef => !!metric)
+  const displayMetric = (metric: MetricDef) => gateBases && metric.id.endsWith('_area')
+    ? { ...metric, label: metric.label.replace(/area$/i, 'Gate Count'), unit: 'GE' } : metric
+  const metrics = columns.map(id => metricDef.get(id)).filter((metric): metric is MetricDef => !!metric).map(displayMetric)
   const [choosing, setChoosing] = useState(false)
   const [areaDraft, setAreaDraft] = useState(minArea)
   useEffect(() => setAreaDraft(minArea), [minArea])
@@ -168,7 +178,10 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
       const label = (row: BrowserRow) => row.currentPaths[0] || row.baselinePaths[0] || ''
       return [...kept].sort((a, b) => (sort.descending ? -1 : 1) * label(a).localeCompare(label(b), undefined, { numeric: true }))
     }
-    const read = (row: BrowserRow, metric: string, field: Field) => { const raw = text(value(row, metric, field)); const parsed = Number(raw); return raw === '' || Number.isNaN(parsed) ? null : parsed }
+    const read = (row: BrowserRow, metric: string, field: Field) => {
+      const number = text(value(row, metric, field))
+      return isNumber(number) ? number : null
+    }
     // Default: largest instance first (current area, else baseline area), the
     // same order the server pages children in.
     const [sortMetric, sortField] = sort.key.split('.') as [string, Field]
@@ -176,14 +189,25 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
     return [...kept].sort((a, b) => {
       const left = numeric(a), right = numeric(b)
       if (left === null || right === null) return left === right ? 0 : left === null ? 1 : -1
-      return sort.descending ? right - left : left - right
+      return sort.descending ? compareNumber(right, left) : compareNumber(left, right)
     })
   }
 
+  const projectRow = useMemo(() => {
+    if (!gateBases) return null
+    const cache = new WeakMap<BrowserRow, BrowserRow>()
+    return (row: BrowserRow) => {
+      const existing = cache.get(row)
+      if (existing) return existing
+      const converted = gateCountRow(row, gateBases)
+      cache.set(row, converted)
+      return converted
+    }
+  }, [gateBases])
   const lines = useMemo(() => {
     const result: Line[] = []
     const walk = (rows: BrowserRow[], depth: number, parent: string, parentRow?: BrowserRow) => {
-      for (const row of order(rows)) {
+      for (const row of order(projectRow ? rows.map(projectRow) : rows)) {
         result.push({ kind: 'row', row, depth, parent, parentRow })
         if (!expanded.has(row.key)) continue
         const state = childrenOf(row)
@@ -193,7 +217,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
     }
     walk(roots, 0, '')
     return result
-  }, [roots, expanded, childrenOf, sort, changedOnly])
+  }, [roots, expanded, childrenOf, sort, changedOnly, projectRow])
   const rowLines = lines.filter((line): line is Extract<Line, { kind: 'row' }> => line.kind === 'row')
   // Jump to an analysed instance: expand its ancestors (children load one level
   // at a time) and select it once its row exists.
@@ -287,25 +311,27 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
 
   return <div className={`hierarchy-browser${maximized ? ' maximized' : ''}`} role={maximized ? 'dialog' : undefined} aria-modal={maximized || undefined} aria-label={maximized ? 'Hierarchy 크게 보기' : undefined}>
     <div className="browser-toolbar" role="toolbar" aria-label="Hierarchy 보기">
+      {maximized && unitSwitch}
       <div className="view-switch" role="group" aria-label="보기 방식">{([['split', '좌우 비교'], ['single', '단일 표']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)}>{label}</button>)}</div>
       <Button variant="outline" size="xs" aria-expanded={choosing} onClick={() => setChoosing(value => !value)}><Columns3 size={13} />열 선택 · {metrics.length}</Button>
-      <label className="browser-threshold" title="현재·기준 중 큰 total area가 이 값보다 작은 하위 instance를 숨깁니다. 비우면 모두 표시합니다. 루트는 항상 표시합니다.">Area ≥<input type="text" inputMode="decimal" value={areaDraft} placeholder="전체" onChange={event => setAreaDraft(event.target.value)} onBlur={commitArea} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commitArea() } if (event.key === 'Escape') setAreaDraft(minArea) }} aria-invalid={areaDraft.trim() !== '' && !AREA_THRESHOLD.test(areaDraft.trim())} /></label>
+      <label className="browser-threshold" title="현재·기준 중 큰 total area가 이 값보다 작은 하위 instance를 숨깁니다. 비우면 모두 표시합니다. 루트는 항상 표시합니다.">{gateBases ? '원본 Area' : 'Area'} ≥<input type="text" inputMode="decimal" value={areaDraft} placeholder="전체" onChange={event => setAreaDraft(event.target.value)} onBlur={commitArea} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commitArea() } if (event.key === 'Escape') setAreaDraft(minArea) }} aria-invalid={areaDraft.trim() !== '' && !AREA_THRESHOLD.test(areaDraft.trim())} /></label>
       <Button variant="outline" size="xs" disabled={!differences} onClick={() => jump(-1)} title="이전 차이 (Alt+↑)"><StepBack size={13} />이전 차이</Button>
       <Button variant="outline" size="xs" disabled={!differences} onClick={() => jump(1)} title="다음 차이 (Alt+↓)"><StepForward size={13} />다음 차이</Button>
       <span className="diff-count">표시 중 차이 {differences.toLocaleString()}</span>
       <Button variant="outline" size="xs" aria-pressed={maximized} onClick={() => setMaximized(value => !value)} title={maximized ? '원래 크기 (Esc)' : '표만 화면 전체로 보기'}>{maximized ? <><Minimize2 size={13} />원래 크기</> : <><Maximize2 size={13} />크게 보기</>}</Button>
       {!flat && <Button variant="outline" size="xs" onClick={() => setExpanded(new Set())} disabled={!expanded.size}><ChevronsDownUp size={14} />모두 접기</Button>}
       <label className="browser-check"><input type="checkbox" checked={changedOnly} onChange={event => setChangedOnly(event.target.checked)} />변화·미대응만</label>
-      {sort.key === 'size' ? <span className="diff-count">정렬 · Area 큰 순</span> : <Button variant="ghost" size="xs" onClick={() => setSort(defaultSort)}>정렬 초기화 (Area 큰 순)</Button>}
+      {sort.key === 'size' ? <span className="diff-count">정렬 · {gateBases ? 'Gate Count' : 'Area'} 큰 순</span> : <Button variant="ghost" size="xs" onClick={() => setSort(defaultSort)}>정렬 초기화 ({gateBases ? 'Gate Count' : 'Area'} 큰 순)</Button>}
       {mode === 'single' && <span className="side-legend">{sideName('baseline')} <span aria-hidden="true">↔</span> {sideName('current')}</span>}
       <small>{flat ? '검색 결과 · instance 전체 경로 · ' : ''}부모 값에는 자식이 포함됩니다 · 수치 비교이며 정상/이상 판정이 아님</small>
     </div>
+    {gateBases && <p className="gate-count-basis" role="status"><span>기준 · {gateBases.baseline.note}</span><span>현재 · {gateBases.current.note}</span></p>}
     {choosing && <div className="column-chooser" role="group" aria-label="표시할 지표">
       {METRIC_GROUPS.map(group => <fieldset key={group}><legend>{group}</legend>{METRIC_CATALOG.filter(metric => metric.group === group).map(metric => {
         const checked = columns.includes(metric.id)
-        return <label key={metric.id}><input type="checkbox" checked={checked} disabled={!checked && columns.length >= MAX_COLUMNS} onChange={() => toggleColumn(metric.id)} />{metric.label}{metric.ratio ? ' %' : metric.unit ? ` (${metric.unit})` : ''}</label>
+        return <label key={metric.id}><input type="checkbox" checked={checked} disabled={!checked && columns.length >= MAX_COLUMNS} onChange={() => toggleColumn(metric.id)} />{displayMetric(metric).label}{metric.ratio ? ' %' : metric.unit ? ` (${metric.unit})` : ''}</label>
       })}</fieldset>)}
-      <div className="chooser-actions"><small>최대 {MAX_COLUMNS}개 · 선택은 이 브라우저에만 저장됩니다. 비율(%)은 Δ%p로 비교합니다.</small><Button variant="ghost" size="xs" onClick={() => onColumns(DEFAULT_COLUMNS)}>기본값 (Logic area · Power)</Button><Button variant="ghost" size="xs" onClick={() => onMinArea(DEFAULT_MIN_AREA)}>Area 임계값 기본 {DEFAULT_MIN_AREA}</Button><Button variant="outline" size="xs" onClick={() => setChoosing(false)}>닫기</Button></div>
+      <div className="chooser-actions"><small>최대 {MAX_COLUMNS}개 · 선택은 이 브라우저에만 저장됩니다. 비율(%)은 Δ%p로 비교합니다.</small><Button variant="ghost" size="xs" onClick={() => onColumns(DEFAULT_COLUMNS)}>기본값 ({gateBases ? 'Logic Gate Count' : 'Logic area'} · Power)</Button><Button variant="ghost" size="xs" onClick={() => onMinArea(DEFAULT_MIN_AREA)}>Area 임계값 기본 {DEFAULT_MIN_AREA}</Button><Button variant="outline" size="xs" onClick={() => setChoosing(false)}>닫기</Button></div>
     </div>}
     <div className="browser-scroll">
       <table role={flat ? 'grid' : 'treegrid'} aria-label="Instance hierarchy 비교" className={mode === 'split' ? 'split-view' : undefined} style={{ minWidth }}>
@@ -387,7 +413,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
       <div><dt title={sideName('baseline')}>{sideName('baseline')}</dt><dd>{current.row.baselinePaths.join(' + ') || '대응 없음'}</dd></div>
       {metrics.map(metric => <div key={metric.id}><dt>{metric.label}{unitOf(metric)}</dt><dd>{metric.ratio
         ? <>{percent(value(current.row, metric.id, 'baseline'))} → {percent(value(current.row, metric.id, 'current'))} · Δ {formatPercent(value(current.row, metric.id, 'pct_point_change'))}%p</>
-        : <>{format(value(current.row, metric.id, 'baseline'))} → {format(value(current.row, metric.id, 'current'))} · Δ {format(value(current.row, metric.id, 'delta'))} · {percent(value(current.row, metric.id, 'relative_change_pct'))}</>}</dd></div>)}
+        : <>{amount(value(current.row, metric.id, 'baseline'), metric)} → {amount(value(current.row, metric.id, 'current'), metric)} · Δ {amount(value(current.row, metric.id, 'delta'), metric)} · {percent(value(current.row, metric.id, 'relative_change_pct'))}</>}</dd></div>)}
       {reasonOf(current.row, hasResult) && <div><dt>사유</dt><dd>{reasonOf(current.row, hasResult)}</dd></div>}
     </dl>}
   </div>
