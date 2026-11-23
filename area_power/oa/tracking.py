@@ -37,10 +37,21 @@ from area_power.common.tracking import (
     round_dedupe_key,
 )
 from area_power.common.triage import Thresholds, build_card, select_items, side_context
+from common.sanity_common import ReviewError
 from oa.sanity_ai_task_defaults import DEFAULT_AREA_RETRY_LIMIT, TaskDefaults
 from .service import Input, reject
 
 D = Decimal
+
+
+def _is_tracking_admin(service) -> bool:
+    access = getattr(service, "access", None)
+    return access is None or access.development or bool(access.is_admin)
+
+
+def _require_admin(service) -> None:
+    if not _is_tracking_admin(service):
+        raise ReviewError("FORBIDDEN", "Administrator access is required for tracking configuration.")
 
 
 def _host_db(service):
@@ -53,7 +64,7 @@ def _latest_one(service, conn, kind: str, **filters) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
-def _mail_delivery_info(service, conn, mail_record: dict | None) -> dict[str, Any]:
+def _mail_delivery_info(service, conn, mail_record: dict | None, *, include_recipients: bool = True) -> dict[str, Any]:
     if mail_record is None:
         return {"state": "waiting", "mail_id": None, "job_state": None, "phase": None, "error": None}
     jobs = service.db.records(conn, "job", parent_id=mail_record["id"], limit=1)
@@ -75,22 +86,24 @@ def _mail_delivery_info(service, conn, mail_record: dict | None) -> dict[str, An
         state = "requested"
     else:
         state = mail_record.get("state") or "requested"
-    return {
+    info: dict[str, Any] = {
         "state": state,
         "mail_id": mail_record["id"],
         "trigger": mail_record["payload"].get("trigger"),
         "frozen_at": mail_record["payload"].get("snapshot", {}).get("frozen_at") or mail_record.get("created_at"),
-        "recipients": mail_record["payload"].get("recipients") or [],
         "job_id": job["id"] if job else None,
         "job_state": job["state"] if job else None,
         "phase": phase,
-        "accepted_recipients": last.get("accepted_recipients") or [],
-        "rejected_recipients": last.get("rejected_recipients") or [],
         "error": (job or {}).get("error_detail"),
     }
+    if include_recipients:
+        info["recipients"] = mail_record["payload"].get("recipients") or []
+        info["accepted_recipients"] = last.get("accepted_recipients") or []
+        info["rejected_recipients"] = last.get("rejected_recipients") or []
+    return info
 
 
-def _block_live_row(service, conn, round_row: dict, project_row: dict, block_id: UUID, proj_cfg: dict, block_cfgs: dict) -> dict[str, Any]:
+def _block_live_row(service, conn, round_row: dict, project_row: dict, block_id: UUID, proj_cfg: dict, block_cfgs: dict, *, include_recipients: bool = True) -> dict[str, Any]:
     block_row = service.db.record(conn, block_id, kind="block")
     block_cfg_row = block_cfgs.get(str(block_id))
     block_cfg = block_cfg_row["payload"] if block_cfg_row else {}
@@ -214,7 +227,7 @@ def _block_live_row(service, conn, round_row: dict, project_row: dict, block_id:
         parts.append("발송 후 수정")
 
     block_mails = service.db.records(conn, "tracking_block_mail", parent_id=round_row["id"], block_id=block_id, limit=5)
-    latest_block_mail = _mail_delivery_info(service, conn, block_mails[0] if block_mails else None)
+    latest_block_mail = _mail_delivery_info(service, conn, block_mails[0] if block_mails else None, include_recipients=include_recipients)
 
     return {
         "block_id": block_id,
@@ -238,6 +251,7 @@ def _block_live_row(service, conn, round_row: dict, project_row: dict, block_id:
 
 
 def overview(service, project_id: UUID) -> dict[str, Any]:
+    is_admin = _is_tracking_admin(service)
     with service.db.connect() as conn:
         project_row = service.db.record(conn, project_id, kind="project")
         proj_cfg_row = _latest_one(service, conn, "tracking_project_config", project_id=project_id)
@@ -262,7 +276,7 @@ def overview(service, project_id: UUID) -> dict[str, Any]:
         for r in round_rows:
             rp = r["payload"]
             target_ids = [UUID(str(bid)) for bid in rp.get("target_block_ids") or []]
-            blocks = [_block_live_row(service, conn, r, project_row, bid, proj_cfg, block_cfgs) for bid in target_ids]
+            blocks = [_block_live_row(service, conn, r, project_row, bid, proj_cfg, block_cfgs, include_recipients=is_admin) for bid in target_ids]
             full_chips = [b for b in blocks if b["is_full_chip"]]
             subs = [b for b in blocks if not b["is_full_chip"]]
             top_mail_id = rp.get("top_mail_record_id")
@@ -288,7 +302,7 @@ def overview(service, project_id: UUID) -> dict[str, Any]:
                     "arrived": sum(b["arrived_corners"] > 0 for b in subs),
                     "completed": sum(b["all_completed"] for b in subs),
                 },
-                "top_mail": _mail_delivery_info(service, conn, top_mail_row),
+                "top_mail": _mail_delivery_info(service, conn, top_mail_row, include_recipients=is_admin),
                 "has_post_top_revisions": any(b["post_top_mail_revised"] for b in blocks),
                 "blocks": blocks,
             })
@@ -304,46 +318,58 @@ def overview(service, project_id: UUID) -> dict[str, Any]:
         ]
         proposals.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
 
-        # Check current user's VWP AREA_TRIAGE readiness
-        host = _host_db(service)
-        ai_model = {"ready": False, "error": "AI_AUTHENTICATED_REQUEST_REQUIRED"}
-        if host is not None:
-            from oa.sanity_ai_connections import ConnectionStore
-            _, selected, default = ConnectionStore(host).task_selection(service.access.actor.user_id, "AREA_TRIAGE")
-            err = (
-                default.get("reason") if default and not default.get("applied")
-                else "AI_VWP_CONNECTION_REQUIRED" if selected and selected.get("execution_site") != "vwp"
-                else selected.get("credential_error") if selected and not selected.get("credential_ready")
-                else None
-            )
-            ai_model = {
-                "ready": bool(selected and err is None),
-                "error": err,
-                "connection_label": selected.get("label") if selected else None,
-                "model": selected.get("model") if selected else None,
-                "site": selected.get("execution_site") if selected else None,
-            }
+        # Check current admin's VWP AREA_TRIAGE readiness (omitted for non-admin viewers)
+        ai_model = None
+        if is_admin:
+            host = _host_db(service)
+            ai_model = {"ready": False, "error": "AI_AUTHENTICATED_REQUEST_REQUIRED"}
+            if host is not None:
+                from oa.sanity_ai_connections import ConnectionStore
+                _, selected, default = ConnectionStore(host).task_selection(service.access.actor.user_id, "AREA_TRIAGE")
+                err = (
+                    default.get("reason") if default and not default.get("applied")
+                    else "AI_VWP_CONNECTION_REQUIRED" if selected and selected.get("execution_site") != "vwp"
+                    else selected.get("credential_error") if selected and not selected.get("credential_ready")
+                    else None
+                )
+                ai_model = {
+                    "ready": bool(selected and err is None),
+                    "error": err,
+                    "connection_label": selected.get("label") if selected else None,
+                    "model": selected.get("model") if selected else None,
+                    "site": selected.get("execution_site") if selected else None,
+                }
 
-        return {
+        public_proj_cfg = {k: v for k, v in proj_cfg.items() if k != "ai_context"}
+        if not is_admin:
+            public_proj_cfg["top_recipients"] = []
+        public_block_cfgs = []
+        for row in block_cfg_rows:
+            entry = {"id": row["id"], "block_id": row["block_id"], "row_version": row["row_version"], **row["payload"]}
+            if not is_admin:
+                entry["recipients"] = []
+            public_block_cfgs.append(entry)
+
+        result: dict[str, Any] = {
             "project_id": project_id,
             "project_name": project_row["payload"].get("name") or "",
             "project_config": {
                 "id": proj_cfg_row["id"] if proj_cfg_row else None,
                 "row_version": proj_cfg_row["row_version"] if proj_cfg_row else None,
-                **{k: v for k, v in proj_cfg.items() if k != "ai_context"},
+                **public_proj_cfg,
             },
-            "block_configs": [
-                {"id": row["id"], "block_id": row["block_id"], "row_version": row["row_version"], **row["payload"]}
-                for row in block_cfg_rows
-            ],
+            "block_configs": public_block_cfgs,
             "rounds": rounds_out,
-            "expectations": expectations,
-            "expectation_proposals": proposals[:20],
-            "ai_model": ai_model,
+            "expectations": expectations if is_admin else [],
+            "expectation_proposals": proposals[:20] if is_admin else [],
         }
+        if ai_model is not None:
+            result["ai_model"] = ai_model
+        return result
 
 
 def save_project_config(service, project_id: UUID, body: ProjectTrackingConfigInput, actor: str) -> dict[str, Any]:
+    _require_admin(service)
     with service.db.connect() as conn:
         project = service.db.record(conn, project_id, kind="project")
         service.authorize(conn, project, write=True)
@@ -385,6 +411,7 @@ def save_project_config(service, project_id: UUID, body: ProjectTrackingConfigIn
 
 
 def save_block_config(service, project_id: UUID, block_id: UUID, body: BlockTrackingConfigInput, actor: str) -> dict[str, Any]:
+    _require_admin(service)
     with service.db.connect() as conn:
         block = service.db.record(conn, block_id, kind="block")
         if block.get("project_id") != project_id:
@@ -477,6 +504,7 @@ def save_block_config(service, project_id: UUID, block_id: UUID, body: BlockTrac
 
 
 def save_round(service, project_id: UUID, body: RoundInput, actor: str) -> dict[str, Any]:
+    _require_admin(service)
     with service.db.connect() as conn:
         project = service.db.record(conn, project_id, kind="project")
         service.authorize(conn, project, write=True)
@@ -542,6 +570,7 @@ def save_round(service, project_id: UUID, body: RoundInput, actor: str) -> dict[
 
 
 def reconcile_round(service, round_id: UUID, actor: str) -> dict[str, Any]:
+    _require_admin(service)
     with service.db.connect() as conn:
         round_row = service.db.record(conn, round_id, kind="tracking_round")
         service.authorize(conn, round_row, write=True)
@@ -555,6 +584,7 @@ def reconcile_round(service, round_id: UUID, actor: str) -> dict[str, Any]:
 
 
 def save_expectation(service, project_id: UUID, block_id: UUID, body: ExpectationInput, actor: str, *, entity_id: UUID | None = None) -> dict[str, Any]:
+    _require_admin(service)
     with service.db.connect() as conn:
         block = service.db.record(conn, block_id, kind="block")
         if block.get("project_id") != project_id:
@@ -587,6 +617,7 @@ def save_expectation(service, project_id: UUID, block_id: UUID, body: Expectatio
 
 
 def propose_expectations(service, project_id: UUID, block_id: UUID, body: ExpectationProposalInput, actor) -> dict[str, Any]:
+    _require_admin(service)
     host = getattr(actor, "access", None)
     if actor.auth_method != "sso" or host is None:
         reject("SSO is required for AI expectation proposals.", "AI_AUTHENTICATED_REQUEST_REQUIRED", 403)
@@ -624,6 +655,7 @@ def propose_expectations(service, project_id: UUID, block_id: UUID, body: Expect
 
 
 def approve_expectations(service, proposal_id: UUID, body: ExpectationApprovalInput, actor: str) -> dict[str, Any]:
+    _require_admin(service)
     with service.db.connect() as conn:
         run = service.db.record(conn, proposal_id, kind="expected_change_proposal", lock=True)
         service.authorize(conn, run, write=True)
@@ -672,6 +704,7 @@ class PreviewInput(Input):
 
 def preview_tracking(service, project_id: UUID, body: PreviewInput) -> dict[str, Any]:
     """Pre-activation preview: evaluate existing uploads & render block/TOP mail previews without sending."""
+    _require_admin(service)
     data = overview(service, project_id)
     rounds = data["rounds"]
     chosen = next((r for r in rounds if r["net_ver"] == body.net_ver), None) if body.net_ver else (rounds[0] if rounds else None)
@@ -726,11 +759,12 @@ def preview_tracking(service, project_id: UUID, body: PreviewInput) -> dict[str,
 
 def mail_snapshot(service, mail_id: UUID) -> dict[str, Any]:
     """Open a frozen mail snapshot (block or TOP) alongside pointers to the latest live status."""
+    is_admin = _is_tracking_admin(service)
     with service.db.connect() as conn:
         row = service.db.record(conn, mail_id)
         if row["record_type"] not in ("tracking_block_mail", "tracking_top_mail"):
             reject("Record is not a tracking mail snapshot.", "not_found", 404)
-        delivery = _mail_delivery_info(service, conn, row)
+        delivery = _mail_delivery_info(service, conn, row, include_recipients=is_admin)
         round_row = service.db.record(conn, row["parent_id"], kind="tracking_round")
         latest_slots = service.all_records(conn, "tracking_slot", parent_id=round_row["id"])
         has_newer = any(

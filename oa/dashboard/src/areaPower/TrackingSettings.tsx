@@ -1,15 +1,234 @@
-import { useEffect, useMemo, useState } from 'react'
-import { ChevronRight, Eye, Plus, Sparkles, Trash2 } from 'lucide-react'
-import { array, format, object, request, text, unknownSchema, uploadName, type Auth, type TrackingRecord, type Upload } from './api'
-import { Badge, Button, Field, useAction } from './components/workspace'
-import type { AtlasProject } from '../atlasContext'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronRight, Eye, LoaderCircle, Mail, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react'
+import { z } from 'zod'
+import { allRecords, allUploads, array, date, format, object, recordSchema, request, text, unknownSchema, uploadName, type Auth, type TrackingRecord, type Upload } from './api'
+import { Badge, Button, Empty, Field, useAction } from './components/workspace'
+import { useAtlas, type AtlasCatalog, type AtlasProject } from '../atlasContext'
+import { useDashboardAuth } from '../useDashboardAuth'
 import {
   cornerSpecId,
+  MAIL_STATE_LABEL,
+  trackingMailSnapshotSchema,
+  trackingOverviewSchema,
   trackingPreviewSchema,
   type CornerSpec,
+  type TrackingMailSnapshot,
   type TrackingOverviewData,
   type TrackingPreviewData,
 } from './trackingApi'
+
+const baselineSchema = z.object({
+  project_id: z.string(),
+  row_version: z.string(),
+  baseline_project_id: z.string().nullable(),
+  baseline_project: recordSchema.nullable(),
+  status: z.enum(['unset', 'available', 'unavailable']),
+  process: z.string().nullish(),
+  baseline_process: z.string().nullish(),
+})
+
+/** Admin-only Area/Power automation, NET_VER rounds, and mail recipient management. */
+export function AreaTrackingAdmin() {
+  const host = useDashboardAuth(true)
+  const atlas = useAtlas()
+  const action = useAction()
+  const auth = useMemo<Auth>(
+    () => ({ actor: host.session?.reviewer || '', request: host.request, demo: atlas?.demo }),
+    [host.session?.reviewer, host.request, atlas?.demo],
+  )
+
+  const [fallbackCatalog, setFallbackCatalog] = useState<AtlasCatalog | null>(null)
+  const [uploads, setUploads] = useState<Upload[]>([])
+  const [records, setRecords] = useState<TrackingRecord[]>([])
+  const [workspaceLoading, setWorkspaceLoading] = useState(false)
+  const [workspaceError, setWorkspaceError] = useState('')
+  const [refreshTick, setRefreshTick] = useState(0)
+
+  const catalog = atlas?.catalog || fallbackCatalog
+  const available = catalog?.area_enabled === true && catalog.area_status !== 'unavailable'
+  const projects = catalog?.projects || []
+  const [projectId, setProjectId] = useState(() => atlas?.scope.projectId || '')
+
+  useEffect(() => {
+    if (!projectId && projects.length) setProjectId(projects[0].id)
+  }, [projectId, projects])
+
+  const loadWorkspace = useCallback(async (signal?: AbortSignal) => {
+    setWorkspaceLoading(true)
+    setWorkspaceError('')
+    try {
+      let currentCatalog = atlas?.catalog || null
+      if (!currentCatalog) {
+        currentCatalog = await host.request<AtlasCatalog>('/api/atlas/catalog', undefined, false, signal)
+        if (!signal?.aborted) setFallbackCatalog(currentCatalog)
+      }
+      if (currentCatalog?.area_enabled === true && currentCatalog.area_status !== 'unavailable') {
+        const [u, projRecs, blkRecs, mapRecs] = await Promise.all([
+          allUploads(auth, signal),
+          allRecords(auth, 'project', { latest: 'false' }, signal),
+          allRecords(auth, 'block', { latest: 'false' }, signal),
+          allRecords(auth, 'mapping', { latest: 'false' }, signal),
+        ])
+        if (!signal?.aborted) {
+          setUploads(u)
+          setRecords([...projRecs, ...blkRecs, ...mapRecs])
+        }
+      }
+    } catch (cause) {
+      if (!signal?.aborted) setWorkspaceError(cause instanceof Error ? cause.message : 'Area/Power 관리 자료를 불러오지 못했습니다.')
+    } finally {
+      if (!signal?.aborted) setWorkspaceLoading(false)
+    }
+  }, [atlas?.catalog, auth, host.request])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    void loadWorkspace(controller.signal)
+    return () => controller.abort()
+  }, [loadWorkspace, refreshTick])
+
+  const projectRecords = useMemo(
+    () => new Map(records.filter(row => row.record_type === 'project').map(row => [text(row.payload.sanity_project_id), row])),
+    [records],
+  )
+  const project = projects.find(p => p.id === projectId)
+  const areaProjectId = project?.area_id || (project ? projectRecords.get(project.id)?.id : '') || ''
+
+  const [baseline, setBaseline] = useState<z.infer<typeof baselineSchema> | null>(null)
+  const [trackingData, setTrackingData] = useState<TrackingOverviewData | null>(null)
+  const [trackingLoading, setTrackingLoading] = useState(false)
+  const [trackingError, setTrackingError] = useState('')
+  const ctrlRef = useRef<AbortController | null>(null)
+
+  const reloadProjectTracking = useCallback(async () => {
+    ctrlRef.current?.abort()
+    if (!areaProjectId) {
+      setBaseline(null)
+      setTrackingData(null)
+      setTrackingError('')
+      return
+    }
+    const controller = new AbortController()
+    ctrlRef.current = controller
+    setTrackingLoading(true)
+    setTrackingError('')
+    try {
+      const [b, ov] = await Promise.all([
+        request(auth, `/projects/${encodeURIComponent(areaProjectId)}/baseline`, baselineSchema, undefined, controller.signal),
+        request(auth, `/tracking/projects/${encodeURIComponent(areaProjectId)}/overview`, trackingOverviewSchema, undefined, controller.signal),
+      ])
+      if (!controller.signal.aborted) {
+        setBaseline(b)
+        setTrackingData(ov)
+      }
+    } catch (cause) {
+      if (!controller.signal.aborted) {
+        setTrackingError(cause instanceof Error ? cause.message : '프로젝트 자동 분석 설정을 조회하지 못했습니다.')
+      }
+    } finally {
+      if (!controller.signal.aborted) setTrackingLoading(false)
+    }
+  }, [auth, areaProjectId])
+
+  useEffect(() => {
+    void reloadProjectTracking()
+    return () => ctrlRef.current?.abort()
+  }, [reloadProjectTracking, refreshTick])
+
+  const baselineProject = useMemo(
+    () => projects.find(row => (row.area_id || projectRecords.get(row.id)?.id) === baseline?.baseline_project_id),
+    [projects, projectRecords, baseline?.baseline_project_id],
+  )
+
+  async function prepareProject(target: AtlasProject) {
+    await auth.request('/api/atlas/area-scope', { project_id: target.id }, false)
+    if (atlas) await atlas.reload()
+    setRefreshTick(v => v + 1)
+  }
+
+  async function reloadAll() {
+    if (atlas) await atlas.reload()
+    setRefreshTick(v => v + 1)
+  }
+
+  return (
+    <div className="area-power area-tracking-admin">
+      {action.feedback}
+      {workspaceError && <div className="notice error" role="alert">{workspaceError}</div>}
+      {!available && !workspaceLoading ? (
+        <Empty title="Area/Power 수치 분석 서비스가 비활성 상태입니다">
+          Area/Power DB 및 서비스 연결이 준비되면 여기에서 프로젝트별 자동 분석·회차·메일 수신자를 관리할 수 있습니다.
+        </Empty>
+      ) : (
+        <>
+          <section className="panel comparison-setup-bar project-context-bar" aria-label="관리 대상 프로젝트 선택">
+            <div className="baseline-summary">
+              <label className="setup-project">
+                <span>대상 프로젝트</span>
+                <select value={projectId} onChange={e => setProjectId(e.target.value)}>
+                  <option value="">프로젝트 선택</option>
+                  {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </label>
+              {project && (
+                <>
+                  <span className="context-pill">{(baseline ? baseline.process : project.process) || '공정 미등록'}</span>
+                  <span className="setup-arrow" aria-hidden="true">↔</span>
+                  <span className="setup-baseline">
+                    <small>비교 기준</small>
+                    <strong className={baseline?.status !== 'available' ? 'is-unset' : ''}>
+                      {baseline?.status === 'available'
+                        ? text(baseline.baseline_project?.payload.name) || baselineProject?.name
+                        : baseline?.status === 'unavailable' ? '기준 조회 불가' : '미설정'}
+                    </strong>
+                  </span>
+                </>
+              )}
+              <Button variant="outline" size="sm" disabled={workspaceLoading || trackingLoading} onClick={() => setRefreshTick(v => v + 1)}>
+                <RefreshCw size={14} className={workspaceLoading || trackingLoading ? 'spin' : ''} />새로고침
+              </Button>
+            </div>
+          </section>
+
+          {!project ? (
+            <Empty title="관리할 프로젝트를 선택하세요">프로젝트를 선택하면 버전 회차, 자동 분석, 메일 수신자, 블록별 기준 실행을 관리할 수 있습니다.</Empty>
+          ) : !areaProjectId ? (
+            <section className="panel">
+              <p className="notice">이 프로젝트는 아직 Area/Power 서비스에 연결되지 않았습니다.</p>
+              <Button size="sm" disabled={action.busy || !project.can_write} onClick={() => action.run(() => prepareProject(project), '프로젝트를 Area/Power에 연결했습니다.')}>
+                프로젝트 연결
+              </Button>
+            </section>
+          ) : (
+            <>
+              {!project.can_write && (
+                <p className="notice warning">
+                  이 프로젝트의 설정을 저장하려면 ‘프로젝트·권한’ 탭에서 본인의 프로젝트 멤버 권한도 함께 승인해 주세요.
+                </p>
+              )}
+              {trackingError && <div className="notice error" role="alert">{trackingError}</div>}
+              {trackingLoading && !trackingData ? (
+                <div className="loading-state" role="status"><LoaderCircle className="spin" size={20} />설정을 불러오는 중…</div>
+              ) : (
+                <TrackingSettings
+                  auth={auth}
+                  project={project}
+                  baselineProject={baselineProject}
+                  areaProjectId={areaProjectId}
+                  baselineAreaProjectId={baseline?.baseline_project_id}
+                  uploads={uploads}
+                  records={records}
+                  data={trackingData}
+                  onReload={reloadAll}
+                />
+              )}
+            </>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
 
 interface TrackingSettingsProps {
   auth: Auth
@@ -38,6 +257,56 @@ export function TrackingSettings({
 }: TrackingSettingsProps) {
   const action = useAction()
   const projCfg = object(data?.project_config)
+
+  // Round management (admin-only)
+  const rounds = data?.rounds || []
+  const areaBlocks = useMemo(() => project.blocks.filter(b => Boolean(b.area_id)), [project.blocks])
+  const knownNetVers = useMemo(() => {
+    const set = new Set<string>()
+    for (const block of project.blocks) {
+      for (const version of block.versions) {
+        if (version.net_ver) set.add(version.net_ver)
+      }
+    }
+    return [...set]
+  }, [project.blocks])
+
+  const [addingRound, setAddingRound] = useState(false)
+  const [netVerDraft, setNetVerDraft] = useState('')
+  const [arrivedDraft, setArrivedDraft] = useState(() => new Date().toISOString().slice(0, 10))
+  const [targetBlocks, setTargetBlocks] = useState<string[]>([])
+  const [mailSnapshot, setMailSnapshot] = useState<TrackingMailSnapshot | null>(null)
+
+  useEffect(() => {
+    if (addingRound && !targetBlocks.length && areaBlocks.length) {
+      setTargetBlocks(areaBlocks.map(b => b.area_id!))
+    }
+  }, [addingRound, areaBlocks, targetBlocks.length])
+
+  async function submitRound() {
+    const trimmed = netVerDraft.trim()
+    if (!trimmed) throw new Error('버전(NET_VER)을 입력하거나 선택하세요.')
+    if (!arrivedDraft) throw new Error('Netlist 도착일을 입력하세요.')
+    if (!targetBlocks.length) throw new Error('대상 블록을 하나 이상 선택하세요.')
+    await request(auth, `/tracking/projects/${encodeURIComponent(areaProjectId)}/rounds`, unknownSchema, {
+      net_ver: trimmed,
+      netlist_arrived_at: arrivedDraft,
+      target_block_ids: targetBlocks,
+    })
+    setAddingRound(false)
+    setNetVerDraft('')
+    await onReload()
+  }
+
+  async function reconcileRound(roundId: string) {
+    await request(auth, `/tracking/rounds/${encodeURIComponent(roundId)}/reconcile`, unknownSchema, {})
+    await onReload()
+  }
+
+  async function openMailSnapshot(mailId: string) {
+    const snap = await request(auth, `/tracking/mails/${encodeURIComponent(mailId)}`, trackingMailSnapshotSchema)
+    setMailSnapshot(snap)
+  }
 
   // Project-level settings
   const [enabled, setEnabled] = useState(false)
@@ -104,7 +373,6 @@ export function TrackingSettings({
   }, [data?.project_config?.id, data?.project_config?.row_version])
 
   // Block-level settings
-  const areaBlocks = useMemo(() => project.blocks.filter(b => Boolean(b.area_id)), [project.blocks])
   const [selectedBlockId, setSelectedBlockId] = useState(initialBlockId || '')
   useEffect(() => {
     if (initialBlockId) setSelectedBlockId(initialBlockId)
@@ -202,10 +470,7 @@ export function TrackingSettings({
       temp_c: newCornerTemp.trim() || null,
       pex: newCornerPex.trim() || null,
     }])
-    setNewCornerName('')
-    setNewCornerVolt('')
-    setNewCornerTemp('')
-    setNewCornerPex('')
+    setNewCornerName(''); setNewCornerVolt(''); setNewCornerTemp(''); setNewCornerPex('')
   }
 
   function addBlockCorner() {
@@ -301,7 +566,137 @@ export function TrackingSettings({
     <div className="tracking-settings">
       {action.feedback}
 
-      {/* Card 1: Essential Project Automation Settings */}
+      {/* Card 1: Version Round Management (Admin-only) */}
+      <section className="panel" aria-label="버전 회차 관리">
+        <div className="section-heading">
+          <div>
+            <h2>버전 회차 (NET_VER) 관리</h2>
+            <p>Netlist 도착일과 추적 대상 블록을 등록해 마감 및 TOP 요약 메일 일정을 관리합니다.</p>
+          </div>
+          {project.can_write && (
+            <Button variant="outline" size="sm" onClick={() => setAddingRound(v => !v)}>
+              <Plus size={14} />{addingRound ? '입력 닫기' : '새 버전 회차 등록'}
+            </Button>
+          )}
+        </div>
+
+        {addingRound && (
+          <div className="tracking-round-form-panel admin-round-form">
+            <div className="tracking-form-row">
+              <Field label="버전 (NET_VER)">
+                <input
+                  type="text"
+                  list="admin-net-ver-options"
+                  value={netVerDraft}
+                  onChange={event => setNetVerDraft(event.target.value)}
+                  placeholder="예: NET_023"
+                />
+                <datalist id="admin-net-ver-options">
+                  {knownNetVers.map(nv => <option key={nv} value={nv} />)}
+                </datalist>
+              </Field>
+              <Field label="Netlist 도착일">
+                <input type="date" value={arrivedDraft} onChange={event => setArrivedDraft(event.target.value)} />
+                <small>마감: 도착일 + {deadlineDays}일 {deadlineTime}</small>
+              </Field>
+            </div>
+            <div className="tracking-block-checks">
+              <span>추적 대상 블록</span>
+              <div className="tracking-check-grid">
+                {areaBlocks.map(block => {
+                  const id = block.area_id!
+                  const checked = targetBlocks.includes(id)
+                  const isFc = block.name.trim() === project.name.trim()
+                  return (
+                    <label key={id} className="checkbox">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={event => setTargetBlocks(prev => event.target.checked ? [...prev, id] : prev.filter(item => item !== id))}
+                      />
+                      <span>{block.name}{isFc ? ' (Full-chip)' : ''}</span>
+                    </label>
+                  )
+                })}
+                {!areaBlocks.length && <small className="text-muted">먼저 블록이 연결되어야 합니다.</small>}
+              </div>
+            </div>
+            <div className="actions">
+              <Button size="sm" disabled={action.busy || !project.can_write || !areaBlocks.length} onClick={() => action.run(submitRound, '버전 회차를 등록했습니다.')}>
+                회차 등록
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setAddingRound(false)}>취소</Button>
+            </div>
+          </div>
+        )}
+
+        {rounds.length > 0 ? (
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>NET_VER</th>
+                  <th>도착일 · 마감</th>
+                  <th>진행 현황</th>
+                  <th>TOP 메일 상태</th>
+                  <th>관리</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rounds.map(r => (
+                  <tr key={r.id}>
+                    <td>
+                      <strong>{r.net_ver}</strong>
+                      {r.has_post_top_revisions && <Badge value="발송 후 수정" />}
+                    </td>
+                    <td>{r.netlist_arrived_at || '—'} → {r.deadline_date || '—'} {r.deadline_time || ''}</td>
+                    <td>
+                      {r.full_chip_counts.total > 0 && `Full-chip ${r.full_chip_counts.completed}/${r.full_chip_counts.total} · `}
+                      블록 {r.sub_block_counts.completed}/{r.sub_block_counts.total} 완료
+                    </td>
+                    <td>
+                      <Badge value={MAIL_STATE_LABEL[r.top_mail.state] || r.top_mail.state} />
+                    </td>
+                    <td>
+                      <div className="actions">
+                        {project.can_write && (
+                          <Button variant="outline" size="sm" disabled={action.busy} onClick={() => action.run(() => reconcileRound(r.id), '회차 상태를 재점검하도록 요청했습니다.')}>
+                            <RefreshCw size={13} />재점검
+                          </Button>
+                        )}
+                        {r.top_mail.mail_id && (
+                          <Button variant="ghost" size="sm" onClick={() => action.run(() => openMailSnapshot(r.top_mail.mail_id!))}>
+                            <Mail size={13} />발송 스냅샷
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="muted">등록된 버전 회차가 없습니다. ‘새 버전 회차 등록’으로 추적을 시작하세요.</p>
+        )}
+
+        {mailSnapshot && (
+          <div className="tracking-subblock">
+            <div className="tracking-snapshot-head">
+              <strong>
+                <Mail size={14} aria-hidden="true" /> 발송 당시 스냅샷 · {date(text(mailSnapshot.snapshot.frozen_at) || mailSnapshot.created_at)}
+              </strong>
+              <Button variant="ghost" size="sm" onClick={() => setMailSnapshot(null)}>닫기</Button>
+            </div>
+            <p className="muted">
+              상태: {MAIL_STATE_LABEL[mailSnapshot.delivery.state] || mailSnapshot.delivery.state}
+              {mailSnapshot.delivery.recipients?.length ? ` · 수신자: ${mailSnapshot.delivery.recipients.join(', ')}` : ''}
+            </p>
+          </div>
+        )}
+      </section>
+
+      {/* Card 2: Essential Project Automation Settings */}
       <section className="panel" aria-label="자동 분석 기본 설정">
         <div className="section-heading">
           <div>
@@ -318,7 +713,7 @@ export function TrackingSettings({
           <p className={aiModel.ready ? 'notice' : 'notice warning'}>
             {aiModel.ready
               ? `자동 분석 AI 연결됨 · ${aiModel.connection_label || 'VWP'} (${aiModel.model})`
-              : '자동 분석을 켜려면 중앙 VWP AI 연결과 본인 인증값이 먼저 설정되어 있어야 합니다.'}
+              : '자동 분석을 켜려면 ‘AI 연결·모델 관리’에서 중앙 VWP AI 연결과 본인 인증값이 먼저 설정되어 있어야 합니다.'}
           </p>
         )}
 
@@ -381,7 +776,6 @@ export function TrackingSettings({
           </div>
         </div>
 
-        {/* Advanced Project Rules collapsed by default */}
         <details className="settings-advanced">
           <summary>
             <ChevronRight size={15} className="chevron" aria-hidden="true" />
@@ -500,7 +894,7 @@ export function TrackingSettings({
         </section>
       )}
 
-      {/* Card 2: Per-block summary table + compact editor for selected block */}
+      {/* Card 3: Per-block summary table + compact editor for selected block */}
       <section className="panel" aria-label="블록별 비교 기준 및 담당자">
         <div className="section-heading">
           <div>

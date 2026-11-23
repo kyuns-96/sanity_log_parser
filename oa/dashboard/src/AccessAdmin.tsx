@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Check, FolderKanban, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react'
+import { Check, FolderKanban, GitCompareArrows, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react'
 import { Button } from './studio/components/ui/button'
 import { Badge } from './studio/components/ui/badge'
 import { Input } from './components/ui/input'
@@ -8,6 +8,7 @@ import { Textarea } from './components/ui/textarea'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog'
 import { AccessLayout } from './AccessWelcome'
 import AIConnectionsAdmin from './AIConnectionsAdmin'
+import { AreaTrackingAdmin } from './areaPower/TrackingSettings'
 import UserGrants from './UserGrants'
 import ProjectProcessField from './ProjectProcessField'
 import type { AccessScreenProps } from './AccessWelcome'
@@ -24,7 +25,7 @@ export default function AccessAdmin(props: AccessScreenProps) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [showAI, setShowAI] = useState(false)
+  const [tab, setTab] = useState<'access' | 'ai' | 'tracking'>('access')
   const viewId = useId()
   const [projectName, setProjectName] = useState('')
   const [process, setProcess] = useState('')
@@ -84,14 +85,21 @@ export default function AccessAdmin(props: AccessScreenProps) {
   const userName = (userId: string) => access?.users.find(user => user.user_id === userId)?.display_name || userId
   const pending = access?.requests.filter(request => request.status === 'PENDING') || []
   const completed = access?.requests.filter(request => request.status !== 'PENDING') || []
-  return <AccessLayout {...props} page="admin" title={showAI ? 'AI 연결·모델 관리' : '프로젝트·권한 관리'} description={showAI ? '사용할 AI 연결과 기본 모델, 사용자 인증값 발급 경로를 관리합니다.' : '프로젝트와 블록을 등록하고, 사용자의 프로젝트 멤버 권한을 승인하거나 회수합니다.'}>
+  const heading = tab === 'ai'
+    ? { title: 'AI 연결·모델 관리', description: '사용할 AI 연결과 기본 모델, 사용자 인증값 발급 경로를 관리합니다.' }
+    : tab === 'tracking'
+      ? { title: 'Area·Power 자동 분석 관리', description: '프로젝트별 버전 회차, 마감 일정, TOP·블록 결과 메일 수신자와 기준 실행을 관리합니다.' }
+      : { title: '프로젝트·권한 관리', description: '프로젝트와 블록을 등록하고, 사용자의 프로젝트 멤버 권한을 승인하거나 회수합니다.' }
+  return <AccessLayout {...props} page="admin" title={heading.title} description={heading.description}>
     <nav className="am-view-switch" aria-label="관리 항목">
-      <Button variant="ghost" aria-pressed={!showAI} aria-controls={`${viewId}-access`} onClick={() => setShowAI(false)}><FolderKanban size={16} />프로젝트·권한</Button>
-      <Button variant="ghost" aria-pressed={showAI} aria-expanded={showAI} aria-controls={`${viewId}-ai`} onClick={() => setShowAI(true)}>AI 연결·모델 관리</Button>
+      <Button variant="ghost" aria-pressed={tab === 'access'} aria-controls={`${viewId}-access`} onClick={() => setTab('access')}><FolderKanban size={16} />프로젝트·권한</Button>
+      <Button variant="ghost" aria-pressed={tab === 'ai'} aria-expanded={tab === 'ai'} aria-controls={`${viewId}-ai`} onClick={() => setTab('ai')}>AI 연결·모델 관리</Button>
+      <Button variant="ghost" aria-pressed={tab === 'tracking'} aria-expanded={tab === 'tracking'} aria-controls={`${viewId}-tracking`} onClick={() => setTab('tracking')}><GitCompareArrows size={16} />Area·Power 자동 분석</Button>
     </nav>
-    <div id={`${viewId}-ai`} hidden={!showAI}>{showAI && <AIConnectionsAdmin api={api} />}</div>
+    <div id={`${viewId}-ai`} hidden={tab !== 'ai'}>{tab === 'ai' && <AIConnectionsAdmin api={api} />}</div>
+    <div id={`${viewId}-tracking`} hidden={tab !== 'tracking'}>{tab === 'tracking' && <AreaTrackingAdmin />}</div>
     {error && !decision && <p className="am-error" role="alert">{error}</p>}{notice && <p className="am-notice" role="status">{notice}</p>}
-    <div id={`${viewId}-access`} hidden={showAI}>
+    <div id={`${viewId}-access`} hidden={tab !== 'access'}>
     <p className="am-admin-note"><ShieldCheck size={17} />관리자는 등록과 권한을 관리합니다. 검토·수정이 필요하면 본인의 프로젝트 멤버 권한도 승인해 주세요.</p>
     <div className="am-section-heading"><h2>승인 대기 <span>{pending.length}건</span></h2><Button variant="outline" size="sm" disabled={busy || loading} onClick={() => void command(refresh)}><RefreshCw size={15} />관리 상태 새로고침</Button></div>
     {loading ? <p role="status" className="am-loading">프로젝트와 권한 요청을 확인하고 있습니다.</p> : <>

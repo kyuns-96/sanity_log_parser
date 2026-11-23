@@ -465,6 +465,9 @@
 .area-power .tracking-dot.is-off { background: var(--surface-soft); color: var(--text-muted); border: 1px solid var(--line); }
 
 .area-power .project-summary-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.area-power .project-summary-strip.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.area-power.area-tracking-admin { margin-top: 8px; }
+.area-power .admin-round-form { margin: 8px 0 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
 .area-power .summary-card { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); min-width: 0; }
 .area-power .summary-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: var(--text-caption); color: var(--text-secondary); }
 .area-power .summary-card > strong { font-size: 15px; color: var(--ink); line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, CalendarClock, CheckCircle2, Mail, Plus, RefreshCw, Settings2 } from 'lucide-react'
-import { array, cornerKey, date, format, object, request, text, unknownSchema, type Auth, type Upload } from './api'
-import { Badge, Button, Field, useAction } from './components/workspace'
+import { AlertTriangle, CalendarClock, CheckCircle2, Mail } from 'lucide-react'
+import { array, cornerKey, date, format, object, request, text, type Auth, type Upload } from './api'
+import { Badge, Button } from './components/workspace'
 import type { AtlasProject } from '../atlasContext'
 import {
   MAIL_STATE_LABEL,
@@ -28,9 +28,7 @@ interface TrackingOverviewProps {
   error: string
   initialMailId: string
   onClearMailId: () => void
-  onReload: () => Promise<void>
   onEditBaseline: () => void
-  onOpenSettings: (blockId?: string) => void
   onOpenResult: (target: { comparisonId?: string; uploadId?: string; baselineUploadId?: string; openMapping?: boolean; blockId?: string }) => void
 }
 
@@ -55,17 +53,10 @@ export function TrackingOverview({
   error,
   initialMailId,
   onClearMailId,
-  onReload,
   onEditBaseline,
-  onOpenSettings,
   onOpenResult,
 }: TrackingOverviewProps) {
-  const action = useAction()
   const [selectedRoundId, setSelectedRoundId] = useState('')
-  const [addingRound, setAddingRound] = useState(false)
-  const [netVerDraft, setNetVerDraft] = useState('')
-  const [arrivedDraft, setArrivedDraft] = useState(() => new Date().toISOString().slice(0, 10))
-  const [targetBlocks, setTargetBlocks] = useState<string[]>([])
   const [mailSnapshotId, setMailSnapshotId] = useState(initialMailId)
   const [mailSnapshot, setMailSnapshot] = useState<TrackingMailSnapshot | null>(null)
   const [mailSnapshotError, setMailSnapshotError] = useState('')
@@ -93,11 +84,6 @@ export function TrackingOverview({
     }
     return [...set]
   }, [project.blocks])
-
-  const areaBlocks = useMemo(
-    () => project.blocks.filter(block => Boolean(block.area_id)),
-    [project.blocks],
-  )
 
   const projectUploads = useMemo(
     () => uploads.filter(u => u.state === 'ready' && u.project_id === areaProjectId),
@@ -138,9 +124,9 @@ export function TrackingOverview({
     }
     if (baselineStatus === 'available') {
       return {
-        label: `${baselineName} · 블록 미지정`,
-        pinnedText: pinnedCount ? `기준 ${pinnedCount}건 고정` : '기준 실행 미고정',
-        configured: false,
+        label: `${baselineName}`,
+        pinnedText: pinnedCount ? `기준 ${pinnedCount}건 고정` : '',
+        configured: pinnedCount > 0,
       }
     }
     return {
@@ -179,12 +165,6 @@ export function TrackingOverview({
   }, [project.blocks, projectUploads])
 
   useEffect(() => {
-    if (addingRound && !targetBlocks.length && areaBlocks.length) {
-      setTargetBlocks(areaBlocks.map(b => b.area_id!))
-    }
-  }, [addingRound, areaBlocks, targetBlocks.length])
-
-  useEffect(() => {
     if (!mailSnapshotId) {
       setMailSnapshot(null)
       setMailSnapshotError('')
@@ -201,66 +181,54 @@ export function TrackingOverview({
       .catch(cause => {
         if (!controller.signal.aborted) {
           setMailSnapshot(null)
-          setMailSnapshotError(cause instanceof Error ? cause.message : '발송 스냅샷을 조회하지 못했습니다.')
+          setMailSnapshotError(cause instanceof Error ? cause.message : '발송 당시 결과를 조회하지 못했습니다.')
         }
       })
     return () => controller.abort()
   }, [auth, mailSnapshotId])
 
-  async function submitRound() {
-    const trimmed = netVerDraft.trim()
-    if (!trimmed) throw new Error('버전(NET_VER)을 입력하거나 선택하세요.')
-    if (!arrivedDraft) throw new Error('Netlist 도착일을 입력하세요.')
-    if (!targetBlocks.length) throw new Error('대상 블록을 하나 이상 선택하세요.')
-    await request(auth, `/tracking/projects/${encodeURIComponent(areaProjectId)}/rounds`, unknownSchema, {
-      net_ver: trimmed,
-      netlist_arrived_at: arrivedDraft,
-      target_block_ids: targetBlocks,
-    })
-    setAddingRound(false)
-    setNetVerDraft('')
-    await onReload()
-  }
-
-  async function reconcile(roundId: string) {
-    await request(auth, `/tracking/rounds/${encodeURIComponent(roundId)}/reconcile`, unknownSchema, {})
-    await onReload()
-  }
-
-  function handleBlockAction(row: TrackingBlockRow) {
+  function resolveRowAction(row: TrackingBlockRow): { label: string; run: () => void } | null {
     const next = object(row.next_action)
     const kind = text(next.kind)
-    if (kind === 'configure') {
-      onOpenSettings(row.block_id)
-      return
-    }
     if (kind === 'mapping') {
-      onOpenResult({
-        blockId: row.block_id,
-        uploadId: text(next.upload_id) || undefined,
-        baselineUploadId: text(next.baseline_upload_id) || undefined,
-        openMapping: true,
-      })
-      return
+      return {
+        label: '매핑 확인',
+        run: () => onOpenResult({
+          blockId: row.block_id,
+          uploadId: text(next.upload_id) || undefined,
+          baselineUploadId: text(next.baseline_upload_id) || undefined,
+          openMapping: true,
+        }),
+      }
     }
     if (kind === 'result' && text(next.comparison_id)) {
-      onOpenResult({
-        blockId: row.block_id,
-        comparisonId: text(next.comparison_id),
-        uploadId: text(next.upload_id) || undefined,
-        baselineUploadId: text(next.baseline_upload_id) || undefined,
-      })
-      return
+      return {
+        label: text(next.label) || '결과 보기',
+        run: () => onOpenResult({
+          blockId: row.block_id,
+          comparisonId: text(next.comparison_id),
+          uploadId: text(next.upload_id) || undefined,
+          baselineUploadId: text(next.baseline_upload_id) || undefined,
+        }),
+      }
     }
     const fallbackCorner = row.corners.find(c => c.comparison_id)
     if (fallbackCorner?.comparison_id) {
-      onOpenResult({ blockId: row.block_id, comparisonId: fallbackCorner.comparison_id })
-    } else {
-      onOpenSettings(row.block_id)
+      return {
+        label: '결과 보기',
+        run: () => onOpenResult({ blockId: row.block_id, comparisonId: fallbackCorner.comparison_id! }),
+      }
     }
+    const latestUpload = latestUploadByBlock.get(row.block_id)?.latestUploadId
+    if (latestUpload) {
+      return {
+        label: '직접 비교',
+        run: () => onOpenResult({ blockId: row.block_id, uploadId: latestUpload }),
+      }
+    }
+    return null
   }
 
-  const enabled = data?.project_config?.enabled === true
   const totalBlocks = activeRound ? activeRound.full_chip_counts.total + activeRound.sub_block_counts.total : 0
   const completedBlocks = activeRound ? activeRound.full_chip_counts.completed + activeRound.sub_block_counts.completed : 0
   const progressPct = totalBlocks > 0 ? Math.round((completedBlocks / totalBlocks) * 100) : 0
@@ -268,7 +236,6 @@ export function TrackingOverview({
 
   return (
     <div className="tracking-overview">
-      {action.feedback}
       {error && <div className="notice error" role="alert">{error}</div>}
 
       {mailSnapshotError && (
@@ -284,7 +251,7 @@ export function TrackingOverview({
             <div>
               <strong>
                 <Mail size={15} aria-hidden="true" />{' '}
-                {mailSnapshot.kind === 'tracking_top_mail' ? 'TOP 요약 메일 발송 당시 결과' : '블록 결과 메일 발송 당시 결과'}
+                {mailSnapshot.kind === 'tracking_top_mail' ? 'TOP 요약 발송 당시 결과' : '블록 결과 메일 발송 당시 결과'}
               </strong>
               <small>
                 발송 시각 {date(text(mailSnapshot.snapshot.frozen_at) || mailSnapshot.created_at)} · {MAIL_STATE_LABEL[mailSnapshot.delivery.state] || mailSnapshot.delivery.state}
@@ -344,8 +311,8 @@ export function TrackingOverview({
         </section>
       )}
 
-      {/* 4-card at-a-glance project summary strip */}
-      <section className="project-summary-strip" aria-label="프로젝트 핵심 요약">
+      {/* 3-card at-a-glance project summary strip (pure user view) */}
+      <section className="project-summary-strip cols-3" aria-label="프로젝트 핵심 요약">
         <article className="summary-card">
           <div className="summary-card-head">
             <span>비교 기준</span>
@@ -363,16 +330,11 @@ export function TrackingOverview({
         <article className="summary-card">
           <div className="summary-card-head">
             <span>현재 버전 (NET_VER)</span>
-            {project.can_write && (
-              <button type="button" className="tracking-link-inline" onClick={() => setAddingRound(value => !value)}>
-                {addingRound ? '닫기' : '+ 새 회차'}
-              </button>
-            )}
           </div>
           {rounds.length > 1 ? (
             <select
               className="summary-round-select"
-              aria-label="추적 중인 버전 선택"
+              aria-label="버전 선택"
               value={activeRound?.id || ''}
               onChange={event => setSelectedRoundId(event.target.value)}
             >
@@ -389,8 +351,8 @@ export function TrackingOverview({
             {activeRound
               ? `도착 ${activeRound.netlist_arrived_at || '—'} · 마감 ${activeRound.deadline_date || '—'} ${activeRound.deadline_time || ''}`
               : latestDetectedNet
-                ? '추적 회차 미등록 · 최근 업로드 기준 표시'
-                : '버전 회차를 등록하면 마감이 자동 계산됩니다'}
+                ? '최근 업로드 버전 기준'
+                : '아직 업로드된 버전이 없습니다'}
           </small>
         </article>
 
@@ -417,88 +379,7 @@ export function TrackingOverview({
             </>
           )}
         </article>
-
-        <article className="summary-card">
-          <div className="summary-card-head">
-            <span>자동 분석 · 결과 메일</span>
-            <button type="button" className="tracking-link-inline" onClick={() => onOpenSettings()}>설정</button>
-          </div>
-          <div className="summary-mail-row">
-            <Badge value={enabled ? '자동 분석 켜짐' : '자동 분석 꺼짐'} />
-            {activeRound && (
-              <Badge value={MAIL_STATE_LABEL[activeRound.top_mail.state] || activeRound.top_mail.state} />
-            )}
-          </div>
-          <small>
-            {activeRound?.top_mail.mail_id ? (
-              <button type="button" className="tracking-link-inline" onClick={() => setMailSnapshotId(activeRound.top_mail.mail_id!)}>
-                발송된 TOP 요약 메일 보기 →
-              </button>
-            ) : enabled ? (
-              activeRound?.has_post_top_revisions ? '발송 후 수정본 도착' : '필수 코너 완료 시 블록 메일 자동 발송'
-            ) : (
-              '자동 분석 설정에서 필수 코너와 수신자를 지정하세요'
-            )}
-          </small>
-        </article>
       </section>
-
-      {addingRound && (
-        <section className="panel tracking-round-form-panel" aria-label="새 버전 회차 등록">
-          <div className="section-heading">
-            <div>
-              <h2>새 버전 회차 등록</h2>
-              <p>Netlist 도착일을 입력하면 마감일시(도착일 + {format(data?.project_config?.deadline_days ?? 7)}일 {text(data?.project_config?.deadline_time) || '18:00'})가 자동 설정됩니다.</p>
-            </div>
-          </div>
-          <div className="tracking-form-row">
-            <Field label="버전 (NET_VER)">
-              <input
-                type="text"
-                list="atlas-net-ver-options"
-                value={netVerDraft}
-                onChange={event => setNetVerDraft(event.target.value)}
-                placeholder="예: NET_023"
-              />
-              <datalist id="atlas-net-ver-options">
-                {knownNetVers.map(nv => <option key={nv} value={nv} />)}
-              </datalist>
-            </Field>
-            <Field label="Netlist 도착일">
-              <input type="date" value={arrivedDraft} onChange={event => setArrivedDraft(event.target.value)} />
-            </Field>
-          </div>
-          <div className="tracking-block-checks">
-            <span>추적 대상 블록</span>
-            <div className="tracking-check-grid">
-              {areaBlocks.map(block => {
-                const id = block.area_id!
-                const checked = targetBlocks.includes(id)
-                const isFc = block.name.trim() === project.name.trim()
-                return (
-                  <label key={id} className="checkbox">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={event => {
-                        setTargetBlocks(prev => event.target.checked ? [...prev, id] : prev.filter(item => item !== id))
-                      }}
-                    />
-                    <span>{block.name}{isFc ? ' (Full-chip)' : ''}</span>
-                  </label>
-                )
-              })}
-              {!areaBlocks.length && <small>먼저 블록이 연결되어야 회차 대상으로 선택할 수 있습니다.</small>}
-            </div>
-          </div>
-          <div className="actions">
-            <Button size="sm" disabled={action.busy || !project.can_write || !areaBlocks.length} onClick={() => action.run(submitRound, '버전 회차를 등록했습니다.')}>
-              회차 등록
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setAddingRound(false)}>취소</Button>
-          </div>
-        </section>
-      )}
 
       {loading && !data ? (
         <p className="muted">프로젝트 현황을 불러오는 중…</p>
@@ -511,20 +392,8 @@ export function TrackingOverview({
                 {activeRound.has_post_top_revisions && <Badge value="발송 후 수정" />}
               </h2>
               <small>
-                <CalendarClock size={13} aria-hidden="true" /> 마감 {activeRound.deadline_date || '—'} {activeRound.deadline_time || ''} · 각 블록의 기준, 현재 리비전, 코너별 분석 결과를 한눈에 확인합니다.
+                <CalendarClock size={13} aria-hidden="true" /> 마감 {activeRound.deadline_date || '—'} {activeRound.deadline_time || ''} · 각 블록의 기준, 현재 리비전, 코너별 분석 결과를 확인합니다.
               </small>
-            </div>
-            <div className="actions">
-              {project.can_write && (
-                <Button variant="outline" size="sm" disabled={action.busy} onClick={() => action.run(() => reconcile(activeRound.id), '회차 상태를 다시 점검했습니다.')}>
-                  <RefreshCw size={14} />상태 재점검
-                </Button>
-              )}
-              {project.can_write && (
-                <Button variant="outline" size="sm" onClick={() => setAddingRound(value => !value)}>
-                  <Plus size={14} />새 버전 등록
-                </Button>
-              )}
             </div>
           </div>
           <div className="table-scroll">
@@ -536,19 +405,19 @@ export function TrackingOverview({
                   <th>현재 버전</th>
                   <th>코너 진행</th>
                   <th>Area · Power 요약</th>
-                  <th>상태 · 바로가기</th>
+                  <th>상태 · 결과</th>
                 </tr>
               </thead>
               <tbody>
                 {activeRound.blocks.map(row => {
                   const typ = object(object(row.power_evaluation).typical)
                   const target = object(typ.target)
-                  const next = object(row.next_action)
                   const baseInfo = describeBlockBaseline(row.block_id)
                   const completedCornerMetrics = row.corners.filter(c => c.logic_area_delta_pct || c.power_current_mw)
                   const unexpected = Number(row.totals?.unexpected ?? 0)
                   const needsReview = Number(row.totals?.needs_review ?? 0)
                   const expected = Number(row.totals?.expected ?? 0)
+                  const rowAction = resolveRowAction(row)
                   return (
                     <tr key={row.block_id} className={row.needs_attention ? 'tracking-row-attention' : ''}>
                       <td>
@@ -556,18 +425,11 @@ export function TrackingOverview({
                           <strong>{row.is_full_chip ? `${project.name} (Full-chip)` : row.block_name}</strong>
                           {row.is_full_chip && <span className="side-tag">Full-chip</span>}
                         </div>
-                        <div className="tracking-tags">
-                          {row.post_top_mail_revised && <Badge value="발송 후 수정" />}
-                          {row.block_mail?.mail_id && (
-                            <button
-                              type="button"
-                              className="tracking-link-inline"
-                              onClick={() => setMailSnapshotId(row.block_mail!.mail_id!)}
-                            >
-                              메일 ({MAIL_STATE_LABEL[row.block_mail.state] || row.block_mail.state})
-                            </button>
-                          )}
-                        </div>
+                        {row.post_top_mail_revised && (
+                          <div className="tracking-tags">
+                            <Badge value="발송 후 수정" />
+                          </div>
+                        )}
                       </td>
                       <td>
                         <div className="tracking-cell-stack">
@@ -589,7 +451,7 @@ export function TrackingOverview({
                               {c.last_failed_upload ? ' (수정 실패)' : ''}
                             </span>
                           ))}
-                          {!row.corners.length && <small>필수 코너 미지정</small>}
+                          {!row.corners.length && <small className="text-muted">필수 코너 미지정</small>}
                         </div>
                       </td>
                       <td>
@@ -636,9 +498,11 @@ export function TrackingOverview({
                       <td>
                         <div className="tracking-status-action">
                           <span>{row.status_summary}</span>
-                          <Button variant="outline" size="sm" onClick={() => handleBlockAction(row)}>
-                            {text(next.label) || '상세 보기'} →
-                          </Button>
+                          {rowAction && (
+                            <Button variant="outline" size="sm" onClick={rowAction.run}>
+                              {rowAction.label} →
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -653,17 +517,7 @@ export function TrackingOverview({
           <div className="tracking-table-head">
             <div>
               <h2>블록별 최신 버전 현황</h2>
-              <small>아직 자동 추적 회차가 등록되지 않았습니다. 아래에서 각 블록의 현재 버전을 바로 보거나 ‘새 버전 등록’으로 마감·자동 메일을 시작할 수 있습니다.</small>
-            </div>
-            <div className="actions">
-              {project.can_write && (
-                <Button size="sm" onClick={() => setAddingRound(true)}>
-                  <Plus size={14} />새 버전 회차 등록
-                </Button>
-              )}
-              <Button variant="outline" size="sm" onClick={() => onOpenSettings()}>
-                <Settings2 size={14} />자동 분석 설정
-              </Button>
+              <small>각 블록의 비교 기준과 최신 업로드 버전을 확인하고 바로 비교할 수 있습니다.</small>
             </div>
           </div>
           {project.blocks.length > 0 ? (
@@ -711,18 +565,13 @@ export function TrackingOverview({
                           </div>
                         </td>
                         <td>
-                          <div className="actions">
-                            {latest?.latestUploadId && (
-                              <Button variant="outline" size="sm" onClick={() => onOpenResult({ blockId: block.area_id || undefined, uploadId: latest.latestUploadId })}>
-                                직접 비교 →
-                              </Button>
-                            )}
-                            {block.area_id && (
-                              <Button variant="ghost" size="sm" onClick={() => onOpenSettings(block.area_id!)}>
-                                기준 설정
-                              </Button>
-                            )}
-                          </div>
+                          {latest?.latestUploadId ? (
+                            <Button variant="outline" size="sm" onClick={() => onOpenResult({ blockId: block.area_id || undefined, uploadId: latest.latestUploadId })}>
+                              직접 비교 →
+                            </Button>
+                          ) : (
+                            <small className="text-muted">—</small>
+                          )}
                         </td>
                       </tr>
                     )

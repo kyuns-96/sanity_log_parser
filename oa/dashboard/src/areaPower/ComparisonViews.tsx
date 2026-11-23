@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Check, Download, GitCompareArrows, LoaderCircle, Plus, RefreshCw, Settings2, Trash2, Upload as UploadIcon } from 'lucide-react'
+import { Check, Download, GitCompareArrows, LoaderCircle, Plus, RefreshCw, Trash2, Upload as UploadIcon } from 'lucide-react'
 import { z } from 'zod'
 import { comparisonCreatedSchema, cornerKey, date, detailSchema, format, object, recordSchema, request, revision, text, uploadName, type AreaAccess, type Auth, type ComparisonDetail, type TrackingRecord, type TriageItem, type Upload } from './api'
 import { Badge, Button, Empty, Field, useAction } from './components/workspace'
@@ -12,7 +12,6 @@ import { AREA_THRESHOLD, atLeast, loadColumns, loadMinArea, requestedMetrics, sa
 import { MappingSuggestions } from './MappingSuggestions'
 import { NotesPanel } from './NotesPanel'
 import { TrackingOverview } from './TrackingOverview'
-import { TrackingSettings } from './TrackingSettings'
 import { trackingOverviewSchema, type TrackingOverviewData } from './trackingApi'
 import { TriagePanel } from './TriagePanel'
 
@@ -54,12 +53,10 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
   const [baselineEditing, setBaselineEditing] = useState(false)
   const [baselineChoice, setBaselineChoice] = useState('')
   const lastDesignation = useRef<string | null>(null)
-  const [section, setSection] = useState<'status' | 'settings' | 'compare'>('status')
-  const [settingsBlockId, setSettingsBlockId] = useState<string | undefined>(undefined)
+  const [section, setSection] = useState<'status' | 'compare'>('status')
   const [trackingData, setTrackingData] = useState<TrackingOverviewData | null>(null)
   const [trackingLoading, setTrackingLoading] = useState(false)
   const [trackingError, setTrackingError] = useState('')
-  const [trackingRefresh, setTrackingRefresh] = useState(0)
   const initialMailId = useMemo(() => new URLSearchParams(atlas.routeSearch).get('tracking_mail') || '', [atlas.routeSearch])
   const [current, setCurrent] = useState<Selection>(emptySelection)
   const [before, setBefore] = useState<Selection>(emptySelection)
@@ -213,12 +210,7 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
       })
       .finally(() => { if (!controller.signal.aborted) setTrackingLoading(false) })
     return () => controller.abort()
-  }, [props.auth, currentAreaId, props.refreshVersion, trackingRefresh])
-
-  async function reloadTracking() {
-    setTrackingRefresh(value => value + 1)
-    await props.refresh()
-  }
+  }, [props.auth, currentAreaId, props.refreshVersion])
 
   function openTrackingResult(target: { comparisonId?: string; uploadId?: string; baselineUploadId?: string; openMapping?: boolean; blockId?: string }) {
     setSection('compare')
@@ -412,7 +404,6 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
     const versions = project.blocks.flatMap(b => b.versions.map(v => v.net_ver).filter(Boolean))
     return versions.length ? versions[versions.length - 1] : ''
   }, [trackingData?.rounds, project.blocks])
-  const trackingEnabled = trackingData?.project_config?.enabled === true
 
   return <>
     {action.feedback}
@@ -458,19 +449,6 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
           <button key={key} type="button" role="tab" aria-selected={section === key} onClick={() => setSection(key)}>{label}</button>
         ))}
       </div>
-      <button
-        type="button"
-        role="tab"
-        className="tracking-tab-settings"
-        aria-selected={section === 'settings'}
-        onClick={() => setSection('settings')}
-      >
-        <Settings2 size={14} aria-hidden="true" />
-        <span>자동 분석 설정</span>
-        <span className={`tracking-dot ${trackingEnabled ? 'is-on' : 'is-off'}`} title={trackingEnabled ? '자동 분석 켜짐' : '자동 분석 꺼짐'}>
-          {trackingEnabled ? 'ON' : 'OFF'}
-        </span>
-      </button>
     </nav>}
     {currentAreaId && section === 'status' && (
       <TrackingOverview
@@ -492,24 +470,8 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
           next.delete('tracking_mail')
           atlas.replaceRoute(`${location.pathname}${next.toString() ? `?${next}` : ''}`)
         }}
-        onReload={reloadTracking}
         onEditBaseline={() => setBaselineEditing(true)}
-        onOpenSettings={blockId => { setSettingsBlockId(blockId); setSection('settings') }}
         onOpenResult={openTrackingResult}
-      />
-    )}
-    {currentAreaId && section === 'settings' && (
-      <TrackingSettings
-        auth={props.auth}
-        project={project}
-        baselineProject={savedProject}
-        areaProjectId={currentAreaId}
-        baselineAreaProjectId={baseline?.baseline_project_id}
-        uploads={props.uploads}
-        records={props.records}
-        data={trackingData}
-        initialBlockId={settingsBlockId}
-        onReload={reloadTracking}
       />
     )}
     {(!currentAreaId || section === 'compare') && <>
