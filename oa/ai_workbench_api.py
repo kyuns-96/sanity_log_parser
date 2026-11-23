@@ -18,7 +18,7 @@ from oa.sanity_production_workspace import ProductionWorkspaceStore
 from oa.sanity_workspace_clustering import WorkspaceClusteringStore
 from oa.sanity_workspace_group_review import WorkspaceGroupReviewStore
 from oa.sanity_workspace_pipeline import WorkspacePipelineStore, compact_review, event_brief
-from oa.sanity_workspace_sources import submissions
+from oa.sanity_workspace import submissions
 from oa.workspace_api import (ID, ClusterChange, ClusterEdit, CodexProposal,
                               GroupReviewChange, PorChange, RationaleChange)
 

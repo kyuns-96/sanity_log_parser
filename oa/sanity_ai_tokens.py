@@ -14,10 +14,10 @@ import re
 from cryptography.fernet import Fernet, InvalidToken
 
 from common.sanity_clustering import check
-from common.sanity_common import ReviewError, _decode_json, canonical_json
+from common.sanity_common import ReviewError, decode_json, canonical_json
 from common.sanity_config import load_environment
 from common.sanity_db import lock_key, uuid_value
-from oa.sanity_workspace import WorkspaceStore, record_id
+from oa.sanity_workspace_core import WorkspaceCoreStore as WorkspaceStore, record_id
 
 NAMESPACE = "oa-ai-user-token-v1"
 PREFIX = "ait1.user."
@@ -36,7 +36,7 @@ def expiry_hint(token):
         if len(parts) != 3:
             return None
         part = parts[1]
-        claims = _decode_json(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)).decode("utf-8"))
+        claims = decode_json(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)).decode("utf-8"))
         exp = claims.get("exp") if isinstance(claims, dict) else None
         if type(exp) is int and 0 <= exp <= 253402300799:
             return datetime.fromtimestamp(exp, timezone.utc)
@@ -95,7 +95,7 @@ class UserTokenStore:
     def _decrypt(self, row):
         value = row["payload"]
         try:
-            content = _decode_json(self.cipher.decrypt(value["ciphertext"].encode("ascii")).decode("utf-8"))
+            content = decode_json(self.cipher.decrypt(value["ciphertext"].encode("ascii")).decode("utf-8"))
             fields = {"user_id", "revision", "token"}
             if self.connection_id:fields.update(("connection_id", "credential_scope"))
             check(isinstance(content, dict) and set(content) == fields

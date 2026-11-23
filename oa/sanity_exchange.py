@@ -31,7 +31,7 @@ def request_evidence(bundle_id, unit_id, record_ids, reason, request_id, ttl_sec
                 "message_id": message_id, "bundle_id": bundle_id, "record_count": len(record_ids)}
 
 
-def _validate_response(db, response):
+def validate_response(db, response):
     from oa.sanity_oa_store import OAStore
     # The path authorizes request-<UUID> before fetching response-<UUID>.
     # A producer must not put another request's data under that response ID.
@@ -96,7 +96,7 @@ def receive_evidence(request_id, out=None):
             return {"status": "NO_MESSAGE"}
         try:
             with db.transaction(readonly=already):
-                data = _validate_response(db, response)
+                data = validate_response(db, response)
                 if not already:
                     queue.finish(response)
         except ReviewError as exc:

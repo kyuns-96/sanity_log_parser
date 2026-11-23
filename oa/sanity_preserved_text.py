@@ -2,7 +2,7 @@
 from common.sanity_submission import check
 from common.sanity_preserved_text import verify_parts
 from common.sanity_shared_sources import SharedSourcePackets
-from oa.sanity_workspace import record_id
+from oa.sanity_workspace_core import record_id
 
 
 def read(db, report, source_id):

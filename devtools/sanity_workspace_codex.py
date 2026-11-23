@@ -6,7 +6,7 @@ held across inference, and an uncertain call is never repeated automatically.
 import uuid
 
 from common.sanity_clustering import check
-from devtools.sanity_codex_mock import CodexMockClusteringAdvisor, MODEL, REPORT_IDS, assert_synthetic_context, fixture_report, request_packet
+from devtools.sanity_codex_mock import CodexMockClusteringAdvisor, MODEL, REPORT_IDS, assert_synthetic_context, fixture_report, request_packet, validate_receipt
 from common.sanity_common import ReviewError, digest
 from common.sanity_db import Database, json_value, lock_key, uuid_value
 from oa.sanity_workspace import utcnow
@@ -145,7 +145,8 @@ class WorkspaceCodexService:
                 saved = head["state"]["codex_jobs"][rid]
                 check(saved["owner"] == self.owner and saved["status"] == "RESULT_READY", "PROPOSAL_STALE")
                 event = store.change(**command, action="PROPOSE", request_id=rid,
-                                     identity_fields=FIELDS, mode="MOCK_CODEX", mock_receipt=receipt)
+                                     identity_fields=FIELDS, mode="MOCK_CODEX", mock_receipt=receipt,
+                                     receipt_validator=validate_receipt)
                 head = store.reviews.row("WS_CLUSTER", report_id)
                 saved = head["state"]["codex_jobs"][rid]
                 saved.update(status="COMPLETED", event_id=event["id"], finished_at=utcnow().isoformat())

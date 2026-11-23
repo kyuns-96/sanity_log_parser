@@ -33,8 +33,14 @@ def main():
     os.chdir(ROOT)
     from oa.workspace_api import create_app
     import uvicorn
+    codex_service, mock_report_ids = None, ()
+    if config.get("codex_mock_enabled") is True:
+        from devtools.sanity_workspace_codex import REPORT_IDS, WorkspaceCodexService
+        codex_service = WorkspaceCodexService(enabled=True)
+        codex_service.recover()
+        mock_report_ids = REPORT_IDS
     uvicorn.run(create_app(origins=config["origins"], static_dir=config["static_dir"],
-                          codex_mock_enabled=config.get("codex_mock_enabled") is True),
+                           codex_service=codex_service, mock_report_ids=mock_report_ids),
                 host="127.0.0.1", port=config["port"], access_log=False, log_level="warning", proxy_headers=False)
 
 

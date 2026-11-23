@@ -2,10 +2,10 @@
 import math
 
 from common.sanity_common import ReviewError
+from oa.sanity_ai_store import parse_timestamp
 
 
 def eta(event, state, wave, timing, measured, samples, records):
-    from oa.sanity_ai_jobs import _timestamp
     try:
         width = state.get('allocated_concurrency',event['data']['batch']['max_concurrency'])
         baseline = timing['base_seconds']
@@ -27,7 +27,7 @@ def eta(event, state, wave, timing, measured, samples, records):
         for slot in active:
             if type(slot.get('work')) is not int or slot['work'] <= 0:
                 return None
-            age = (measured-_timestamp(slot['reserved_at'])).total_seconds()
+            age = (measured - parse_timestamp(slot['reserved_at'])).total_seconds()
             # Refill reservations can be newer than the last completion sample.
             # Their delay is included relative to that fixed measurement time.
             if abs(age) > 604800:

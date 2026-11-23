@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from contextlib import contextmanager
+from pathlib import Path
 import secrets
 import threading
 import time
-from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -15,164 +15,37 @@ from fastapi import Depends, FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StringConstraints
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from common.sanity_common import ReviewError
 from common.sanity_ai_knowledge import shared_case_views
 from common.sanity_clustering import check
+from common.sanity_common import ReviewError
 from common.sanity_db import Database
-from oa.sanity_workspace import WorkspaceStore
-from oa.sanity_workspace_review import WorkspaceReviewStore
-from oa.sanity_workspace_clustering import WorkspaceClusteringStore, MAX_RECORDS, MAX_GROUPS
+from oa.sanity_workspace import WorkspaceStore, submissions
+from oa.sanity_workspace_clustering import WorkspaceClusteringStore
 from oa.sanity_workspace_group_review import WorkspaceGroupReviewStore
 from oa.sanity_workspace_pipeline import WorkspacePipelineStore, compact_review, event_brief
+from oa.sanity_workspace_review import WorkspaceReviewStore
+from oa.workspace_schemas import (
+    ClusterChange, ClusterEdit, ClusterOperation, ClusterProposal, ClusterTaskStep,
+    CodexProposal, GroupReviewChange, GroupReviewProposal, ID, Login, PipelineGroup,
+    PorChange, RationaleChange, RationaleContent, RationaleReference, ReviewChange,
+    ReviewException, ReviewProposal,
+)
 
 COOKIE = "sanity_workspace_session"
 API = "/workspace/api"
-ID = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")]
 
 
-class Login(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    username: Annotated[str, Field(pattern=r"^user[0-9]{2}$")]
-    password: Annotated[str, Field(min_length=1, max_length=128)]
-
-
-class PorChange(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    version_id: ID
-    expected_revision: Annotated[StrictInt, Field(ge=0)]
-    request_id: UUID
-    reason: Annotated[str, Field(min_length=1, max_length=500)]
-
-
-class ReviewException(BaseModel):
-    """Human annotation; never an executable rule or catalog modification."""
-    model_config = ConfigDict(extra="forbid")
-    rule: Annotated[str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=500)]
-    reason: Annotated[str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=2000)]
-    conditions: Annotated[str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=2000)]
-
-
-class ReviewChange(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    conclusion: Literal["PASS", "FAIL", "DEFER"]
-    reason: Annotated[str, Field(min_length=1, max_length=2000)]
-    criteria: Annotated[str, Field(max_length=2000)] = ""
-    conditions: Annotated[dict[str, Annotated[str, Field(strict=True, max_length=500)]], Field(max_length=12)] = Field(default_factory=dict)
-    reusable: StrictBool = False
-    compatible_versions: StrictBool = False
-    exception: ReviewException | None = None
-    expected_revision: Annotated[StrictInt, Field(ge=0)]
-    request_id: UUID
-    proposal_id: UUID | None = None
-
-
-class ReviewProposal(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    expected_revision: Annotated[StrictInt, Field(ge=0)]
-    request_id: UUID
-    mode: Literal["CRITERIA", "CORPORATE"] = "CRITERIA"
-
-
-class PipelineGroup(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    id: ID
-    label: Annotated[str, Field(min_length=1, max_length=120)]
-    record_ids: Annotated[list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]], Field(min_length=1, max_length=MAX_RECORDS)]
-
-
-class ClusterProposal(ReviewProposal):
-    identity_fields: list[Literal["object", "check_point", "mode", "code", "severity", "observed", "expected", "unit"]] | None = None
-
-
-class ClusterChange(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    action: Literal["EDIT", "CONFIRM", "WITHDRAW"]
-    expected_revision: Annotated[StrictInt, Field(ge=0)]
-    request_id: UUID
-    reason: Annotated[str, Field(max_length=2000)] = ""
-    groups: Annotated[list[PipelineGroup], Field(min_length=1, max_length=MAX_GROUPS)] | None = None
-    reusable: StrictBool = False
-    compatible_versions: StrictBool = False
-    criteria: Annotated[str, Field(max_length=2000)] = ""
-
-
-class GroupReviewChange(ReviewChange):
-    expected_cluster_revision: Annotated[StrictInt, Field(ge=1)]
-
-
-class GroupReviewProposal(ReviewProposal):
-    expected_cluster_revision: Annotated[StrictInt, Field(ge=1)]
-
-
-class ClusterOperation(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    kind: Literal["MOVE", "MERGE", "RENAME"]
-    record_ids: Annotated[list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]], Field(max_length=MAX_RECORDS)] = Field(default_factory=list)
-    group_ids: Annotated[list[ID], Field(max_length=MAX_GROUPS)] = Field(default_factory=list)
-    destination_id: ID | None = None
-    new_group_id: ID | None = None
-    label: Annotated[str, Field(max_length=120)] = ""
-
-
-class ClusterEdit(ReviewProposal):
-    reason: Annotated[str, Field(min_length=1, max_length=2000)]
-    operation: ClusterOperation
-
-
-class ClusterTaskStep(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    task_id: UUID
-    expected_chunk: Annotated[StrictInt, Field(ge=0)]
-    action: Literal["ADVANCE", "RESUME", "CANCEL"] = "ADVANCE"
-
-
-class RationaleReference(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    case_id: UUID
-    group_id: ID
-    reason: Annotated[str, Field(min_length=1, max_length=500)]
-
-
-class RationaleContent(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    reason: Annotated[str, Field(min_length=1, max_length=2000)]
-    summary: Annotated[str, Field(min_length=1, max_length=120)] | None = None
-    evidence_ids: Annotated[list[Annotated[str, Field(strict=True, min_length=1, max_length=128)]], Field(min_length=1, max_length=20)]
-    reference_groups: Annotated[list[RationaleReference], Field(max_length=20)] = Field(default_factory=list)
-
-
-class RationaleChange(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    expected_revision: Annotated[StrictInt, Field(ge=1)]
-    request_id: UUID
-    action: Literal["SAVE", "ACCEPT"]
-    reason: Annotated[str, Field(min_length=1, max_length=2000)]
-    content: RationaleContent | None = None
-    reviewed: StrictBool = False
-
-
-class CodexProposal(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    expected_revision: Annotated[StrictInt, Field(ge=0)]
-    request_id: UUID
-
-
-def create_app(*, origins, static_dir=None, codex_mock_enabled=False, codex_advisor_factory=None):
+def create_app(*, origins, static_dir=None, codex_service=None, mock_report_ids=()):
     origins = frozenset(origins)
     if not origins or any(urlsplit(origin).scheme not in ("http", "https") or urlsplit(origin).path for origin in origins):
         raise ValueError("Explicit workspace origins are required")
     app = FastAPI(title="Sanity Workspace", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=sorted({urlsplit(origin).hostname for origin in origins}))
     attempts = defaultdict(deque)
-    codex, mock_report_ids = None, ()
-    if codex_mock_enabled is True:
-        from devtools.sanity_workspace_codex import WorkspaceCodexService, REPORT_IDS
-        codex = WorkspaceCodexService(enabled=True, advisor_factory=codex_advisor_factory)
-        mock_report_ids = REPORT_IDS
-        codex.recover()
+    codex = codex_service
+    mock_report_ids = tuple(mock_report_ids)
     database_gate = threading.RLock()
 
     @contextmanager
@@ -280,10 +153,9 @@ def create_app(*, origins, static_dir=None, codex_mock_enabled=False, codex_advi
 
     @app.get(API + "/blocks/{block_id}/submissions")
     def submission_list(block_id: ID, offset: Annotated[int, Query(ge=0)] = 0,
-                        limit: Annotated[int, Query(ge=1,le=100)] = 25, actor=Depends(authenticated)):
-        from oa.sanity_workspace_sources import submissions
+                        limit: Annotated[int, Query(ge=1, le=100)] = 25, actor=Depends(authenticated)):
         with workspace_transaction(readonly=True) as db:
-            return submissions(db,actor['user']['id'],block_id,offset=offset,limit=limit)
+            return submissions(db, actor['user']['id'], block_id, offset=offset, limit=limit)
 
     @app.get(API + "/blocks/{block_id}/history")
     def history(block_id: ID, actor=Depends(authenticated)):
@@ -305,12 +177,12 @@ def create_app(*, origins, static_dir=None, codex_mock_enabled=False, codex_advi
                 limit: Annotated[int, Query(ge=1, le=100)] = 25, include_history: bool = False, actor=Depends(authenticated)):
         with workspace_transaction(readonly=True) as db:
             return WorkspaceStore(db).reports(actor["user"]["id"], block_id, version_id, eco=eco,
-                item_id=item_id, family=family, status=status, search=search, offset=offset, limit=limit,include_history=include_history)
+                item_id=item_id, family=family, status=status, search=search, offset=offset, limit=limit, include_history=include_history)
 
     @app.get(API + "/blocks/{block_id}/versions/{version_id}/reports/{report_id}")
     def report(block_id: ID, version_id: ID, report_id: ID, actor=Depends(authenticated)):
         with workspace_transaction(readonly=True) as db:
-            return WorkspaceStore(db).report(actor["user"]["id"], block_id, version_id, report_id,hydrate_source=False)
+            return WorkspaceStore(db).report(actor["user"]["id"], block_id, version_id, report_id, hydrate_source=False)
 
     @app.get(API + "/blocks/{block_id}/versions/{version_id}/reports/{report_id}/review")
     def review_detail(block_id: ID, version_id: ID, report_id: ID, actor=Depends(authenticated)):
@@ -393,7 +265,7 @@ def create_app(*, origins, static_dir=None, codex_mock_enabled=False, codex_advi
 
     @app.post(API + "/blocks/{block_id}/versions/{version_id}/reports/{report_id}/groups/{group_id}/rationale")
     def group_rationale_save(block_id: ID, version_id: ID, report_id: ID, group_id: ID,
-                            body: RationaleChange, actor=Depends(authenticated)):
+                             body: RationaleChange, actor=Depends(authenticated)):
         operation = {"kind": body.action, "group_id": group_id}
         if body.action == "SAVE":
             operation.update(content=body.content.model_dump(mode="json", exclude_none=True) if body.content else None, reviewed=body.reviewed)
@@ -441,8 +313,8 @@ def create_app(*, origins, static_dir=None, codex_mock_enabled=False, codex_advi
     @app.get(API + "/blocks/{block_id}/versions/{version_id}/reports/{report_id}/source")
     def report_source(block_id: ID, version_id: ID, report_id: ID, actor=Depends(authenticated)):
         with workspace_transaction(readonly=True) as db:
-            report = WorkspaceStore(db).report(actor["user"]["id"], block_id, version_id, report_id,hydrate_source=False)
-            check(report.get('source_storage')!='PARTS_V2','SOURCE_FILE_ON_VWP','Original report bytes are retained on VWP')
+            report = WorkspaceStore(db).report(actor["user"]["id"], block_id, version_id, report_id, hydrate_source=False)
+            check(report.get('source_storage') != 'PARTS_V2', 'SOURCE_FILE_ON_VWP', 'Original report bytes are retained on VWP')
             return Response(report.get("raw_report") or "", media_type="text/plain",
                 headers={"Content-Disposition": f'attachment; filename="{report_id}.rpt"'})
 

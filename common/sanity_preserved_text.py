@@ -4,7 +4,7 @@ import re
 
 from common.sanity_common import canonical_json, digest
 from common.sanity_privacy import MASK, PATTERNS, PRIVATE_KEY, SecretGuard
-from common.sanity_submission import HEX, check
+from common.sanity_submission_core import HEX, check
 
 PRODUCER = 'postgresql-source-2.4'
 FORMAT = 'utf8-text-v1'

@@ -4,61 +4,21 @@ The mutable head owns a task; only a fully validated partition becomes an
 immutable classification event. No company SDK or cross-bridge transport runs
 here. Corporate mode remains explicitly unavailable.
 """
-import copy
-
 from common.sanity_clustering import check
 from common.sanity_ai_knowledge import shared_case_views
 from common.sanity_common import ReviewError, digest
 from common.sanity_db import json_value, lock_key, uuid_value
-from oa.sanity_workspace import record_id, utcnow
-from oa.sanity_workspace_clustering import WorkspaceClusteringStore, ConfirmedPartitionAdvisor, evidence, identity_fields_valid, partition, validate_clustering_advice, ai_job_active
-from oa.sanity_workspace_clustering import reference_rationales
 import common.sanity_workspace_rationale as rationale
+from oa.sanity_ai_cases import CaseRetriever
+from oa.sanity_workspace_core import record_id, utcnow
+from oa.sanity_workspace_clustering import (
+    ConfirmedPartitionAdvisor, WorkspaceClusteringStore, ai_job_active, apply_operation,
+    evidence, identity_fields_valid, partition, reference_rationales, validate_clustering_advice,
+)
+from oa.sanity_workspace_sources import hydrate, records_page as source_records_page
 
 ACTIVE = ("PENDING", "RUNNING", "FAILED", "STALE")
 CHUNK_SIZE = 500
-
-
-def apply_operation(groups, operation):
-    """Resolve explicit ID selection against the full, pinned server partition."""
-    check(isinstance(operation, dict) and operation.get("kind") in ("MOVE", "MERGE", "RENAME"), "INVALID_REQUEST")
-    allowed = {"kind", "record_ids", "group_ids", "destination_id", "new_group_id", "label"}
-    check(set(operation) <= allowed, "INVALID_REQUEST")
-    result = copy.deepcopy(groups)
-    index = {group["id"]: group for group in result}
-    destination = operation.get("destination_id")
-    label = operation.get("label", "")
-    if operation["kind"] == "RENAME":
-        check(set(operation) == {"kind", "destination_id", "label"} and destination in index, "INVALID_REQUEST")
-        index[destination]["label"] = label
-        return result
-    ids, selected_groups = operation.get("record_ids", []), operation.get("group_ids", [])
-    check(isinstance(ids, list) and isinstance(selected_groups, list)
-          and all(isinstance(key, str) for key in ids + selected_groups)
-          and len(ids) == len(set(ids)) and len(selected_groups) == len(set(selected_groups))
-          and set(selected_groups) <= set(index), "INVALID_PARTITION")
-    if operation["kind"] == "MERGE":
-        check(not ids and len(selected_groups) >= 2, "INVALID_REQUEST")
-    else:
-        check(bool(ids) != bool(selected_groups), "INVALID_REQUEST")
-    selected = set(ids)
-    for key in selected_groups:
-        selected.update(index[key]["record_ids"])
-    existing = {key for group in result for key in group["record_ids"]}
-    check(selected and selected <= existing, "INVALID_PARTITION")
-    new_id = operation.get("new_group_id")
-    check(bool(destination) != bool(new_id), "INVALID_REQUEST")
-    if new_id:
-        check(new_id not in index and bool(label.strip()), "INVALID_REQUEST")
-        target = {"id": new_id, "label": label, "record_ids": []}
-        result.append(target)
-    else:
-        check(destination in index, "INVALID_REQUEST")
-        target = index[destination]
-    for group in result:
-        group["record_ids"] = [key for key in group["record_ids"] if key not in selected]
-    target["record_ids"] = sorted(set(target["record_ids"]) | selected)
-    return [group for group in result if group["record_ids"]]
 
 
 def event_brief(event):
@@ -106,7 +66,6 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
             return self.catalog(context)
         if not event or not event.get("references"):
             return []
-        from oa.sanity_ai_cases import CaseRetriever
         return CaseRetriever(self.db, self.ws).resolve_references(
             context, event["references"], stage="CLUSTER", require_evidence=False)["cases"]
 
@@ -138,7 +97,6 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
         current, revision = self.current(report_id)
         if current or context['report'].get('source_storage')!='PARTS_V2':
             if context['report'].get('source_storage') == 'PARTS_V2':
-                from oa.sanity_workspace_sources import hydrate
                 context['report'] = hydrate(self.db, context['report'])
             records = evidence(context)
         if current:
@@ -211,15 +169,14 @@ class WorkspacePipelineStore(WorkspaceClusteringStore):
         context = self.reviews.context(user_id, block_id, version_id, report_id, hydrate_source=False)
         header = context['report']
         if header.get('source_storage') == 'PARTS_V2':
-            from oa.sanity_workspace_sources import records_page
             event = self.selected_event(context,expected_revision,event_id)
             group = next((g for g in event['groups'] if g['id']==group_id),None) if event and group_id else None
             check(not group_id or group is not None,'NOT_FOUND')
             ids = set(group['record_ids']) if group else None
-            result = records_page(self.db,header,offset=offset,limit=limit,search=search,member_ids=ids)
+            result = source_records_page(self.db,header,offset=offset,limit=limit,search=search,member_ids=ids)
             counts = result.pop('counts')
             if group and search:
-                counts = records_page(self.db,header,offset=0,limit=1,member_ids=ids)['counts']
+                counts = source_records_page(self.db,header,offset=0,limit=1,member_ids=ids)['counts']
             status = 'FAIL' if counts['FAIL'] else 'UNKNOWN' if counts['UNKNOWN'] else 'PASS'
             return {**result,'group':{'id':group['id'],'label':group['label'],'record_count':len(group['record_ids']),
                        'check_status':status} if group else None,'cluster_revision':event['revision'] if event else 0}

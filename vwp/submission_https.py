@@ -6,7 +6,7 @@ import os
 import ssl
 from urllib.parse import urlsplit
 
-from common.sanity_common import ReviewError, _decode_json, canonical_json
+from common.sanity_common import ReviewError, decode_json, canonical_json
 from common.sanity_submission import check, submission_uuid
 from common.sanity_submission_files import regular, verify_bundle
 from common.sanity_submission_https import API, MAX_RESPONSE, bearer, validate_http_receipt, validate_https_config
@@ -39,7 +39,7 @@ class HttpsTransport:
                 code = {401:'SUBMISSION_AUTH_REQUIRED',403:'FORBIDDEN',404:'NOT_FOUND',409:'SUBMISSION_CONFLICT',
                         413:'SUBMISSION_LIMIT'}.get(response.status,'SUBMISSION_HTTP_FAILED')
                 try:
-                    failure = _decode_json(data)
+                    failure = decode_json(data)
                 except ReviewError:
                     failure = None
                 if isinstance(failure,dict) and set(failure) == {'code'} and isinstance(failure['code'],str) and failure['code'] in {
@@ -53,7 +53,7 @@ class HttpsTransport:
                 raise ReviewError(code,'HTTPS submission request failed')
             check(response.getheader('Content-Type','').split(';')[0].strip() == 'application/json',
                   'INVALID_SUBMISSION_RECEIPT')
-            return _decode_json(data)
+            return decode_json(data)
         except ReviewError:
             raise
         except (OSError,ValueError,http.client.HTTPException):

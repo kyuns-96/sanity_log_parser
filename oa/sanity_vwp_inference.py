@@ -12,7 +12,7 @@ from common.sanity_ai_execution import worker_site
 from common.sanity_privacy import SecretGuard
 from common.sanity_vwp_ai import VERSION, CATALOG_BYTES, CATALOG_TTL, require, strict_json, timestamp, validate_profile
 from oa.sanity_ai_model import OAAdvisor
-from oa.sanity_workspace import WorkspaceStore, record_id
+from oa.sanity_workspace_core import WorkspaceCoreStore as WorkspaceStore, record_id
 
 PROVIDER = "VWP_OPENAI_COMPATIBLE"
 PREFIX, NAMESPACE = "vwpai.catalog.", "vwp-ai-catalog-v1"
@@ -36,7 +36,7 @@ class Catalog:
         require(len({p["id"] for p in value["profiles"]}) == len(value["profiles"]))
         return value
 
-    def _latest(self):
+    def latest(self):
         row = self.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s "
             "ORDER BY workspace_key DESC LIMIT 1", (PREFIX + "%",)).fetchone()
         if row is None: return None
@@ -48,8 +48,10 @@ class Catalog:
                 "AI_VWP_CATALOG_CORRUPT")
         return self.validate(value["catalog"])
 
+    _latest = latest
+
     def profiles(self):
-        value = self._latest()
+        value = self.latest()
         require(value is not None and timestamp(value["expires_at"]) > now(self.db), "AI_VWP_PROFILE_UNAVAILABLE")
         return value["profiles"]
 

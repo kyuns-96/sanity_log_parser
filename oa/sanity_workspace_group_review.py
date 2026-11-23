@@ -3,11 +3,15 @@ from common.sanity_clustering import check
 from common.sanity_ai_contracts import validate_review_v2
 from common.sanity_common import digest
 from common.sanity_db import lock_key, uuid_value
+from common.sanity_preserved_ai import receipt
 from common.sanity_review_advice import report_facts
-from oa.sanity_workspace import record_id, utcnow
+from common.sanity_workspace_rationale import complete
+from oa.sanity_ai_cases import CaseRetriever
+from oa.sanity_ai_criteria import load_criteria
+from oa.sanity_preserved_text import enrich
+from oa.sanity_workspace_core import record_id, utcnow
 from oa.sanity_workspace_clustering import WorkspaceClusteringStore
 from oa.sanity_workspace_review import WorkspaceReviewStore, validate_ai_receipt
-from common.sanity_workspace_rationale import complete
 
 
 class WorkspaceGroupReviewStore(WorkspaceReviewStore):
@@ -24,7 +28,6 @@ class WorkspaceGroupReviewStore(WorkspaceReviewStore):
     def current_criteria(self, context):
         if self.criteria_provider is not None:
             return self.criteria_provider(context)
-        from oa.sanity_ai_criteria import load_criteria
         return load_criteria(context)
 
     def head_key(self, report_id, group_id=None):
@@ -94,7 +97,6 @@ class WorkspaceGroupReviewStore(WorkspaceReviewStore):
     def apply_ai(self, user_id, block_id, version_id, report_id, *, expected_revision,
                  request_id, advice, cases, metadata, retrieval, criteria):
         """Save a validated direct-evidence proposal tied to the confirmed group."""
-        from oa.sanity_ai_cases import CaseRetriever
         check(self.ai_case_policy, "AI_NOT_CONFIGURED")
         check(type(expected_revision) is int and expected_revision >= 0, "INVALID_REQUEST")
         rid = str(uuid_value(request_id))
@@ -106,8 +108,6 @@ class WorkspaceGroupReviewStore(WorkspaceReviewStore):
                                              "metadata": metadata, "retrieval": retrieval})}
         self.db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("workspace-review-write"),))
         context = self.context(user_id, block_id, version_id, report_id, write=True)
-        from oa.sanity_preserved_text import enrich
-        from common.sanity_preserved_ai import receipt
         receipt(metadata, advice, enrich(self.db, context))
         previous = self.row(self.proposal_kind, rid)
         if previous:

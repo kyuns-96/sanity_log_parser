@@ -9,15 +9,19 @@ import hashlib
 
 from common.sanity_ai_contracts import review_evidence, validate_criteria, validate_review_v2
 from common.sanity_ai_knowledge import shared_case
+from common.sanity_ai_projection import instruction as projection_instruction, alias_rows, project_rows, restore_review
+from common.sanity_ai_retry import annotate
 from common.sanity_common import ReviewError, digest
 from common.sanity_preserved_ai import available, evidence, model_metadata, split_reply
 from common.sanity_submission import check
 from oa.sanity_ai_batch_model import BatchModel, LEAF_PROMPT, MERGE_PROMPT
-from oa.sanity_ai_model import _COMMON_PROMPT, _REVIEW_PROMPT, _PRESERVED_PROMPT, project_review_context, project_context_facts, scope_rationale
-from common.sanity_ai_projection import instruction as projection_instruction, alias_rows, project_rows, restore_review
+from oa.sanity_ai_budget import EVIDENCE_BATCH_PROMPT_VERSION as VERSION
+from oa.sanity_ai_model import (
+    COMMON_PROMPT, PRESERVED_PROMPT, REVIEW_PROMPT, project_context_facts,
+    project_review_context, scope_rationale,
+)
 
-VERSION = 'oa-batch-evidence-v1'
-TEXT_PROMPT = _COMMON_PROMPT + """
+TEXT_PROMPT = COMMON_PROMPT + """
 작업: 보존 텍스트의 이번 조각 전체에서 조건·예외·반례·불확실성을 분석하세요.
 fragments는 마스킹된 원본 segment 일부이며 text_start/text_stop은 Unicode 문자 위치입니다.
 원래 byte/line 범위는 부모 segment의 위치입니다. 가려진 원본 위치를 추정하지 마세요.
@@ -41,7 +45,7 @@ evidence_ids는 preserved_analysis.evidence_ids의 pe- ID 1~20개만 인용하�
 reason은 실제 본문 분석과 현재 판단의 관계를 1~2000자로 설명하세요.
 보존 파일·분석은 승인된 criterion이나 사람 확정 case를 대체하지 않습니다.
 """
-REVIEW_BATCH_PROMPT = _REVIEW_PROMPT + """
+REVIEW_BATCH_PROMPT = REVIEW_PROMPT + """
 이번 작업은 전체 확정 그룹의 분할 검토입니다. batch.stage를 확인하세요.
 REVIEW_LEAF는 제공된 group_evidence만 판정하는 중간 결과입니다. 그룹 전체의 완료가 아닙니다.
 REVIEW_MERGE의 analyses는 모든 원본을 나누어 읽은 앞선 AI의 중간 판정입니다.
@@ -93,7 +97,7 @@ class EvidenceBatchModel(BatchModel):
             prompt = prompt.replace('batch.record_aliases가 원본 ID와의 대응입니다. 배치 밖 원본을 배정하지 마세요.',
                                     '제공된 짧은 ID는 이번 배치의 식별자입니다. 제공되지 않은 ID를 배정하지 마세요.')
         if available(self.context): prompt += ANALYSIS_PROMPT
-        elif context['report'].get('preserved_sources'): prompt += _PRESERVED_PROMPT
+        elif context['report'].get('preserved_sources'): prompt += PRESERVED_PROMPT
         version = VERSION+'.'+stage.lower()+'.rule-code-v1'
         return projection_instruction(self.policy, prompt, version) if self.policy is not None else (prompt, version)
 
@@ -175,7 +179,7 @@ class EvidenceBatchModel(BatchModel):
                                   'preserved_citations':n['citations']} for n in nodes]
         prompt = REVIEW_BATCH_PROMPT
         if available(self.context): prompt += ANALYSIS_PROMPT
-        elif context['report'].get('preserved_sources'): prompt += _PRESERVED_PROMPT
+        elif context['report'].get('preserved_sources'): prompt += PRESERVED_PROMPT
         version = VERSION+'.'+stage.lower()
         if self.policy is not None: prompt,version = projection_instruction(self.policy,prompt,version)
         return packet, prompt, version, context
@@ -257,7 +261,6 @@ class EvidenceBatchModel(BatchModel):
                         'advice':advice,'citations':citations or []}
             return {'nodes':[node], 'metadata':metadata}
         except ReviewError as error:
-            from oa.sanity_ai_retry import annotate
             annotate(error,attempt)
             raise
 

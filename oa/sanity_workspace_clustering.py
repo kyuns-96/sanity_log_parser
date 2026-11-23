@@ -4,18 +4,23 @@ The reference advisor remains available for synthetic workspaces. Trusted OA AI
 receipts enter through apply_ai after the background worker validates its input.
 """
 from collections import defaultdict
+import copy
 import re
 
 from common.sanity_clustering import FIELDS, assignment, check, validate_rules
 from common.sanity_ai_knowledge import shared_case_views
 from common.sanity_clustering_advice import ClusteringAdvisor, MAX_RECORDS, MAX_GROUPS, evidence, partition, identity_fields_valid, signature, validate_clustering_advice
 from common.sanity_common import digest
+from common.sanity_preserved_ai import receipt
 from common.sanity_submission import source_digest
 from common.sanity_db import json_value, lock_key, uuid_value
 from common.sanity_rule_groups import enforce as enforce_rule_groups, rule_code
-from oa.sanity_workspace import WorkspaceStore, record_id, utcnow
-from oa.sanity_workspace_review import WorkspaceReviewStore, validate_ai_receipt
 import common.sanity_workspace_rationale as rationale
+from oa.sanity_ai_cases import CaseRetriever
+from oa.sanity_preserved_text import enrich
+from oa.sanity_workspace_core import WorkspaceCoreStore, record_id, utcnow
+from oa.sanity_workspace_review import WorkspaceReviewStore, validate_ai_receipt
+from oa.sanity_workspace_sources import hydrate
 
 # Resource guards, not the expected/business report size. Typical is ~10,000;
 # 100,000 and larger inputs use the same complete-input, paged workflow.
@@ -117,6 +122,48 @@ class ConfirmedPartitionAdvisor(ClusteringAdvisor):
                            + (f" 충돌/구분 불가 로그 {conflicts}건은 개별 그룹으로 남겼습니다." if conflicts else ""))}
 
 
+def apply_operation(groups, operation):
+    """Resolve explicit ID selection against the full, pinned server partition."""
+    check(isinstance(operation, dict) and operation.get("kind") in ("MOVE", "MERGE", "RENAME"), "INVALID_REQUEST")
+    allowed = {"kind", "record_ids", "group_ids", "destination_id", "new_group_id", "label"}
+    check(set(operation) <= allowed, "INVALID_REQUEST")
+    result = copy.deepcopy(groups)
+    index = {group["id"]: group for group in result}
+    destination = operation.get("destination_id")
+    label = operation.get("label", "")
+    if operation["kind"] == "RENAME":
+        check(set(operation) == {"kind", "destination_id", "label"} and destination in index, "INVALID_REQUEST")
+        index[destination]["label"] = label
+        return result
+    ids, selected_groups = operation.get("record_ids", []), operation.get("group_ids", [])
+    check(isinstance(ids, list) and isinstance(selected_groups, list)
+          and all(isinstance(key, str) for key in ids + selected_groups)
+          and len(ids) == len(set(ids)) and len(selected_groups) == len(set(selected_groups))
+          and set(selected_groups) <= set(index), "INVALID_PARTITION")
+    if operation["kind"] == "MERGE":
+        check(not ids and len(selected_groups) >= 2, "INVALID_REQUEST")
+    else:
+        check(bool(ids) != bool(selected_groups), "INVALID_REQUEST")
+    selected = set(ids)
+    for key in selected_groups:
+        selected.update(index[key]["record_ids"])
+    existing = {key for group in result for key in group["record_ids"]}
+    check(selected and selected <= existing, "INVALID_PARTITION")
+    new_id = operation.get("new_group_id")
+    check(bool(destination) != bool(new_id), "INVALID_REQUEST")
+    if new_id:
+        check(new_id not in index and bool(label.strip()), "INVALID_REQUEST")
+        target = {"id": new_id, "label": label, "record_ids": []}
+        result.append(target)
+    else:
+        check(destination in index, "INVALID_REQUEST")
+        target = index[destination]
+    for group in result:
+        group["record_ids"] = [key for key in group["record_ids"] if key not in selected]
+    target["record_ids"] = sorted(set(target["record_ids"]) | selected)
+    return [group for group in result if group["record_ids"]]
+
+
 def ai_job_active(head):
     state = head["state"] if head else {}
     job = state.get("codex_jobs", {}).get(state.get("codex_job_id"), {})
@@ -125,7 +172,7 @@ def ai_job_active(head):
 
 class WorkspaceClusteringStore:
     def __init__(self, db, ws=None):
-        self.db, self.ws = db, ws if ws is not None else WorkspaceStore(db)
+        self.db, self.ws = db, ws if ws is not None else WorkspaceCoreStore(db)
         self.reviews = WorkspaceReviewStore(db, ws=self.ws)
 
     @property
@@ -151,7 +198,6 @@ class WorkspaceClusteringStore:
 
     def catalog(self, context):
         if self.ai_case_policy:
-            from oa.sanity_ai_cases import CaseRetriever
             retriever = CaseRetriever(self.db, self.ws)
             selected = retriever.select(context, stage="CLUSTER")["cases"]
             current, _ = self.current(context["report"]["id"])
@@ -192,7 +238,6 @@ class WorkspaceClusteringStore:
             source = source_row["payload"]
             check(event["source_sha256"] == source_digest(source), "STATE_CORRUPT")
             if source.get('source_storage') == 'PARTS_V2':
-                from oa.sanity_workspace_sources import hydrate
                 source = hydrate(self.db,source)
             records = evidence({"report": source})
             partition(event["groups"], records)
@@ -209,7 +254,6 @@ class WorkspaceClusteringStore:
         if ai_job_active(head) or head and head["state"].get("task", {}).get("status") in ("PENDING", "RUNNING", "FAILED", "STALE"):
             return False
         if event.get("case_policy") == "OA_RETRIEVAL_V1":
-            from oa.sanity_ai_cases import CaseRetriever
             if any(reference["report_id"] == exclude_report for reference in event["references"]):
                 return False
             reference_context = {"scope": event["scope"], "report": {"id": exclude_report or event["report_id"],
@@ -274,7 +318,6 @@ class WorkspaceClusteringStore:
         reauthorizes and checks the source, partition revision and supplied case
         revisions under the same lock used by human edits and confirmations.
         """
-        from oa.sanity_ai_cases import CaseRetriever
         check(self.ai_case_policy, "AI_NOT_CONFIGURED")
         check(type(expected_revision) is int and expected_revision >= 0, "INVALID_REQUEST")
         rid = str(uuid_value(request_id))
@@ -285,8 +328,6 @@ class WorkspaceClusteringStore:
                        "cases": cases, "metadata": metadata, "retrieval": retrieval})}
         self.db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("workspace-review-write"),))
         context = self.context(user_id, block_id, version_id, report_id, write=True)
-        from oa.sanity_preserved_text import enrich
-        from common.sanity_preserved_ai import receipt
         receipt(metadata, advice, enrich(self.db, context))
         previous = self.reviews.row("WS_CLUSTER_EVENT", rid)
         if previous:
@@ -332,7 +373,7 @@ class WorkspaceClusteringStore:
     def change(self, user_id, block_id, version_id, report_id, *, action, expected_revision, request_id,
                reason="", groups=None, identity_fields=None, reusable=False, compatible_versions=False,
                criteria="", mode="CRITERIA", prepared=None, task=None, operation=None, mock_receipt=None,
-               rationale_operation=None, _task_context=None):
+               receipt_validator=None, rationale_operation=None, _task_context=None):
         if _task_context is not None:
             # advance_task already authorized and pinned the complete source in
             # this transaction/lock. Avoid decoding another 100,000-row copy.
@@ -388,8 +429,8 @@ class WorkspaceClusteringStore:
         if action == "PROPOSE":
             fields = identity_fields_valid(identity_fields if identity_fields is not None else fields, evidence(context))
             if mode == "MOCK_CODEX":
-                from devtools.sanity_codex_mock import validate_receipt
-                value = validate_receipt(mock_receipt, context, cases, fields)
+                check(callable(receipt_validator), "AI_NOT_CONFIGURED")
+                value = receipt_validator(mock_receipt, context, cases, fields)
             else:
                 value = validate_clustering_advice(prepared if prepared is not None else
                     ConfirmedPartitionAdvisor().propose(context, cases, fields), context, cases)
@@ -409,7 +450,6 @@ class WorkspaceClusteringStore:
                 if rationale_operation is not None:
                     groups = old["groups"]
                 if operation is not None:
-                    from oa.sanity_workspace_pipeline import apply_operation
                     groups = apply_operation(old["groups"], operation)
         groups = enforce_rule_groups(partition(groups, evidence(context)), evidence(context), context['report'])
         if action == "EDIT" and operation is not None and groups == old["groups"]:

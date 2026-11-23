@@ -17,7 +17,7 @@ VWP↔OA 통신은 PostgreSQL 4개 테이블만 사용하며, 이 폴더의 repo
 
 ## Area/Power PC 업로드는 별도 입력 경로
 
-수치 CSV는 `python -m area_power.vwp --config /approved/pc/upload.json` 또는 같은 Python 환경의 `bin/area-power --config ...`로 중앙 VWP에 올린다. Python 3.11+와 이 역할의 `requirements.txt`만 필요하다. 필수 `csv`·`metadata` 경로와 선택 `report_export` 전체 argv 배열은 [설정 예제](../area_power/vwp/upload.example.json)·[실행 안내](../area_power/README.md#csv-업로드)를 따른다. 상대 경로·exporter cwd는 config 디렉터리 기준이며 설정과 기존 명시적 입력 옵션은 혼용하지 않는다.
+수치 CSV는 `python -m vwp.area_power --config /approved/pc/upload.json` 또는 같은 Python 환경의 `bin/area-power --config ...`로 중앙 VWP에 올린다. Python 3.11+와 이 역할의 `requirements.txt`만 필요하다. 필수 `csv`·`metadata` 경로와 선택 `report_export` 전체 argv 배열은 [설정 예제](area_power/upload.example.json)·[실행 안내](../docs/area_power/README.md#csv-업로드)를 따른다. 상대 경로·exporter cwd는 config 디렉터리 기준이며 설정과 기존 명시적 입력 옵션은 혼용하지 않는다.
 
 이는 Sanity 제출과 별개의 Area CSV 업로드 API다. `AREA_POWER_SERVER_URL` 또는 `--url`로 사내 중앙 VWP 주소만 지정하며 업로드/상태 조회에 추가 인증은 없다. 기존 launcher의 `--token`·`--actor`와 `AREA_POWER_UPLOAD_TOKEN`·`AREA_POWER_ACTOR` 설정은 제거한다. 클라이언트가 사용자 신원을 주장하지 않고 DB에는 기술적 수신 서비스 `vwp_server`를 기록한다. 사내 도달성을 신뢰하므로 인증된 사용자별 업로드 추적은 제공하지 않는다. DB·모델 계정은 PC에 주지 않으며 OA 로그인·SSO·프로젝트 권한은 바꾸지 않는다. 실제 사내 접속 경로는 운영자가 제공한다.
 

@@ -8,7 +8,8 @@ from common.sanity_db import json_value, lock_key, uuid_value
 from common.sanity_review_advice import (ApprovedCriteriaAdvisor, normalize_review_exception,
     report_facts, validate_advice, validate_stored_review_exception)
 from common.sanity_submission import source_digest
-from oa.sanity_workspace import WorkspaceStore, record_id, utcnow
+from oa.sanity_ai_cases import CaseRetriever
+from oa.sanity_workspace_core import WorkspaceCoreStore, record_id, utcnow
 
 
 def validate_ai_receipt(metadata, retrieval, cases):
@@ -62,7 +63,7 @@ class WorkspaceReviewStore:
     report_ref, event_ref = "workspace_review_report_ref", "workspace_review_event_ref"
 
     def __init__(self, db, ws=None):
-        self.db, self.ws = db, ws if ws is not None else WorkspaceStore(db)
+        self.db, self.ws = db, ws if ws is not None else WorkspaceCoreStore(db)
 
     @property
     def ai_case_policy(self):
@@ -123,7 +124,6 @@ class WorkspaceReviewStore:
 
     def cases(self, context):
         if self.ai_case_policy:
-            from oa.sanity_ai_cases import CaseRetriever
             return CaseRetriever(self.db, self.ws).select(context, stage="REVIEW")["cases"]
         rows = self.db.execute(
             "SELECT e.payload FROM {oa} h JOIN {oa} e ON e.record_id=h." + self.event_ref + " "
@@ -153,7 +153,6 @@ class WorkspaceReviewStore:
                 or self.decision_stale(proposal, context)):
             return True
         if proposal.get("case_policy") == "OA_RETRIEVAL_V1":
-            from oa.sanity_ai_cases import CaseRetriever
             if "criteria_sha256" in proposal:
                 if proposal["criteria_sha256"] != digest(self.current_criteria(context)):
                     return True

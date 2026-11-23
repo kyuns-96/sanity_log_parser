@@ -9,6 +9,7 @@ from common.sanity_common import ReviewError
 from common.sanity_db import lock_key, uuid_value
 from oa.sanity_access import AccessStore
 from oa.sanity_workspace import WorkspaceStore, record_id
+from oa.sanity_workspace_sources import CURRENT_SOURCES_SQL
 
 
 class ProductionWorkspaceStore(WorkspaceStore):
@@ -91,8 +92,6 @@ class ProductionWorkspaceStore(WorkspaceStore):
                 "can_assign_por": self.can_write(user_id, block)}
 
     def overview(self, user_id):
-        from oa.sanity_workspace_sources import CURRENT_SOURCES_SQL
-
         user = self.user(user_id)
         readable = self.authorization._scopes(user_id)
         readable_blocks = {scope["block_id"] for scope in readable}

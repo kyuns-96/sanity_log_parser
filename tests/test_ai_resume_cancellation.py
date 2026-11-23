@@ -22,14 +22,14 @@ class ResumeCancellationTests(PgTestCase):
         start=datetime.now(timezone.utc)
         for attempt in range(6):
             at=start+timedelta(seconds=200*attempt)
-            with executing_on('vwp'),patch('oa.sanity_ai_jobs._db_now',return_value=at):
+            with executing_on('vwp'),patch('oa.sanity_ai_store.db_now',return_value=at):
                 failed=self.c.run_job(now=at)
         self.assertEqual(('FAILED','AI_CALL_FAILED',True),
                          (failed['status'],failed['error'],failed['model_called']))
         self.assertTrue(failed['resumable'])
         self.assertEqual(6,len(self.w.v.wire))
         at=start+timedelta(seconds=1200)
-        with patch('oa.sanity_ai_jobs._db_now',return_value=at),self.c.service() as service:
+        with patch('oa.sanity_ai_store.db_now',return_value=at),self.c.service() as service:
             before=service._load(job['id'])
             first=service.resume('owner',job['id'],uuid4())
             self.assertEqual(('PENDING',False,False),(first['status'],first['model_called'],first['model_attempted']))
@@ -44,6 +44,6 @@ class ResumeCancellationTests(PgTestCase):
             self.assertEqual(503,old['data']['retry_failure']['http_status'])
             self.assertEqual(6,len(self.w.v.wire))
         self.c.callback=None
-        with patch('oa.sanity_ai_jobs._db_now',return_value=at):result=self.w.v.finish()
+        with patch('oa.sanity_ai_store.db_now',return_value=at):result=self.w.v.finish()
         self.assertEqual('COMPLETED',result['status'],result)
         self.assertEqual(7,len(self.w.v.wire))

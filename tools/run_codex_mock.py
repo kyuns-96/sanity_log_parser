@@ -15,7 +15,7 @@ CHILD = """
 import json,sys,uuid
 from pathlib import Path
 from common.sanity_common import canonical_json, digest
-from devtools.sanity_codex_mock import CodexMockClusteringAdvisor, fixture_report, REPORT_IDS, MODEL
+from devtools.sanity_codex_mock import CodexMockClusteringAdvisor, fixture_report, REPORT_IDS, MODEL, validate_receipt
 from common.sanity_db import Database
 from oa.sanity_workspace import seed_workspace
 from oa.sanity_workspace_clustering import WorkspaceClusteringStore
@@ -42,7 +42,8 @@ def propose(name):
     advisor.propose(context,cases,FIELDS)
     # The model is called before opening the write transaction/lock.
     event=change(name,action='PROPOSE',expected_revision=0,request_id=str(uuid.uuid4()),
-                 mode='MOCK_CODEX',identity_fields=FIELDS,mock_receipt=advisor.receipt)
+                 mode='MOCK_CODEX',identity_fields=FIELDS,mock_receipt=advisor.receipt,
+                 receipt_validator=validate_receipt)
     assert event['model_called'] and not event['confirmed']
     trace.append({'report_id':name,'receipt':advisor.receipt,'event_id':event['id']})
     (out/'trace.json').write_bytes(canonical_json(trace))

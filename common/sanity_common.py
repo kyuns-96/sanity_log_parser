@@ -61,7 +61,7 @@ def _finite(value):
     return number
 
 
-def _decode_json(data):
+def decode_json(data):
     try:
         result = json.loads(data, object_pairs_hook=_object_pairs,
                             parse_constant=_constant, parse_float=_finite)
@@ -74,7 +74,7 @@ def _decode_json(data):
 
 def read_json(path) -> dict:
     try:
-        return _decode_json(Path(path).read_text(encoding="utf-8"))
+        return decode_json(Path(path).read_text(encoding="utf-8"))
     except OSError as exc:
         raise ReviewError("READ_ERROR", "Cannot read JSON file") from exc
     except UnicodeError as exc:
@@ -126,6 +126,31 @@ def require_id(value, field="id") -> str:
     return value
 
 
+def validate_scope(value, *, code="INVALID_SCOPE"):
+    """Return an independent, exact version-1 scope or fail without echoing IDs."""
+    if (not isinstance(value, dict)
+            or set(value) != {"schema_version", "project_id", "block_id"}
+            or type(value["schema_version"]) is not int or value["schema_version"] != 1):
+        raise ReviewError(code, "Invalid report project/block scope")
+    try:
+        require_id(value["project_id"], "project_id")
+        require_id(value["block_id"], "block_id")
+    except ReviewError:
+        raise ReviewError(code, "Invalid report project/block scope") from None
+    return dict(value)
+
+
+def run_scope(run, *, required=False, code="INVALID_SCOPE"):
+    """Read optional run.scope; a present null value is never an unscoped run."""
+    if not isinstance(run, dict):
+        raise ReviewError(code, "Invalid report run")
+    if "scope" not in run:
+        if required:
+            raise ReviewError(code, "Explicit report project/block scope is required")
+        return None
+    return validate_scope(run["scope"], code=code)
+
+
 def _require(condition, message):
     if not condition:
         raise ReviewError("INVALID_SCHEMA", message)
@@ -173,7 +198,6 @@ def validate_payload(payload) -> None:
     require_id(run.get("run_id"), "run_id")
     _require(all(_text(run.get(key)) for key in
                  ("project", "design", "stage", "tool", "tool_version")), "Incomplete run metadata")
-    from common.sanity_scope import run_scope
     run_scope(run, code="INVALID_SCHEMA")
     inventory = payload.get("inventory")
     _require(isinstance(inventory, dict), "Missing inventory")
@@ -399,7 +423,7 @@ def unpack_json(message, max_bytes=67108864):
             raise ReviewError("SIZE_LIMIT", "Expanded payload exceeds limit")
         if len(raw) != size:
             raise ReviewError("INTEGRITY_ERROR", "Expanded payload size mismatch")
-        return _decode_json(raw.decode("utf-8"))
+        return decode_json(raw.decode("utf-8"))
     except ReviewError:
         raise
     except (OSError, EOFError, ValueError, UnicodeError, zlib.error) as exc:

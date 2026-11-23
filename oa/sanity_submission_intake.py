@@ -10,7 +10,7 @@ from common.sanity_common import digest
 from common.sanity_db import lock_key
 from common.sanity_submission import check, scope_digest, submission_uuid, text
 from common.sanity_submission_intake import unverified
-from oa.sanity_workspace import record_id
+from oa.sanity_workspace_core import record_id
 from oa.submission_receiver import SourceReceiver
 
 

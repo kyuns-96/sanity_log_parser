@@ -13,7 +13,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.requests import ClientDisconnect
 from starlette.responses import JSONResponse
 
-from common.sanity_common import ReviewError, _decode_json
+from common.sanity_common import ReviewError, decode_json
 from common.sanity_submission import MAX_METADATA, VerifiedRemoteSubmitter, approved, check, submission_uuid
 from common.sanity_submission_files import load_config, validate_submission
 from common.sanity_submission_https import API, bearer
@@ -145,7 +145,7 @@ def create_app(config, authority):
             check(len(data)+len(chunk) <= length,'SUBMISSION_LIMIT')
             data.extend(chunk)
         check(len(data) == length,'INVALID_SUBMISSION_REQUEST')
-        value = _decode_json(bytes(data))
+        value = decode_json(bytes(data))
         check(isinstance(value,dict) and set(value) == {'submission','manifest'})
         validate_submission(value['submission'],value['manifest'])
         if internal:

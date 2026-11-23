@@ -18,9 +18,9 @@ from common.sanity_db import json_value
 from common.sanity_submission import source_digest
 from common.sanity_review_advice import validate_stored_review_exception
 import common.sanity_workspace_rationale as rationale
-from oa.sanity_workspace import WorkspaceStore, record_id
-from oa.sanity_workspace_review import WorkspaceReviewStore
-from oa.sanity_ai_evidence_choices import EvidenceChoices,selected_case
+from oa.sanity_workspace_core import WorkspaceCoreStore, record_id
+from oa.sanity_workspace_sources import hydrate
+from oa.sanity_ai_evidence_reader import choices_for_reports, selected_case
 
 
 def _validation_operation(method):
@@ -51,8 +51,7 @@ class CaseRetriever:
 
     def __init__(self, db, workspace=None):
         self.db = db
-        self.workspace = workspace if workspace is not None else WorkspaceStore(db)
-        self.reviews = WorkspaceReviewStore(db, ws=self.workspace)
+        self.workspace = workspace if workspace is not None else WorkspaceCoreStore(db)
         self._case_read_budget = 1024 * 1024
 
     def _begin_validation(self, target, stage, *, context=None):
@@ -81,7 +80,7 @@ class CaseRetriever:
     def _load_choices(self,stage,report_ids):
         missing=sorted({key for key in report_ids if (stage,key) not in self._choice_cache})
         if not missing:return
-        for report_id,rows in EvidenceChoices(self.db).for_reports(stage,missing).items():
+        for report_id, rows in choices_for_reports(self.db, stage, missing).items():
             self._validation_bytes+=len(canonical_json(rows))
             check(self._validation_bytes<=self.max_reference_bytes,'AI_REFERENCE_LIMIT')
             self._choice_cache[(stage,report_id)]=rows
@@ -106,7 +105,7 @@ class CaseRetriever:
 
     def _head_row(self, kind, key):
         self._charge_work(1)
-        return self.reviews.row(kind, key)
+        return self.workspace.row(kind, key)
 
     def _validated(self, key, exclude_report, validate):
         if getattr(self, "_validation_target", None) is None:
@@ -142,7 +141,7 @@ class CaseRetriever:
         if size is None:
             return None
         check(size["bytes"] <= self._case_read_budget, "AI_CASE_BUDGET", "Complete example dependency exceeds the byte budget")
-        return self.reviews.row(kind, key)
+        return self.workspace.row(kind, key)
 
     def _source_version(self, event, source):
         """Compare a case to its own immutable source, never to the target."""
@@ -283,7 +282,6 @@ class CaseRetriever:
         self._source_version(event, source["payload"])
         original = source["payload"]
         if original.get("source_storage") == "PARTS_V2":
-            from oa.sanity_workspace_sources import hydrate
             original = hydrate(self.db, original)
         partition(event["groups"], evidence({"report": original}))
         del original
@@ -376,7 +374,6 @@ class CaseRetriever:
         check(source.get("rule") is None or isinstance(source["rule"], str), "STATE_CORRUPT")
         source_version = self._source_version(event, source)
         if source.get("source_storage") == "PARTS_V2":
-            from oa.sanity_workspace_sources import hydrate
             source = hydrate(self.db, source)
         records = evidence({"report": source})
         if stage == "CLUSTER":

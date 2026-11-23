@@ -6,6 +6,8 @@ parser/model inference, file I/O or implicit downgrade of unit reports here.
 import copy
 
 from common.sanity_common import canonical_json, digest
+from common.sanity_preserved_text import FORMAT, validate_extraction
+from common.sanity_submission_core import HEX, check, relative_report, source_execution, source_unit
 
 PRODUCER = 'postgresql-source-2.3'
 MAX_FILES = 256
@@ -17,7 +19,6 @@ def declarations(plan):
 
 
 def validate_declarations(plan):
-    from common.sanity_submission import check, relative_report
     items = declarations(plan)
     check(isinstance(items, list) and 1 <= len(items) <= MAX_FILES, 'INVALID_PRESERVED_SOURCE')
     units = {u['review_unit_id']: u for u in plan['inventory']['units']}
@@ -26,7 +27,6 @@ def validate_declarations(plan):
         keys = {'path', 'role', 'binding'} | ({'content'} if plan['schema_version'] == 4 else set())
         check(isinstance(item, dict) and set(item) == keys, 'INVALID_PRESERVED_SOURCE')
         if plan['schema_version'] == 4:
-            from common.sanity_preserved_text import FORMAT
             check(item['content'] in (None, FORMAT), 'INVALID_PRESERVED_SOURCE')
         relative_report(item['path'])
         check(item['path'] not in paths and isinstance(item['role'], str) and item['role'] in ROLES,
@@ -64,7 +64,6 @@ def anchor(plan, item):
 
 
 def scope_declarations(plan):
-    from common.sanity_submission import source_unit
     values = []
     for p in declarations(plan):
         value = {'path': p['path'], 'role': p['role'], 'binding_kind': p['binding']['kind']}
@@ -82,7 +81,6 @@ def declared_paths(plan):
 
 def metadata(plan, files):
     """Resolve verified file descriptors into immutable, scoped references."""
-    from common.sanity_submission import check, source_execution, source_unit
     by_path = {f['path']: f for f in files}
     result = []
     for item in sorted(declarations(plan), key=lambda p: p['path']):
@@ -101,7 +99,6 @@ def metadata(plan, files):
 
 
 def validate_metadata(plan, values, *, transferred=False):
-    from common.sanity_submission import HEX, check, relative_report
     check(isinstance(values, list) and len(values) == len(declarations(plan)), 'PRESERVED_SOURCE_MISMATCH')
     files, normalized = [], []
     for original in values:
@@ -111,7 +108,6 @@ def validate_metadata(plan, values, *, transferred=False):
         if plan['schema_version'] == 4:
             keys |= {'targets', 'content'}
             if transferred and value.get('content') is not None:
-                from common.sanity_preserved_text import validate_extraction
                 check(value['content_available_to_ai'] is True, 'PRESERVED_TEXT_CORRUPT')
                 validate_extraction(value); value.pop('extraction')
                 value['content_available_to_ai'] = False
@@ -129,7 +125,6 @@ def validate_metadata(plan, values, *, transferred=False):
 
 
 def for_unit(plan, unit, values):
-    from common.sanity_submission import source_execution, source_unit
     key, execution = source_unit(plan['collection'], unit), source_execution(plan['collection'], unit)
     if plan['schema_version'] == 4:
         return [value for value in values if {'unit_key': key, 'execution_id': execution} in value['targets']]

@@ -3,16 +3,19 @@
 from cryptography.fernet import Fernet, InvalidToken
 
 from common.sanity_clustering import check
-from common.sanity_common import ReviewError, _decode_json, canonical_json, digest
+from common.sanity_common import ReviewError, canonical_json, decode_json, digest
 from common.sanity_config import ai_token_issuance_url, load_environment
 from common.sanity_db import lock_key, uuid_value
 from common.sanity_privacy import SecretGuard
 from common.sanity_ai_reasoning import ReasoningSettings
 from common.sanity_ai_cache import validate_wire_cache
+from common.sanity_vwp_ai import identifier
+from oa.sanity_access import require_admin_access
 from oa.sanity_ai_budget import BatchSettings
 from oa.sanity_ai_model import OAAdvisor, OASettings
 from oa.sanity_ai_tokens import UserTokenStore
-from oa.sanity_workspace import WorkspaceStore, record_id
+from oa.sanity_vwp_inference import Catalog, VwpAdvisor
+from oa.sanity_workspace_core import WorkspaceCoreStore, record_id
 
 NAMESPACE, PREFIX = "oa-ai-connections-v1", "aic1."
 CONFIG_KEYS = frozenset(("label", "enabled", "endpoint", "fallback_endpoint", "api", "auth_mode",
@@ -28,7 +31,6 @@ def is_vwp(config):
 
 def validate_config(config):
     if is_vwp(config):
-        from common.sanity_vwp_ai import identifier
         check(VWP_CONFIG_KEYS <= set(config) <= VWP_CONFIG_KEYS | {"issuance_url", "reasoning", "cache"}
               and identifier(config["profile_id"]), "AI_CONNECTION_CONFIG")
         # Reuse the existing bounded model/batch validation, without accepting
@@ -140,7 +142,7 @@ class ConnectionStore:
         if value["client_key_ciphertext"] is None:
             return ""
         try:
-            content = _decode_json(self._cipher().decrypt(value["client_key_ciphertext"].encode("ascii")).decode("utf-8"))
+            content = decode_json(self._cipher().decrypt(value["client_key_ciphertext"].encode("ascii")).decode("utf-8"))
             check(set(content) == {"connection_id", "revision", "key"}
                   and content["connection_id"] == value["connection_id"] and content["revision"] == value["revision"]
                   and isinstance(content["key"], str) and 1 <= len(content["key"]) <= 8192
@@ -155,8 +157,7 @@ class ConnectionStore:
         if vwp and profile is None:
             # Expired catalog metadata may label an existing credential for
             # removal, but credential_scope/dispatch always require a live one.
-            from oa.sanity_vwp_inference import Catalog
-            catalog = Catalog(self.db)._latest()
+            catalog = Catalog(self.db).latest()
             profile = next((p for p in catalog["profiles"] if p["id"] == config["profile_id"]), None) if catalog else None
         return {"id":value["connection_id"], "revision":value["revision"], "label":config["label"],
                 "auth_mode":(profile["auth_mode"] if profile else "vwp_unavailable") if vwp else config["auth_mode"],
@@ -171,7 +172,6 @@ class ConnectionStore:
 
     def credential_scope(self, value):
         if is_vwp(value["config"]):
-            from oa.sanity_vwp_inference import Catalog
             config = value["config"]
             profile = Catalog(self.db).get(config["profile_id"])
             self._check_profile(config, profile)
@@ -217,7 +217,6 @@ class ConnectionStore:
             connection_error = "AI_CONNECTION_UNAVAILABLE" if not value["config"]["enabled"] else None
             if is_vwp(value["config"]):
                 try:
-                    from oa.sanity_vwp_inference import Catalog
                     profile = Catalog(self.db).get(value["config"]["profile_id"], actor_id=user_id)
                     self._check_profile(value["config"], profile)
                 except ReviewError as failure:
@@ -243,37 +242,10 @@ class ConnectionStore:
         advisor = OAAdvisor(settings)
         return advisor.for_model(model_id) if model_id is not None else advisor
 
-    def task_selection(self, user_id, task, *, defaults=None):
-        """The shared log/Area initial connection and model selection."""
-        from oa.sanity_ai_task_defaults import TaskDefaults, TASKS
-        check(task in TASKS, "INVALID_REQUEST")
-        connections = self.user_connections(user_id)
-        first = connections[0] if connections else {}
-        if defaults is None:
-            defaults = TaskDefaults(self.db).current()['defaults']
-        default = defaults[task]
-        if task == 'AREA_TRIAGE' and default is None:
-            return connections, {}, {'applied': False, 'reason': 'AI_TASK_MODEL_REQUIRED'}
-        task_default = None
-        if default is not None:
-            selected = next((connection for connection in connections if connection['id'] == default['connection_id']), None)
-            if selected is None:
-                task_default = {**default, 'applied': False, 'reason': 'AI_CONNECTION_UNAVAILABLE'}
-            elif default['model_id'] not in selected['models']:
-                task_default = {**default, 'applied': False, 'reason': 'AI_MODEL_NOT_ALLOWED'}
-            else:
-                selected['model'] = default['model_id']
-                first = selected
-                task_default = {**default, 'applied': True}
-        if task == 'AREA_TRIAGE' and task_default and not task_default.get('applied'):
-            return connections, {}, task_default
-        return connections, first, task_default
-
     def advisor(self, connection_id, model_id=None, *, transport=None):
         value = self.get(connection_id)
         config = value["config"]
         if is_vwp(config):
-            from oa.sanity_vwp_inference import Catalog, VwpAdvisor
             profile = Catalog(self.db).get(config["profile_id"])
             self._check_profile(config, profile)
             settings = OASettings(enabled=True, endpoint="https://vwp.invalid/inference", token_source="user", token="",
@@ -306,13 +278,12 @@ class ConnectionStore:
     def authorize_user(self, connection_id, user_id):
         value = self.get(connection_id)
         if is_vwp(value["config"]):
-            from oa.sanity_vwp_inference import Catalog
             Catalog(self.db).get(value["config"]["profile_id"], actor_id=user_id)
 
     def save(self, actor, connection_id, config, expected_revision, client_api_key=None):
         check(getattr(actor, "auth_method", None) == "sso" and getattr(actor, "access", None) is not None
               and actor.access.db is self.db, "FORBIDDEN")
-        actor.access._admin(actor)
+        require_admin_access(actor.access, actor)
         connection_id = str(uuid_value(connection_id))
         config = validate_config(config)
         check(type(expected_revision) is int and 0 <= expected_revision < 9999999999, "INVALID_REQUEST")
@@ -325,7 +296,6 @@ class ConnectionStore:
         check(previous is not None or len(values) < 100, "AI_CONNECTION_LIMIT")
         check(previous is None or is_vwp(previous["config"]) == is_vwp(config), "AI_CONNECTION_CONFIG")
         if is_vwp(config):
-            from oa.sanity_vwp_inference import Catalog
             if previous is None or config != {**previous["config"], "enabled":False}:
                 self._check_profile(config, Catalog(self.db).get(config["profile_id"]))
             if config["enabled"]:
@@ -345,14 +315,14 @@ class ConnectionStore:
         value = {"namespace":NAMESPACE, "connection_id":connection_id,"revision":revision,"actor_id":actor.user_id,
                  "config":config,"client_key_ciphertext":encrypted}
         value["sha256"] = digest(value)
-        WorkspaceStore(self.db).put("WS_CONFIG", PREFIX + connection_id + "." + f"{revision:010d}", value)
+        WorkspaceCoreStore(self.db).put("WS_CONFIG", PREFIX + connection_id + "." + f"{revision:010d}", value)
         return self.admin_public(value)
 
     def delete(self, actor, connection_id, expected_revision):
         """Remove a connection from use while retaining immutable past revisions."""
         check(getattr(actor, 'auth_method', None) == 'sso' and getattr(actor, 'access', None) is not None
               and actor.access.db is self.db, 'FORBIDDEN')
-        actor.access._admin(actor)
+        require_admin_access(actor.access, actor)
         connection_id = str(uuid_value(connection_id))
         check(type(expected_revision) is int and 1 <= expected_revision < 9999999999, 'INVALID_REQUEST')
         self.db.execute('SELECT pg_advisory_xact_lock(%s)', (lock_key(PREFIX + 'catalog'),))
@@ -367,5 +337,5 @@ class ConnectionStore:
         value = {'namespace':NAMESPACE,'connection_id':connection_id,'revision':revision,'actor_id':actor.user_id,
                  'config':{**previous['config'],'enabled':False},'client_key_ciphertext':None,'deleted':True}
         value['sha256'] = digest(value)
-        WorkspaceStore(self.db).put('WS_CONFIG',PREFIX + connection_id + '.' + f'{revision:010d}',value)
+        WorkspaceCoreStore(self.db).put('WS_CONFIG',PREFIX + connection_id + '.' + f'{revision:010d}',value)
         return {'id':connection_id,'revision':revision,'deleted':True}

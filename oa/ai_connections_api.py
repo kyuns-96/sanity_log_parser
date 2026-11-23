@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from common.sanity_clustering import check
 from oa.ai_tokens_api import TokenCommand, RemoveTokenCommand
+from oa.sanity_access import require_admin_access
 from oa.sanity_ai_connections import ConnectionStore
 from oa.sanity_ai_retry import MAX_RETRIES
 
@@ -65,7 +66,7 @@ def create_ai_connections_router(authorized_actor):
 
     @router.get("/api/admin/ai/connections")
     def admin_list(actor=Depends(owner)):
-        actor.access._admin(actor)
+        require_admin_access(actor.access, actor)
         store = ConnectionStore(actor.access.db)
         ready = True
         try:
@@ -80,13 +81,13 @@ def create_ai_connections_router(authorized_actor):
 
     @router.post("/api/admin/ai/connections/{connection_id}")
     def save(connection_id: UUID, body: ConnectionCommand, actor=Depends(owner)):
-        actor.access._admin(actor)
+        require_admin_access(actor.access, actor)
         return ConnectionStore(actor.access.db).save(actor, str(connection_id), body.config, body.expected_revision,
             body.client_api_key.get_secret_value() if body.client_api_key is not None else None)
 
     @router.post("/api/admin/ai/connections/{connection_id}/delete")
     def delete(connection_id: UUID, body: DeleteConnectionCommand, actor=Depends(owner)):
-        actor.access._admin(actor)
+        require_admin_access(actor.access, actor)
         return ConnectionStore(actor.access.db).delete(actor,str(connection_id),body.expected_revision)
 
     @router.get("/api/ai/connections")

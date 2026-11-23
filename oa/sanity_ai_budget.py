@@ -15,6 +15,7 @@ from common.sanity_common import ReviewError
 from common.sanity_submission import check
 
 BATCH_PROMPT_VERSION = 'oa-batch-clustering-v1'
+EVIDENCE_BATCH_PROMPT_VERSION = 'oa-batch-evidence-v1'
 
 
 @dataclass(frozen=True)

@@ -13,7 +13,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from devtools.sanity_codex_mock import MODEL, REPORT_IDS, fixture_report
+from devtools.sanity_codex_mock import MODEL, REPORT_IDS, fixture_report, validate_receipt
 from common.sanity_common import ReviewError, digest
 from oa.sanity_workspace import WorkspaceStore
 from oa.sanity_workspace_clustering import WorkspaceClusteringStore
@@ -68,6 +68,7 @@ def install(db, archive, result, trace):
             if not receipt or command.pop('mock_receipt_sha256', None) != digest(receipt):
                 raise ReviewError('INVALID_WORKSPACE_SEED', 'Model receipt mismatch')
             command['mock_receipt'] = receipt
+            command['receipt_validator'] = validate_receipt
         replayed = clustering.change(**command)
         # Import time can differ. All grouping, actor, reference and inference data
         # must match the original successful experiment.

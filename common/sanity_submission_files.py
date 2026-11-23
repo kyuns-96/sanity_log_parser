@@ -8,7 +8,7 @@ import shutil
 import stat
 import tempfile
 
-from common.sanity_common import _decode_json, canonical_json, digest
+from common.sanity_common import decode_json, canonical_json, digest
 from common.sanity_submission import HEX, MAX_METADATA, actor_value, check, relative_report, submission_uuid, text, validate_plan
 
 DEFAULT_TOTAL_BYTES = 16 * 1024**3
@@ -59,7 +59,7 @@ def read_json_file(path, maximum=MAX_METADATA):
     with stream:
         value = stream.read(maximum + 1)
     check(len(value) <= maximum, "SUBMISSION_LIMIT")
-    return _decode_json(value)
+    return decode_json(value)
 
 
 def fsync_dir(path):

@@ -2,7 +2,7 @@
 import hashlib
 import re
 from datetime import datetime, timezone
-from common.sanity_common import ReviewError, canonical_json, _decode_json
+from common.sanity_common import ReviewError, canonical_json, decode_json
 from common.sanity_db import MAX_BYTES
 
 VERSION = 1
@@ -37,7 +37,7 @@ def timestamp(value):
 def strict_json(raw, limit=MAX_BYTES):
     require(isinstance(raw, bytes) and 0 < len(raw) <= limit)
     try:
-        return _decode_json(raw.decode("utf-8"))
+        return decode_json(raw.decode("utf-8"))
     except (ValueError, UnicodeError, RecursionError):
         raise ReviewError("AI_VWP_PROTOCOL", "Invalid bounded JSON") from None
 

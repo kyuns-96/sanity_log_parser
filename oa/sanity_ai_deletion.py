@@ -7,49 +7,14 @@ marker that prevents reuse of a deleted inference request ID.
 """
 from common.sanity_db import uuid_value
 from common.sanity_submission import check
-from oa.sanity_workspace import record_id
-
-PREFIX, NAMESPACE = 'ai.deleted.', 'oa-ai-deleted-v1'
-
-
-def available(service):
-    if getattr(service.db,'side',None) != 'oa' or getattr(service.db,'privilege_mode',None) != 'single_account':
-        return False
-    row = service.db.execute("SELECT has_table_privilege(current_user, "
-        "quote_ident(%s) || '.sanity_oa_data', 'DELETE') AS allowed",
-        (service.db.schema,)).fetchone()
-    return bool(row and row['allowed'])
-
-
-def marker(service, identity):
-    from oa.sanity_ai_jobs import _NULL_COLUMNS
-    key = PREFIX + str(uuid_value(identity, 'job_id'))
-    row = service.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key=%s", (key,)).fetchone()
-    if row is None:
-        return None
-    value = row['payload']
-    check(isinstance(value, dict) and {'namespace', 'id', 'actor_id'} <= set(value)
-          and value['namespace'] == NAMESPACE and value['id'] == str(identity)
-          and isinstance(value['actor_id'], str) and 1 <= len(value['actor_id']) <= 100
-          and row['record_id'] == record_id('WS_CONFIG', key) and row['state'] == {} and row['version'] == 0
-          and row['status'] == 'RECORDED' and row['created_at'] == row['updated_at']
-          and all(row.get(k) is None for k in _NULL_COLUMNS), 'AI_JOB_CORRUPT')
-    return value
-
-
-def ensure_not_deleted(service, identity):
-    check(marker(service, identity) is None, 'AI_JOB_DELETED')
-
-
-def worker_load(service, identity, loader=None):
-    event = (loader or service._load)(identity, required=False)
-    check(event is not None or marker(service, identity) is not None, 'AI_JOB_NOT_FOUND')
-    return event
+from oa.sanity_ai_store import (
+    DELETE_NAMESPACE as NAMESPACE, DELETE_PREFIX as PREFIX, deletion_available as available,
+    deletion_marker as marker, ensure_not_deleted, job_lock, report_header as header, worker_load,
+)
+from oa.sanity_ai_submissions import Submissions
 
 
 def delete(service, user_id, identity):
-    from oa.sanity_ai_submissions import Submissions, header, job_lock
-
     identity = str(uuid_value(identity, 'job_id'))
     job_lock(service, identity)
     previous = marker(service, identity)
@@ -68,18 +33,17 @@ def delete(service, user_id, identity):
         check({**intent['data']['command'], 'model_id': intent['data']['model']}
               == {**command, 'model_id': event['data']['model']}, 'AI_JOB_CORRUPT')
     check(available(service), 'AI_JOB_DELETE_NOT_CONFIGURED')
-    return purge_locked(service,identity,user_id)
+    return purge_locked(service, identity, user_id)
 
 
-def purge_locked(service,identity,user_id):
+def purge_locked(service, identity, user_id):
     """Internal scope purge; caller has authorized the containing report."""
-    from oa.sanity_ai_submissions import job_lock
-    identity=str(uuid_value(identity,'job_id'))
-    job_lock(service,identity)
-    previous=marker(service,identity)
+    identity = str(uuid_value(identity, 'job_id'))
+    job_lock(service, identity)
+    previous = marker(service, identity)
     if previous:
-        check(previous['actor_id']==user_id,'AI_JOB_CORRUPT')
-        return {'id':identity,'deleted':True}
+        check(previous['actor_id'] == user_id, 'AI_JOB_CORRUPT')
+        return {'id': identity, 'deleted': True}
     value = {'namespace': NAMESPACE, 'id': identity, 'actor_id': user_id}
     # The marker and all execution rows change atomically, including if DELETE
     # is revoked between the permission check and the actual statement.

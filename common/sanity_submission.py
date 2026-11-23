@@ -3,12 +3,17 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
-from pathlib import Path, PurePosixPath
+from datetime import datetime, timezone
+from pathlib import Path
 import re
-import uuid
 
+from common.sanity_ai_projection import declaration
 from common.sanity_common import ReviewError, canonical_json, digest
+from common.sanity_preserved_sources import scope_declarations, validate_declarations
+from common.sanity_submission_core import (
+    COLLECTION_KEYS, HEX, ID, SOURCE_KEYS, check, identifier, relative_report,
+    source_execution, source_unit, source_version, submission_uuid, text,
+)
 
 PROTOCOL = "source-collection-v2"
 PART_BYTES = 4 * 1024 * 1024
@@ -18,48 +23,10 @@ MAX_PARTS = 100000
 MAX_METADATA = 64 * 1024 * 1024
 SOURCE_TYPES = ("SOURCE_MANIFEST", "SOURCE_PART", "SOURCE_COMMIT")
 DELIVERY_STATES = ("LOCAL_QUEUED", "VWP_ACCEPTED", "PARSING", "DB_QUEUED", "OA_STORED", "REJECTED")
-COLLECTION_KEYS = {"source_namespace", "project_key", "block_key", "net_ver", "submission_revision",
-                   "layout", "target_eco", "pre_revision", "stage", "profile_id", "profile_version"}
-SOURCE_KEYS = {"net_ver", "revision", "layout", "eco", "mode", "execution_ref", "execution_order",
-               "source_stage", "tool", "tool_version"}
 AI_INPUT_KEYS = ('ai_fields', 'include_raw', 'include_details')
 UNIT_REQUIRED_KEYS = {"review_unit_id", "item_id", "report", "parser", "rule_version", "condition", "identity_fields",
                       "execution_status", "applicable", "family", "source"}
 UNIT_KEYS = UNIT_REQUIRED_KEYS | {"exclusion", "evaluation"} | set(AI_INPUT_KEYS)
-HEX = re.compile(r"[0-9a-f]{64}\Z")
-ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\Z")
-
-
-def check(value, code="INVALID_SUBMISSION", message="Invalid submission contract"):
-    if not value:
-        raise ReviewError(code, message)
-
-
-def text(value, maximum=1000):
-    return (isinstance(value, str) and 1 <= len(value) <= maximum and bool(value.strip())
-            and re.search(r'[\x00-\x1f\x7f]',value) is None)
-
-
-def identifier(value):
-    check(isinstance(value, str) and ID.fullmatch(value))
-    return value
-
-
-def submission_uuid(value):
-    try:
-        result = str(uuid.UUID(str(value)))
-    except (ValueError, TypeError, AttributeError) as exc:
-        raise ReviewError("INVALID_SUBMISSION", "A submission UUID is required") from exc
-    check(str(value) == result)
-    return result
-
-
-def relative_report(value):
-    check(text(value) and value.startswith("reports/") and "\\" not in value)
-    path = PurePosixPath(value)
-    check(not path.is_absolute() and len(path.parts) >= 2 and str(path) == value
-          and not any(p in (".", "..") for p in path.parts))
-    return value
 
 
 def actor_value(value):
@@ -160,23 +127,6 @@ def submission_receipt(row):
             'workspace_links':state.get('oa_receipt',{}).get('workspace_links',[])}
 
 
-def source_version(collection, source):
-    return "sv-" + digest([collection["source_namespace"], collection["project_key"], collection["block_key"],
-                            source["net_ver"], source["revision"], source["layout"]])
-
-
-def source_unit(collection, unit):
-    source = unit["source"]
-    return "su-" + digest([source_version(collection, source), source["eco"], unit["item_id"], source["mode"]])
-
-
-def source_execution(collection, unit, submission_id=None):
-    identity = [source_unit(collection, unit), unit["source"]["execution_ref"]]
-    if submission_id is not None:
-        identity.append(submission_uuid(submission_id))
-    return "sx-" + digest(identity)
-
-
 def scope_digest(plan):
     c = plan["collection"]
     # File presence, source executions, upload actor and times are not scope approval.
@@ -187,7 +137,6 @@ def scope_digest(plan):
                                      "exclusion":u.get('exclusion')}
                                     for u in plan["inventory"]["units"]),key=lambda u:u['unit_key'])}
     if plan['schema_version'] >= 3:
-        from common.sanity_preserved_sources import scope_declarations
         value['preserved_files'] = scope_declarations(plan)
     return digest(value)
 
@@ -218,7 +167,6 @@ def validate_plan(plan):
     ids, paths, units = set(), set(), set()
     for unit in inv["units"]:
         check(isinstance(unit, dict) and set(unit) <= UNIT_KEYS and UNIT_REQUIRED_KEYS <= set(unit))
-        from common.sanity_ai_projection import declaration
         declaration(unit,code='INVALID_SUBMISSION')
         uid = identifier(unit["review_unit_id"]); identifier(unit["item_id"])
         path = relative_report(unit["report"])
@@ -248,7 +196,6 @@ def validate_plan(plan):
         check(any(u["source"]["layout"] == "POST" and u["source"]["eco"] == c["target_eco"] for u in inv["units"]))
         check(c['pre_revision'] is None or any(u['source']['layout']=='PRE' for u in inv['units']))
     if plan['schema_version'] >= 3:
-        from common.sanity_preserved_sources import validate_declarations
         validate_declarations(plan)
     approval = plan["approval"]
     if approval is not None:
@@ -289,7 +236,6 @@ def validate_packet(packet):
     check(isinstance(packet, dict) and set(packet)-{'submitted_at'} == {
         "schema_version", "protocol", "submission_id", "content_sha256", "collection_id", "actor", "scope", "body"})
     if 'submitted_at' in packet:
-        from datetime import timezone
         try:
             at=datetime.fromisoformat(packet['submitted_at'])
             check(at.utcoffset() is not None and at.astimezone(timezone.utc).isoformat(timespec='microseconds')==packet['submitted_at'])

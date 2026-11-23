@@ -1,23 +1,26 @@
 """Complete leaf classification and bounded semantic reduction; no DB writes."""
+from itertools import groupby
+
 from common.sanity_common import ReviewError, canonical_json, digest
 from common.sanity_clustering_advice import evidence, partition, validate_clustering_advice
 from common.sanity_ai_knowledge import shared_case
+from common.sanity_ai_retry import annotate
 from common.sanity_rule_groups import rule_code, group_code, model_context as rule_context
 from common.sanity_preserved_ai import split_reply, model_metadata
 from common.sanity_submission import check
 from common.sanity_ai_projection import policy_for, project_rows, instruction as projection_instruction, alias_rows, restore_clustering
 from oa.sanity_ai_budget import TokenBudget, BATCH_PROMPT_VERSION
-from oa.sanity_ai_model import _CLUSTER_PROMPT, source_instruction, project_context_facts
+from oa.sanity_ai_model import CLUSTER_PROMPT, source_instruction, project_context_facts
 
 VERSION = BATCH_PROMPT_VERSION
-LEAF_PROMPT = _CLUSTER_PROMPT + """
+LEAF_PROMPT = CLUSTER_PROMPT + """
 이번 요청은 고정된 전체 report의 일부를 빠짐없이 소유하는 leaf 배치입니다.
 모든 report.records를 검토하고 이번 배치의 짧은 record ID로 정확히 배정하세요.
 batch.record_aliases가 원본 ID와의 대응입니다. 배치 밖 원본을 배정하지 마세요.
 이번 결과는 중간 분류이며 전체 report 완료나 사람 확정이 아닙니다.
 그룹별 이유는 공통 조건, 구분 기준, 반례/예외/미확인을 빠뜨리지 않고 간결하게 작성하세요.
 """
-MERGE_PROMPT = _CLUSTER_PROMPT + """
+MERGE_PROMPT = CLUSTER_PROMPT + """
 이번 records는 원본 로그가 아니라 앞선 AI가 전체 구성원을 읽고 만든 중간 그룹입니다.
 각 record의 fields에는 이전 분류 근거·조건·예외·대표 원본 참조가 있습니다.
 이번 요청은 중간 group ID 전체를 유지하거나 의미상 같은 그룹으로 통합하는 작업입니다.
@@ -155,7 +158,6 @@ class BatchModel:
         shift=min(len(ordered),limit//2) if round_number%2==0 else 0
         # Rotate inside each rule only; code boundaries are never candidates.
         if shift:
-            from itertools import groupby
             buckets = [list(values) for _,values in groupby(ordered,key=lambda n:codes[n['id']])]
             ordered = [node for bucket in buckets for node in bucket[shift%len(bucket):]+bucket[:shift%len(bucket)]]
         for node in ordered:
@@ -224,7 +226,6 @@ class BatchModel:
                     'citation':{**cite,'target_id':key} if cite else None})
             return {'nodes':results,'metadata':metadata,'reason':advice['reason']}
         except ReviewError as error:
-            from oa.sanity_ai_retry import annotate
             annotate(error,attempt)
             raise
 

@@ -16,7 +16,7 @@ from uuid import UUID
 from common.sanity_common import ReviewError
 from common.sanity_db import json_value, lock_key, stable_uuid
 from oa.sanity_auth import Actor
-from oa.sanity_workspace import WorkspaceStore
+from oa.sanity_workspace_core import WorkspaceCoreStore as WorkspaceStore
 
 NAMESPACE = "oa-rbac-v1"
 PREFIX = "rbac1.event."
@@ -110,6 +110,14 @@ def require_mutation_request(request):
             _error("FORBIDDEN")
 
 
+def require_admin_access(access, actor):
+    """Verify administrator access on an AccessStore (or compatible double)."""
+    checker = getattr(access, "require_admin", None) or getattr(access, "_admin", None)
+    if checker is None:
+        _error("FORBIDDEN")
+    return checker(actor)
+
+
 class AccessStore:
     def __init__(self, db, administrator_id):
         self.db, self.administrator_id = db, administrator_id
@@ -173,10 +181,12 @@ class AccessStore:
     def is_admin(self, user_id):
         return self.administrator_id is not None and user_id == self.administrator_id
 
-    def _admin(self, actor):
+    def require_admin(self, actor):
         self.require_actor(actor)
         if not self.is_admin(actor.user_id):
             _error("FORBIDDEN")
+
+    _admin = require_admin
 
     @staticmethod
     def _role_scope(role, project_id, block_id, *, code="INVALID_REQUEST"):
