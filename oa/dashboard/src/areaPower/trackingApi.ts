@@ -131,7 +131,7 @@ export const trackingMailSnapshotSchema = z.object({
 export type TrackingMailSnapshot = z.infer<typeof trackingMailSnapshotSchema>
 
 export const MAIL_STATE_LABEL: Record<string, string> = {
-  waiting: 'TOP 메일 대기',
+  waiting: '발송 대기',
   requested: '발송 요청됨',
   accepted: '접수 완료',
   partially_accepted: '일부 거부',
@@ -142,7 +142,7 @@ export const MAIL_STATE_LABEL: Record<string, string> = {
 
 export const SLOT_STATE_LABEL: Record<string, string> = {
   waiting_upload: '미도착',
-  waiting_baseline: '기준 실행 미승인',
+  waiting_baseline: '기준 실행 미고정',
   mapping_review: '매핑 확인 필요',
   queued: '분석 대기',
   running: '분석 중',

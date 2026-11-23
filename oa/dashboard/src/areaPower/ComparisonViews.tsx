@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Check, Download, GitCompareArrows, LoaderCircle, Plus, RefreshCw, Trash2, Upload as UploadIcon } from 'lucide-react'
+import { Check, Download, GitCompareArrows, LoaderCircle, Plus, RefreshCw, Settings2, Trash2, Upload as UploadIcon } from 'lucide-react'
 import { z } from 'zod'
 import { comparisonCreatedSchema, cornerKey, date, detailSchema, format, object, recordSchema, request, revision, text, uploadName, type AreaAccess, type Auth, type ComparisonDetail, type TrackingRecord, type TriageItem, type Upload } from './api'
 import { Badge, Button, Empty, Field, useAction } from './components/workspace'
@@ -34,10 +34,10 @@ export function Comparisons(props: ComparisonProps) {
   const unitSwitch = <button type="button" className="gate-count-switch" role="switch" aria-label="Gate Count 표시" aria-checked={gateCount} onClick={() => setGateCount(value => !value)}><span>Area</span><i aria-hidden="true" /><span>Gate Count</span></button>
   const projects = atlas.catalog?.projects || []
   const project = projects.find(row => row.id === projectId)
-  const picker = <label className="setup-project" title="상단 공통 범위에서 선택한 프로젝트를 이어받으며, 이 화면에서도 바꿀 수 있습니다."><span>비교할 현재 프로젝트</span><select value={projectId} onChange={event => setProjectId(event.target.value)}><option value="">프로젝트 선택</option>{projects.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
+  const picker = <label className="setup-project" title="상단 공통 범위에서 선택한 프로젝트를 이어받으며, 이 화면에서도 바꿀 수 있습니다."><span>프로젝트</span><select value={projectId} onChange={event => setProjectId(event.target.value)}><option value="">프로젝트 선택</option>{projects.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
   return project ? <ProjectComparison key={project.id} {...props} project={project} picker={picker} gateCount={gateCount} unitSwitch={unitSwitch} /> : <>
     <section className="panel comparison-setup-bar"><div className="baseline-summary">{picker}<small>상단 공통 범위의 프로젝트를 이어받거나 여기서 직접 선택하세요.</small></div></section>
-    <Empty title="비교할 프로젝트를 선택하세요">프로젝트를 선택하면 NET_VER 현황, 자동 추적 설정, 블록 결과와 수동 비교를 사용할 수 있습니다.</Empty>
+    <Empty title="프로젝트를 선택하세요">프로젝트를 선택하면 비교 기준, 현재 버전 현황, 블록별 결과와 직접 비교를 바로 확인할 수 있습니다.</Empty>
   </>
 }
 
@@ -195,7 +195,7 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
         lastDesignation.current = designation
         setBaselineChoice(candidates.find(row => (row.area_id || projectRecords.get(row.id)?.id) === value.baseline_project_id)?.id || '')
         setBefore(emptySelection); resetCorrespondence()
-        setBaselineEditing(value.status !== 'available')
+        setBaselineEditing(false)
       }
     }).catch(cause => { if (!controller.signal.aborted) { setBaseline(null); setBaselineChoice(''); setBaselineError(cause instanceof Error ? cause.message : '기준을 조회하지 못했습니다.') } }).finally(() => { if (!controller.signal.aborted) setBaselineLoading(false) })
     return () => controller.abort()
@@ -403,11 +403,40 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
   const draftPage = Math.min(mappingDraftPage, draftLastPage)
   const draftStart = draftPage * draftPageSize
 
+  const currentProcess = (baseline ? baseline.process : project.process) || '미등록'
+  const baselineName = baseline?.status === 'available'
+    ? text(baseline.baseline_project?.payload.name) || savedProject?.name || '기준 프로젝트'
+    : baseline?.status === 'unavailable' ? '기준 조회 불가' : '미설정'
+  const latestNetVer = useMemo(() => {
+    if (trackingData?.rounds[0]?.net_ver) return trackingData.rounds[0].net_ver
+    const versions = project.blocks.flatMap(b => b.versions.map(v => v.net_ver).filter(Boolean))
+    return versions.length ? versions[versions.length - 1] : ''
+  }, [trackingData?.rounds, project.blocks])
+  const trackingEnabled = trackingData?.project_config?.enabled === true
+
   return <>
     {action.feedback}
     {!project.can_write && <p className="notice">조회 전용 · 기준 설정, 비교 실행과 구조 대응 변경에는 프로젝트 멤버 권한이 필요합니다.</p>}
-    <section className="panel comparison-setup-bar project-baseline" aria-label="프로젝트 기준 설정">
-      <div className="baseline-summary">{props.picker}<div className="view-switch" role="group" aria-label="비교 대상">{([['project', '기준 프로젝트와 비교'], ['version', '같은 프로젝트의 이전 버전과 비교']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={mode === value} disabled={!!comparisonId} onClick={() => chooseMode(value)}>{label}</button>)}</div><span className="setup-arrow" aria-hidden="true">→</span><span className="setup-baseline"><small>기준 프로젝트</small><strong>{baseline?.status === 'available' ? text(baseline.baseline_project?.payload.name) || savedProject?.name : baseline?.status === 'unavailable' ? '기준 조회 불가' : '기준 미설정'}</strong></span><span className="setup-process"><small>공정</small>{(baseline ? baseline.process : project.process) || '미등록'}</span><Button variant="outline" size="sm" disabled={baselineLoading || !project.can_write} onClick={() => setBaselineEditing(value => !value)}>{baselineEditing ? '설정 접기' : '기준 변경'}</Button></div>
+    <section className="panel comparison-setup-bar project-baseline project-context-bar" aria-label="프로젝트 요약 및 비교 기준">
+      <div className="baseline-summary">
+        {props.picker}
+        <span className="context-pill">{currentProcess}</span>
+        <span className="setup-arrow" aria-hidden="true">↔</span>
+        <span className="setup-baseline">
+          <small>비교 기준</small>
+          <strong className={baseline?.status !== 'available' ? 'is-unset' : ''}>{baselineName}</strong>
+          {baseline?.status === 'available' && baseline.baseline_process && <span className="context-pill subtle">{baseline.baseline_process}</span>}
+        </span>
+        {latestNetVer && (
+          <span className="setup-version">
+            <small>최신 버전</small>
+            <strong>{latestNetVer}</strong>
+          </span>
+        )}
+        <Button variant="outline" size="sm" disabled={baselineLoading || !project.can_write} onClick={() => setBaselineEditing(value => !value)}>
+          {baselineEditing ? '기준 닫기' : '기준 · 공정 변경'}
+        </Button>
+      </div>
       {baselineError && <div className="notice error" role="alert">{baselineError}</div>}
       {!currentAreaId ? <div className="notice"><p>프로젝트만 연결하면 CSV·블록·버전 없이 기준을 설정할 수 있습니다.</p><Button disabled={action.busy || !project.can_write} onClick={() => action.run(() => prepare(project))}>현재 프로젝트 연결</Button></div> : baselineEditing && <div className="baseline-editor">
         {baseline?.status === 'unavailable' && <p className="notice warning">저장된 기준은 현재 권한으로 조회할 수 없습니다. 다른 기준으로 교체하거나 해제할 수 있습니다.</p>}
@@ -415,24 +444,45 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
         {choiceProject && !choiceAreaId && <Button disabled={action.busy || !choiceProject.can_write} onClick={() => action.run(() => prepare(choiceProject))}>선택한 기준 프로젝트 연결</Button>}
         <Button disabled={action.busy || baselineLoading || !baseline || !choiceAreaId || !project.can_write} onClick={() => action.run(() => saveBaseline(choiceAreaId))}>기준 저장</Button>
         <Button variant="outline" disabled={action.busy || !baseline || baseline.status === 'unset' || !project.can_write} onClick={() => action.run(() => saveBaseline(null))}>기준 해제</Button>
-        <small>A→B는 현재 프로젝트에만 저장됩니다. 다른 프로젝트의 기준을 바꾸지 않습니다.</small>
+        <small>기준 프로젝트는 현재 프로젝트에만 저장됩니다.</small>
         <div className="process-editor"><Field label="현재 프로젝트 공정"><select value={processDraft} onChange={event => setProcessDraft(event.target.value)}>
           <option value="">미지정</option>
           {baseline?.process && !atlas.catalog?.processes?.some(item => item.name === baseline.process) && <option value={baseline.process}>{baseline.process} · 기존 공정</option>}
           {atlas.catalog?.processes?.map(item => <option key={item.name} value={item.name}>{item.name} · {item.unit_area} µm²</option>)}
-        </select></Field><Button variant="outline" disabled={action.busy || baselineLoading || !baseline || !project.can_write || processDraft.trim() === (baseline.process || '')} onClick={() => action.run(saveProcess)}>공정 저장</Button><small>공정과 corner가 같으면 같은 library로 봅니다. AI 분석의 Vth·Drive 비교에 쓰입니다.{baseline?.status === 'available' && <> 기준 프로젝트 공정 · {baseline.baseline_process || '미등록'}</>}</small></div>
+        </select></Field><Button variant="outline" disabled={action.busy || baselineLoading || !baseline || !project.can_write || processDraft.trim() === (baseline.process || '')} onClick={() => action.run(saveProcess)}>공정 저장</Button><small>공정과 corner가 같으면 같은 library로 판단합니다.{baseline?.status === 'available' && <> 기준 공정 · {baseline.baseline_process || '미등록'}</>}</small></div>
       </div>}
     </section>
     {currentAreaId && <nav className="tracking-view-tabs" role="tablist" aria-label="프로젝트 비교 보기">
-      {([['status', 'NET_VER 현황'], ['settings', '추적 설정'], ['compare', '블록 결과 · 수동 비교']] as const).map(([key, label]) => (
-        <button key={key} type="button" role="tab" aria-selected={section === key} onClick={() => setSection(key)}>{label}</button>
-      ))}
+      <div className="tracking-tabs-primary">
+        {([['status', '프로젝트 현황'], ['compare', '직접 비교']] as const).map(([key, label]) => (
+          <button key={key} type="button" role="tab" aria-selected={section === key} onClick={() => setSection(key)}>{label}</button>
+        ))}
+      </div>
+      <button
+        type="button"
+        role="tab"
+        className="tracking-tab-settings"
+        aria-selected={section === 'settings'}
+        onClick={() => setSection('settings')}
+      >
+        <Settings2 size={14} aria-hidden="true" />
+        <span>자동 분석 설정</span>
+        <span className={`tracking-dot ${trackingEnabled ? 'is-on' : 'is-off'}`} title={trackingEnabled ? '자동 분석 켜짐' : '자동 분석 꺼짐'}>
+          {trackingEnabled ? 'ON' : 'OFF'}
+        </span>
+      </button>
     </nav>}
     {currentAreaId && section === 'status' && (
       <TrackingOverview
         auth={props.auth}
         project={project}
+        baselineProject={savedProject}
+        baselineName={baselineName}
+        baselineStatus={baseline?.status || 'unset'}
+        currentProcess={currentProcess}
+        baselineProcess={baseline?.baseline_process || ''}
         areaProjectId={currentAreaId}
+        uploads={props.uploads}
         data={trackingData}
         loading={trackingLoading}
         error={trackingError}
@@ -443,6 +493,7 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
           atlas.replaceRoute(`${location.pathname}${next.toString() ? `?${next}` : ''}`)
         }}
         onReload={reloadTracking}
+        onEditBaseline={() => setBaselineEditing(true)}
         onOpenSettings={blockId => { setSettingsBlockId(blockId); setSection('settings') }}
         onOpenResult={openTrackingResult}
       />
@@ -463,6 +514,10 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
     )}
     {(!currentAreaId || section === 'compare') && <>
     <section className="panel comparison-workspace">
+      <div className="compare-mode-bar">
+        <div className="view-switch" role="group" aria-label="비교 대상">{([['project', '기준 프로젝트와 비교'], ['version', '같은 프로젝트의 이전 버전과 비교']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={mode === value} disabled={!!comparisonId} onClick={() => chooseMode(value)}>{label}</button>)}</div>
+        <small>{mode === 'version' ? '같은 블록의 이전 NET_VER·버전과 RTL 변경 사항을 비교합니다.' : `기준 프로젝트(${baselineName})의 실행과 비교합니다.`}</small>
+      </div>
       {setupOpen || (!comparisonId && !selectedCurrent) ? <div className="compare-sides">
         <RunSelector label="현재" project={project} selection={current} onChange={chooseCurrent} uploads={currentUploads} busy={action.busy} onPrepare={(selection, previous) => action.run(() => prepare(project, selection, previous))} />
         {mode === 'version' ? <RunSelector label="기준" project={project} selection={before} onChange={chooseBefore} uploads={beforeUploads} busy={action.busy} lockedBlock hint="기준 버전은 현재 버전의 명시적 이전 버전(계보)이어야 합니다. NET_VER가 다르면 RTL 변경 비교입니다." onPrepare={(selection, previous) => action.run(() => prepare(project, selection, previous))} />

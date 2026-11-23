@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Eye, Plus, Sparkles, Trash2 } from 'lucide-react'
+import { ChevronRight, Eye, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { array, format, object, request, text, unknownSchema, uploadName, type Auth, type TrackingRecord, type Upload } from './api'
 import { Badge, Button, Field, useAction } from './components/workspace'
 import type { AtlasProject } from '../atlasContext'
@@ -39,7 +39,7 @@ export function TrackingSettings({
   const action = useAction()
   const projCfg = object(data?.project_config)
 
-  // Project-level tracking settings state
+  // Project-level settings
   const [enabled, setEnabled] = useState(false)
   const [deadlineDays, setDeadlineDays] = useState('7')
   const [deadlineTime, setDeadlineTime] = useState('18:00')
@@ -49,8 +49,8 @@ export function TrackingSettings({
   const [powerPct, setPowerPct] = useState('10')
   const [minArea, setMinArea] = useState('50')
   const [defaultCorners, setDefaultCorners] = useState<CornerSpec[]>([])
-  const [newCornerLabel, setNewCornerLabel] = useState('')
-  const [newCornerProc, setNewCornerProc] = useState('')
+  const [newCornerName, setNewCornerName] = useState('')
+  const [showCornerDetail, setShowCornerDetail] = useState(false)
   const [newCornerVolt, setNewCornerVolt] = useState('')
   const [newCornerTemp, setNewCornerTemp] = useState('')
   const [newCornerPex, setNewCornerPex] = useState('')
@@ -75,8 +75,8 @@ export function TrackingSettings({
     setDefaultCorners(array(projCfg.default_required_corners).map(item => {
       const o = object(item)
       return {
-        label: text(o.label),
-        process_label: text(o.process_label),
+        label: text(o.label) || text(o.process_label),
+        process_label: text(o.process_label) || text(o.label),
         voltage_v: text(o.voltage_v) || null,
         temp_c: text(o.temp_c) || null,
         pex: text(o.pex) || null,
@@ -103,7 +103,7 @@ export function TrackingSettings({
     }))
   }, [data?.project_config?.id, data?.project_config?.row_version])
 
-  // Block-level tracking settings state
+  // Block-level settings
   const areaBlocks = useMemo(() => project.blocks.filter(b => Boolean(b.area_id)), [project.blocks])
   const [selectedBlockId, setSelectedBlockId] = useState(initialBlockId || '')
   useEffect(() => {
@@ -112,18 +112,23 @@ export function TrackingSettings({
   }, [initialBlockId, areaBlocks])
 
   const selectedBlock = areaBlocks.find(b => b.area_id === selectedBlockId)
-  const blockCfg = useMemo(
-    () => (data?.block_configs || []).find(row => text(row.block_id) === selectedBlockId),
-    [data?.block_configs, selectedBlockId],
-  )
+  const blockCfgMap = useMemo(() => {
+    const map = new Map<string, Record<string, unknown>>()
+    for (const row of data?.block_configs || []) {
+      const bid = text(row.block_id)
+      if (bid) map.set(bid, row)
+    }
+    return map
+  }, [data?.block_configs])
+  const blockCfg = blockCfgMap.get(selectedBlockId)
+
   const [blockEnabled, setBlockEnabled] = useState(true)
   const [blockKind, setBlockKind] = useState<'previous_project' | 'previous_version'>('previous_project')
   const [baselineBlockId, setBaselineBlockId] = useState('')
   const [designStage, setDesignStage] = useState('')
   const [blockRecipients, setBlockRecipients] = useState('')
   const [blockCorners, setBlockCorners] = useState<CornerSpec[]>([])
-  const [blockCornerLabel, setBlockCornerLabel] = useState('')
-  const [blockCornerProc, setBlockCornerProc] = useState('')
+  const [blockCornerName, setBlockCornerName] = useState('')
   const [approvedBaselines, setApprovedBaselines] = useState<Record<string, string>>({})
   const [approvedMappingId, setApprovedMappingId] = useState('')
   const [noChangeNets, setNoChangeNets] = useState('')
@@ -138,8 +143,8 @@ export function TrackingSettings({
     setBlockCorners(array(cfg.required_corners).map(item => {
       const o = object(item)
       return {
-        label: text(o.label),
-        process_label: text(o.process_label),
+        label: text(o.label) || text(o.process_label),
+        process_label: text(o.process_label) || text(o.label),
         voltage_v: text(o.voltage_v) || null,
         temp_c: text(o.temp_c) || null,
         pex: text(o.pex) || null,
@@ -170,7 +175,7 @@ export function TrackingSettings({
     [records, selectedBlockId],
   )
 
-  // Design info expected changes
+  // Design change notes (expected changes)
   const [expText, setExpText] = useState('')
   const [expNet, setExpNet] = useState('')
   const [expPath, setExpPath] = useState('')
@@ -187,6 +192,29 @@ export function TrackingSettings({
     [data?.expectations, selectedBlockId],
   )
 
+  function addDefaultCorner() {
+    const name = newCornerName.trim()
+    if (!name) return
+    setDefaultCorners(rows => [...rows, {
+      label: name,
+      process_label: name,
+      voltage_v: newCornerVolt.trim() || null,
+      temp_c: newCornerTemp.trim() || null,
+      pex: newCornerPex.trim() || null,
+    }])
+    setNewCornerName('')
+    setNewCornerVolt('')
+    setNewCornerTemp('')
+    setNewCornerPex('')
+  }
+
+  function addBlockCorner() {
+    const name = blockCornerName.trim()
+    if (!name) return
+    setBlockCorners(rows => [...rows, { label: name, process_label: name, voltage_v: null, temp_c: null, pex: null }])
+    setBlockCornerName('')
+  }
+
   async function saveProjectSettings() {
     const days = Number(deadlineDays)
     if (!Number.isInteger(days) || days < 1 || days > 90) throw new Error('마감 기간은 1~90일 정수여야 합니다.')
@@ -195,7 +223,7 @@ export function TrackingSettings({
       default_required_corners: defaultCorners,
       deadline_days: days,
       deadline_time: deadlineTime.trim(),
-      deadline_timezone: deadlineTz.trim(),
+      deadline_timezone: deadlineTz.trim() || 'Asia/Seoul',
       top_recipients: topRecipients.split(/[,;\s]+/).filter(Boolean),
       thresholds: {
         area_increase_pct: areaPct.trim(),
@@ -250,7 +278,7 @@ export function TrackingSettings({
 
   async function proposeExpectation() {
     if (!selectedBlockId) throw new Error('블록을 먼저 선택하세요.')
-    if (!expText.trim()) throw new Error('Design info 원문을 입력하세요.')
+    if (!expText.trim()) throw new Error('설계 변경 원문을 입력하세요.')
     await request(auth, `/tracking/projects/${encodeURIComponent(areaProjectId)}/blocks/${encodeURIComponent(selectedBlockId)}/expectations/propose`, unknownSchema, {
       request_id: crypto.randomUUID(),
       effective_net_ver: expNet.trim() || null,
@@ -267,160 +295,194 @@ export function TrackingSettings({
   }
 
   const aiModel = data?.ai_model
+  const latestPowerTarget = powerTargets[powerTargets.length - 1]
 
   return (
     <div className="tracking-settings">
       {action.feedback}
 
-      <section className="panel" aria-label="프로젝트 추적 설정">
+      {/* Card 1: Essential Project Automation Settings */}
+      <section className="panel" aria-label="자동 분석 기본 설정">
         <div className="section-heading">
           <div>
-            <h2>프로젝트 자동 추적 설정 · {project.name}</h2>
-            <p>기본 필수 corner, 마감 기간·시각, TOP 수신자, Logic Area·Total Power 기준과 대표 조건·목표 전력을 관리합니다.</p>
+            <h2>자동 분석 · 결과 메일 기본 설정</h2>
+            <p>필수 코너가 업로드되면 자동 분석을 실행하고, 완료 시 블록 메일과 마감 시 TOP 요약 메일을 발송합니다.</p>
           </div>
-          <label className="checkbox">
+          <label className="settings-toggle">
             <input type="checkbox" checked={enabled} disabled={!project.can_write} onChange={event => setEnabled(event.target.checked)} />
-            <span>자동 추적 활성화</span>
+            <span>{enabled ? '자동 분석 켜짐' : '자동 분석 꺼짐'}</span>
           </label>
         </div>
 
         {aiModel && (
           <p className={aiModel.ready ? 'notice' : 'notice warning'}>
-            중앙 VWP 프로젝트 비교 AI: {aiModel.model ? `${aiModel.site === 'vwp' ? 'VWP' : 'OA'} · ${aiModel.connection_label} · ${aiModel.model}` : '미설정'}
-            {!aiModel.ready && ` · 활성화 시 추적 담당자의 VWP AI 연결과 본인 인증값이 필요합니다 (${aiModel.error || 'AI_VWP_CONNECTION_REQUIRED'})`}
+            {aiModel.ready
+              ? `자동 분석 AI 연결됨 · ${aiModel.connection_label || 'VWP'} (${aiModel.model})`
+              : '자동 분석을 켜려면 중앙 VWP AI 연결과 본인 인증값이 먼저 설정되어 있어야 합니다.'}
           </p>
         )}
 
-        <div className="tracking-settings-grid">
-          <Field label="마감 기간 (실제 netlist 도착일 + N일)">
-            <input type="number" min={1} max={90} value={deadlineDays} disabled={!project.can_write} onChange={event => setDeadlineDays(event.target.value)} />
-          </Field>
-          <Field label="마감 시각 (HH:MM)">
-            <input type="time" value={deadlineTime} disabled={!project.can_write} onChange={event => setDeadlineTime(event.target.value)} />
-          </Field>
-          <Field label="마감 시간대 (IANA)">
-            <input type="text" value={deadlineTz} disabled={!project.can_write} onChange={event => setDeadlineTz(event.target.value)} placeholder="Asia/Seoul" />
-          </Field>
-          <Field label="관리자 · TOP 배포 목록 (쉼표 구분)">
-            <input type="text" value={topRecipients} disabled={!project.can_write} onChange={event => setTopRecipients(event.target.value)} placeholder="lead@example.com, top@example.com" />
-          </Field>
-          <Field label="Logic Area 증가 후보 기준 (%)">
-            <input type="text" value={areaPct} disabled={!project.can_write} onChange={event => setAreaPct(event.target.value)} />
-          </Field>
-          <Field label="Total Power 증가 후보 기준 (%)">
-            <input type="text" value={powerPct} disabled={!project.can_write} onChange={event => setPowerPct(event.target.value)} />
-          </Field>
-          <Field label="Logic Area 최소 크기">
-            <input type="text" value={minArea} disabled={!project.can_write} onChange={event => setMinArea(event.target.value)} />
-          </Field>
-        </div>
-
-        <div className="tracking-subblock">
-          <h3>프로젝트 기본 필수 corner</h3>
-          <div className="tracking-chip-list">
-            {defaultCorners.map((c, idx) => (
-              <span key={cornerSpecId(c)} className="tracking-chip">
-                {c.label} ({c.process_label}{c.voltage_v ? ` / ${c.voltage_v}V` : ''}{c.temp_c ? ` / ${c.temp_c}°C` : ''}{c.pex ? ` / ${c.pex}` : ''})
-                {project.can_write && (
-                  <button type="button" aria-label={`${c.label} 삭제`} onClick={() => setDefaultCorners(rows => rows.filter((_, i) => i !== idx))}>
-                    <Trash2 size={12} />
-                  </button>
-                )}
-              </span>
-            ))}
-            {!defaultCorners.length && <small>등록된 기본 corner가 없습니다.</small>}
-          </div>
-          {project.can_write && (
-            <div className="tracking-inline-add">
-              <input placeholder="표시명 (예: TT)" value={newCornerLabel} onChange={e => setNewCornerLabel(e.target.value)} />
-              <input placeholder="process_label (예: TT)" value={newCornerProc} onChange={e => setNewCornerProc(e.target.value)} />
-              <input placeholder="전압 V (선택)" value={newCornerVolt} onChange={e => setNewCornerVolt(e.target.value)} />
-              <input placeholder="온도 °C (선택)" value={newCornerTemp} onChange={e => setNewCornerTemp(e.target.value)} />
-              <input placeholder="PEX (선택)" value={newCornerPex} onChange={e => setNewCornerPex(e.target.value)} />
-              <Button variant="outline" size="sm" onClick={() => {
-                if (!newCornerLabel.trim() || !newCornerProc.trim()) return
-                setDefaultCorners(rows => [...rows, {
-                  label: newCornerLabel.trim(),
-                  process_label: newCornerProc.trim(),
-                  voltage_v: newCornerVolt.trim() || null,
-                  temp_c: newCornerTemp.trim() || null,
-                  pex: newCornerPex.trim() || null,
-                }])
-                setNewCornerLabel(''); setNewCornerProc(''); setNewCornerVolt(''); setNewCornerTemp(''); setNewCornerPex('')
-              }}><Plus size={14} />corner 추가</Button>
+        <div className="settings-essential-grid">
+          <Field label="마감 기준 (Netlist 도착 후)">
+            <div className="settings-deadline-inline">
+              <input type="number" min={1} max={90} value={deadlineDays} disabled={!project.can_write} onChange={event => setDeadlineDays(event.target.value)} aria-label="마감 일수" />
+              <span>일 뒤</span>
+              <input type="time" value={deadlineTime} disabled={!project.can_write} onChange={event => setDeadlineTime(event.target.value)} aria-label="마감 시각" />
             </div>
-          )}
+          </Field>
+
+          <Field label="TOP 요약 메일 수신자 (쉼표 구분)">
+            <input type="text" value={topRecipients} disabled={!project.can_write} onChange={event => setTopRecipients(event.target.value)} placeholder="lead@company.com, top@company.com" />
+          </Field>
+
+          <div className="field">
+            <span className="field-label">기본 필수 코너</span>
+            <div className="tracking-chip-list">
+              {defaultCorners.map((c, idx) => (
+                <span key={cornerSpecId(c)} className="tracking-chip">
+                  {c.label}
+                  {(c.voltage_v || c.temp_c || c.pex) && (
+                    <small>
+                      ({[c.voltage_v && `${c.voltage_v}V`, c.temp_c && `${c.temp_c}°C`, c.pex].filter(Boolean).join(' / ')})
+                    </small>
+                  )}
+                  {project.can_write && (
+                    <button type="button" aria-label={`${c.label} 삭제`} onClick={() => setDefaultCorners(rows => rows.filter((_, i) => i !== idx))}>
+                      <Trash2 size={12} />
+                    </button>
+                  )}
+                </span>
+              ))}
+              {!defaultCorners.length && <small className="text-muted">등록된 코너 없음</small>}
+            </div>
+            {project.can_write && (
+              <div className="settings-corner-add">
+                <input
+                  placeholder="코너명 (예: TT, SS)"
+                  value={newCornerName}
+                  onChange={e => setNewCornerName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addDefaultCorner() } }}
+                />
+                <Button variant="outline" size="sm" onClick={addDefaultCorner}>
+                  <Plus size={14} />추가
+                </Button>
+                <button type="button" className="tracking-link-inline" onClick={() => setShowCornerDetail(v => !v)}>
+                  {showCornerDetail ? '세부 조건 숨기기' : '전압·온도 지정'}
+                </button>
+              </div>
+            )}
+            {project.can_write && showCornerDetail && (
+              <div className="tracking-inline-add">
+                <input placeholder="전압 V (예: 0.70)" value={newCornerVolt} onChange={e => setNewCornerVolt(e.target.value)} />
+                <input placeholder="온도 °C (예: 25)" value={newCornerTemp} onChange={e => setNewCornerTemp(e.target.value)} />
+                <input placeholder="PEX (선택)" value={newCornerPex} onChange={e => setNewCornerPex(e.target.value)} />
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="tracking-subblock two-columns">
-          <div>
-            <h3>전체 목표 전력 (Full-chip Typical 루트 · 버전 관리)</h3>
-            <ul className="tracking-mini-list">
-              {powerTargets.map((t, idx) => (
-                <li key={t.effective_net_ver}>
-                  <span>{t.effective_net_ver}부터 · <strong>{t.target_mw} mW 이하</strong></span>
-                  {project.can_write && <button type="button" onClick={() => setPowerTargets(rows => rows.filter((_, i) => i !== idx))}><Trash2 size={12} /></button>}
-                </li>
-              ))}
-              {!powerTargets.length && <li className="muted">미설정</li>}
-            </ul>
-            {project.can_write && (
-              <div className="tracking-inline-add">
-                <input placeholder="적용 NET_VER" value={targetNet} onChange={e => setTargetNet(e.target.value)} />
-                <input placeholder="목표 mW (예: 85)" value={targetMw} onChange={e => setTargetMw(e.target.value)} />
-                <Button variant="outline" size="sm" onClick={() => {
-                  if (!targetNet.trim() || !targetMw.trim()) return
-                  setPowerTargets(rows => [...rows.filter(r => r.effective_net_ver !== targetNet.trim()), { effective_net_ver: targetNet.trim(), target_mw: targetMw.trim(), label: '' }])
-                  setTargetNet(''); setTargetMw('')
-                }}><Plus size={14} />추가</Button>
+        {/* Advanced Project Rules collapsed by default */}
+        <details className="settings-advanced">
+          <summary>
+            <ChevronRight size={15} className="chevron" aria-hidden="true" />
+            <span>세부 기준 설정</span>
+            <small>
+              Logic Area +{areaPct}% · Total Power +{powerPct}% · 최소 {minArea}
+              {latestPowerTarget ? ` · 목표 전력 ${latestPowerTarget.target_mw} mW` : ''}
+              {typicalSpecs.length ? ` · 대표 조건 ${typicalSpecs.length}건` : ''}
+              {deadlineTz !== 'Asia/Seoul' ? ` · ${deadlineTz}` : ''}
+            </small>
+          </summary>
+          <div className="settings-advanced-body">
+            <div className="tracking-settings-grid">
+              <Field label="이상 감지 · Logic Area 증가 (%)">
+                <input type="text" value={areaPct} disabled={!project.can_write} onChange={event => setAreaPct(event.target.value)} />
+              </Field>
+              <Field label="이상 감지 · Total Power 증가 (%)">
+                <input type="text" value={powerPct} disabled={!project.can_write} onChange={event => setPowerPct(event.target.value)} />
+              </Field>
+              <Field label="최소 Logic Area 크기">
+                <input type="text" value={minArea} disabled={!project.can_write} onChange={event => setMinArea(event.target.value)} />
+              </Field>
+              <Field label="마감 시간대">
+                <input type="text" value={deadlineTz} disabled={!project.can_write} onChange={event => setDeadlineTz(event.target.value)} placeholder="Asia/Seoul" />
+              </Field>
+            </div>
+
+            <div className="tracking-subblock two-columns">
+              <div>
+                <h3>Full-chip 목표 전력</h3>
+                <ul className="tracking-mini-list">
+                  {powerTargets.map((t, idx) => (
+                    <li key={t.effective_net_ver}>
+                      <span>{t.effective_net_ver}부터 · <strong>{t.target_mw} mW 이하</strong></span>
+                      {project.can_write && <button type="button" onClick={() => setPowerTargets(rows => rows.filter((_, i) => i !== idx))}><Trash2 size={12} /></button>}
+                    </li>
+                  ))}
+                  {!powerTargets.length && <li className="muted">설정된 목표 전력 없음</li>}
+                </ul>
+                {project.can_write && (
+                  <div className="tracking-inline-add">
+                    <input placeholder="적용 시작 버전 (예: NET_023)" value={targetNet} onChange={e => setTargetNet(e.target.value)} />
+                    <input placeholder="목표 mW (예: 85)" value={targetMw} onChange={e => setTargetMw(e.target.value)} />
+                    <Button variant="outline" size="sm" onClick={() => {
+                      if (!targetNet.trim() || !targetMw.trim()) return
+                      setPowerTargets(rows => [...rows.filter(r => r.effective_net_ver !== targetNet.trim()), { effective_net_ver: targetNet.trim(), target_mw: targetMw.trim(), label: '' }])
+                      setTargetNet(''); setTargetMw('')
+                    }}><Plus size={14} />추가</Button>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-          <div>
-            <h3>Typical 대표 조건 (버전 관리)</h3>
-            <ul className="tracking-mini-list">
-              {typicalSpecs.map((s, idx) => (
-                <li key={s.effective_net_ver}>
-                  <span>{s.effective_net_ver}부터 · <strong>{s.corner.process_label}{s.corner.voltage_v ? ` @ ${s.corner.voltage_v} V` : ''}</strong></span>
-                  {project.can_write && <button type="button" onClick={() => setTypicalSpecs(rows => rows.filter((_, i) => i !== idx))}><Trash2 size={12} /></button>}
-                </li>
-              ))}
-              {!typicalSpecs.length && <li className="muted">미설정</li>}
-            </ul>
-            {project.can_write && (
-              <div className="tracking-inline-add">
-                <input placeholder="적용 NET_VER" value={typNet} onChange={e => setTypNet(e.target.value)} />
-                <input placeholder="process (예: TT)" value={typProc} onChange={e => setTypProc(e.target.value)} />
-                <input placeholder="전압 V (예: 0.70)" value={typVolt} onChange={e => setTypVolt(e.target.value)} />
-                <Button variant="outline" size="sm" onClick={() => {
-                  if (!typNet.trim() || !typProc.trim()) return
-                  setTypicalSpecs(rows => [...rows.filter(r => r.effective_net_ver !== typNet.trim()), {
-                    effective_net_ver: typNet.trim(),
-                    label: `${typProc.trim()} ${typVolt.trim() ? typVolt.trim() + 'V' : ''}`.trim(),
-                    corner: { label: typProc.trim(), process_label: typProc.trim(), voltage_v: typVolt.trim() || null, temp_c: null, pex: null },
-                  }])
-                  setTypNet(''); setTypProc(''); setTypVolt('')
-                }}><Plus size={14} />추가</Button>
+              <div>
+                <h3>대표(Typical) 비교 조건</h3>
+                <ul className="tracking-mini-list">
+                  {typicalSpecs.map((s, idx) => (
+                    <li key={s.effective_net_ver}>
+                      <span>{s.effective_net_ver}부터 · <strong>{s.corner.process_label}{s.corner.voltage_v ? ` @ ${s.corner.voltage_v} V` : ''}</strong></span>
+                      {project.can_write && <button type="button" onClick={() => setTypicalSpecs(rows => rows.filter((_, i) => i !== idx))}><Trash2 size={12} /></button>}
+                    </li>
+                  ))}
+                  {!typicalSpecs.length && <li className="muted">설정된 대표 조건 없음</li>}
+                </ul>
+                {project.can_write && (
+                  <div className="tracking-inline-add">
+                    <input placeholder="적용 시작 버전" value={typNet} onChange={e => setTypNet(e.target.value)} />
+                    <input placeholder="코너 (예: TT)" value={typProc} onChange={e => setTypProc(e.target.value)} />
+                    <input placeholder="전압 V (선택)" value={typVolt} onChange={e => setTypVolt(e.target.value)} />
+                    <Button variant="outline" size="sm" onClick={() => {
+                      if (!typNet.trim() || !typProc.trim()) return
+                      setTypicalSpecs(rows => [...rows.filter(r => r.effective_net_ver !== typNet.trim()), {
+                        effective_net_ver: typNet.trim(),
+                        label: `${typProc.trim()} ${typVolt.trim() ? typVolt.trim() + 'V' : ''}`.trim(),
+                        corner: { label: typProc.trim(), process_label: typProc.trim(), voltage_v: typVolt.trim() || null, temp_c: null, pex: null },
+                      }])
+                      setTypNet(''); setTypProc(''); setTypVolt('')
+                    }}><Plus size={14} />추가</Button>
+                  </div>
+                )}
               </div>
-            )}
+            </div>
           </div>
-        </div>
+        </details>
 
         <div className="form-actions">
-          <Button variant="outline" size="sm" disabled={action.busy} onClick={() => action.run(loadPreview, '활성화 전 미리보기를 생성했습니다.')}>
-            <Eye size={14} />활성화 전 메일 미리보기
+          <Button variant="outline" size="sm" disabled={action.busy} onClick={() => action.run(loadPreview, '메일 미리보기를 생성했습니다.')}>
+            <Eye size={14} />메일 미리보기
           </Button>
-          <Button size="sm" disabled={action.busy || !project.can_write} onClick={() => action.run(saveProjectSettings, '프로젝트 추적 설정을 저장했습니다.')}>
-            프로젝트 설정 저장
+          <Button size="sm" disabled={action.busy || !project.can_write} onClick={() => action.run(saveProjectSettings, '기본 설정을 저장했습니다.')}>
+            기본 설정 저장
           </Button>
         </div>
       </section>
 
       {preview && (
-        <section className="panel tracking-preview-panel" aria-label="활성화 전 미리보기">
-          <h3>활성화 전 메일 미리보기 {preview.round ? `· ${preview.round.net_ver}` : ''}</h3>
+        <section className="panel tracking-preview-panel" aria-label="메일 미리보기">
+          <div className="section-heading">
+            <h3>메일 미리보기 {preview.round ? `· ${preview.round.net_ver}` : ''}</h3>
+            <Button variant="ghost" size="sm" onClick={() => setPreview(null)}>닫기</Button>
+          </div>
           {!preview.top_mail_preview ? (
-            <p className="muted">등록된 NET_VER 회차가 없어 미리보기를 만들 수 없습니다.</p>
+            <p className="muted">등록된 버전 회차가 없어 미리보기를 만들 수 없습니다.</p>
           ) : (
             <div className="tracking-preview-grid">
               <div>
@@ -438,38 +500,87 @@ export function TrackingSettings({
         </section>
       )}
 
-      <section className="panel" aria-label="블록별 추적 설정">
+      {/* Card 2: Per-block summary table + compact editor for selected block */}
+      <section className="panel" aria-label="블록별 비교 기준 및 담당자">
         <div className="section-heading">
           <div>
-            <h2>블록별 추적 설정 · 기준 실행 고정 · 예상 변화</h2>
-            <p>CSV가 없어도 기준 블록 연결을 먼저 저장할 수 있습니다. 기준 실행을 승인하면 기준 쪽에 새 CSV가 올라와도 기존 기준을 유지합니다.</p>
+            <h2>블록별 비교 기준 · 담당자</h2>
+            <p>블록 행을 선택해 비교 기준 블록, 고정할 기준 실행, 결과 메일 담당자를 설정하세요.</p>
           </div>
-          <Field label="설정할 블록">
-            <select value={selectedBlockId} onChange={e => setSelectedBlockId(e.target.value)}>
-              {areaBlocks.map(b => (
-                <option key={b.area_id!} value={b.area_id!}>
-                  {b.name}{b.name.trim() === project.name.trim() ? ' (Full-chip)' : ''}
-                </option>
-              ))}
-            </select>
-          </Field>
+        </div>
+
+        <div className="table-scroll settings-block-table">
+          <table>
+            <thead>
+              <tr>
+                <th>블록</th>
+                <th>비교 기준</th>
+                <th>기준 실행 고정</th>
+                <th>담당자 메일</th>
+                <th>자동 분석</th>
+              </tr>
+            </thead>
+            <tbody>
+              {areaBlocks.map(block => {
+                const bid = block.area_id!
+                const cfg = object(blockCfgMap.get(bid))
+                const isSelected = bid === selectedBlockId
+                const isFc = block.name.trim() === project.name.trim()
+                const kind = text(cfg.comparison_kind)
+                const baseBlk = baselineProject?.blocks.find(b => b.area_id === text(cfg.baseline_block_id))
+                const baseLabel = kind === 'previous_version'
+                  ? '같은 블록 이전 버전'
+                  : baseBlk ? `${baselineProject?.name} · ${baseBlk.name}` : '미지정'
+                const reqCount = array(cfg.required_corners).length || defaultCorners.length
+                const pinCount = array(cfg.approved_baselines).filter(item => Boolean(text(object(item).upload_id))).length
+                const recips = array(cfg.recipients).map(text).filter(Boolean)
+                const isEnabled = cfg.enabled !== false
+                return (
+                  <tr
+                    key={bid}
+                    className={isSelected ? 'is-selected' : ''}
+                    onClick={() => setSelectedBlockId(bid)}
+                  >
+                    <td>
+                      <strong>{block.name}</strong>
+                      {isFc && <span className="side-tag">Full-chip</span>}
+                    </td>
+                    <td className={baseLabel === '미지정' ? 'text-muted' : ''}>{baseLabel}</td>
+                    <td>{reqCount ? `${pinCount}/${reqCount}` : '—'}</td>
+                    <td className={!recips.length ? 'text-muted' : ''}>{recips.length ? recips.join(', ') : '미지정'}</td>
+                    <td><Badge value={isEnabled ? '사용' : '제외'} /></td>
+                  </tr>
+                )
+              })}
+              {!areaBlocks.length && (
+                <tr><td colSpan={5} className="text-muted">연결된 블록이 없습니다.</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
 
         {selectedBlock && (
-          <>
-            <div className="tracking-settings-grid">
+          <div className="settings-block-editor">
+            <div className="section-heading">
+              <h3>
+                {selectedBlock.name}
+                {selectedBlock.name.trim() === project.name.trim() ? ' (Full-chip)' : ''} 편집
+              </h3>
               <label className="checkbox">
                 <input type="checkbox" checked={blockEnabled} disabled={!project.can_write} onChange={e => setBlockEnabled(e.target.checked)} />
-                <span>이 블록 자동 추적 사용</span>
+                <span>이 블록 자동 분석 사용</span>
               </label>
-              <Field label="비교 기준">
+            </div>
+
+            <div className="tracking-settings-grid">
+              <Field label="비교 방식">
                 <select value={blockKind} disabled={!project.can_write} onChange={e => setBlockKind(e.target.value as 'previous_project' | 'previous_version')}>
-                  <option value="previous_project">지정 기준 프로젝트 ({baselineProject?.name || '미설정'})</option>
+                  <option value="previous_project">기준 프로젝트 ({baselineProject?.name || '미설정'})</option>
                   <option value="previous_version">같은 프로젝트의 이전 버전</option>
                 </select>
               </Field>
               {blockKind === 'previous_project' && (
-                <Field label="기준 블록 (CSV 없어도 먼저 연결 가능)">
+                <Field label="기준 블록">
                   <select value={baselineBlockId} disabled={!project.can_write || !baselineProject} onChange={e => setBaselineBlockId(e.target.value)}>
                     <option value="">기준 블록 선택</option>
                     {(baselineProject?.blocks || []).filter(b => Boolean(b.area_id)).map(b => (
@@ -478,68 +589,24 @@ export function TrackingSettings({
                   </select>
                 </Field>
               )}
-              <Field label="설계 단계 필터 (선택)">
-                <input type="text" value={designStage} disabled={!project.can_write} onChange={e => setDesignStage(e.target.value)} placeholder="예: post_route (비우면 전체)" />
-              </Field>
-              <Field label="블록 담당자 개인 주소 (쉼표 구분)">
-                <input type="text" value={blockRecipients} disabled={!project.can_write} onChange={e => setBlockRecipients(e.target.value)} placeholder="owner@example.com" />
-              </Field>
-              <Field label="승인된 구조 대응 (매핑)">
-                <select value={approvedMappingId} disabled={!project.can_write} onChange={e => setApprovedMappingId(e.target.value)}>
-                  <option value="">기본 상대 경로 대응 사용</option>
-                  {blockMappings.map(m => (
-                    <option key={m.id} value={m.id}>
-                      r{m.revision} · 규칙 {array(m.payload.rules).length}개 · {m.id.slice(0, 8)}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="담당자 확인 ‘변경 없음’ NET_VER (메모 미입력과 구분)">
-                <input type="text" value={noChangeNets} disabled={!project.can_write} onChange={e => setNoChangeNets(e.target.value)} placeholder="예: NET_022, NET_023" />
+              <Field label="블록 담당자 메일 (쉼표 구분)">
+                <input type="text" value={blockRecipients} disabled={!project.can_write} onChange={e => setBlockRecipients(e.target.value)} placeholder="owner@company.com" />
               </Field>
             </div>
 
             <div className="tracking-subblock">
-              <h3>블록 필수 corner (비우면 프로젝트 기본 corner 상속)</h3>
-              <div className="tracking-chip-list">
-                {blockCorners.map((c, idx) => (
-                  <span key={cornerSpecId(c)} className="tracking-chip">
-                    {c.label} ({c.process_label})
-                    {project.can_write && (
-                      <button type="button" onClick={() => setBlockCorners(rows => rows.filter((_, i) => i !== idx))}>
-                        <Trash2 size={12} />
-                      </button>
-                    )}
-                  </span>
-                ))}
-                {!blockCorners.length && <small>프로젝트 기본 필수 corner ({defaultCorners.map(c => c.label).join(', ') || '없음'}) 상속 중</small>}
-              </div>
-              {project.can_write && (
-                <div className="tracking-inline-add">
-                  <input placeholder="표시명 (예: SS)" value={blockCornerLabel} onChange={e => setBlockCornerLabel(e.target.value)} />
-                  <input placeholder="process_label (예: SS)" value={blockCornerProc} onChange={e => setBlockCornerProc(e.target.value)} />
-                  <Button variant="outline" size="sm" onClick={() => {
-                    if (!blockCornerLabel.trim() || !blockCornerProc.trim()) return
-                    setBlockCorners(rows => [...rows, { label: blockCornerLabel.trim(), process_label: blockCornerProc.trim(), voltage_v: null, temp_c: null, pex: null }])
-                    setBlockCornerLabel(''); setBlockCornerProc('')
-                  }}><Plus size={14} />블록 corner 추가</Button>
-                </div>
-              )}
-            </div>
-
-            <div className="tracking-subblock">
-              <h3>corner별 승인된 기준 실행 고정</h3>
+              <h3>코너별 기준 실행 고정</h3>
               <div className="tracking-settings-grid">
                 {effectiveBlockCorners.map(c => {
                   const cid = cornerSpecId(c)
                   return (
-                    <Field key={cid} label={`${c.label} 승인 기준 실행`}>
+                    <Field key={cid} label={`${c.label} 기준 실행`}>
                       <select
                         value={approvedBaselines[cid] || ''}
                         disabled={!project.can_write}
                         onChange={e => setApprovedBaselines(prev => ({ ...prev, [cid]: e.target.value }))}
                       >
-                        <option value="">기준 실행 미승인</option>
+                        <option value="">기준 실행 미고정</option>
                         {candidateBaselineUploads.map(u => (
                           <option key={u.id} value={u.id}>{uploadName(u)}</option>
                         ))}
@@ -547,68 +614,137 @@ export function TrackingSettings({
                     </Field>
                   )
                 })}
-                {!effectiveBlockCorners.length && <small>필수 corner를 먼저 하나 이상 지정하세요.</small>}
+                {!effectiveBlockCorners.length && <small className="text-muted">위 ‘기본 설정’에서 필수 코너를 먼저 하나 이상 추가하세요.</small>}
               </div>
             </div>
 
+            <details className="settings-advanced">
+              <summary>
+                <ChevronRight size={15} className="chevron" aria-hidden="true" />
+                <span>블록 세부 설정</span>
+                <small>
+                  {blockCorners.length ? `전용 코너 ${blockCorners.length}개` : '기본 코너 상속'}
+                  {designStage ? ` · 단계 ${designStage}` : ''}
+                  {approvedMappingId ? ' · 계층 매핑 고정' : ''}
+                  {noChangeNets ? ` · 변경 없음 확인` : ''}
+                </small>
+              </summary>
+              <div className="settings-advanced-body">
+                <div className="tracking-settings-grid">
+                  <Field label="설계 단계 필터 (선택)">
+                    <input type="text" value={designStage} disabled={!project.can_write} onChange={e => setDesignStage(e.target.value)} placeholder="예: post_route (비우면 전체)" />
+                  </Field>
+                  <Field label="고정 계층 매핑">
+                    <select value={approvedMappingId} disabled={!project.can_write} onChange={e => setApprovedMappingId(e.target.value)}>
+                      <option value="">기본 상대 경로 매핑 사용</option>
+                      {blockMappings.map(m => (
+                        <option key={m.id} value={m.id}>
+                          r{m.revision} · 규칙 {array(m.payload.rules).length}개 ({m.id.slice(0, 8)})
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="변경 없음 확인 버전">
+                    <input type="text" value={noChangeNets} disabled={!project.can_write} onChange={e => setNoChangeNets(e.target.value)} placeholder="예: NET_022, NET_023" />
+                  </Field>
+                </div>
+
+                <div className="tracking-subblock">
+                  <h3>이 블록 전용 필수 코너 (비우면 프로젝트 기본 코너 사용)</h3>
+                  <div className="tracking-chip-list">
+                    {blockCorners.map((c, idx) => (
+                      <span key={cornerSpecId(c)} className="tracking-chip">
+                        {c.label}
+                        {project.can_write && (
+                          <button type="button" onClick={() => setBlockCorners(rows => rows.filter((_, i) => i !== idx))}>
+                            <Trash2 size={12} />
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                    {!blockCorners.length && <small className="text-muted">프로젝트 기본 코너({defaultCorners.map(c => c.label).join(', ') || '없음'}) 사용 중</small>}
+                  </div>
+                  {project.can_write && (
+                    <div className="settings-corner-add">
+                      <input
+                        placeholder="블록 전용 코너명 (예: SS)"
+                        value={blockCornerName}
+                        onChange={e => setBlockCornerName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addBlockCorner() } }}
+                      />
+                      <Button variant="outline" size="sm" onClick={addBlockCorner}>
+                        <Plus size={14} />추가
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </details>
+
+            <details className="settings-advanced">
+              <summary>
+                <ChevronRight size={15} className="chevron" aria-hidden="true" />
+                <span>설계 변경 메모 · 예상 증감</span>
+                <small>{blockExpectations.length}건 등록됨</small>
+              </summary>
+              <div className="settings-advanced-body">
+                <p className="muted">미리 등록해 둔 예상 증감 범위 안의 변화는 분석 시 자동으로 ‘설명됨’으로 분류합니다.</p>
+                <ul className="tracking-mini-list">
+                  {blockExpectations.map(exp => (
+                    <li key={text(exp.id)}>
+                      <span>
+                        <strong>{array(exp.target_paths).map(text).join(', ')}</strong> · {exp.metric === 'logic_area' ? 'Logic Area' : 'Total Power'} · {exp.direction === 'increase' ? '증가' : '감소'}{' '}
+                        {exp.min_pct != null || exp.max_pct != null ? `${format(exp.min_pct ?? 0)}~${format(exp.max_pct ?? '?')}%` : '(방향만)'}
+                        {text(exp.effective_net_ver) ? ` · ${text(exp.effective_net_ver)}부터` : ''}
+                        {text(exp.quote) ? ` · "${text(exp.quote)}"` : ''}
+                      </span>
+                    </li>
+                  ))}
+                  {!blockExpectations.length && <li className="muted">등록된 예상 변화가 없습니다.</li>}
+                </ul>
+
+                {project.can_write && (
+                  <div className="tracking-expectation-editor">
+                    <div className="tracking-inline-add">
+                      <input placeholder="적용 시작 버전 (선택)" value={expNet} onChange={e => setExpNet(e.target.value)} />
+                      <input placeholder="instance 경로 (예: GPU/u_cache)" value={expPath} onChange={e => setExpPath(e.target.value)} />
+                      <select value={expMetric} onChange={e => setExpMetric(e.target.value as 'logic_area' | 'pwr_all_total_mw')}>
+                        <option value="logic_area">Logic Area</option>
+                        <option value="pwr_all_total_mw">Total Power</option>
+                      </select>
+                      <select value={expCond} onChange={e => setExpCond(e.target.value as 'any' | 'typical' | 'same_condition')}>
+                        <option value="any">모든 조건</option>
+                        <option value="typical">대표 조건</option>
+                        <option value="same_condition">동일 조건</option>
+                      </select>
+                      <select value={expDir} onChange={e => setExpDir(e.target.value as 'increase' | 'decrease')}>
+                        <option value="increase">증가</option>
+                        <option value="decrease">감소</option>
+                      </select>
+                      <input placeholder="최소 %" value={expMin} onChange={e => setExpMin(e.target.value)} />
+                      <input placeholder="최대 %" value={expMax} onChange={e => setExpMax(e.target.value)} />
+                      <input placeholder="사유 메모" value={expQuote} onChange={e => setExpQuote(e.target.value)} />
+                      <Button variant="outline" size="sm" disabled={action.busy} onClick={() => action.run(saveExpectation, '예상 변화를 등록했습니다.')}>
+                        <Plus size={14} />등록
+                      </Button>
+                    </div>
+                    <div className="tracking-ai-propose">
+                      <textarea rows={2} value={expText} onChange={e => setExpText(e.target.value)} placeholder="Design info 변경 메모를 붙여넣으면 중앙 VWP AI가 예상 증감 범위를 추출해 제안합니다." />
+                      <Button variant="outline" size="sm" disabled={action.busy || !expText.trim()} onClick={() => action.run(proposeExpectation, 'AI 예상 범위 제안을 요청했습니다.')}>
+                        <Sparkles size={14} />AI 추출 요청
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </details>
+
             <div className="form-actions">
-              <Button size="sm" disabled={action.busy || !project.can_write} onClick={() => action.run(saveBlockSettings, '블록 추적 설정을 저장했습니다. 대기 중인 CSV가 있으면 자동으로 분석을 이어갑니다.')}>
-                블록 설정 저장
+              <Button size="sm" disabled={action.busy || !project.can_write} onClick={() => action.run(saveBlockSettings, '블록 설정을 저장했습니다.')}>
+                {selectedBlock.name} 설정 저장
               </Button>
             </div>
-
-            <div className="tracking-subblock">
-              <h3>Design info 승인 예상 변화 (코드 대조 적용)</h3>
-              <p className="muted">AI가 제안하거나 담당자가 승인한 증감 범위는 업로드 시 코드가 자동 대조합니다. 범위 안 변화는 ‘설명됨’으로 집계하며, 목표 전력 초과는 별도로 알립니다.</p>
-              <ul className="tracking-mini-list">
-                {blockExpectations.map(exp => (
-                  <li key={text(exp.id)}>
-                    <span>
-                      <strong>{array(exp.target_paths).map(text).join(', ')}</strong> · {exp.metric === 'logic_area' ? 'Logic Area' : 'Total Power'} · {exp.direction === 'increase' ? '증가' : '감소'}{' '}
-                      {exp.min_pct != null || exp.max_pct != null ? `${format(exp.min_pct ?? 0)}~${format(exp.max_pct ?? '?')}%` : '(방향만)'}
-                      {text(exp.effective_net_ver) ? ` · ${text(exp.effective_net_ver)}부터` : ''}
-                      {text(exp.quote) ? ` · "${text(exp.quote)}"` : ''}
-                    </span>
-                  </li>
-                ))}
-                {!blockExpectations.length && <li className="muted">승인된 예상 변화가 없습니다.</li>}
-              </ul>
-
-              {project.can_write && (
-                <div className="tracking-expectation-editor">
-                  <div className="tracking-inline-add">
-                    <input placeholder="적용 NET_VER (선택)" value={expNet} onChange={e => setExpNet(e.target.value)} />
-                    <input placeholder="대상 경로 (예: GPU/u_cache)" value={expPath} onChange={e => setExpPath(e.target.value)} />
-                    <select value={expMetric} onChange={e => setExpMetric(e.target.value as 'logic_area' | 'pwr_all_total_mw')}>
-                      <option value="logic_area">Logic Area</option>
-                      <option value="pwr_all_total_mw">Total Power</option>
-                    </select>
-                    <select value={expCond} onChange={e => setExpCond(e.target.value as 'any' | 'typical' | 'same_condition')}>
-                      <option value="any">모든 비교 조건</option>
-                      <option value="typical">Typical 대표</option>
-                      <option value="same_condition">동일 조건</option>
-                    </select>
-                    <select value={expDir} onChange={e => setExpDir(e.target.value as 'increase' | 'decrease')}>
-                      <option value="increase">증가</option>
-                      <option value="decrease">감소</option>
-                    </select>
-                    <input placeholder="최소 %" value={expMin} onChange={e => setExpMin(e.target.value)} />
-                    <input placeholder="최대 %" value={expMax} onChange={e => setExpMax(e.target.value)} />
-                    <input placeholder="근거 문구" value={expQuote} onChange={e => setExpQuote(e.target.value)} />
-                    <Button variant="outline" size="sm" disabled={action.busy} onClick={() => action.run(saveExpectation, '승인 예상 변화를 저장했습니다.')}>
-                      <Plus size={14} />승인 등록
-                    </Button>
-                  </div>
-                  <div className="tracking-ai-propose">
-                    <textarea rows={2} value={expText} onChange={e => setExpText(e.target.value)} placeholder="Design info 원문을 붙여넣으면 중앙 VWP AI가 예상 증감 범위를 제안합니다." />
-                    <Button variant="outline" size="sm" disabled={action.busy || !expText.trim()} onClick={() => action.run(proposeExpectation, 'AI 예상 범위 제안을 요청했습니다.')}>
-                      <Sparkles size={14} />AI 제안 요청
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </>
+          </div>
         )}
       </section>
     </div>
