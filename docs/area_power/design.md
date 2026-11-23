@@ -1,6 +1,6 @@
 # Design Atlas 프로젝트 비교 설계
 
-주 업무는 **프로젝트 A→지정 기준 프로젝트 B의 Block·hierarchy instance별 Area/Power 비교**다. 단일 `프로젝트 비교` 화면에서 상단 범위와 독립적으로 현재 프로젝트와 양쪽 Block·NET_VER·REVISION·corner·정확한 CSV 실행을 선택한다. 기준 프로젝트의 지정은 명시적으로 저장한다. 대응 경로와 업로드 이력도 같은 화면에 둔다. AI·작업·알림·target·변경 설명은 내부 분석 도구로 보존하되 독립 주 탐색이나 비교 필수 단계로 요구하지 않는다.
+목표는 블록별 비교 기준·instance 매핑·Design info를 미리 지정해 두고, 새 CSV가 도착하면 설명이 필요한 변화를 찾아 담당자와 TOP에 알리는 것이다. 2단계의 첫 화면은 **NET_VER 현황**이며 기존 Area/Power 비교 표는 블록 결과와 수동 비교에서 사용한다. 필수 corner, Full-chip 식별, Typical 전력과 목표, 수정본 및 메일 마감 규칙은 [NET_VER별 자동 추적 설계](../superpowers/specs/2026-11-23-area-power-net-ver-tracking-design.md)에 정의한다.
 
 ## 요구사항과 설계 제안
 
@@ -29,6 +29,8 @@
 제품명은 유지하되 추적 대상은 area에 한정하지 않는다. 추가 지표는 원본에서 계산할 수 있고 단위·집계 범위·비교 의미가 정의될 때 포함한다.
 
 ## 현재 구현
+
+현재 비교 화면은 상단 범위와 독립적으로 양쪽 Block·NET_VER·REVISION·corner·CSV 실행을 선택한다. instance별 AI 분석과 요약 메일은 사용자가 요청한다. NET_VER 현황, 업로드에 따른 자동 분석, 블록 완료 메일과 TOP 마감 요약은 2단계 구현 대상이다.
 
 Design Atlas 저장소의 `area_power.vwp` CLI, `area_power.vwp_server` 업로드 API·분석/AI worker, `area_power.oa` DB API·추상 메일 worker와 호스트 Dashboard의 프로젝트 비교를 제공한다. 기준은 기존 project payload의 `baseline_project_id` 하나로 저장하며 새 DDL·테이블·migration을 추가하지 않는다. 회사 메일 전송은 [MailSender Protocol](../../oa/MAIL_INTEGRATION.md)의 사내 어댑터 경계이고, 비교 자체에는 AI·메일 설정이 필요하지 않다. 경로 대응은 프로젝트 비교의 선택/입력 컨트롤로 기존 불변 mapping 계약을 사용한다. 실행·API 계약은 [README](../../area_power/README.md)를 따른다.
 
@@ -446,7 +448,7 @@ AI 호출 실패나 잘못된 응답은 성공으로 바꾸지 않는다. 후보
 
 수치 비교 key는 양쪽 업로드·조건·범위·지표·검출 정책·매핑 revision·저장 형식·계산 계약을 포함한다. 기존 단일 지표 행은 저장값을 유지하고 참조 비교는 지원하는 고정 계산 계약에서만 조회한다. 실제 AI 근거의 key는 comparison·실제 대응·metric·power 실행 쌍을 구분하며 재판정에서도 같은 사실을 재사용한다. payload 일치와 종류별 dedupe UNIQUE로 불변 충돌을 확인한다. 설명이 바뀐 AI 분석은 명시적으로 새 run을 요청한다. JSON 내부 참조·수치·범위 검증과 완료 데이터 불변성은 공통 모델과 각 서비스가 검증한다. 진행 중 화면은 작은 상태/coverage만 읽으며 새 참조 결과는 경로 검색·페이지별로 계산한다.
 
-조건별 현재 파일은 selection 레코드가 명시적으로 선택한다. 수정본 업로드로 자동 교체하지 않으며 완료 비교는 당시의 업로드·원문·매핑 revision을 고정한다. OA의 동시 선택 변경은 `row_version` 조건 갱신으로 충돌을 검출한다.
+현재 수동 흐름의 조건별 파일은 selection 레코드가 명시적으로 선택한다. 2단계에서는 활성화한 추적 설정 안에서 같은 조건의 현재 쪽 최신 검증본을 자동 선택한다. 완료 비교는 당시의 업로드·원문·매핑 revision을 고정한다. OA의 수동 선택 변경은 `row_version` 조건 갱신으로 충돌을 검출한다.
 
 작업도 `di_area_power_tracking_record`에 저장한다. 기본 참조 비교는 OA 요청에서 검증해 준비하고 worker 대기열에 넣지 않는다. 기존 적재·비교 작업 및 명시적 추출·판정은 vwp_server, 메일은 oa_server가 소비하며 자기 서버의 pending job만 짧은 트랜잭션에서 행 잠금으로 점유한다. AI·사내 메일 호출 중 DB 잠금을 유지하지 않는다. 전체 요청 범위를 처리하기 전에는 완료로 표시하지 않으며 실패 이유·명시 재실행 이력을 보존한다.
 
@@ -466,7 +468,7 @@ vwp_server가 알림·mail job을 DB에 저장하고 OA가 읽어 `MailSender`�
 
 ## instance 단위 AI 이상치 분석 (2026-11-17)
 
-사용자 결정으로 비교 화면에 버튼 실행 방식의 AI 이상치 분석을 추가했다. 위 "자연어 변경사항 처리"와 "이상 후보 검출과 AI 판정"의 원칙(수치는 코드, 메모는 데이터, 방향만 적힌 설명은 규모를 정당화하지 못함, AI 실패는 확인 필요)을 그대로 따르되, 지표 단위가 아니라 **instance 단위**로 진단하고 메모의 수치 범위 대조는 1단계에서 AI가 판단한다. 후보 선별·조상 묶기·비교 조건 미확인 처리·library 규칙·검증 가드·요약 메일·같은 프로젝트의 이전 버전 비교의 상세는 [AI 이상치 분석 설계](../superpowers/specs/2026-11-17-area-power-ai-triage-design.md)에 있다. 기존 지표별 판정 엔진과 알림은 변경하지 않았고 이 기능에서 사용하지 않는다. 업로드 시 자동 실행·자동 메일은 다음 단계다.
+1단계는 버튼으로 실행하며 **instance 단위**로 진단한다. 코드는 수치를 계산하고 AI는 메모와 관측 변화의 연관성을 판단한다. 후보 선별·조상 묶기·조건별 진단·수동 요약 메일은 [1단계 AI 이상치 분석 설계](../superpowers/specs/2026-11-17-area-power-ai-triage-design.md)에 있다. 2단계 자동 추적에서는 담당자가 승인한 예상 범위를 코드가 대조하며, 목표 미달을 독립적으로 표시한다.
 
 ## 남은 입력 계약과 실행 조건
 
