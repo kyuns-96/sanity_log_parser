@@ -31,6 +31,7 @@ class Runtime:
     subject: dict
     context: dict
     receipts: list = field(default_factory=list)
+    timeout_seconds: int | None = None
 
     def wait_for_retry(self, seconds):
         deadline = monotonic() + seconds
@@ -66,6 +67,9 @@ class Runtime:
             advisor = store.default_advisor(pin["model"])
             require(advisor is not None, "AI_CONFIG_CHANGED")
         require(advisor.describe()["config_sha256"] == pin["config_sha256"], "AI_CONFIG_CHANGED")
+        timeout = getattr(getattr(advisor, "settings", None), "timeout", None)
+        if isinstance(timeout, int) and timeout > 0:
+            self.timeout_seconds = timeout
         tokens = token_store(store, pin["connection_id"], advisor)
         if tokens is not None:
             credential, revision = tokens.get_token(pin["user_id"])
@@ -89,7 +93,7 @@ class Runtime:
                 for task in tasks:
                     self._resolve(host_db, task)
 
-    def infer(self, task, context, instruction, prompt_version):
+    def infer(self, task, context, instruction, prompt_version, *, observer=None):
         pin = self.context.get(task, {})
         if pin.get("error"):
             raise ReviewError(pin["error"], "The selected AI connection is unavailable")
@@ -106,6 +110,8 @@ class Runtime:
                         canonical=True,
                     )),
                 )
+            if observer is not None and hasattr(advisor, "with_observer"):
+                advisor = advisor.with_observer(observer)
             value, metadata = advisor.infer_json(
                 {"context_json": dumps(context, canonical=True)},
                 instruction,

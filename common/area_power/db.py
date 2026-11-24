@@ -82,6 +82,8 @@ class Database:
     def records(self, conn, record_type=None, *, project_id=None, version_id=None, block_id=None, snapshot_id=None, parent_id=None, state=None, limit=100, offset=0, latest=False, metrics=None):
         limit, offset = self._page(limit, offset)
         condition, params = _where(dict(record_type=record_type, project_id=project_id, version_id=version_id, block_id=block_id, snapshot_id=snapshot_id, parent_id=parent_id, state=state))
+        if record_type is None:
+            condition += sql.SQL(" AND record_type <> 'worker_heartbeat'")
         if metrics is not None:
             if record_type != 'metric_result':
                 raise ValueError('Metric selection requires metric results')
@@ -200,6 +202,42 @@ class Database:
             return self.update_record(conn, job_id, row["consumer_server"], expected_row_version=row["row_version"],
                                       state="failed" if error else "completed", error_detail=error,
                                       finished_at=datetime.now(timezone.utc))
+
+    @staticmethod
+    def worker_heartbeat_key(consumer_server):
+        if consumer_server not in {"vwp_server", "oa_server"}:
+            raise ValueError("Invalid worker consumer")
+        return digest({"worker_heartbeat": consumer_server})
+
+    def touch_worker_heartbeat(self, consumer_server, owner, *, worker_state="idle", job_kind=None):
+        if consumer_server not in {"vwp_server", "oa_server"} or not owner.strip():
+            raise ValueError("Invalid worker identity")
+        if worker_state not in {"idle", "busy"}:
+            raise ValueError("Invalid worker state")
+        key = self.worker_heartbeat_key(consumer_server)
+        payload = {"consumer_server": consumer_server, "worker_state": worker_state,
+                   "job_kind": job_kind, "owner_prefix": owner[:24]}
+        row_id = uuid4()
+        with self.connect() as conn:
+            return conn.execute(sql.SQL(
+                "INSERT INTO {} (id, record_type, entity_id, state, payload, created_by, updated_by, dedupe_key) "
+                "VALUES (%s, 'worker_heartbeat', %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (record_type, dedupe_key) DO UPDATE SET "
+                "state = EXCLUDED.state, payload = EXCLUDED.payload, updated_by = EXCLUDED.updated_by, "
+                "updated_at = GREATEST({}.created_at, CURRENT_TIMESTAMP), "
+                "row_version = {}.row_version + 1 "
+                "RETURNING state, payload, updated_at"
+            ).format(
+                self.table("di_area_power_tracking_record"),
+                self.table("di_area_power_tracking_record"),
+                self.table("di_area_power_tracking_record"),
+            ), (row_id, row_id, worker_state, Jsonb(payload, dumps=dumps), consumer_server, consumer_server, key)).fetchone()
+
+    def worker_heartbeat(self, conn, consumer_server):
+        key = self.worker_heartbeat_key(consumer_server)
+        return conn.execute(sql.SQL(
+            "SELECT state, payload, updated_at FROM {} WHERE record_type = 'worker_heartbeat' AND dedupe_key = %s LIMIT 1"
+        ).format(self.table("di_area_power_tracking_record")), (key,)).fetchone()
 
     def check_schema(self):
         """Read-only readiness check. Never creates tables or leaks private identifiers."""

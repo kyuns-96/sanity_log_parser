@@ -389,6 +389,30 @@
 .area-power.area-power .triage-summary { cursor: pointer; font-size: var(--text-body); color: var(--text-secondary); padding: 2px 0; }
 .area-power.area-power .triage-progress { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }
 .area-power.area-power .triage-progress .spin { flex-shrink: 0; }
+.area-power.area-power .triage-live-card { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); display: flex; flex-direction: column; gap: 8px; }
+.area-power.area-power .triage-live-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.area-power.area-power .triage-live-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.area-power.area-power .triage-live-tools { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.area-power.area-power .triage-phase-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: var(--text-caption); font-weight: 650; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.area-power.area-power .triage-phase-badge.phase-calling_model, .area-power.area-power .triage-phase-badge.phase-saving_batch { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }
+.area-power.area-power .triage-phase-badge.phase-retrying, .area-power.area-power .triage-phase-badge.phase-splitting_batch { color: var(--warning); background: var(--warning-soft); border-color: var(--warning-line); }
+.area-power.area-power .triage-subphase { font-size: var(--text-data); font-weight: 600; color: var(--ink); }
+.area-power.area-power .triage-step-detail { font-size: var(--text-data); color: var(--text-secondary); font-family: var(--font-mono); }
+.area-power.area-power .triage-worker-pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); font-size: var(--text-caption); color: var(--text-secondary); white-space: nowrap; }
+.area-power.area-power .triage-worker-pill.online { color: var(--success); background: var(--success-soft); border-color: var(--success-line); }
+.area-power.area-power .triage-worker-pill.offline { color: var(--danger); background: var(--danger-soft); border-color: var(--danger-line); }
+.area-power.area-power .triage-bar-row { display: flex; align-items: center; gap: 10px; }
+.area-power.area-power .triage-bar { flex: 1; height: 7px; border-radius: 999px; background: var(--line-soft); overflow: hidden; position: relative; }
+.area-power.area-power .triage-bar-fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width .25s ease; }
+.area-power.area-power .triage-bar-fill.indeterminate { width: 32%; animation: triage-indeterminate 1.4s ease-in-out infinite; }
+@keyframes triage-indeterminate { 0% { transform: translateX(-110%); } 100% { transform: translateX(340%); } }
+.area-power.area-power .triage-bar-pct { flex: none; min-width: 38px; text-align: right; font-family: var(--font-mono); font-size: var(--text-caption); font-weight: 600; color: var(--text-secondary); }
+.area-power.area-power .triage-live-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 6px 12px; margin: 0; }
+.area-power.area-power .triage-live-grid > div { padding: 6px 8px; border: 1px solid var(--line-soft); border-radius: 6px; background: var(--surface); min-width: 0; }
+.area-power.area-power .triage-live-grid dt { display: flex; align-items: center; gap: 4px; font-size: var(--text-micro); color: var(--text-muted); margin-bottom: 2px; }
+.area-power.area-power .triage-live-grid dd { margin: 0; font-size: var(--text-data); color: var(--ink); overflow-wrap: anywhere; }
+.area-power.area-power .triage-live-card .notice { margin: 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.area-power.area-power .triage-live-card .notice svg { flex-shrink: 0; }
 .area-power.area-power .triage-lists { max-height: 40vh; overflow: auto; margin-top: 4px; padding-right: 4px; }
 .area-power.area-power .triage-summary strong { color: var(--danger); }
 .area-power.area-power .triage-section { margin-top: 6px; }

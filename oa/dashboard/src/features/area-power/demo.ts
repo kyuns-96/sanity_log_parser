@@ -117,7 +117,8 @@ async function dispatch(path: string, body: Payload | undefined, plain: boolean 
     const run = scopedRecord(decodeURIComponent(triageResult[1]), 'ai_run', visible)
     const children = accessible().filter(row => row.parent_id === run.id)
     return { ai_run: { ...triageSummary(run, actor), notes: list(run.payload.notes) }, items: children.filter(row => row.record_type === 'judgement').map(row => row.payload),
-      mails: children.filter(row => row.record_type === 'triage_mail').map(row => ({ id: row.id, created_at: row.created_at, ...row.payload })) }
+      mails: children.filter(row => row.record_type === 'triage_mail').map(row => ({ id: row.id, created_at: row.created_at, ...row.payload })),
+      job: null, queue: null, worker: null, server_time: now() }
   }
   const hierarchy = /^\/uploads\/([^/]+)\/hierarchy$/.exec(route)
   if (hierarchy && !body) {

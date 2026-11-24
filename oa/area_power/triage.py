@@ -6,12 +6,16 @@ and enqueues a ``judge`` job for the central VWP process; the digest mail is a
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID
 
+from psycopg import sql
 from pydantic import Field, field_validator
 
+from common.sanity_common import ReviewError
 from oa.sanity_ai_task_defaults import DEFAULT_AREA_RETRY_LIMIT, TaskDefaults
 from common.area_power.analysis import observation_view
+from common.area_power.errors import DomainError
 from common.area_power.models import COMPARISON_FORMAT
 from common.area_power.triage import BATCH_SIZE, ENGINE, MAX_ITEMS, Thresholds, select_items, side_context
 from .analysis_deletion import request_owner
@@ -20,6 +24,7 @@ from .schemas import Input, addresses, reject
 
 BINDING_PREFIX = 'design-atlas-v1.binding.'
 FINISHED = ('completed', 'failed')
+WORKER_ONLINE_TTL_SECONDS = 60
 
 
 class TriageInput(Input):
@@ -186,12 +191,22 @@ def request_run(service, prepared, selection, body: TriageInput, actor) -> dict:
         ai_context = capture_context(service.access, tasks=('AREA_TRIAGE',), defaults=settings['defaults'] if settings else None)
         if selection.items and ai_context['AREA_TRIAGE'].get('error'):
             reject('The project comparison AI selection is unavailable.', ai_context['AREA_TRIAGE']['error'], 409)
-        payload = {'engine': ENGINE, 'retry_limit': settings['area_retry_limit'] if settings else DEFAULT_AREA_RETRY_LIMIT, 'thresholds': body.thresholds.model_dump(mode='python'),
+        expected_batches = -(-len(selection.items) // BATCH_SIZE)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        model_meta = prepared.get('ai_model') or {}
+        ai_model = {key: model_meta.get(key) for key in ('connection_label', 'model', 'site')}
+        retry_limit = settings['area_retry_limit'] if settings else DEFAULT_AREA_RETRY_LIMIT
+        payload = {'engine': ENGINE, 'retry_limit': retry_limit, 'thresholds': body.thresholds.model_dump(mode='python'),
                    'notes': prepared['notes'], 'note_warnings': prepared['note_warnings'], 'same_rtl': prepared['same_rtl'],
                    'watched_paths': prepared['watched_paths'], 'approved_expectations': prepared.get('approved_expectations', []),
                    'process': prepared['process'],
                    'comparison_kind': prepared['comparison_kind'], 'labels': body.labels, 'requested_by': actor,
-                   'ai_context': ai_context, 'coverage': {'expected_items': selection.counts['total']}}
+                   'ai_context': ai_context, 'ai_model': ai_model,
+                   'coverage': {'expected_items': selection.counts['total'], 'processed_items': 0, 'failed_items': 0,
+                                'batches': expected_batches, 'processed_batches': 0, 'retry_calls': 0},
+                   'progress': {'phase': 'queued', 'sub_phase': None, 'phase_started_at': now_iso,
+                                'updated_at': now_iso, 'total_batches': expected_batches,
+                                'max_attempts': retry_limit + 1}}
         run = service.db.insert_record(conn, 'ai_run', payload, actor, state='queued', parent_id=comparison['id'],
                                        upload_id=comparison['upload_id'], baseline_upload_id=comparison['baseline_upload_id'],
                                        **service.scope(comparison))
@@ -203,7 +218,7 @@ def _summary(run, actor):
     payload = run['payload']
     return {**{key: run.get(key) for key in ('id', 'state', 'created_at', 'updated_at', 'error_detail', 'parent_id')},
             'payload': {key: payload.get(key) for key in ('engine', 'retry_limit', 'thresholds', 'coverage', 'missing_watched', 'note_warnings',
-                                                           'same_rtl', 'requested_by', 'side_context', 'counts', 'labels')},
+                                                           'same_rtl', 'requested_by', 'side_context', 'counts', 'labels', 'progress', 'ai_model')},
             'can_delete': actor.auth_method == 'sso' and request_owner(run) == actor.user_id,
             'note_count': len(payload.get('notes', []))}
 
@@ -234,19 +249,103 @@ def _run(service, conn, identifier, *, lock=False):
     return run
 
 
+def _judge_job(service, conn, run):
+    attempt_job_id = run['payload'].get('explicit_attempt_job_id')
+    if attempt_job_id:
+        try:
+            job = service.db.record(conn, UUID(str(attempt_job_id)), kind='job')
+            if job.get('job_kind') == 'judge':
+                return job
+        except (DomainError, ReviewError, ValueError):
+            pass
+    jobs = [row for row in service.db.records(conn, 'job', parent_id=run['id'], limit=5) if row.get('job_kind') == 'judge']
+    return jobs[0] if jobs else None
+
+
+def _job_summary(job):
+    if job is None:
+        return None
+    return {
+        'id': job['id'],
+        'state': job['state'],
+        'job_kind': job.get('job_kind'),
+        'created_at': job.get('created_at'),
+        'claimed_at': job.get('claimed_at'),
+        'started_at': job.get('started_at'),
+        'finished_at': job.get('finished_at'),
+        'error_detail': job.get('error_detail'),
+        'claimed': bool(job.get('claim_owner')),
+    }
+
+
+def _vwp_observability(service, conn, run, job, server_time):
+    """Aggregate VWP worker liveness and queue depth without exposing other projects."""
+    raw = service.db.raw if service.access is not None else service.db
+    table = raw.table('di_area_power_tracking_record')
+    heartbeat = raw.worker_heartbeat(conn, 'vwp_server') if hasattr(raw, 'worker_heartbeat') else None
+    activity = conn.execute(sql.SQL(
+        "SELECT MAX(COALESCE(finished_at, started_at, claimed_at)) AS last_at "
+        "FROM {} WHERE record_type = 'job' AND consumer_server = 'vwp_server' AND claimed_at IS NOT NULL"
+    ).format(table)).fetchone()
+    heartbeat_at = heartbeat['updated_at'] if heartbeat else None
+    heartbeat_payload = (heartbeat.get('payload') or {}) if heartbeat else {}
+    online = None if heartbeat_at is None else (server_time - heartbeat_at).total_seconds() <= WORKER_ONLINE_TTL_SECONDS
+    worker = {
+        'online': online,
+        'state': heartbeat_payload.get('worker_state') if heartbeat else None,
+        'current_job_kind': heartbeat_payload.get('job_kind') if heartbeat else None,
+        'heartbeat_at': heartbeat_at,
+        'last_job_activity_at': activity['last_at'] if activity else None,
+    }
+    active = run['state'] not in FINISHED or (job is not None and job['state'] in ('pending', 'running'))
+    if not active:
+        return worker, None
+    total_pending = conn.execute(sql.SQL(
+        "SELECT COUNT(*) AS cnt FROM {} WHERE record_type = 'job' AND consumer_server = 'vwp_server' AND state = 'pending'"
+    ).format(table)).fetchone()['cnt']
+    pending_ahead = 0
+    if job is not None and job['state'] == 'pending':
+        pending_ahead = conn.execute(sql.SQL(
+            "SELECT COUNT(*) AS cnt FROM {} WHERE record_type = 'job' AND consumer_server = 'vwp_server' "
+            "AND state = 'pending' AND (created_at, id) < (%s, %s)"
+        ).format(table), (job['created_at'], job['id'])).fetchone()['cnt']
+    job_id = job['id'] if job is not None else None
+    other_running = conn.execute(sql.SQL(
+        "SELECT job_kind, started_at, claimed_at FROM {} "
+        "WHERE record_type = 'job' AND consumer_server = 'vwp_server' AND state = 'running' "
+        "AND (%s::uuid IS NULL OR id <> %s::uuid) ORDER BY started_at ASC NULLS LAST, id ASC LIMIT 5"
+    ).format(table), (job_id, job_id)).fetchall()
+    first_other = other_running[0] if other_running else None
+    queue = {
+        'pending_ahead': pending_ahead,
+        'total_pending': total_pending,
+        'other_running_count': len(other_running),
+        'other_running_job_kind': first_other['job_kind'] if first_other else None,
+        'other_running_since': (first_other['started_at'] or first_other['claimed_at']) if first_other else None,
+    }
+    return worker, queue
+
+
 def results(service, identifier) -> dict:
     with service.db.connect() as conn:
+        server_time = conn.execute("SELECT CURRENT_TIMESTAMP AS now").fetchone()['now']
         run = _run(service, conn, identifier)
         identifier = run['id']
+        job = _judge_job(service, conn, run)
+        worker, queue = _vwp_observability(service, conn, run, job, server_time)
         items = [] if run['state'] == 'queued' else [{'id': row['id'], 'state': row['state'], **row['payload']} for row in service.all_records(conn, 'judgement', parent_id=identifier)]
         mails = [{'id': row['id'], 'created_at': row.get('created_at'), **row['payload']}
                  for row in service.all_records(conn, 'triage_mail', parent_id=identifier)]
-        jobs = {str(job['parent_id']): job for mail in mails for job in service.db.records(conn, 'job', parent_id=mail['id'], limit=1)}
+        jobs = {str(mail_job['parent_id']): mail_job for mail in mails for mail_job in service.db.records(conn, 'job', parent_id=mail['id'], limit=1)}
         for mail in mails:
-            job = jobs.get(str(mail['id']))
-            mail['job_state'] = job['state'] if job else None
-            mail['job_error'] = job.get('error_detail') if job else None
-        return {'ai_run': {**_summary(run, service.access.actor), 'notes': run['payload'].get('notes', [])}, 'items': items, 'mails': mails}
+            mail_job = jobs.get(str(mail['id']))
+            mail['job_state'] = mail_job['state'] if mail_job else None
+            mail['job_error'] = mail_job.get('error_detail') if mail_job else None
+        return {
+            'ai_run': {**_summary(run, service.access.actor), 'notes': run['payload'].get('notes', [])},
+            'items': items, 'mails': mails,
+            'job': _job_summary(job), 'queue': queue, 'worker': worker, 'server_time': server_time,
+        }
 
 
 def request_mail(service, identifier, body: TriageMailInput, actor) -> dict:

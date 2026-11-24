@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from psycopg import sql
@@ -183,9 +184,15 @@ def persist_failure(db, job, error):
         elif subject['record_type'] in ('mapping_proposal', 'expected_change_proposal'):
             db.update_record(conn, subject['id'], ACTOR, state='failed', error_detail=error)
         elif subject['record_type'] == 'ai_run':
-            if subject['state'] != 'completed':
+            if subject['state'] not in ('completed', 'failed'):
                 payload = dict(subject['payload'])
                 payload['failure'] = error
+                now = datetime.now(timezone.utc).isoformat()
+                payload['progress'] = {
+                    **(payload.get('progress') or {}),
+                    'phase': 'failed', 'sub_phase': None, 'last_error': error.get('code'),
+                    'retry_wait_seconds': None, 'retry_at': None, 'phase_started_at': now, 'updated_at': now,
+                }
                 db.update_record(conn, subject['id'], ACTOR, state='failed', payload=payload, error_detail=error)
             comparison = db.record(conn, subject['parent_id'], lock=True, kind='comparison')
             payload = dict(comparison['payload'])
@@ -193,31 +200,37 @@ def persist_failure(db, job, error):
             db.update_record(conn, comparison['id'], ACTOR, payload=payload)
 
 
-def consume_once(db, settings, owner, *, claim_job=None):
+def consume_once(db, settings, owner, *, claim_job=None, on_job_state=None):
     job = claim_job() if claim_job is not None else db.claim_job('vwp_server', owner)
     if job is None:
         return False
+    if on_job_state is not None:
+        on_job_state(job.get('job_kind'))
     error = None
     try:
-        dispatch(db, settings, job)
-    except Exception as exc:
-        error = failure_detail(exc)
-        if isinstance(exc, DomainError):
-            error['code'] = exc.code
         try:
-            persist_failure(db, job, error)
-        except Exception as persistence_error:
-            if not (job['job_kind'] == 'judge' and isinstance(persistence_error, DomainError)
-                    and persistence_error.code == 'not_found'):
-                LOG.error('Failure persistence failed: %s', type(persistence_error).__name__)
-    try:
-        db.finish_job(job['id'], owner, error=error)
-    except DomainError as exc:
-        # Removal commits the subject and its claimed job together. Late completion
-        # of this claim must leave the worker available for the next pending job.
-        if job['job_kind'] == 'judge' and exc.code == 'not_found':
-            return True
-        raise
+            dispatch(db, settings, job)
+        except Exception as exc:
+            error = failure_detail(exc)
+            if isinstance(exc, DomainError):
+                error['code'] = exc.code
+            try:
+                persist_failure(db, job, error)
+            except Exception as persistence_error:
+                if not (job['job_kind'] == 'judge' and isinstance(persistence_error, DomainError)
+                        and persistence_error.code == 'not_found'):
+                    LOG.error('Failure persistence failed: %s', type(persistence_error).__name__)
+        try:
+            db.finish_job(job['id'], owner, error=error)
+        except DomainError as exc:
+            # Removal commits the subject and its claimed job together. Late completion
+            # of this claim must leave the worker available for the next pending job.
+            if job['job_kind'] == 'judge' and exc.code == 'not_found':
+                return True
+            raise
+    finally:
+        if on_job_state is not None:
+            on_job_state(None)
     if error:
         LOG.error('Job failed: %s', error['error_class'])
     return True
@@ -225,6 +238,8 @@ def consume_once(db, settings, owner, *, claim_job=None):
 
 class ProcessingWorker:
     """One non-daemon consumer; fatal claim/finish failures make readiness false."""
+
+    HEARTBEAT_SECONDS = 15.0
 
     def __init__(self, db, settings):
         self.db = db
@@ -234,11 +249,33 @@ class ProcessingWorker:
         self._started = threading.Event()
         self._failed = threading.Event()
         self._claim_lock = threading.Lock()
+        self._current_job_kind: str | None = None
         self._thread = threading.Thread(target=self._run, name='area-power-processing', daemon=False)
+        self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, name='area-power-heartbeat', daemon=True)
 
     @property
     def ready(self):
         return self._started.is_set() and not self._stopping.is_set() and not self._failed.is_set() and self._thread.is_alive()
+
+    def _touch_heartbeat(self):
+        if not hasattr(self.db, 'touch_worker_heartbeat'):
+            return
+        job_kind = self._current_job_kind
+        try:
+            self.db.touch_worker_heartbeat('vwp_server', self.owner, worker_state='busy' if job_kind else 'idle', job_kind=job_kind)
+        except Exception as exc:
+            LOG.warning('Worker heartbeat skipped: %s', type(exc).__name__)
+
+    def _set_job_state(self, job_kind):
+        self._current_job_kind = job_kind
+        self._touch_heartbeat()
+
+    def _heartbeat_loop(self):
+        self._started.wait()
+        while not self._stopping.is_set() and not self._failed.is_set() and self._thread.is_alive():
+            self._touch_heartbeat()
+            if self._stopping.wait(self.HEARTBEAT_SECONDS):
+                return
 
     def _claim_job(self):
         # stop() linearizes with claiming. A claim already in progress is drained,
@@ -253,7 +290,8 @@ class ProcessingWorker:
     def _run(self):
         try:
             while not self._stopping.is_set():
-                consumed = consume_once(self.db, self.settings, self.owner, claim_job=self._claim_job)
+                consumed = consume_once(self.db, self.settings, self.owner, claim_job=self._claim_job,
+                                        on_job_state=self._set_job_state)
                 if not consumed:
                     try:
                         check_deadlines(self.db)
@@ -271,6 +309,7 @@ class ProcessingWorker:
         self._started.wait()
         if not self.ready:
             raise RuntimeError('VWP processing could not start')
+        self._heartbeat_thread.start()
 
     def stop(self):
         self._stopping.set()
@@ -279,3 +318,5 @@ class ProcessingWorker:
             pass
         if self._thread.ident is not None:
             self._thread.join()
+        if self._heartbeat_thread.ident is not None:
+            self._heartbeat_thread.join(timeout=5)

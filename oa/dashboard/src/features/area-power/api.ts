@@ -65,7 +65,43 @@ export type TriageRun = z.infer<typeof triageRunSchema>
 export const triageRunsSchema = z.object({ runs: z.array(triageRunSchema) })
 export const triageItemSchema = z.object({ group_id: z.string(), verdict: z.string(), cause: z.string(), explanation: z.string(), failed: z.boolean(), failure: z.string().nullish(), quotes: z.array(z.string()).optional(), card: loose }).passthrough()
 export type TriageItem = z.infer<typeof triageItemSchema>
-export const triageResultSchema = z.object({ ai_run: triageRunSchema, items: z.array(triageItemSchema), mails: z.array(loose) })
+export const triageJobSchema = z.object({
+  id: z.string(),
+  state: z.string(),
+  job_kind: optionalText,
+  created_at: optionalText,
+  claimed_at: optionalText,
+  started_at: optionalText,
+  finished_at: optionalText,
+  error_detail: z.unknown().nullish(),
+  claimed: z.boolean().optional(),
+}).passthrough()
+export type TriageJob = z.infer<typeof triageJobSchema>
+export const triageQueueSchema = z.object({
+  pending_ahead: count.optional(),
+  total_pending: count.optional(),
+  other_running_count: count.optional(),
+  other_running_job_kind: optionalText,
+  other_running_since: optionalText,
+}).passthrough()
+export type TriageQueue = z.infer<typeof triageQueueSchema>
+export const triageWorkerSchema = z.object({
+  online: z.boolean().nullable().optional(),
+  state: optionalText,
+  current_job_kind: optionalText,
+  heartbeat_at: optionalText,
+  last_job_activity_at: optionalText,
+}).passthrough()
+export type TriageWorker = z.infer<typeof triageWorkerSchema>
+export const triageResultSchema = z.object({
+  ai_run: triageRunSchema,
+  items: z.array(triageItemSchema),
+  mails: z.array(loose),
+  job: triageJobSchema.nullish(),
+  queue: triageQueueSchema.nullish(),
+  worker: triageWorkerSchema.nullish(),
+  server_time: optionalText,
+})
 export type TriageResult = z.infer<typeof triageResultSchema>
 export const triageStartedSchema = z.object({ ai_run: recordSchema, job: recordSchema.nullable() })
 export const unknownSchema = z.unknown()

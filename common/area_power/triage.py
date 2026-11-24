@@ -28,7 +28,7 @@ AREA, POWER_TOTAL = 'logic_area', 'pwr_all_total_mw'
 # Run payload keys an explicit rerun must carry over unchanged.
 RUN_KEYS = ('engine', 'retry_limit', 'thresholds', 'notes', 'note_warnings', 'same_rtl', 'watched_paths', 'process',
             'labels', 'comparison_kind', 'requested_by', 'approved_expectations', 'tracking_slot_id', 'tracking_generation',
-            'comparison_condition')
+            'comparison_condition', 'ai_model')
 
 
 class Thresholds(BaseModel):
