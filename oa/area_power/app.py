@@ -226,7 +226,10 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
     def mapping_proposal(identifier: UUID, context=Depends(service)):
         with context.db.connect() as conn:
             row = context.db.record(conn, identifier, kind='mapping_proposal')
-        return json({'state': row['state'], 'error': (row.get('error_detail') or {}).get('code'),
+        detail = row.get('error_detail') or {}
+        return json({'state': row['state'], 'error': detail.get('code'),
+                     'error_class': detail.get('error_class'),
+                     'max_depth': row['payload'].get('max_depth'),
                      'result': row['payload'].get('result')})
 
     @router.post("/mapping-proposals/{identifier}/approve")

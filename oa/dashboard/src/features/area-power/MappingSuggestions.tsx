@@ -5,25 +5,36 @@ import { date, request, type Auth } from './api'
 import { Button, useAction } from './components/workspace'
 import type { MappingDraft } from './mappingCsv'
 
-const count = z.coerce.number().int().nonnegative()
+const count = z.union([z.string(), z.number()]).transform(Number).refine(v => Number.isSafeInteger(v) && v >= 0)
+const optionalCount = z.union([z.string(), z.number()]).transform(Number).refine(v => Number.isSafeInteger(v) && v >= 0).nullish()
 const report = z.object({
   suggestions: z.array(z.object({ baseline: z.string(), current: z.string(), scope: z.enum(['node', 'subtree']),
     gain: count, reason: z.string(), pattern: z.string() })),
   held: z.array(z.object({ baseline: z.string(), alternatives: z.array(z.string()), reason: z.string() })),
   baseline_unmatched: count, current_unmatched: count,
+  max_depth: optionalCount, scope_baseline_unmatched: optionalCount, scope_current_unmatched: optionalCount, max_tree_depth: optionalCount,
 })
-const statusSchema = z.object({ state: z.string(), error: z.string().nullable(), result: report.nullable() })
+const statusSchema = z.object({
+  state: z.string(),
+  error: z.string().nullable(),
+  error_class: z.string().nullish(),
+  max_depth: optionalCount,
+  result: report.nullable(),
+})
 type Report = z.infer<typeof report>
 
-const historySchema = z.object({ runs: z.array(z.object({ id: z.string(), state: z.string(), created_at: z.string() })) })
+const historySchema = z.object({
+  runs: z.array(z.object({ id: z.string(), state: z.string(), created_at: z.string(), max_depth: optionalCount })),
+})
 
-export function MappingSuggestions({ auth, current, baseline, mapping, draft, disabled, onSaved, onInspect }: {
-  auth: Auth; current: string; baseline: string; mapping: string; draft: MappingDraft[]; disabled: boolean
+export function MappingSuggestions({ auth, current, baseline, mapping, draft, maxAvailableDepth, disabled, onSaved, onInspect }: {
+  auth: Auth; current: string; baseline: string; mapping: string; draft: MappingDraft[]; maxAvailableDepth?: number; disabled: boolean
   onSaved: (id: string) => Promise<void>
   onInspect: (baseline: string, current: string) => void
 }) {
   const action = useAction()
   const [run, setRun] = useState('')
+  const [maxDepth, setMaxDepth] = useState('')
   const [history, setHistory] = useState<z.infer<typeof historySchema>['runs']>([])
   const [historyVersion, setHistoryVersion] = useState(0)
   const [historyId, setHistoryId] = useState('')
@@ -51,10 +62,23 @@ export function MappingSuggestions({ auth, current, baseline, mapping, draft, di
   const live = useRef(true)
   useEffect(() => { live.current = true; return () => { live.current = false } }, [])
 
+  const depthChoices = useMemo(() => {
+    const limit = Math.min(50, Math.max(1, maxAvailableDepth && maxAvailableDepth > 0 ? maxAvailableDepth : 6))
+    return Array.from({ length: limit }, (_, idx) => idx + 1)
+  }, [maxAvailableDepth])
+
+  function changeDepth(next: string) {
+    setMaxDepth(next)
+    setRun(''); setResult(null); setChecking(false); setSelected(new Set()); setMessage(''); setFilter(''); setPage(0); setHeldPage(0)
+    requestId.current = ''
+  }
+
   async function start() {
     if (!requestId.current) requestId.current = crypto.randomUUID()
+    const parsedDepth = maxDepth ? Number(maxDepth) : null
     const row = await request(auth, '/mapping-proposals', z.object({ id: z.string() }), {
       current_upload_id: current, baseline_upload_id: baseline, mapping_id: mapping || null, request_id: requestId.current,
+      max_depth: parsedDepth,
       draft: draft.map(r => ({ kind: 'one_to_one', scope: r.scope, baseline_paths: [r.baselinePath], current_paths: [r.currentPath] })),
     })
     if (live.current) { setRun(row.id); setHistoryId(row.id); setHistoryVersion(v => v + 1); setMessage(''); setChecking(true); setResult(null); setSelected(new Set()); setPage(0); setHeldPage(0) }
@@ -69,7 +93,8 @@ export function MappingSuggestions({ auth, current, baseline, mapping, draft, di
         if (controller.signal.aborted) return
         setHistory(rows => rows.map(row => row.id === run ? { ...row, state: data.state } : row))
         if (data.state === 'failed') {
-          setMessage('분석 실패 · ' + (data.error || 'unknown')); setChecking(false); setRun(''); requestId.current = ''
+          const detail = data.error === 'analysis_failure' && data.error_class ? `${data.error} (${data.error_class})` : (data.error || 'unknown')
+          setMessage('분석 실패 · ' + detail); setChecking(false); setRun(''); requestId.current = ''
         } else if (data.result) {
           setResult(data.result); setMessage(''); setChecking(false)
         } else {
@@ -106,22 +131,27 @@ export function MappingSuggestions({ auth, current, baseline, mapping, draft, di
     if (live.current) await onSaved(mapping.id)
   }
   return <section className="mapping-suggestions" aria-label="AI 매핑 제안">
-    <div className="mapping-actions"><Button variant="outline" disabled={disabled || action.busy || checking || !!result || !!run || auth.demo} onClick={() => action.run(start, '')}>AI 매핑 제안 분석</Button>
-      {!run && !checking && !auth.demo && <small>VWP에서 미대응 경로를 분석합니다. 선택한 제안과 작성 중인 규칙을 함께 저장합니다.</small>}
+    <div className="mapping-actions">
+      <label>분석 depth <select aria-label="AI 매핑 제안 최대 depth" value={maxDepth} disabled={disabled || action.busy || checking} onChange={e => changeDepth(e.target.value)}>
+        <option value="">전체 깊이{maxAvailableDepth ? ` (최대 ${maxAvailableDepth})` : ''}</option>
+        {depthChoices.map(depth => <option key={depth} value={String(depth)}>depth {depth} 이하{depth === 1 ? ' (최상위 블록)' : ''}</option>)}
+      </select></label>
+      <Button variant="outline" disabled={disabled || action.busy || checking || !!result || !!run || auth.demo} onClick={() => action.run(start, '')}>AI 매핑 제안 분석</Button>
+      {!run && !checking && !auth.demo && <small>VWP에서 지정한 depth까지의 미대응 경로를 분석합니다. 하위가 동일하면 subtree 규칙으로 자동 묶고, 선택한 제안과 작성 중인 규칙을 함께 저장합니다.</small>}
       {auth.demo && <small>합성 데모에서는 VWP 모델을 호출하지 않습니다.</small>}
       {message && <span role="status">{message}</span>}
       {run && !checking && !result && <Button variant="outline" onClick={() => { setChecking(true); setPoll(n => n + 1) }}>결과 다시 조회</Button>}
     </div>{action.feedback}
     {historyError && <p role="alert">{historyError}</p>}
     {history.length > 0 && !disabled && <div className="mapping-actions"><label>내 매핑 제안 이력 <select value={historyId} onChange={e => setHistoryId(e.target.value)}>
-      {history.map(row => <option key={row.id} value={row.id}>{date(row.created_at)} · {row.state}</option>)}</select></label>
+      {history.map(row => <option key={row.id} value={row.id}>{date(row.created_at)}{row.max_depth != null ? ` · depth ≤ ${row.max_depth}` : ''} · {row.state}</option>)}</select></label>
       {historyId && <AnalysisDelete key={historyId} auth={auth} id={historyId} mapping active={history.some(row => row.id === historyId && ['queued','running'].includes(row.state))}
         onDeleted={ids => {
           if (ids.includes(run)) { setRun(''); setResult(null); setChecking(false); setSelected(new Set()); setMessage(''); requestId.current = '' }
           setHistory(rows => rows.filter(row => !ids.includes(row.id))); setHistoryId(''); setHistoryVersion(v => v + 1)
         }} />}</div>}
     {result && <>
-      <p>제안 {result.suggestions.length}개 · 선택 적용 시 새로 연결 {gain}쌍 · 남는 미대응 기준 {result.baseline_unmatched - gain}개 / 현재 {result.current_unmatched - gain}개</p>
+      <p>{result.max_depth != null ? `분석 범위 depth ≤ ${result.max_depth} · ` : ''}제안 {result.suggestions.length}개 · 선택 적용 시 새로 연결 {gain}쌍 · 전체 남는 미대응 기준 {result.baseline_unmatched - gain}개 / 현재 {result.current_unmatched - gain}개{result.max_depth != null && result.scope_baseline_unmatched != null && result.scope_current_unmatched != null ? ` (범위 내 최초 미대응 기준 ${result.scope_baseline_unmatched}개 / 현재 ${result.scope_current_unmatched}개)` : ''}</p>
       {patterns.length > 0 && <><input aria-label="매핑 제안 검색" placeholder="변경 패턴 또는 경로 검색" value={filter} onChange={e => { setFilter(e.target.value); setPage(0) }} />
         {matching.slice(page * 12, page * 12 + 12).map(([pattern, indices]) => <Pattern key={pattern} pattern={pattern} indices={indices} rows={result.suggestions} selected={selected} toggle={toggle} />)}
         {matching.length > 12 && <Pages page={page} size={12} total={matching.length} set={setPage} />}

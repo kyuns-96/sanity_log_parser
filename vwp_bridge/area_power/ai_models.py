@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from common.area_power.errors import DomainError
 from common.area_power.jsonutil import digest, dumps
 from common.sanity_common import ReviewError
 
@@ -164,5 +165,10 @@ def judgement_provider(settings, context):
 
 
 def failure_detail(exc: Exception) -> dict:
-    code = exc.code if isinstance(exc, ReviewError) else str(exc) if isinstance(exc, AIError) else 'analysis_failure'
+    if isinstance(exc, (ReviewError, DomainError)):
+        code = exc.code
+    elif isinstance(exc, AIError):
+        code = str(exc)
+    else:
+        code = 'analysis_failure'
     return {'code': code, 'error_class': type(exc).__name__}

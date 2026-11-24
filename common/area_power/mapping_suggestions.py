@@ -176,16 +176,20 @@ def candidates(before, current, paths, anchors, renames, index, covered_c):
     return unique, held
 
 
-def suggest(before, current, rules, choose):
+def suggest(before, current, rules, choose, *, max_depth: int | None = None):
     """Review parent candidates first; an approved subtree resolves its exact relative paths."""
+    if max_depth is not None and (isinstance(max_depth, bool) or not isinstance(max_depth, int) or max_depth < 1):
+        raise DomainError('Maximum mapping depth must be an integer >= 1.', 'invalid_mapping_depth')
     protected, free_b, free_c, anchors = unmatched(before, current, rules)
-    index = build_index(current, free_c)
+    candidate_c = free_c if max_depth is None else {p for p in free_c if current.rows[p]['depth'] <= max_depth}
+    index = build_index(current, candidate_c)
     renames = rename_patterns(before, current, anchors)
     held = []
     covered_b, covered_c = set(), set()
     expected = set(protected)
     suggestions, additions = [], []
-    paths = sorted(free_b, key=lambda p: (before.rows[p]['depth'], p))
+    paths = [p for p in sorted(free_b, key=lambda p: (before.rows[p]['depth'], p))
+             if max_depth is None or before.rows[p]['depth'] <= max_depth]
     for _, layer in groupby(paths, key=lambda p: before.rows[p]['depth']):
         remaining, deferred = candidates(before, current, (p for p in layer if p not in covered_b),
                                           anchors, renames, index, covered_c)
@@ -193,15 +197,15 @@ def suggest(before, current, rules, choose):
         decisions = []
         for start in range(0, len(remaining), 20):
             batch = remaining[start:start + 20]
-            for case, (index, reason) in zip(batch, choose(batch), strict=True):
+            for case, (choice_index, reason) in zip(batch, choose(batch), strict=True):
                 options = case['options']
-                if index is not None and any(abs(o['score'] - options[index]['score']) < .12
-                                             for i, o in enumerate(options) if i != index):
-                    index, reason = None, 'ambiguous'
-                if index is None:
+                if choice_index is not None and any(abs(o['score'] - options[choice_index]['score']) < .12
+                                                    for i, o in enumerate(options) if i != choice_index):
+                    choice_index, reason = None, 'ambiguous'
+                if choice_index is None:
                     held.append({'baseline': case['baseline'], 'alternatives': [o['path'] for o in options], 'reason': reason})
                 else:
-                    decisions.append((case['baseline'], options[index]['path'], reason))
+                    decisions.append((case['baseline'], options[choice_index]['path'], reason))
         demand = Counter(dest for _, dest, _ in decisions)
         for path, dest, reason in decisions:
             if demand[dest] > 1 or dest in covered_c:
@@ -229,4 +233,6 @@ def suggest(before, current, rules, choose):
     if matched(groups(before, current, rules + additions)) != expected:
         raise DomainError('Proposed rules conflict with existing correspondence.', 'mapping_preview_conflict')
     return {'suggestions': suggestions, 'held': [h for h in held if h['baseline'] not in covered_b],
-            'baseline_unmatched': len(free_b), 'current_unmatched': len(free_c)}
+            'baseline_unmatched': len(free_b), 'current_unmatched': len(free_c),
+            'max_depth': max_depth, 'scope_baseline_unmatched': len(paths), 'scope_current_unmatched': len(candidate_c),
+            'max_tree_depth': max((r['depth'] for r in before.rows.values()), default=0)}

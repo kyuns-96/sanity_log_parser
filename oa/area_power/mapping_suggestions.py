@@ -18,6 +18,7 @@ class ProposalInput(Input):
     baseline_upload_id: UUID
     mapping_id: UUID | None = None
     draft: list[MappingRule] = Field(default_factory=list)
+    max_depth: StrictInt | None = Field(default=None, ge=1, le=50)
 
 
 def submit(service, body, actor):
@@ -45,7 +46,8 @@ def submit(service, body, actor):
             service.authorize(conn, old, write=True)
             if (old['upload_id'] != current['id'] or old['baseline_upload_id'] != baseline['id']
                     or old['payload']['mapping_id'] != (str(body.mapping_id) if mapping else None)
-                    or old['payload']['draft'] != draft):
+                    or old['payload']['draft'] != draft
+                    or old['payload'].get('max_depth') != body.max_depth):
                 reject('The request inputs have changed.', 'request_conflict', 409)
             return {'id': old['id']}
         settings = TaskDefaults(host.db).current()
@@ -53,7 +55,8 @@ def submit(service, body, actor):
         if pin['AREA_TRIAGE'].get('error'):
             reject('Project comparison model is unavailable.', pin['AREA_TRIAGE']['error'], 409)
         scope = service.scope(current)
-        payload = {'mapping_id': body.mapping_id, 'draft': draft, 'ai_context': pin, 'retry_limit': settings['area_retry_limit']}
+        payload = {'mapping_id': body.mapping_id, 'draft': draft, 'max_depth': body.max_depth,
+                   'ai_context': pin, 'retry_limit': settings['area_retry_limit']}
         run = service.db.insert_record(conn, 'mapping_proposal', payload, actor.user_id, state='queued',
                                        upload_id=current['id'], baseline_upload_id=baseline['id'], dedupe_key=key, **scope)
         service.db.enqueue(conn, 'judge', actor=actor.user_id, parent_id=run['id'], payload={}, **scope)
@@ -109,7 +112,9 @@ def history(service, current_id, baseline_id):
         service.db.upload(conn, current_id)
         service.db.upload(conn, baseline_id)
         rows = conn.execute(sql.SQL(
-            "SELECT id, state, created_at FROM {} WHERE record_type='mapping_proposal' AND upload_id=%s "
+            "SELECT id, state, created_at, "
+            "CASE WHEN jsonb_typeof(payload->'max_depth') = 'number' THEN (payload->>'max_depth')::int ELSE NULL END AS max_depth "
+            "FROM {} WHERE record_type='mapping_proposal' AND upload_id=%s "
             "AND baseline_upload_id=%s AND created_by=%s ORDER BY created_at DESC, id DESC"
         ).format(service.db.table('di_area_power_tracking_record')),
             (current_id, baseline_id, service.access.actor.user_id)).fetchall()

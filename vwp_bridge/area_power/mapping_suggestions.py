@@ -71,7 +71,8 @@ def run_mapping_proposal(db, run):
         db.update_record(conn, run['id'], ACTOR, state='running', error_detail=None)
     before, current = _tree(db, run['baseline_upload_id']), _tree(db, run['upload_id'])
     rules = saved + [{**r, 'id': f'draft-{i}'} for i, r in enumerate(payload['draft'])]
-    result = suggest(before, current, rules, lambda batch: _choices(runtime, batch, payload['retry_limit']))
+    result = suggest(before, current, rules, lambda batch: _choices(runtime, batch, payload['retry_limit']),
+                     max_depth=payload.get('max_depth'))
     runtime.validate(tasks=('AREA_TRIAGE',))
     with db.connect() as conn:
         db.update_record(conn, run['id'], ACTOR, state='completed', payload={**payload, 'result': result})
