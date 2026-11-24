@@ -21,12 +21,16 @@ from common.area_power.models import UploadMetadata
 
 CELL_GROUPS = ("total", "logic", "cts", "sram", "io", "others")
 VTH_NAMES = tuple(f"vt_{v}{suffix}" for v in ("slvt", "lvt", "rvt", "hvt") for suffix in ("", "_llp"))
-DRIVE_NAMES = tuple(f"drv_{v}" for v in ("D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D10", "D12", "D14", "D16", "other"))
+SUB1X_DRIVE_NAMES = ("drv_D0P5", "drv_D0P7")
+LEGACY_DRIVE_NAMES = tuple(f"drv_{v}" for v in ("D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D10", "D12", "D14", "D16", "other"))
+DRIVE_NAMES = SUB1X_DRIVE_NAMES + LEGACY_DRIVE_NAMES
 POWER_GROUPS = ("all", "logic", "sram", "io", "others")
 POWER_COMPONENTS = ("internal", "switching", "leakage", "total")
 COUNT_FIELDS = tuple(f"{g}_cells" for g in CELL_GROUPS) + tuple(f"{g}_cnt" for g in VTH_NAMES + DRIVE_NAMES)
+LEGACY_COUNT_FIELDS = tuple(f"{g}_cells" for g in CELL_GROUPS) + tuple(f"{g}_cnt" for g in VTH_NAMES + LEGACY_DRIVE_NAMES)
 AREA_FIELDS = tuple(f"{g}_area" for g in CELL_GROUPS)
 PCT_FIELDS = ("cts_area_pct",) + tuple(f"{g}_pct" for g in VTH_NAMES + DRIVE_NAMES)
+LEGACY_PCT_FIELDS = ("cts_area_pct",) + tuple(f"{g}_pct" for g in VTH_NAMES + LEGACY_DRIVE_NAMES)
 POWER_FIELDS = tuple(f"pwr_{g}_{c}_mw" for g in POWER_GROUPS for c in POWER_COMPONENTS)
 POWER_IDENTITIES = tuple(
     (f"pwr_{group}_total_mw", tuple(f"pwr_{group}_{component}_mw" for component in POWER_COMPONENTS[:-1]))
@@ -36,9 +40,13 @@ POWER_IDENTITIES = tuple(
     for component in POWER_COMPONENTS
 )
 STRUCTURE_FIELDS = ("hier_name", "level") + COUNT_FIELDS + AREA_FIELDS + PCT_FIELDS[1:]
+LEGACY_STRUCTURE_FIELDS = ("hier_name", "level") + LEGACY_COUNT_FIELDS + AREA_FIELDS + LEGACY_PCT_FIELDS[1:]
 HEADERS = ("hier_name", "level", "process_label", "voltage_v", "temp_c", "pex") + tuple(
     field for g in CELL_GROUPS for field in (f"{g}_cells", f"{g}_area")
 ) + PCT_FIELDS + tuple(f"{g}_cnt" for g in VTH_NAMES + DRIVE_NAMES) + POWER_FIELDS
+LEGACY_HEADERS = ("hier_name", "level", "process_label", "voltage_v", "temp_c", "pex") + tuple(
+    field for g in CELL_GROUPS for field in (f"{g}_cells", f"{g}_area")
+) + LEGACY_PCT_FIELDS + tuple(f"{g}_cnt" for g in VTH_NAMES + LEGACY_DRIVE_NAMES) + POWER_FIELDS
 _NUMERIC = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?\Z")
 
 
@@ -139,7 +147,10 @@ def _half_unit(value: Decimal) -> Decimal:
 
 def structural_rows(parsed: ParsedCSV) -> dict[str, dict[str, Any]]:
     """Return all structure, including reported area percentages, without power or PVT."""
-    return {path: {key: row[key] for key in STRUCTURE_FIELDS} for path, row in parsed.rows.items()}
+    return {
+        path: {key: row[key] for key in STRUCTURE_FIELDS if key in row}
+        for path, row in parsed.rows.items()
+    }
 
 
 def structural_metadata(metadata: UploadMetadata) -> dict[str, Any]:
@@ -211,6 +222,12 @@ def _unpack(data: bytes, maximum: int) -> tuple[bytes, bytes]:
     return data, gzip.compress(data, compresslevel=6, mtime=0)
 
 
+def _schema_fields(header: list[str]):
+    if len(header) == len(HEADERS):
+        return DRIVE_NAMES, COUNT_FIELDS, PCT_FIELDS, STRUCTURE_FIELDS
+    return LEGACY_DRIVE_NAMES, LEGACY_COUNT_FIELDS, LEGACY_PCT_FIELDS, LEGACY_STRUCTURE_FIELDS
+
+
 def _csv_reader(original: bytes):
     try:
         text = original.decode("utf-8-sig")
@@ -223,8 +240,16 @@ def _csv_reader(original: bytes):
         raise DomainError("CSV is empty or its header is invalid.", code="invalid_csv") from exc
     if len(header) != len(set(header)):
         _invalid("CSV contains duplicate column names.")
-    if len(header) != 81 or set(header) != set(HEADERS):
-        _invalid("CSV must contain exactly the 81 documented column names, without missing or unknown columns.")
+    header_set = set(header)
+    if not (
+        (len(header) == len(HEADERS) and header_set == set(HEADERS))
+        or (len(header) == len(LEGACY_HEADERS) and header_set == set(LEGACY_HEADERS))
+    ):
+        _invalid(
+            f"CSV must contain exactly the {len(HEADERS)} documented column names "
+            f"(or legacy {len(LEGACY_HEADERS)}-column format without drv_D0P5/drv_D0P7), "
+            "without missing or unknown columns."
+        )
     return reader, header
 
 
@@ -294,12 +319,12 @@ def parse_hierarchy(
     return items
 
 
-def _row_precision(values, reported, metadata):
+def _row_precision(values, reported, metadata, count_fields=COUNT_FIELDS):
     decimals = [v for v in values.values() if isinstance(v, Decimal)] + [v for v in reported.values() if v is not None]
     decimals.extend(v for v in (metadata.pct_tolerance, metadata.power_tolerance_mw) if v is not None)
     highest = max((v.adjusted() for v in decimals), default=0)
     lowest = min((v.as_tuple().exponent for v in decimals), default=0)
-    count_digits = max(len(str(values[key])) for key in COUNT_FIELDS)
+    count_digits = max(len(str(values[key])) for key in count_fields)
     return highest, lowest, max(50, highest - lowest + count_digits + 50)
 
 
@@ -313,6 +338,7 @@ def read_observations(upload, metadata: UploadMetadata, maximum: int) -> Observe
     if len(original) != upload['original_byte_length'] or sha256(original).digest() != bytes(upload['original_sha256']):
         raise DomainError('Stored upload no longer matches validated snapshot', code='stored_upload_mismatch')
     reader, header = _csv_reader(original)
+    _, active_count_fields, active_pct_fields, _ = _schema_fields(header)
     rows, roots = {}, []
     numeric_highest, numeric_lowest = 0, 0
     # Integers have exponent 0 and adjusted() = digits - 1, so only the largest
@@ -326,15 +352,15 @@ def read_observations(upload, metadata: UploadMetadata, maximum: int) -> Observe
                 _invalid(f'Row {reader.line_num}: column count does not match the header.')
             raw = dict(zip(header, fields))
             path = raw['hier_name']
-            values = {key: Decimal(raw[key].strip()) for key in COUNT_FIELDS + AREA_FIELDS + POWER_FIELDS + ('level',)}
-            for key in COUNT_FIELDS + ('level',):
+            values = {key: Decimal(raw[key].strip()) for key in active_count_fields + AREA_FIELDS + POWER_FIELDS + ('level',)}
+            for key in active_count_fields + ('level',):
                 values[key] = int(values[key])
             if (not path or not path.strip() or any(not part for part in path.split(separator))
                     or path in rows or values['level'] != len(path.split(separator)) - 1):
                 raise DomainError('Stored hierarchy no longer matches its input contract', code='stored_upload_mismatch')
             if values['level'] == 0:
                 roots.append(path)
-            reported = {key: Decimal(raw[key].strip()) if raw[key].strip() else None for key in PCT_FIELDS}
+            reported = {key: Decimal(raw[key].strip()) if raw[key].strip() else None for key in active_pct_fields}
             this_corner = {
                 'process_label': raw['process_label'] if raw['process_label'].strip() else None,
                 'voltage_v': Decimal(raw['voltage_v'].strip()) if raw['voltage_v'].strip() else None,
@@ -344,9 +370,9 @@ def read_observations(upload, metadata: UploadMetadata, maximum: int) -> Observe
             if corner is None:
                 corner = this_corner
             row = {'hier_name': path, **values, **this_corner}
-            row.update(reported if values['logic_area'] else {key: None for key in PCT_FIELDS})
+            row.update(reported if values['logic_area'] else {key: None for key in active_pct_fields})
             if values['logic_area']:
-                highest, lowest, precision = _row_precision(values, reported, metadata)
+                highest, lowest, precision = _row_precision(values, reported, metadata, active_count_fields)
                 with localcontext() as context:
                     context.prec = precision
                     context.Emax = max(context.Emax, highest + precision)
@@ -366,7 +392,7 @@ def read_observations(upload, metadata: UploadMetadata, maximum: int) -> Observe
                     if magnitude > largest_integer:
                         largest_integer = magnitude
             rows[path] = ObservedRow({key: row[key] for key in ('level', 'total_area', 'pwr_all_total_mw')},
-                                     _EXTRA_SEPARATOR.join(raw[key].strip() for key in OBSERVED_EXTRA))
+                                     _EXTRA_SEPARATOR.join(raw.get(key, '').strip() for key in OBSERVED_EXTRA))
     except (csv.Error, InvalidOperation, ValueError, OverflowError) as exc:
         raise DomainError('Stored upload is not a validated CSV original', code='stored_upload_mismatch') from exc
     if largest_integer:
@@ -385,6 +411,7 @@ def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompre
     """Validate a complete export. Compression is detected by magic, not filename."""
     original, compressed = _unpack(data, max_uncompressed_bytes)
     reader, header = _csv_reader(original)
+    active_drive_names, active_count_fields, active_pct_fields, active_structure_fields = _schema_fields(header)
     rows: dict[str, dict[str, Any]] = {}
     root_paths: list[str] = []
     corner: dict[str, Any] | None = None
@@ -401,9 +428,9 @@ def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompre
                 _invalid(f"Row {line}: hierarchy path is empty or has an empty segment.")
             if path in rows:
                 _invalid(f"Row {line}: duplicate hierarchy path.")
-            values = {key: _number(raw[key], key, line) for key in COUNT_FIELDS + AREA_FIELDS + POWER_FIELDS + ("level",)}
-            reported = {key: _number(raw[key], key, line, optional=True) for key in PCT_FIELDS}
-            for key in COUNT_FIELDS + ("level",):
+            values = {key: _number(raw[key], key, line) for key in active_count_fields + AREA_FIELDS + POWER_FIELDS + ("level",)}
+            reported = {key: _number(raw[key], key, line, optional=True) for key in active_pct_fields}
+            for key in active_count_fields + ("level",):
                 value = values[key]
                 if value < 0 or value != value.to_integral_value():
                     _invalid(f"Row {line}: {key} must be a nonnegative integer.")
@@ -428,18 +455,18 @@ def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompre
             row = {"hier_name": path, **values, **this_corner}
             # Enough precision for exact finite input sums and tolerance products;
             # the extra digits also make recomputed repeating ratios useful.
-            highest, lowest, precision = _row_precision(values, reported, metadata)
+            highest, lowest, precision = _row_precision(values, reported, metadata, active_count_fields)
             with localcontext() as context:
                 context.prec = precision
                 context.Emax = max(context.Emax, highest + context.prec)
                 context.Emin = min(context.Emin, lowest - context.prec)
                 logic = values["logic_cells"]
                 vt_sum = sum(values[f"{key}_cnt"] for key in VTH_NAMES)
-                drive_sum = sum(values[f"{key}_cnt"] for key in DRIVE_NAMES)
+                drive_sum = sum(values[f"{key}_cnt"] for key in active_drive_names)
                 if vt_sum > logic or drive_sum > logic:
                     _invalid(f"Row {line}: Vth or drive count sum exceeds logic_cells.")
                 unavailable = []
-                for key in PCT_FIELDS:
+                for key in active_pct_fields:
                     denominator = values["logic_area"]
                     pct = reported[key]
                     if pct is not None and not Decimal(0) <= pct <= Decimal(100):
@@ -459,7 +486,7 @@ def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompre
                             row[key] = Decimal(100) * values["cts_area"] / denominator
                         else:
                             row[key] = pct
-                for names in (VTH_NAMES, DRIVE_NAMES):
+                for names in (VTH_NAMES, active_drive_names):
                     percentages = [reported[f"{name}_pct"] for name in names]
                     tolerance = sum((metadata.pct_tolerance if metadata.pct_tolerance is not None else _half_unit(pct) for pct in percentages if pct is not None), Decimal(0))
                     if sum((pct for pct in percentages if pct is not None), Decimal(0)) > Decimal(100) + tolerance:
@@ -488,8 +515,8 @@ def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompre
         _invalid("Every hierarchy path must belong to the single design root.")
     conditions, missing = _conditions(corner, metadata)
     root = rows[root_path]
-    root_summary = {"hier_name": root_path, "level": 0, "metrics": {key: root[key] for key in COUNT_FIELDS + AREA_FIELDS + PCT_FIELDS + POWER_FIELDS}, "quality": root["quality"]}
-    structure = {path: {key: row[key] for key in STRUCTURE_FIELDS} for path, row in rows.items()}
+    root_summary = {"hier_name": root_path, "level": 0, "metrics": {key: root[key] for key in active_count_fields + AREA_FIELDS + active_pct_fields + POWER_FIELDS}, "quality": root["quality"]}
+    structure = {path: {key: row[key] for key in active_structure_fields} for path, row in rows.items()}
     contract = {
         "version": 1, "metadata": metadata.model_dump(mode="python"),
         "encoding": "utf-8-sig", "headers": header,

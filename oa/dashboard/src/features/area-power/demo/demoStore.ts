@@ -23,13 +23,20 @@ export const originals = new Map<string, Promise<Blob>>()
 
 const groups = ['total', 'logic', 'cts', 'sram', 'io', 'others']
 const vths = ['slvt', 'lvt', 'rvt', 'hvt'].flatMap(value => [`vt_${value}`, `vt_${value}_llp`])
-const drives = ['D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D10', 'D12', 'D14', 'D16', 'other'].map(value => `drv_${value}`)
+const drives = ['D0P5', 'D0P7', 'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D10', 'D12', 'D14', 'D16', 'other'].map(value => `drv_${value}`)
+export const DRIVE_GROUP_MEMBERS: Record<string, string[]> = {
+  drv_sub1x_pct: ['drv_D0P5_pct', 'drv_D0P7_pct'],
+  drv_d1_d3_pct: ['drv_D1_pct', 'drv_D2_pct', 'drv_D3_pct'],
+  drv_d4_plus_pct: ['drv_D4_pct', 'drv_D5_pct', 'drv_D6_pct', 'drv_D7_pct', 'drv_D8_pct', 'drv_D10_pct', 'drv_D12_pct', 'drv_D14_pct', 'drv_D16_pct'],
+}
+export const driveGroupKeys = Object.keys(DRIVE_GROUP_MEMBERS)
 const powerGroups = ['all', 'logic', 'sram', 'io', 'others']
 const components = ['internal', 'switching', 'leakage', 'total']
 const percentageKeys = ['cts_area_pct', ...[...vths, ...drives].map(value => `${value}_pct`)]
 export const powerKeys = powerGroups.flatMap(group => components.map(component => `pwr_${group}_${component}_mw`))
-export const metricKeys = [...groups.flatMap(group => [`${group}_cells`, `${group}_area`]), ...percentageKeys, ...[...vths, ...drives].map(value => `${value}_cnt`), ...powerKeys]
-const csvHeaders = ['hier_name', 'level', 'process_label', 'voltage_v', 'temp_c', 'pex', ...metricKeys]
+const csvMetricKeys = [...groups.flatMap(group => [`${group}_cells`, `${group}_area`]), ...percentageKeys, ...[...vths, ...drives].map(value => `${value}_cnt`), ...powerKeys]
+export const metricKeys = [...csvMetricKeys, ...driveGroupKeys]
+const csvHeaders = ['hier_name', 'level', 'process_label', 'voltage_v', 'temp_c', 'pex', ...csvMetricKeys]
 
 export function decimal(value: unknown): Fraction {
   return parseDecimal(value) ?? fail('지원되는 유한 십진수가 아닙니다.')
@@ -70,7 +77,7 @@ function numericMetrics(units: bigint, hot: boolean, rerun: boolean): Metrics {
   for (const key of ['cells', 'area']) result[`total_${key}`] = display(sum(Object.keys(values).map(group => result[`${group}_${key}`])))!
   result.cts_area_pct = '10'
   for (const name of [...vths, ...drives]) { result[`${name}_cnt`] = '0'; result[`${name}_pct`] = '0' }
-  for (const [name, pct] of [['vt_lvt', 25n], ['vt_rvt', 50n], ['vt_hvt', 25n], ['drv_D1', 50n], ['drv_D2', 25n], ['drv_D4', 25n]] as const) {
+  for (const [name, pct] of [['vt_lvt', 25n], ['vt_rvt', 50n], ['vt_hvt', 25n], ['drv_D0P5', 10n], ['drv_D0P7', 5n], ['drv_D1', 35n], ['drv_D2', 25n], ['drv_D4', 25n]] as const) {
     result[`${name}_cnt`] = String(pct * units); result[`${name}_pct`] = String(pct)
   }
   const factor = fraction((hot ? 15n : 10n) + (rerun ? 1n : 0n), 100n)

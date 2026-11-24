@@ -13,7 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from common.area_power.analysis import DRIVE, VT, known_metadata, metric_value, total
+from common.area_power.analysis import DRIVE, DRIVE_GROUP_NAMES, VT, known_metadata, metric_value, total
 from common.area_power.jsonutil import dumps
 
 D = Decimal
@@ -278,7 +278,8 @@ def build_card(view, item: Item, context, thresholds: Thresholds) -> dict:
     return {'id': group.id, 'current_path': ' + '.join(group.current_paths) or None,
             'baseline_path': ' + '.join(group.baseline_paths) or None,
             'reasons': list(item.reasons), 'watched': item.watched, 'notable': notable, 'flags': flags,
-            'area': area, 'power_mw': power, 'vth': _shares(view, group, VT), 'drive': _shares(view, group, DRIVE),
+            'area': area, 'power_mw': power, 'vth': _shares(view, group, VT),
+            'drive_groups': _shares(view, group, DRIVE_GROUP_NAMES), 'drive': _shares(view, group, DRIVE),
             'logic_cells': {key: value for key, value in _metric(view, group, 'logic_cells').items() if key != 'delta_pct'},
             'rolled_up_ancestors': [paths(identifier) for identifier in item.rolled_up], 'top_children': top,
             'ancestor_ids': ancestors[::-1]}
@@ -306,7 +307,7 @@ For every instance in `instances`, follow the reviewer's order:
    change only when it names the scope and agrees with the direction. A note that gives only a direction cannot justify a
    large magnitude: answer needs_review. A numeric expectation in a note that the observation violates: answer unexpected.
 2. If power rose while area stayed similar, look at the Vth mix (`vth`): a larger low-Vth share raises power.
-3. If the Vth mix does not explain it, look at the drive-strength mix (`drive`): more high-drive cells raise power.
+3. If the Vth mix does not explain it, look at the drive-strength mix (`drive_groups` for sub-1x (<D1), D1-D3, D4+ summary and `drive` for individual bins): more high-drive cells raise power.
 4. Otherwise the cause is unknown.
 Verdicts:
 - expected: a supplied note explains the change. Requires note_ids and exact quotes copied from those notes.

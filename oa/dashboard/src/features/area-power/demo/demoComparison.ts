@@ -1,10 +1,10 @@
 import { add, compare, display, divide, fraction, magnitude, multiply, subtract, type Fraction } from '../fraction'
 import type { Payload, TrackingRecord } from '../api'
 import {
-  ancestry, checkedPaths, decimal, descends, designatedBaseline, exactEvidence, fail, latest,
-  list, metricKeys, nonoverlap, notice, object, policyChecked, powerKeys, publicUpload, record,
-  records, requestedMetrics, scoped, scopedRecord, scopedUpload, scopeFromRecord, strings, sum,
-  text, touch, type DemoUpload,
+  DRIVE_GROUP_MEMBERS, ancestry, checkedPaths, decimal, descends, designatedBaseline, driveGroupKeys,
+  exactEvidence, fail, latest, list, metricKeys, nonoverlap, notice, object, policyChecked, powerKeys,
+  publicUpload, record, records, requestedMetrics, scoped, scopedRecord, scopedUpload, scopeFromRecord,
+  strings, sum, text, touch, type DemoUpload,
 } from './demoStore'
 
 export const TRIAGE_ENGINE = 'instance-triage-v1'
@@ -14,7 +14,14 @@ function metricValue(upload: DemoUpload | null, paths: string[], metric: string)
   if (!upload || !paths.length || paths.some(path => !upload.rows[path])) return missing
   const total = (key: string) => sum(paths.map(path => upload.rows[path][key]))
   if (metric.endsWith('_pct')) {
-    const numerator = metric === 'cts_area_pct' ? total('cts_area') : paths.reduce((value, path) => add(value, divide(multiply(decimal(upload.rows[path][metric]), decimal(upload.rows[path].logic_area)), fraction(100n))), fraction(0n))
+    const numerator = metric === 'cts_area_pct'
+      ? total('cts_area')
+      : metric in DRIVE_GROUP_MEMBERS
+        ? paths.reduce((value, path) => {
+            const groupPct = DRIVE_GROUP_MEMBERS[metric].reduce((acc, member) => add(acc, decimal(upload.rows[path][member])), fraction(0n))
+            return add(value, divide(multiply(groupPct, decimal(upload.rows[path].logic_area)), fraction(100n)))
+          }, fraction(0n))
+        : paths.reduce((value, path) => add(value, divide(multiply(decimal(upload.rows[path][metric]), decimal(upload.rows[path].logic_area)), fraction(100n))), fraction(0n))
     const denominator = total('logic_area')
     return { value: denominator.n ? multiply(divide(numerator, denominator), fraction(100n)) : null, numerator, denominator }
   }
@@ -237,12 +244,16 @@ export function triageSelection(comparison: TrackingRecord, thresholds: Payload,
     if (!reasons.length && !isWatched) continue
     for (const reason of reasons) counts[reason as 'area_increase'] += 1
     if (isWatched) counts.watched += 1
-    const shares = (prefix: string) => Object.entries(group.metrics).filter(([metric, value]) => metric.startsWith(prefix) && metric.endsWith('_pct') && value.pct_point_change != null && Number(text(value.pct_point_change)) !== 0)
+    const driveGroupSet = new Set(driveGroupKeys)
+    const shares = (predicate: (metric: string) => boolean) => Object.entries(group.metrics).filter(([metric, value]) => predicate(metric) && value.pct_point_change != null && Number(text(value.pct_point_change)) !== 0)
       .map(([metric, value]) => ({ name: metric.replace(/_pct$/, ''), baseline_pct: value.baseline, current_pct: value.current, delta_pp: value.pct_point_change }))
     cards.push({ id: group.id, current_path: group.current.join(' + ') || null, baseline_path: group.baseline.join(' + ') || null, reasons, watched: isWatched, notable: reasons.length > 0,
       flags: library === 'same' ? [] : [`library_${library}`], area: { baseline: area.baseline, current: area.current, delta: area.delta, delta_pct: area.relative_change_pct },
       power_mw: context.power.analyzed ? { baseline: power.baseline, current: power.current, delta: power.delta, delta_pct: power.relative_change_pct } : { excluded: 'corner_different' },
-      vth: shares('vt_'), drive: shares('drv_'), rolled_up_ancestors: [], top_children: [], ancestor_ids: [] })
+      vth: shares(m => m.startsWith('vt_') && m.endsWith('_pct')),
+      drive_groups: shares(m => driveGroupSet.has(m)),
+      drive: shares(m => m.startsWith('drv_') && m.endsWith('_pct') && !driveGroupSet.has(m)),
+      rolled_up_ancestors: [], top_children: [], ancestor_ids: [] })
   }
   counts.total = cards.length
   const known = new Set([...groups.values()].flatMap(group => group.current))

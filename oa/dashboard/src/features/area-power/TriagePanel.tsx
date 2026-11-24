@@ -64,8 +64,20 @@ function summary(card: Record<string, unknown>) {
   return parts.join(' · ')
 }
 
-function shares(card: Record<string, unknown>, key: 'vth' | 'drive') {
-  return array(card[key]).map(object).slice(0, 5).map(share => `${text(share.name).replace(/^vt_|^drv_/, '').toUpperCase()} ${formatPercent(share.baseline_pct)}% → ${formatPercent(share.current_pct)}% (${signed(share.delta_pp, '%p')})`).join(', ')
+const DRIVE_SHARE_LABEL: Record<string, string> = {
+  drv_sub1x: 'sub-1x (<D1)',
+  drv_d1_d3: 'D1-D3',
+  drv_d4_plus: 'D4+',
+  drv_other: 'other',
+}
+
+function shareLabel(raw: string, key: 'vth' | 'drive_groups' | 'drive') {
+  if (key === 'drive_groups' || key === 'drive') return DRIVE_SHARE_LABEL[raw] || raw.replace(/^drv_/, '')
+  return raw.replace(/^vt_/, '').toUpperCase()
+}
+
+function shares(card: Record<string, unknown>, key: 'vth' | 'drive_groups' | 'drive') {
+  return array(card[key]).map(object).slice(0, 5).map(share => `${shareLabel(text(share.name), key)} ${formatPercent(share.baseline_pct)}% → ${formatPercent(share.current_pct)}% (${signed(share.delta_pp, '%p')})`).join(', ')
 }
 
 export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onLocate }: {
@@ -258,7 +270,8 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
         <span className="triage-head"><span className={`verdict-tag verdict-${item.verdict}`}>{VERDICT_LABEL[item.verdict] || item.verdict}</span><strong>{text(card.current_path) || text(card.baseline_path)}</strong>{object(item.card).watched === true && <span className="side-tag">주요</span>}<span className="triage-delta">{summary(card)}</span></span>
         <span className="triage-reason">원인: {CAUSE_LABEL[item.cause] || item.cause} · {item.explanation}</span>
         {shares(card, 'vth') && <span className="triage-evidence">Vth: {shares(card, 'vth')}</span>}
-        {shares(card, 'drive') && <span className="triage-evidence">Drive: {shares(card, 'drive')}</span>}
+        {shares(card, 'drive_groups') && <span className="triage-evidence">Drive (그룹): {shares(card, 'drive_groups')}</span>}
+        {shares(card, 'drive') && <span className="triage-evidence">{shares(card, 'drive_groups') ? 'Drive (세부)' : 'Drive'}: {shares(card, 'drive')}</span>}
         {(item.quotes || []).length > 0 && <span className="triage-evidence">근거 메모: {(item.quotes || []).slice(0, 3).map(quote => `"${quote}"`).join(' / ')}</span>}
         {(flags.length > 0 || item.failed || ancestors.length > 0) && <span className="triage-flags">{[...flags, item.failed ? `AI 판정 실패(${text(item.failure)})` : '', ancestors.length ? `영향받은 상위 ${ancestors.slice(0, 3).join(', ')}` : ''].filter(Boolean).join(' · ')}</span>}
       </button>

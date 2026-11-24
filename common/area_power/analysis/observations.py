@@ -13,6 +13,7 @@ from common.area_power.jsonutil import digest
 from common.area_power.models import CALCULATION_CONTRACT, COMPARISON_FORMAT, ComparisonRequest, MappingPayload
 from .groups import (
     D,
+    DRIVE_GROUP_METRICS,
     Group,
     METRICS,
     POWER,
@@ -217,7 +218,7 @@ _VIEW_BUILDING: dict[tuple[str, str], threading.Lock] = {}
 VIEW_CACHE_SIZE = 4
 FROZEN_KEYS = ('request', 'frozen', 'result_format', 'calculation_contract', 'correspondence')
 DEFAULT_OBSERVED = ('total_area', 'pwr_all_total_mw')
-OBSERVABLE = tuple(metric for metric in METRICS if metric in DEFAULT_OBSERVED + OBSERVED_EXTRA + ('cts_area_pct',))
+OBSERVABLE = tuple(metric for metric in METRICS if metric in DEFAULT_OBSERVED + OBSERVED_EXTRA + ('cts_area_pct',) + DRIVE_GROUP_METRICS)
 MAX_OBSERVED = 16
 
 

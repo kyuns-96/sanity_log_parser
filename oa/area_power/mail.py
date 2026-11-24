@@ -123,6 +123,18 @@ FLAGS = {"area_conditions_unconfirmed": "Area 조건 미확인", "power_conditio
          "removed_in_current": "현재 실행에 없음"}
 EXCLUSIONS = {"corner_different": "양쪽 corner가 다름", "analysis_conditions_different": "분석 조건이 다름",
               "area_unit_different": "area 단위가 다름", "baseline_missing": "기준 실행 없음"}
+DRIVE_SHARE_LABELS = {
+    "drv_sub1x": "sub-1x (<D1)",
+    "drv_d1_d3": "D1-D3",
+    "drv_d4_plus": "D4+",
+    "drv_other": "other",
+}
+
+
+def _share_label(name: str, key: str) -> str:
+    if key in ("drive_groups", "drive"):
+        return DRIVE_SHARE_LABELS.get(name, name[4:] if name.startswith("drv_") else name)
+    return name
 
 
 def digest_context(db, job, owner):
@@ -174,8 +186,9 @@ def _item_lines(item):
         values.append(f"Power {_number(power.get('baseline'))} → {_number(power.get('current'))} mW ({_signed(power.get('delta_pct'), '%')})")
     lines = [f"- {path}", "    " + " · ".join(values),
              f"    원인: {CAUSES.get(item['cause'], item['cause'])} · {' '.join(str(item['explanation']).split())}"]
-    for title, key in (("Vth", "vth"), ("Drive", "drive")):
-        shares = [f"{share['name']} {_number(share['baseline_pct'], '%')} → {_number(share['current_pct'], '%')} ({_signed(share['delta_pp'], '%p')})" for share in card.get(key, [])[:6]]
+    drive_title = "Drive (세부)" if card.get("drive_groups") else "Drive"
+    for title, key in (("Vth", "vth"), ("Drive (그룹)", "drive_groups"), (drive_title, "drive")):
+        shares = [f"{_share_label(share['name'], key)} {_number(share['baseline_pct'], '%')} → {_number(share['current_pct'], '%')} ({_signed(share['delta_pp'], '%p')})" for share in card.get(key, [])[:6]]
         if shares:
             lines.append(f"    {title}: " + ", ".join(shares))
     if item.get("quotes"):

@@ -1,11 +1,16 @@
 // Columns the hierarchy browser can show. The ids match the server's
-// observable comparison metrics (area_power/common/analysis.py OBSERVABLE).
+// observable comparison metrics (common/area_power/analysis/observations.py OBSERVABLE).
 export type MetricDef = { id: string; label: string; group: string; ratio: boolean; unit: string }
 
 const capital = (value: string) => value.toUpperCase() === value ? value : value[0].toUpperCase() + value.slice(1)
 const categories = ['total', 'logic', 'cts', 'sram', 'io', 'others']
 const vth = ['slvt', 'lvt', 'rvt', 'hvt']
-const drives = ['D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D10', 'D12', 'D14', 'D16', 'other']
+const driveGroups: { id: string; label: string }[] = [
+  { id: 'drv_sub1x_pct', label: 'sub-1x (<D1)' },
+  { id: 'drv_d1_d3_pct', label: 'D1-D3' },
+  { id: 'drv_d4_plus_pct', label: 'D4+' },
+]
+const drives = ['D0P5', 'D0P7', 'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D10', 'D12', 'D14', 'D16', 'other']
 const powerGroups = ['all', 'logic', 'sram', 'io', 'others']
 const powerParts = ['total', 'internal', 'switching', 'leakage']
 
@@ -14,6 +19,7 @@ export const METRIC_CATALOG: MetricDef[] = [
   { id: 'cts_area_pct', label: 'CTS area', group: 'Area', ratio: true, unit: '%' },
   ...vth.map(name => ({ id: `vt_${name}_pct`, label: name.toUpperCase(), group: 'Vth', ratio: true, unit: '%' })),
   ...vth.map(name => ({ id: `vt_${name}_llp_pct`, label: `${name.toUpperCase()} LLP`, group: 'Vth', ratio: true, unit: '%' })),
+  ...driveGroups.map(item => ({ ...item, group: 'Drive', ratio: true, unit: '%' })),
   ...drives.map(name => ({ id: `drv_${name}_pct`, label: name === 'other' ? 'Drive other' : name, group: 'Drive', ratio: true, unit: '%' })),
   ...powerGroups.flatMap(group => powerParts.map(part => ({ id: `pwr_${group}_${part}_mw`, label: `${group === 'all' ? 'Power' : `${group === 'io' ? 'IO' : group === 'sram' ? 'SRAM' : capital(group)} power`}${part === 'total' ? '' : ` ${part}`}`, group: 'Power', ratio: false, unit: 'mW' }))),
   ...categories.map(group => ({ id: `${group}_cells`, label: `${group === 'cts' ? 'CTS' : group === 'io' ? 'IO' : group === 'sram' ? 'SRAM' : capital(group)} cells`, group: 'Cells', ratio: false, unit: '' })),

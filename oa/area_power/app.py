@@ -263,7 +263,7 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
                    offset: int = Query(default=0, ge=0), limit: int = Query(default=200, ge=1, le=500),
                    search: str = Query(default="", max_length=1000),
                    parent: str | None = Query(default=None, max_length=64, pattern="^[0-9a-f]*$"),
-                   metrics: str = Query(default="", max_length=2000, pattern="^[a-z0-9_,]*$"),
+                   metrics: str = Query(default="", max_length=2000, pattern="^[A-Za-z0-9_,]*$"),
                    min_area: Decimal | None = Query(default=None, ge=0)):
         observed = [name for name in metrics.split(",") if name] or None
         from common.area_power.models import COMPARISON_FORMAT

@@ -33,6 +33,10 @@ vt_hvt_cnt
 vt_hvt_pct
 vt_hvt_llp_cnt
 vt_hvt_llp_pct
+drv_D0P5_cnt
+drv_D0P5_pct
+drv_D0P7_cnt
+drv_D0P7_pct
 drv_D1_cnt
 drv_D1_pct
 drv_D2_cnt

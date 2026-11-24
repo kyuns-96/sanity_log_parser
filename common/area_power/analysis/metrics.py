@@ -5,8 +5,11 @@ from .groups import (
     D,
     DISTRIBUTIONS,
     DRIVE,
+    DRIVE_GROUP_MEMBERS,
+    LEGACY_DRIVE,
     POWER,
     QUALITY,
+    SUB1X_DRIVES,
     VT,
     nonoverlap,
 )
@@ -19,7 +22,7 @@ def total(rows: dict, paths: list[str], metric: str):
     for path in paths:
         row = rows[path]
         if metric in QUALITY:
-            prefixes = VT if metric.startswith('vth') else DRIVE
+            prefixes = VT if metric.startswith('vth') else tuple(v for v in DRIVE if f'{v}_cnt' in row)
             value = D(row['logic_cells']) - sum((D(row[f'{v}_cnt']) for v in prefixes), D(0))
         else:
             value = row.get(metric)
@@ -36,6 +39,20 @@ def metric_value(rows, paths, metric):
             n = total(rows, paths, 'cts_area')
         elif d is None:
             n = None
+        elif metric in DRIVE_GROUP_MEMBERS:
+            members = DRIVE_GROUP_MEMBERS[metric]
+            contributions = []
+            missing = False
+            for path in paths:
+                area = D(rows[path]['logic_area'])
+                if area == 0:
+                    continue
+                member_values = [rows[path].get(member) for member in members]
+                if any(value is None for value in member_values):
+                    missing = True
+                    break
+                contributions.append(sum((D(value) for value in member_values), D(0)) * area / D(100))
+            n = None if missing else sum(contributions, D(0))
         else:
             contributions = [D(rows[path][metric]) * D(rows[path]['logic_area']) / D(100)
                              for path in paths if D(rows[path]['logic_area']) != 0 and rows[path].get(metric) is not None]
@@ -99,7 +116,16 @@ def evaluate_metric(metric, group, current, baseline, cm, bm, cu, bu, policy, pa
     current_paths = group.current_paths if nonoverlap(group.current_paths, cm.hierarchy_separator) else []
     bn = bd = cn = cd = None
     if metric in DISTRIBUTIONS:
-        prefixes = VT if metric.startswith('vth') else DRIVE
+        if metric.startswith('vth'):
+            prefixes = VT
+        else:
+            has_sub1x = any(
+                rows[path].get(f'{name}_pct') is not None
+                for rows, paths in ((b_rows, baseline_paths), (current.rows, current_paths))
+                for path in paths if path in rows
+                for name in SUB1X_DRIVES
+            )
+            prefixes = DRIVE if has_sub1x else LEGACY_DRIVE
         bd, cd = total(b_rows, baseline_paths, 'logic_area'), total(current.rows, current_paths, 'logic_area')
         b, c = None, None
         if bd and cd:

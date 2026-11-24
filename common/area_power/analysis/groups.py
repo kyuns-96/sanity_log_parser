@@ -18,12 +18,21 @@ from common.area_power.models import CORRESPONDENCE_POLICY, UploadMetadata
 D = Decimal
 CATEGORIES = ('total', 'logic', 'cts', 'sram', 'io', 'others')
 VT = tuple(f'vt_{v}{suffix}' for v in ('slvt', 'lvt', 'rvt', 'hvt') for suffix in ('', '_llp'))
-DRIVE = tuple(f'drv_{v}' for v in ('D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D10', 'D12', 'D14', 'D16', 'other'))
+SUB1X_DRIVES = ('drv_D0P5', 'drv_D0P7')
+LEGACY_DRIVE = tuple(f'drv_{v}' for v in ('D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D10', 'D12', 'D14', 'D16', 'other'))
+DRIVE = SUB1X_DRIVES + LEGACY_DRIVE
+DRIVE_GROUP_NAMES = ('drv_sub1x', 'drv_d1_d3', 'drv_d4_plus')
+DRIVE_GROUP_MEMBERS = {
+    'drv_sub1x_pct': ('drv_D0P5_pct', 'drv_D0P7_pct'),
+    'drv_d1_d3_pct': ('drv_D1_pct', 'drv_D2_pct', 'drv_D3_pct'),
+    'drv_d4_plus_pct': ('drv_D4_pct', 'drv_D5_pct', 'drv_D6_pct', 'drv_D7_pct', 'drv_D8_pct', 'drv_D10_pct', 'drv_D12_pct', 'drv_D14_pct', 'drv_D16_pct'),
+}
+DRIVE_GROUP_METRICS = tuple(f'{name}_pct' for name in DRIVE_GROUP_NAMES)
 POWER = tuple(f'pwr_{c}_{p}_mw' for c in ('all', 'logic', 'sram', 'io', 'others') for p in ('internal', 'switching', 'leakage', 'total'))
 STRUCTURAL = tuple(f'{c}_{s}' for c in CATEGORIES for s in ('cells', 'area')) + ('cts_area_pct',) + tuple(f'{c}_{s}' for c in VT + DRIVE for s in ('cnt', 'pct'))
 QUALITY = ('vth_unclassified_cnt', 'drive_unclassified_cnt')
 DISTRIBUTIONS = ('vth_distribution_change', 'drive_distribution_change')
-METRICS = STRUCTURAL + QUALITY + DISTRIBUTIONS + POWER
+METRICS = STRUCTURAL + DRIVE_GROUP_METRICS + QUALITY + DISTRIBUTIONS + POWER
 SCOPE_FIELDS = ('project_id', 'version_id', 'block_id', 'snapshot_id', 'condition_key')
 
 
@@ -225,7 +234,7 @@ def resolve_groups(current, baseline, cm, bm, mapping: dict | None, mapping_reas
 def expand_metrics(requested: list[str]) -> tuple[str, ...]:
     if not requested:
         return METRICS
-    families = {'area': tuple(m for m in STRUCTURAL if '_area' in m), 'count': tuple(m for m in STRUCTURAL if m.endswith(('_cnt', '_cells'))), 'vth': tuple(m for m in STRUCTURAL + QUALITY + DISTRIBUTIONS if m.startswith(('vt_', 'vth_'))), 'drive': tuple(m for m in STRUCTURAL + QUALITY + DISTRIBUTIONS if m.startswith(('drv_', 'drive_'))), 'power': POWER}
+    families = {'area': tuple(m for m in STRUCTURAL if '_area' in m), 'count': tuple(m for m in STRUCTURAL if m.endswith(('_cnt', '_cells'))), 'vth': tuple(m for m in STRUCTURAL + QUALITY + DISTRIBUTIONS if m.startswith(('vt_', 'vth_'))), 'drive': tuple(m for m in DRIVE_GROUP_METRICS + STRUCTURAL + QUALITY + DISTRIBUTIONS if m.startswith(('drv_', 'drive_'))), 'power': POWER}
     result = []
     for name in requested:
         for metric in families.get(name, (name,)):
