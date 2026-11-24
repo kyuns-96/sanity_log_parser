@@ -23,6 +23,7 @@ from common.area_power.db import Database
 from common.area_power.errors import ConfigurationError, DomainError
 from common.area_power.jsonutil import loads, public
 from common.area_power.models import UploadMetadata
+from vwp_bridge.area_power.catalog import resolve_catalog
 from vwp_bridge.area_power.ingest import ingest_upload
 from vwp_bridge.area_power.worker import ProcessingWorker
 
@@ -183,6 +184,29 @@ def create_app(settings=None, db=None) -> FastAPI:
                 chunks.append(chunk)
             result = await run_in_threadpool(ingest_upload, db, settings, b"".join(chunks), filename, metadata, "vwp_server")
         return JSONResponse(public(result), status_code=201)
+
+    @app.get("/api/area-power/catalog/resolve")
+    async def catalog_resolve(
+        project: str,
+        block: str,
+        net_ver: str | None = None,
+        revision: str | None = None,
+        layout: str | None = None,
+        source_namespace: str | None = None,
+        version: str | None = None,
+    ):
+        result = await run_in_threadpool(
+            resolve_catalog,
+            db,
+            project=project,
+            block=block,
+            version=version,
+            net_ver=net_ver,
+            revision=revision,
+            layout=layout,
+            source_namespace=source_namespace,
+        )
+        return JSONResponse(public(result))
 
     @app.get("/api/area-power/uploads/{upload_id}")
     async def upload_metadata(upload_id: UUID):
