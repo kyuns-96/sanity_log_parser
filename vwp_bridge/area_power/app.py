@@ -12,7 +12,7 @@ from uuid import UUID
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
@@ -23,12 +23,27 @@ from common.area_power.db import Database
 from common.area_power.errors import ConfigurationError, DomainError
 from common.area_power.jsonutil import loads, public
 from common.area_power.models import UploadMetadata
-from vwp_bridge.area_power.catalog import resolve_catalog
+from vwp_bridge.area_power.catalog import register_version, resolve_catalog
 from vwp_bridge.area_power.ingest import ingest_upload
 from vwp_bridge.area_power.worker import ProcessingWorker
 
 logger = logging.getLogger(__name__)
 _METADATA_LIMIT = 65536
+
+
+class CatalogVersionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project: str
+    block: str
+    net_ver: str
+    revision: str
+    layout: str | None = None
+    source_namespace: str | None = None
+    previous_version: str | None = None
+    previous_net_ver: str | None = None
+    previous_revision: str | None = None
+    previous_layout: str | None = None
+    previous_source_namespace: str | None = None
 
 
 def _error(code: str, message: str, status: int) -> JSONResponse:
@@ -207,6 +222,26 @@ def create_app(settings=None, db=None) -> FastAPI:
             source_namespace=source_namespace,
         )
         return JSONResponse(public(result))
+
+    @app.post("/api/area-power/catalog/versions")
+    async def catalog_register_version(body: CatalogVersionInput):
+        result = await run_in_threadpool(
+            register_version,
+            db,
+            project=body.project,
+            block=body.block,
+            net_ver=body.net_ver,
+            revision=body.revision,
+            layout=body.layout,
+            source_namespace=body.source_namespace,
+            previous_version=body.previous_version,
+            previous_net_ver=body.previous_net_ver,
+            previous_revision=body.previous_revision,
+            previous_layout=body.previous_layout,
+            previous_source_namespace=body.previous_source_namespace,
+        )
+        status = 201 if result.get("created") or result.get("bound") else 200
+        return JSONResponse(public(result), status_code=status)
 
     @app.get("/api/area-power/uploads/{upload_id}")
     async def upload_metadata(upload_id: UUID):
