@@ -46,6 +46,19 @@ function breakableName(name: string) {
   ))
 }
 
+// Long revisions stay on one line: the middle is elided when space runs out,
+// keeping the start and the distinguishing tail visible. Full text on hover.
+function RevisionText({ value }: { value: string }) {
+  const tailLength = value.length > 16 ? Math.min(12, Math.floor(value.length / 3)) : 0
+  if (!tailLength) return <span className="tracking-rev" title={value}><span className="tracking-rev-head">{value}</span></span>
+  return (
+    <span className="tracking-rev" title={value}>
+      <span className="tracking-rev-head">{value.slice(0, value.length - tailLength)}</span>
+      <span className="tracking-rev-tail">{value.slice(-tailLength)}</span>
+    </span>
+  )
+}
+
 interface TrackingOverviewProps {
   auth: Auth
   project: AtlasProject
@@ -239,20 +252,19 @@ export function TrackingOverview({
     }
     return (
       <dl className="tracking-ver-meta">
-        <dt>NET_VER</dt>
-        <dd>
+        <dt className="k-net">NET_VER</dt>
+        <dd className="v-net">
           <strong>{meta.netVer || '—'}</strong>
           {meta.layout && <span className="tracking-layout-pill">{meta.layout}</span>}
-          {meta.isPor && <span className="tracking-por-pill">PoR</span>}
         </dd>
-        <dt>REVISION</dt>
-        <dd>{meta.revision || <span className="text-muted">대기</span>}</dd>
-        <dt>ECO_NUM</dt>
-        <dd>
+        <dt className="k-eco">ECO_NUM</dt>
+        <dd className="v-eco">
           {meta.ecos.length > 0
             ? meta.ecos.map(eco => <span key={eco} className="tracking-eco-pill">{eco}</span>)
             : <span className="text-muted">—</span>}
         </dd>
+        <dt className="k-rev">REVISION</dt>
+        <dd className="v-rev">{meta.revision ? <RevisionText value={meta.revision} /> : <span className="text-muted">대기</span>}</dd>
       </dl>
     )
   }
@@ -379,6 +391,7 @@ export function TrackingOverview({
                   const target = object(typ.target)
                   const baseInfo = describeBlockBaseline(row.block_id, row.block_name)
                   const currentScope = `${project.name} · ${row.block_name}`
+                  const currentMeta = resolveRoundVersionMeta(row, activeRound.net_ver)
                   const completedCornerMetrics = row.corners.filter(c => c.logic_area_delta_pct || c.power_current_mw)
                   const unexpected = Number(row.totals?.unexpected ?? 0)
                   const needsReview = Number(row.totals?.needs_review ?? 0)
@@ -398,6 +411,7 @@ export function TrackingOverview({
                           <div className="tracking-ver-scope" title={baseInfo.label}>
                             <span className={baseInfo.configured ? '' : 'text-muted'}>{baseInfo.label}</span>
                             {baseInfo.scopeTag && <span className="tracking-scope-tag">{baseInfo.scopeTag}</span>}
+{baseInfo.version?.isPor && <span className="tracking-por-pill">PoR</span>}
                           </div>
                           {renderVersionMeta(baseInfo.version, baseInfo.emptyHint)}
                         </div>
@@ -406,8 +420,9 @@ export function TrackingOverview({
                         <div className="tracking-ver-box">
                           <div className="tracking-ver-scope" title={currentScope}>
                             <span>{currentScope}</span>
+                            {currentMeta.isPor && <span className="tracking-por-pill">PoR</span>}
                           </div>
-                          {renderVersionMeta(resolveRoundVersionMeta(row, activeRound.net_ver), '리비전 대기')}
+                          {renderVersionMeta(currentMeta, '리비전 대기')}
                         </div>
                       </td>
                       <td>
@@ -515,6 +530,7 @@ export function TrackingOverview({
                             <div className="tracking-ver-scope" title={baseInfo.label}>
                               <span className={baseInfo.configured ? '' : 'text-muted'}>{baseInfo.label}</span>
                               {baseInfo.scopeTag && <span className="tracking-scope-tag">{baseInfo.scopeTag}</span>}
+{baseInfo.version?.isPor && <span className="tracking-por-pill">PoR</span>}
                             </div>
                             {renderVersionMeta(baseInfo.version, baseInfo.emptyHint)}
                           </div>
@@ -523,19 +539,22 @@ export function TrackingOverview({
                           <div className="tracking-ver-box">
                             <div className="tracking-ver-scope" title={currentScope}>
                               <span className={latest?.version ? '' : 'text-muted'}>{currentScope}</span>
+                              {latest?.version?.isPor && <span className="tracking-por-pill">PoR</span>}
                             </div>
                             {renderVersionMeta(latest?.version || null, '업로드 없음')}
                           </div>
                         </td>
                         <td>
-                          <div className="tracking-corner-chips">
+                          <div className="tracking-corner-chips is-grid">
                             {latest?.corners.length ? (
                               <>
-                                {latest.corners.slice(0, 6).map(corner => (
-                                  <span key={corner.key} className="tracking-chip" title={corner.label}>{corner.label}</span>
+                                {latest.corners.slice(0, 8).map(corner => (
+                                  <span key={corner.key} className="tracking-chip">{corner.label}</span>
                                 ))}
-                                {latest.corners.length > 6 && (
-                                  <span className="tracking-chip">+{latest.corners.length - 6}</span>
+                                {latest.corners.length > 8 && (
+                                  <span className="tracking-chip is-more" title={latest.corners.slice(8).map(corner => corner.label).join('\n')}>
+                                    +{latest.corners.length - 8}개 더
+                                  </span>
                                 )}
                               </>
                             ) : (

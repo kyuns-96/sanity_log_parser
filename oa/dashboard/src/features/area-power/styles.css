@@ -519,24 +519,25 @@
 /* Proportional columns: every column grows with the screen, not just the corner list. */
 .area-power .tracking-latest-table, .area-power .tracking-round-table { table-layout: fixed; width: 100%; }
 .area-power .tracking-latest-table { min-width: 1100px; }
-.area-power .tracking-latest-table col.col-block { width: 13%; }
-.area-power .tracking-latest-table col.col-version { width: 22%; }
-.area-power .tracking-latest-table col.col-corners { width: auto; }
+.area-power .tracking-latest-table col.col-block { width: 11%; }
+.area-power .tracking-latest-table col.col-version { width: 26%; }
+.area-power .tracking-latest-table col.col-corners { width: 37%; }
 .area-power .tracking-latest-table col.col-action { width: 132px; }
 .area-power .tracking-round-table { min-width: 1240px; }
-.area-power .tracking-round-table col.col-block { width: 11%; }
-.area-power .tracking-round-table col.col-version { width: 19%; }
-.area-power .tracking-round-table col.col-corners { width: 19%; }
+.area-power .tracking-round-table col.col-block { width: 10%; }
+.area-power .tracking-round-table col.col-version { width: 21%; }
+.area-power .tracking-round-table col.col-corners { width: 18%; }
 .area-power .tracking-round-table col.col-summary { width: auto; }
 .area-power .tracking-round-table col.col-status { width: 180px; }
 @media (min-width: 2560px) {
-  .area-power .tracking-latest-table col.col-block { width: 8%; }
-  .area-power .tracking-latest-table col.col-version { width: 12%; }
-  .area-power .tracking-round-table col.col-block { width: 7%; }
-  .area-power .tracking-round-table col.col-version { width: 12%; }
+  .area-power .tracking-latest-table col.col-block { width: 9%; }
+  .area-power .tracking-latest-table col.col-version { width: 21%; }
+  .area-power .tracking-latest-table col.col-corners { width: 49%; }
+  .area-power .tracking-round-table col.col-block { width: 8%; }
+  .area-power .tracking-round-table col.col-version { width: 17%; }
 }
 .area-power .tracking-ver-cell { min-width: 0; }
-.area-power .tracking-ver-box { container-type: inline-size; min-width: 0; max-width: 440px; }
+.area-power .tracking-ver-box { container-type: inline-size; min-width: 0; max-width: 720px; }
 .area-power .tracking-ver-scope { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; min-height: 18px; font-size: var(--text-caption); font-weight: 600; color: var(--text-secondary); }
 .area-power .tracking-ver-scope > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .area-power .tracking-scope-tag { flex: none; display: inline-flex; align-items: center; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-soft); color: var(--text-muted); font-size: 10.5px; font-weight: 600; line-height: 1.5; white-space: nowrap; }
@@ -548,10 +549,22 @@
 .area-power .tracking-ver-meta dd strong { display: inline; margin: 0; font-family: var(--font-mono); font-size: var(--text-caption); font-weight: 700; color: var(--ink); }
 .area-power .tracking-layout-pill { display: inline-flex; align-items: center; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--text-secondary); font-family: var(--font-sans); font-size: 10.5px; font-weight: 600; line-height: 1.5; }
 .area-power .tracking-por-pill { display: inline-flex; align-items: center; padding: 0 5px; border: 1px solid var(--accent-line); border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-family: var(--font-sans); font-size: 10.5px; font-weight: 700; line-height: 1.5; }
+.area-power .tracking-ver-scope .tracking-por-pill { flex: none; }
 .area-power .tracking-eco-pill { display: inline-flex; align-items: center; padding: 0 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--ink); font-family: var(--font-mono); font-size: 11px; font-weight: 550; line-height: 1.55; white-space: nowrap; }
 /* Wide enough version cell: labels on top, values below, three columns in two rows. */
-@container (min-width: 300px) {
-  .area-power .tracking-ver-meta { grid-auto-flow: column; grid-template-rows: auto auto; grid-template-columns: minmax(132px, max-content) minmax(52px, max-content) max-content; justify-content: start; gap: 2px 18px; padding: 8px 12px; }
+/* Version card: one row for NET_VER/layout/PoR + ECO, the revision gets the full width on its own row. */
+.area-power .tracking-ver-meta dd.v-rev { flex-wrap: nowrap; min-width: 0; overflow: hidden; }
+.area-power .tracking-rev { display: flex; min-width: 0; max-width: 100%; white-space: nowrap; }
+.area-power .tracking-rev-head { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.area-power .tracking-rev-tail { flex: none; }
+@container (min-width: 340px) {
+  .area-power .tracking-ver-meta { grid-template-columns: max-content minmax(0, max-content) max-content max-content minmax(0, 1fr); grid-template-areas: "kn vn ke ve ." "kr vr vr vr vr"; gap: 4px 10px; padding: 8px 12px; }
+  .area-power .tracking-ver-meta .k-net { grid-area: kn; }
+  .area-power .tracking-ver-meta .v-net { grid-area: vn; }
+  .area-power .tracking-ver-meta .k-eco { grid-area: ke; margin-left: 12px; }
+  .area-power .tracking-ver-meta .v-eco { grid-area: ve; }
+  .area-power .tracking-ver-meta .k-rev { grid-area: kr; }
+  .area-power .tracking-ver-meta .v-rev { grid-area: vr; }
 }
 .area-power .tracking-cell-stack { display: flex; flex-direction: column; gap: 2px; }
 .area-power .tracking-cell-stack small { color: var(--text-secondary); font-size: var(--text-caption); }
@@ -570,7 +583,10 @@
 .area-power .tracking-alert-text { display: inline-flex; align-items: center; gap: 4px; color: var(--danger); font-weight: 600; }
 .area-power .tracking-ok-text { display: inline-flex; align-items: center; gap: 4px; color: var(--success); font-weight: 550; }
 .area-power .tracking-corner-chips, .area-power .tracking-chip-list { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.area-power .tracking-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 5px; font-size: var(--text-caption); background: var(--surface-soft); color: var(--text-secondary); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.area-power .tracking-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 5px; font-size: var(--text-caption); background: var(--surface-soft); color: var(--text-secondary); max-width: 100%; overflow-wrap: anywhere; line-height: 1.5; }
+/* Corner chips keep their natural width and flow onto new lines; a label wraps inside its chip only if it is wider than the column. */
+.area-power .tracking-corner-chips.is-grid { align-items: flex-start; }
+.area-power .tracking-chip.is-more { justify-content: center; color: var(--text-muted); border-style: dashed; cursor: help; }
 .area-power .tracking-chip button { border: 0; background: transparent; color: var(--text-muted); padding: 0; display: inline-flex; cursor: pointer; }
 .area-power .tracking-chip.status-completed { border-color: var(--success-line); background: var(--success-soft); color: var(--success); }
 .area-power .tracking-chip.status-waiting_upload, .area-power .tracking-chip.status-mapping_review, .area-power .tracking-chip.status-waiting_baseline { border-color: var(--warning-line); background: var(--warning-soft); color: var(--warning); }
