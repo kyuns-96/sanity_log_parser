@@ -196,9 +196,17 @@ class AtlasCatalog:
         process_by_project = {row["payload"]["project_id"]: row["payload"]["process"] for row in self.db.execute(
             "SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s",
             ("atlas.project-process.%",)).fetchall()}
-        status_by_project = {row["payload"]["project_id"]: row["payload"].get("status", "active") for row in self.db.execute(
-            "SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s",
-            ("atlas.project-status.%",)).fetchall()}
+        status_by_project = {}
+        for row in self.db.execute(
+            "SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' "
+            "AND (workspace_key LIKE %s OR workspace_key LIKE %s) "
+            "ORDER BY COALESCE((payload->>'revision')::bigint, 0) ASC, created_at ASC, record_id ASC",
+            ("atlas.project-status.%", "atlas.pstat.%"),
+        ).fetchall():
+            p = row["payload"] or {}
+            pid_val = p.get("project_id")
+            if pid_val and p.get("status") in ("active", "completed"):
+                status_by_project[pid_val] = p["status"]
         por_by_block = {}
         for row in self.db.execute("SELECT workspace_key, version, state FROM {oa} WHERE record_type='WS_POR'").fetchall():
             state = row["state"] or {}
@@ -236,23 +244,20 @@ class AtlasCatalog:
             fail("INVALID_REQUEST")
         self.lock()
         self.project(project_id, write=True, manage=self.can_manage)
-        key = "atlas.project-status." + project_id
-        payload = {
+        rows = self.db.execute(
+            "SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' "
+            "AND (workspace_key LIKE %s OR workspace_key LIKE %s) "
+            "AND payload->>'project_id' = %s",
+            ("atlas.project-status.%", "atlas.pstat.%", project_id),
+        ).fetchall()
+        next_revision = max((int((r["payload"] or {}).get("revision") or 0) for r in rows), default=0) + 1
+        self.ws.put("WS_CONFIG", "atlas.pstat." + uuid4().hex, {
             "project_id": project_id,
             "status": status,
+            "revision": next_revision,
             "updated_by": self.actor.user_id,
             "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-        existing = self.db.execute(
-            "SELECT record_id FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key=%s", (key,)
-        ).fetchone()
-        if existing:
-            self.db.execute(
-                "UPDATE {oa} SET payload=%s, updated_at=clock_timestamp() WHERE record_id=%s",
-                (json_value(payload), existing["record_id"]),
-            )
-        else:
-            self.ws.put("WS_CONFIG", key, payload)
+        })
         return {"status": "UPDATED", "project_id": project_id, "project_status": status}
 
     def assign_por(self, project_id: str, block_id: str, version_id: str, expected_revision: int, request_id, reason: str):
