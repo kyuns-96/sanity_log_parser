@@ -39,6 +39,7 @@
 .atlas-scope-overview > div { display:flex; align-items:baseline; gap:7px; min-width:0; }
 .atlas-scope-overview dt { flex-shrink:0; color:var(--text-muted); font-size:var(--text-caption); }
 .atlas-scope-overview dd { min-width:0; max-width:30ch; margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); font-size:var(--text-data); }
+.atlas-scope.atlas-scope-inline { padding:10px 14px; margin:0 0 14px; border:1px solid var(--line); border-radius:10px; }
 @media(min-width:1101px) {
   .atlas-header { min-height:48px; padding-block:7px; }
   .atlas-scope,.atlas-scope.is-collapsed { gap:12px; padding-block:6px; }

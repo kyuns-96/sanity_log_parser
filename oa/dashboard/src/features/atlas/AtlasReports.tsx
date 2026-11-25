@@ -44,6 +44,28 @@ function LoadingDetail() {
   return <div className="loading-state" role="status"><p>검토 결과를 불러오는 중입니다.</p><div aria-hidden="true"><div className="skeleton skeleton-title" />{Array.from({ length: 5 }, (_, row) => <div key={row} className="skeleton-row"><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div>)}</div></div>
 }
 
+// Page-local scope filters. Selection stays in the URL (project/block/version) so links and the workbench round-trip keep working.
+function ScopeFilters() {
+  const atlas = useAtlas()
+  const [error, setError] = useState('')
+  if (!atlas) return null
+  const fail = (cause: unknown) => setError(cause instanceof Error ? cause.message : '조회 범위를 변경하지 못했습니다.')
+  const choose = (projectId: string, blockId: string, versionId: string) => { setError(''); void atlas.selectScope({ projectId, blockId, versionId }).catch(fail) }
+  const netVersions = [...new Set(atlas.block?.versions.map(version => version.net_ver))]
+  const revisions = atlas.block?.versions.filter(version => version.net_ver === atlas.netVer) || []
+  return <>
+    <section className="atlas-scope atlas-scope-inline" aria-label="조회 범위">
+      <div className="atlas-scope-fields">
+        <label>프로젝트<select value={atlas.scope.projectId} onChange={event => choose(event.target.value, '', '')}><option value="">프로젝트 선택</option>{atlas.catalog?.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+        <label>블록<select disabled={!atlas.project} value={atlas.scope.blockId} onChange={event => choose(atlas.scope.projectId, event.target.value, '')}><option value="">블록 선택</option>{atlas.project?.blocks.map(block => <option key={block.id} value={block.id}>{block.name}</option>)}</select></label>
+        <label>NET_VER<select disabled={!atlas.block} value={atlas.netVer} onChange={event => { setError(''); void atlas.selectNetVer(event.target.value).catch(fail) }}><option value="">NET_VER 선택</option>{netVersions.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+        <label>REVISION<select disabled={!atlas.block || !atlas.netVer} value={atlas.scope.versionId} onChange={event => choose(atlas.scope.projectId, atlas.scope.blockId, event.target.value)}><option value="">REVISION 선택</option>{revisions.map(version => <option key={version.id} value={version.id}>{[version.revision, version.layout, version.eco_num].filter(Boolean).join(' · ')}</option>)}</select></label>
+      </div>
+    </section>
+    {error && <p className="error-banner" role="alert">{error}</p>}
+  </>
+}
+
 export function AtlasReports({ onLegacy, canWorkbench }: { onLegacy: () => void; canWorkbench: boolean }) {
   const atlas = useAtlas()
   const auth = useDashboardAuth(true)
@@ -64,11 +86,12 @@ export function AtlasReports({ onLegacy, canWorkbench }: { onLegacy: () => void;
     setReports({ items: [], total: 0, offset: 0, limit: 25 })
   }, [projectId, blockId, versionId])
   useEffect(() => {
-    if (!projectId) { setLoading(false); return }
+    // The reports API is scoped to one exact project/block/version.
+    if (!projectId || !blockId || !versionId) { setLoading(false); return }
     const controller = new AbortController()
     const params = new URLSearchParams({ project_id: projectId, offset: String(offset), limit: '25' })
-    if (blockId) params.set('block_id', blockId)
-    if (versionId) params.set('version_id', versionId)
+    params.set('block_id', blockId)
+    params.set('version_id', versionId)
     setLoading(true); setError('')
     auth.request<Page<AtlasReport>>(`/api/atlas/reports?${params}`, undefined, false, controller.signal)
       .then(value => { if (!controller.signal.aborted) { setReports(value); setSelected(null) } })
@@ -84,9 +107,10 @@ export function AtlasReports({ onLegacy, canWorkbench }: { onLegacy: () => void;
     void navigateDashboard(target.pathname + target.search, auth.session?.user_id).catch(cause => setError(cause instanceof Error ? cause.message : '로그 검토를 열지 못했습니다.'))
   }
   return <main className="workspace" id="workspace-main" tabIndex={-1}>
-    <div className="page-heading"><div><h1>버전 로그</h1><p>선택한 프로젝트·블록·버전의 {atlas?.demo ? '합성 보고서' : '수신된 로그'}를 조회합니다.</p></div><div className="heading-actions"><Button variant="outline" onClick={() => setRefresh(value => value + 1)} disabled={loading || !projectId}><RefreshCw className={loading ? 'spin' : ''} />새로고침</Button>{!atlas?.demo && <Button variant="outline" onClick={onLegacy}>기존 접수 실행 검토</Button>}</div></div>
+    <div className="page-heading"><div><h1>버전 로그</h1><p>선택한 프로젝트·블록·버전의 {atlas?.demo ? '합성 보고서' : '수신된 로그'}를 조회합니다.</p></div><div className="heading-actions"><Button variant="outline" onClick={() => setRefresh(value => value + 1)} disabled={loading || !projectId || !blockId || !versionId}><RefreshCw className={loading ? 'spin' : ''} />새로고침</Button>{!atlas?.demo && <Button variant="outline" onClick={onLegacy}>기존 접수 실행 검토</Button>}</div></div>
+    <ScopeFilters />
     {error && <p className="error-banner" role="alert">{error}</p>}
-    {!projectId ? <Empty>상단 공통 범위에서 프로젝트를 선택해 주세요. 블록과 버전을 선택하면 조회 범위를 좁힐 수 있습니다.</Empty> : loading ? <LoadingDetail /> : error ? null : <>
+    {!projectId || !blockId || !versionId ? <Empty>위에서 프로젝트·블록·NET_VER·REVISION을 선택하면 해당 버전에 수신된 로그를 조회합니다.</Empty> : loading ? <LoadingDetail /> : error ? null : <>
       <div className={`ledger-split${selected ? ' has-detail' : ''}`}>
       <section className="detail-panel"><div className="section-heading"><h2>수신된 보고서 <span>{number(reports.total)}</span></h2></div>
         {reports.items.length ? <Table><TableHeader><TableRow><TableHead>보고서</TableHead><TableHead>블록 · 버전</TableHead><TableHead>검사 결과</TableHead><TableHead>기록 수</TableHead><TableHead>근거</TableHead></TableRow></TableHeader><TableBody>{reports.items.map(report => {

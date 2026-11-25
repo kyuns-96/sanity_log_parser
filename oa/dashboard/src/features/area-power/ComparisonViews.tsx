@@ -32,9 +32,9 @@ export function Comparisons(props: ComparisonProps) {
   const unitSwitch = <button type="button" className="gate-count-switch" role="switch" aria-label="Gate Count 표시" aria-checked={gateCount} onClick={() => setGateCount(value => !value)}><span>Area</span><i aria-hidden="true" /><span>Gate Count</span></button>
   const projects = atlas.catalog?.projects || []
   const project = projects.find(row => row.id === projectId)
-  const picker = <label className="setup-project" title="상단 공통 범위에서 선택한 프로젝트를 이어받으며, 이 화면에서도 바꿀 수 있습니다."><span>프로젝트</span><select value={projectId} onChange={event => setProjectId(event.target.value)}><option value="">프로젝트 선택</option>{projects.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
+  const picker = <label className="setup-project" title="홈에서 선택한 프로젝트를 이어받으며, 이 화면에서도 바꿀 수 있습니다."><span>프로젝트</span><select value={projectId} onChange={event => setProjectId(event.target.value)}><option value="">프로젝트 선택</option>{projects.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
   return project ? <ProjectComparison key={project.id} {...props} project={project} picker={picker} gateCount={gateCount} unitSwitch={unitSwitch} /> : <>
-    <section className="panel comparison-setup-bar"><div className="baseline-summary">{picker}<small>상단 공통 범위의 프로젝트를 이어받거나 여기서 직접 선택하세요.</small></div></section>
+    <section className="panel comparison-setup-bar"><div className="baseline-summary">{picker}<small>홈에서 선택한 프로젝트를 이어받거나 여기서 직접 선택하세요.</small></div></section>
     <Empty title="프로젝트를 선택하세요">프로젝트를 선택하면 비교 기준, 현재 버전 현황, 블록별 결과와 직접 비교를 바로 확인할 수 있습니다.</Empty>
   </>
 }

@@ -231,12 +231,12 @@ function LocalBinding() {
     finally { setBusy(false) }
   }
   return <details className="atlas-panel atlas-local-binding"><summary>로컬 운영자: 기존 수치 데이터 연결 (미연결 {total}개)</summary>
-    <p>기존 분석 ID와 이력은 보존됩니다. 이름으로 자동 연결하지 않습니다. 위 공통 범위를 선택한 후 실제 소유 관계가 일치하는 기존 데이터를 선택해 연결하세요. 프로젝트 공통의 과거 버전 ID는 여러 블록에 명시적으로 연결할 수 있습니다.</p>
+    <p>기존 분석 ID와 이력은 보존됩니다. 이름으로 자동 연결하지 않습니다. 위에서 프로젝트·블록·버전을 선택한 후 실제 소유 관계가 일치하는 기존 데이터를 선택해 연결하세요. 프로젝트 공통의 과거 버전 ID는 여러 블록에 명시적으로 연결할 수 있습니다.</p>
     {!atlas.project ? <p>공통 프로젝트를 먼저 선택하세요.</p> : <form onSubmit={submit}><div className="atlas-form-grid">
       <label>기존 수치 프로젝트{atlas.project.area_id ? <span>연결됨</span> : <select required value={project} onChange={event => { setProject(event.target.value); setBlock(''); setVersion('') }}><option value="">프로젝트 선택</option>{rows.projects.map(row => <option key={row.id} value={row.id}>{label(row)}</option>)}</select>}</label>
       {atlas.block && <label>기존 수치 블록{atlas.block.area_id ? <span>연결됨</span> : <select required value={block} onChange={event => { setBlock(event.target.value); setVersion('') }}><option value="">블록 선택</option>{rows.blocks.filter(row => row.project_id === projectId).map(row => <option key={row.id} value={row.id}>{label(row)}</option>)}</select>}</label>}
       {atlas.version && <label>기존 수치 버전<select required value={version} onChange={event => setVersion(event.target.value)}><option value="">버전 선택</option>{rows.versions.filter(row => row.project_id === projectId && (!row.block_id || row.block_id === blockId)).map(row => <option key={row.id} value={row.id}>{label(row)}</option>)}</select></label>}
       {needsLineage && <label>명시적 수치 계보<select required value={previous} onChange={event => setPrevious(event.target.value)}><option value="">계보 시작 또는 이전 버전 선택</option><option value="null">이 버전에서 계보 시작</option>{atlas.block?.versions.filter(item => item.id !== atlas.version?.id).map(item => <option key={item.id} value={JSON.stringify(item.id)}>{item.net_ver} · {item.revision} · {item.layout}</option>)}</select></label>}
-    </div>{error && <p className="atlas-message error" role="alert">{error} 공통 범위를 새로고침한 후 필요한 경우 직접 다시 연결하세요. 자동 재시도하지 않습니다.</p>}{notice && <p className="atlas-message" role="status">{notice}</p>}<button className="atlas-button secondary" disabled={busy || !!atlas.version?.area_id || needsLineage && !previous}>{busy ? '연결 중…' : atlas.version?.area_id ? '이미 연결된 버전' : '선택한 실제 데이터 연결'}</button></form>}
+    </div>{error && <p className="atlas-message error" role="alert">{error} 화면을 새로고침한 후 필요한 경우 직접 다시 연결하세요. 자동 재시도하지 않습니다.</p>}{notice && <p className="atlas-message" role="status">{notice}</p>}<button className="atlas-button secondary" disabled={busy || !!atlas.version?.area_id || needsLineage && !previous}>{busy ? '연결 중…' : atlas.version?.area_id ? '이미 연결된 버전' : '선택한 실제 데이터 연결'}</button></form>}
   </details>
 }
