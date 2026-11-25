@@ -2,7 +2,7 @@
 
 프로젝트 A가 지정한 기준 프로젝트 B와 Block·hierarchy instance별 Area/Power를 비교하는 수치 엔진이다. 주 화면은 **프로젝트 비교** 하나이며 업로드 이력과 경로 대응도 같은 화면에서 다룬다. 로그 분류·PASS/FAIL과 수치 엔진은 분리하되 공통 프로젝트/블록/버전·인증·탐색은 하나다.
 
-이 안내는 수동 비교·분석·메일 요청과 2단계 NET_VER별 자동 추적·결과 메일의 사용법이다. 합의된 2단계 제품 규칙은 [2단계 설계](../superpowers/specs/2026-11-23-area-power-net-ver-tracking-design.md), 미소 전력 과장 방지·체급 연동 변화율·메일 이중 Top-10 랭킹 후속 설계는 [체급 연동·이중 랭킹 설계](../superpowers/specs/2026-11-25-area-power-scale-coupled-triage-and-ranking-design.md)를 참고한다.
+이 안내는 수동 비교·분석·메일 요청과 2단계 NET_VER별 자동 추적·결과 메일의 사용법이다. 합의된 2단계 제품 규칙은 [2단계 설계](../superpowers/specs/2026-11-23-area-power-net-ver-tracking-design.md), Area·Power 통합 체급 연동 변화율 및 메일 이중 Top-10 랭킹 후속 설계는 [체급 연동·이중 랭킹 설계](../superpowers/specs/2026-11-25-area-power-scale-coupled-triage-and-ranking-design.md)를 참고한다.
 
 ## 코드와 데이터 경계
 
