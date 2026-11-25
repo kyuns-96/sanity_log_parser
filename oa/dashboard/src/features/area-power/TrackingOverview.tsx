@@ -11,7 +11,12 @@ import {
   type TrackingOverviewData,
   type TrackingRound,
 } from './trackingApi'
-import { formatSignedPct, resolveBaselineVersionLabel } from './tracking/trackingUtils'
+import {
+  formatSignedPct,
+  resolveBaselineVersionMeta,
+  versionEcoNumbers,
+  type ResolvedVersionMeta,
+} from './tracking/trackingUtils'
 import { TrackingMailSnapshotBanner } from './tracking/TrackingMailSnapshotBanner'
 import { TrackingSummaryStrip } from './tracking/TrackingSummaryStrip'
 
@@ -93,29 +98,30 @@ export function TrackingOverview({
     return map
   }, [data?.block_configs])
 
-  function describeBlockBaseline(blockAreaId: string) {
+  function describeBlockBaseline(blockAreaId: string): { label: string; emptyHint: string; version: ResolvedVersionMeta | null; configured: boolean } {
     const cfg = blockConfigMap.get(blockAreaId)
     const kind = text(cfg?.comparison_kind)
     if (kind === 'previous_version') {
-      const versionLabel = resolveBaselineVersionLabel(cfg, project, blockAreaId)
-      return { label: '같은 블록 이전 버전', versionLabel: versionLabel || '기준 버전 미지정', configured: Boolean(versionLabel) }
+      const version = resolveBaselineVersionMeta(cfg, project, blockAreaId)
+      return { label: '같은 블록 이전 버전', emptyHint: '기준 버전 미지정', version, configured: Boolean(version) }
     }
     const baseBlockId = text(cfg?.baseline_block_id)
     const baseBlock = baselineProject?.blocks.find(b => b.area_id === baseBlockId)
     if (baseBlock) {
-      const versionLabel = resolveBaselineVersionLabel(cfg, baselineProject, baseBlockId)
+      const version = resolveBaselineVersionMeta(cfg, baselineProject, baseBlockId)
       return {
         label: `${baselineProject?.name || baselineName} · ${baseBlock.name}`,
-        versionLabel: versionLabel || '기준 버전 미지정',
-        configured: Boolean(versionLabel),
+        emptyHint: '기준 버전 미지정',
+        version,
+        configured: Boolean(version),
       }
     }
-    if (baselineStatus === 'available') return { label: baselineName, versionLabel: '블록 기준 미지정', configured: false }
-    return { label: '기준 프로젝트 미설정', versionLabel: '', configured: false }
+    if (baselineStatus === 'available') return { label: baselineName, emptyHint: '블록 기준 미지정', version: null, configured: false }
+    return { label: '기준 프로젝트 미설정', emptyHint: '', version: null, configured: false }
   }
 
   const latestUploadByBlock = useMemo(() => {
-    const map = new Map<string, { netVer: string; revision: string; corners: string[]; latestUploadId: string }>()
+    const map = new Map<string, { version: ResolvedVersionMeta | null; corners: string[]; latestUploadId: string }>()
     for (const block of project.blocks) {
       const areaId = block.area_id
       const blkUploads = areaId
@@ -123,19 +129,75 @@ export function TrackingOverview({
         : []
       const latestUpload = blkUploads[0]
       const latestVer = (latestUpload && block.versions.find(v => v.area_id === latestUpload.version_id))
-        || block.versions[block.versions.length - 1]
+        || (block.por?.version_id ? block.versions.find(v => v.id === block.por?.version_id) : undefined)
+        || block.versions[0]
       const corners = [...new Set(
         blkUploads.filter(u => !latestVer?.area_id || u.version_id === latestVer.area_id).map(u => cornerKey(u)).filter(Boolean),
       )]
       map.set(areaId || block.id, {
-        netVer: latestVer?.net_ver || '',
-        revision: latestVer ? [latestVer.revision, latestVer.layout].filter(Boolean).join(' ') : '',
+        version: latestVer
+          ? {
+              netVer: latestVer.net_ver || '',
+              revision: latestVer.revision || '',
+              layout: latestVer.layout || '',
+              ecos: versionEcoNumbers(latestVer),
+              isPor: Boolean(block.por?.version_id && latestVer.id === block.por.version_id),
+            }
+          : null,
         corners,
         latestUploadId: latestUpload?.id || '',
       })
     }
     return map
   }, [project.blocks, projectUploads])
+
+  const uploadById = useMemo(() => new Map(uploads.map(u => [u.id, u])), [uploads])
+
+  function resolveRoundVersionMeta(row: TrackingBlockRow, roundNetVer: string): ResolvedVersionMeta {
+    const blk = project.blocks.find(b => b.area_id === row.block_id)
+    if (blk) {
+      const cornerUpload = row.corners
+        .map(c => (c.upload_id ? uploadById.get(c.upload_id) : undefined))
+        .find((u): u is Upload => Boolean(u))
+      const matched = (cornerUpload && blk.versions.find(v => v.area_id === cornerUpload.version_id))
+        || blk.versions.find(v => v.net_ver === roundNetVer && (!row.revision_label || v.revision === row.revision_label))
+        || blk.versions.find(v => v.net_ver === roundNetVer)
+      if (matched) {
+        return {
+          netVer: matched.net_ver || roundNetVer,
+          revision: matched.revision || row.revision_label || '',
+          layout: matched.layout || '',
+          ecos: versionEcoNumbers(matched),
+          isPor: Boolean(blk.por?.version_id && matched.id === blk.por.version_id),
+        }
+      }
+    }
+    return { netVer: roundNetVer, revision: row.revision_label || '', layout: '', ecos: [], isPor: false }
+  }
+
+  function renderVersionMeta(meta: ResolvedVersionMeta | null, emptyText: string) {
+    if (!meta || (!meta.netVer && !meta.revision)) {
+      return emptyText ? <small className="text-muted">{emptyText}</small> : null
+    }
+    return (
+      <dl className="tracking-ver-meta">
+        <dt>NET_VER</dt>
+        <dd>
+          <strong>{meta.netVer || '—'}</strong>
+          {meta.layout && <span className="tracking-layout-pill">{meta.layout}</span>}
+          {meta.isPor && <span className="tracking-por-pill">PoR</span>}
+        </dd>
+        <dt>REVISION</dt>
+        <dd>{meta.revision || <span className="text-muted">대기</span>}</dd>
+        <dt>ECO_NUM</dt>
+        <dd>
+          {meta.ecos.length > 0
+            ? meta.ecos.map(eco => <span key={eco} className="tracking-eco-pill">{eco}</span>)
+            : <span className="text-muted">{meta.layout === 'PRE' ? '해당 없음 (PRE)' : '—'}</span>}
+        </dd>
+      </dl>
+    )
+  }
 
   useEffect(() => {
     if (!mailSnapshotId) {
@@ -238,8 +300,8 @@ export function TrackingOverview({
               <thead>
                 <tr>
                   <th>블록</th>
-                  <th>비교 기준 (블록 · NET_VER · REV)</th>
-                  <th>현재 버전</th>
+                  <th>비교 기준 (NET_VER · REVISION · ECO)</th>
+                  <th>현재 버전 (NET_VER · REVISION · ECO)</th>
                   <th>코너 진행</th>
                   <th>Area · Power 요약</th>
                   <th>상태 · 결과</th>
@@ -264,17 +326,14 @@ export function TrackingOverview({
                         </div>
                         {row.post_top_mail_revised && <div className="tracking-tags"><Badge value="발송 후 수정" /></div>}
                       </td>
-                      <td>
-                        <div className="tracking-cell-stack">
+                      <td className="tracking-ver-cell">
+                        <div className="tracking-ver-scope">
                           <span className={baseInfo.configured ? '' : 'text-muted'}>{baseInfo.label}</span>
-                          {baseInfo.versionLabel && <small className={baseInfo.configured ? 'tracking-version-tag' : 'text-muted'}>{baseInfo.versionLabel}</small>}
                         </div>
+                        {renderVersionMeta(baseInfo.version, baseInfo.emptyHint)}
                       </td>
-                      <td>
-                        <div className="tracking-cell-stack">
-                          <strong>{activeRound.net_ver}</strong>
-                          <small>{row.revision_label || '리비전 대기'}</small>
-                        </div>
+                      <td className="tracking-ver-cell">
+                        {renderVersionMeta(resolveRoundVersionMeta(row, activeRound.net_ver), '리비전 대기')}
                       </td>
                       <td>
                         <div className="tracking-corner-chips">
@@ -347,8 +406,8 @@ export function TrackingOverview({
                 <thead>
                   <tr>
                     <th>블록</th>
-                    <th>비교 기준 (블록 · NET_VER · REV)</th>
-                    <th>최신 버전 · 리비전</th>
+                    <th>비교 기준 (NET_VER · REVISION · ECO)</th>
+                    <th>최신 버전 (NET_VER · REVISION · ECO)</th>
                     <th>업로드된 코너</th>
                     <th>바로가기</th>
                   </tr>
@@ -357,7 +416,9 @@ export function TrackingOverview({
                   {project.blocks.map(block => {
                     const isFc = block.name.trim() === project.name.trim()
                     const latest = latestUploadByBlock.get(block.area_id || block.id)
-                    const baseInfo = block.area_id ? describeBlockBaseline(block.area_id) : { label: '미연결', versionLabel: '', configured: false }
+                    const baseInfo = block.area_id
+                      ? describeBlockBaseline(block.area_id)
+                      : { label: '미연결', emptyHint: '', version: null, configured: false }
                     return (
                       <tr key={block.id}>
                         <td>
@@ -366,17 +427,14 @@ export function TrackingOverview({
                             {isFc && <span className="side-tag">Full-chip</span>}
                           </div>
                         </td>
-                        <td>
-                          <div className="tracking-cell-stack">
+                        <td className="tracking-ver-cell">
+                          <div className="tracking-ver-scope">
                             <span className={baseInfo.configured ? '' : 'text-muted'}>{baseInfo.label}</span>
-                            {baseInfo.versionLabel && <small className={baseInfo.configured ? 'tracking-version-tag' : 'text-muted'}>{baseInfo.versionLabel}</small>}
                           </div>
+                          {renderVersionMeta(baseInfo.version, baseInfo.emptyHint)}
                         </td>
-                        <td>
-                          <div className="tracking-cell-stack">
-                            <strong>{latest?.netVer || '업로드 없음'}</strong>
-                            <small>{latest?.revision || '—'}</small>
-                          </div>
+                        <td className="tracking-ver-cell">
+                          {renderVersionMeta(latest?.version || null, '업로드 없음')}
                         </td>
                         <td>
                           <div className="tracking-corner-chips">
