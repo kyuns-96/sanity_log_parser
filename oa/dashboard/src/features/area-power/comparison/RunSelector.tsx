@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { cornerKey, uploadName, type Upload } from '../api'
+import { cornerKey, formatCornerLabel, uploadName, type Upload } from '../api'
 import { Button, Field } from '../components/workspace'
 import type { AtlasProject, AtlasVersion } from '@/features/atlas/atlasContext'
 import { versionEcoNumbers } from '../tracking/trackingUtils'
@@ -59,7 +59,7 @@ export function RunSelector({ label, project, selection, onChange, uploads, busy
 
   const needsLineage = version && !Object.hasOwn(version, 'previous_version_id')
   const corners = new Map<string, string>()
-  for (const upload of uploads) if (!corners.has(cornerKey(upload))) corners.set(cornerKey(upload), `${upload.process_label ?? '?'} · ${upload.voltage_v ?? '?'} V · ${upload.temp_c ?? '?'} °C · ${upload.pex ?? '?'}`)
+  for (const upload of uploads) if (!corners.has(cornerKey(upload))) corners.set(cornerKey(upload), formatCornerLabel(upload))
   const runs = selection.corner ? uploads.filter(row => cornerKey(row) === selection.corner) : []
 
   return <fieldset className="run-selector"><legend>{label} · {project.name}</legend><div className="run-fields">

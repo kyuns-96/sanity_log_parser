@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CalendarClock, CheckCircle2 } from 'lucide-react'
-import { cornerKey, format, object, request, text, type Auth, type Upload } from './api'
+import { cornerKey, format, formatCornerLabel, object, request, text, type Auth, type Upload } from './api'
 import { Badge, Button } from './components/workspace'
 import type { AtlasProject } from '@/features/atlas/atlasContext'
 import {
@@ -121,7 +121,7 @@ export function TrackingOverview({
   }
 
   const latestUploadByBlock = useMemo(() => {
-    const map = new Map<string, { version: ResolvedVersionMeta | null; corners: string[]; latestUploadId: string }>()
+    const map = new Map<string, { version: ResolvedVersionMeta | null; corners: { key: string; label: string }[]; latestUploadId: string }>()
     for (const block of project.blocks) {
       const areaId = block.area_id
       const blkUploads = areaId
@@ -131,9 +131,13 @@ export function TrackingOverview({
       const latestVer = (latestUpload && block.versions.find(v => v.area_id === latestUpload.version_id))
         || (block.por?.version_id ? block.versions.find(v => v.id === block.por?.version_id) : undefined)
         || block.versions[0]
-      const corners = [...new Set(
-        blkUploads.filter(u => !latestVer?.area_id || u.version_id === latestVer.area_id).map(u => cornerKey(u)).filter(Boolean),
-      )]
+      const cornerMap = new Map<string, string>()
+      for (const u of blkUploads) {
+        if (latestVer?.area_id && u.version_id !== latestVer.area_id) continue
+        const key = cornerKey(u)
+        if (key && !cornerMap.has(key)) cornerMap.set(key, formatCornerLabel(u))
+      }
+      const corners = [...cornerMap.entries()].map(([key, label]) => ({ key, label }))
       map.set(areaId || block.id, {
         version: latestVer
           ? {
@@ -411,7 +415,7 @@ export function TrackingOverview({
                     <th>블록</th>
                     <th>비교 기준 (NET_VER · REVISION · ECO)</th>
                     <th>최신 버전 (NET_VER · REVISION · ECO)</th>
-                    <th>업로드된 코너</th>
+                    <th>업로드된 코너 (PVT · PEX)</th>
                     <th>바로가기</th>
                   </tr>
                 </thead>
@@ -441,9 +445,18 @@ export function TrackingOverview({
                         </td>
                         <td>
                           <div className="tracking-corner-chips">
-                            {latest?.corners.length
-                              ? latest.corners.slice(0, 4).map(corner => <span key={corner} className="tracking-chip">{corner}</span>)
-                              : <small className="text-muted">CSV 없음</small>}
+                            {latest?.corners.length ? (
+                              <>
+                                {latest.corners.slice(0, 4).map(corner => (
+                                  <span key={corner.key} className="tracking-chip">{corner.label}</span>
+                                ))}
+                                {latest.corners.length > 4 && (
+                                  <span className="tracking-chip">+{latest.corners.length - 4}</span>
+                                )}
+                              </>
+                            ) : (
+                              <small className="text-muted">CSV 없음</small>
+                            )}
                           </div>
                         </td>
                         <td>

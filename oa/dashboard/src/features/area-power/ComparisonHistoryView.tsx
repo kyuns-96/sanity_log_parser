@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { History, Search } from 'lucide-react'
-import { cornerKey, date, object, text, uploadName, type TrackingRecord, type Upload } from './api'
+import { date, formatCornerLabel, object, text, uploadName, type TrackingRecord, type Upload } from './api'
 import { Badge, Button, Empty } from './components/workspace'
 import type { AtlasProject } from '@/features/atlas/atlasContext'
 import type { TrackingOverviewData } from './trackingApi'
@@ -63,7 +63,7 @@ export function ComparisonHistoryView({
       blockId: blk?.id || '',
       netVer: ver?.net_ver || '',
       revision: ver ? [ver.revision, ver.layout, ver.eco_num].filter(Boolean).join(' ') : '',
-      corner: [u.process_label, u.voltage_v && `${u.voltage_v}V`, u.temp_c && `${u.temp_c}°C`, u.pex].filter(Boolean).join(' / ') || cornerKey(u),
+      corner: formatCornerLabel(u),
       fileName: uploadName(u),
     }
   }

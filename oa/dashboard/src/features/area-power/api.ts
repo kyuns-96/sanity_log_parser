@@ -182,7 +182,16 @@ export function formatPercent(value: unknown): string {
   return format(`${match[1] === '-' && scaled ? '-' : ''}${scaled / 100n}.${(scaled % 100n).toString().padStart(2, '0')}`)
 }
 export const nameOf = (record: TrackingRecord) => text(record.payload.name || record.payload.text || record.id)
-export const uploadName = (upload: Upload) => `${upload.execution_name || upload.original_filename || upload.filename || upload.id} · ${upload.process_label ?? '?'} / ${upload.voltage_v ?? '?'} V / ${upload.temp_c ?? '?'} °C / ${upload.pex ?? '?'} · ${upload.id.slice(0, 8)}`
+export function formatCornerLabel(upload: Pick<Upload, 'process_label' | 'voltage_v' | 'temp_c' | 'pex'>): string {
+  const parts = [
+    upload.process_label?.trim() || '',
+    upload.voltage_v?.trim() ? `${upload.voltage_v.trim()}V` : '',
+    upload.temp_c?.trim() ? `${upload.temp_c.trim()}°C` : '',
+    upload.pex?.trim() || '',
+  ].filter(Boolean)
+  return parts.length ? parts.join(' / ') : '코너 미기재'
+}
+export const uploadName = (upload: Upload) => `${upload.execution_name || upload.original_filename || upload.filename || upload.id} · ${formatCornerLabel(upload)} · ${upload.id.slice(0, 8)}`
 // Match the backend's Decimal identity without converting PVT values to Number.
 function cornerDecimal(value: string | null | undefined) {
   if (value == null) return null
