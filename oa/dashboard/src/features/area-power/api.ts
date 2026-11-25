@@ -182,11 +182,39 @@ export function formatPercent(value: unknown): string {
   return format(`${match[1] === '-' && scaled ? '-' : ''}${scaled / 100n}.${(scaled % 100n).toString().padStart(2, '0')}`)
 }
 export const nameOf = (record: TrackingRecord) => text(record.payload.name || record.payload.text || record.id)
+function formatCornerNumber(value: string | null | undefined, maxDecimals: number): string {
+  const source = value?.trim() || ''
+  if (!source) return ''
+  const match = /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(source)
+  if (!match) return source
+  const fractional = match[3] || ''
+  const coefficient = BigInt(match[2] + fractional)
+  if (coefficient === 0n) return '0'
+  const shift = BigInt(match[4] || '0') - BigInt(fractional.length) + BigInt(maxDecimals)
+  if (shift > 50n || shift < -100n) return source
+  let scaled: bigint
+  if (shift < 0n) {
+    const divisor = 10n ** -shift
+    scaled = (coefficient * 2n + divisor) / (divisor * 2n)
+  } else {
+    scaled = coefficient * (10n ** shift)
+  }
+  if (scaled === 0n) return '0'
+  const sign = match[1] === '-' ? '-' : ''
+  const unit = 10n ** BigInt(maxDecimals)
+  const whole = scaled / unit
+  const rem = scaled % unit
+  if (rem === 0n) return `${sign}${whole}`
+  const trimmedFrac = rem.toString().padStart(maxDecimals, '0').replace(/0+$/, '')
+  return `${sign}${whole}.${trimmedFrac}`
+}
 export function formatCornerLabel(upload: Pick<Upload, 'process_label' | 'voltage_v' | 'temp_c' | 'pex'>): string {
+  const voltage = formatCornerNumber(upload.voltage_v, 3)
+  const temp = formatCornerNumber(upload.temp_c, 1)
   const parts = [
     upload.process_label?.trim() || '',
-    upload.voltage_v?.trim() ? `${upload.voltage_v.trim()}V` : '',
-    upload.temp_c?.trim() ? `${upload.temp_c.trim()}°C` : '',
+    voltage ? `${voltage}V` : '',
+    temp ? `${temp}°C` : '',
     upload.pex?.trim() || '',
   ].filter(Boolean)
   return parts.length ? parts.join(' / ') : '코너 미기재'

@@ -20,6 +20,24 @@ import {
 import { TrackingMailSnapshotBanner } from './tracking/TrackingMailSnapshotBanner'
 import { TrackingSummaryStrip } from './tracking/TrackingSummaryStrip'
 
+function blockSortRank(name: string, isFullChip: boolean): number {
+  if (name.trim().toLowerCase() === 'chip_top') return 0
+  if (isFullChip) return 1
+  return 2
+}
+
+function compareTrackingBlocks(
+  a: { name: string; isFullChip: boolean },
+  b: { name: string; isFullChip: boolean },
+): number {
+  const rankDiff = blockSortRank(a.name, a.isFullChip) - blockSortRank(b.name, b.isFullChip)
+  if (rankDiff !== 0) return rankDiff
+  const aName = a.name.trim()
+  const bName = b.name.trim()
+  return aName.localeCompare(bName, 'en', { numeric: true, sensitivity: 'base' })
+    || aName.localeCompare(bName)
+}
+
 interface TrackingOverviewProps {
   auth: Auth
   project: AtlasProject
@@ -98,12 +116,21 @@ export function TrackingOverview({
     return map
   }, [data?.block_configs])
 
-  function describeBlockBaseline(blockAreaId: string): { label: string; emptyHint: string; version: ResolvedVersionMeta | null; configured: boolean } {
+  function describeBlockBaseline(
+    blockAreaId: string,
+    currentBlockName: string,
+  ): { label: string; scopeTag?: string; emptyHint: string; version: ResolvedVersionMeta | null; configured: boolean } {
     const cfg = blockConfigMap.get(blockAreaId)
     const kind = text(cfg?.comparison_kind)
     if (kind === 'previous_version') {
       const version = resolveBaselineVersionMeta(cfg, project, blockAreaId)
-      return { label: '같은 블록 이전 버전', emptyHint: '기준 버전 미지정', version, configured: Boolean(version) }
+      return {
+        label: `${project.name} · ${currentBlockName}`,
+        scopeTag: '이전 버전',
+        emptyHint: '기준 버전 미지정',
+        version,
+        configured: Boolean(version),
+      }
     }
     const baseBlockId = text(cfg?.baseline_block_id)
     const baseBlock = baselineProject?.blocks.find(b => b.area_id === baseBlockId)
@@ -119,6 +146,22 @@ export function TrackingOverview({
     if (baselineStatus === 'available') return { label: baselineName, emptyHint: '블록 기준 미지정', version: null, configured: false }
     return { label: '기준 프로젝트 미설정', emptyHint: '', version: null, configured: false }
   }
+
+  const sortedProjectBlocks = useMemo(
+    () => [...project.blocks].sort((a, b) => compareTrackingBlocks(
+      { name: a.name, isFullChip: a.name.trim() === project.name.trim() },
+      { name: b.name, isFullChip: b.name.trim() === project.name.trim() },
+    )),
+    [project.blocks, project.name],
+  )
+
+  const sortedRoundBlocks = useMemo(
+    () => [...(activeRound?.blocks || [])].sort((a, b) => compareTrackingBlocks(
+      { name: a.block_name, isFullChip: a.is_full_chip },
+      { name: b.block_name, isFullChip: b.is_full_chip },
+    )),
+    [activeRound?.blocks],
+  )
 
   const latestUploadByBlock = useMemo(() => {
     const map = new Map<string, { version: ResolvedVersionMeta | null; corners: { key: string; label: string }[]; latestUploadId: string }>()
@@ -184,7 +227,7 @@ export function TrackingOverview({
 
   function renderVersionMeta(meta: ResolvedVersionMeta | null, emptyText: string) {
     if (!meta || (!meta.netVer && !meta.revision)) {
-      return emptyText ? <small className="text-muted">{emptyText}</small> : null
+      return emptyText ? <div className="tracking-ver-empty">{emptyText}</div> : null
     }
     return (
       <dl className="tracking-ver-meta">
@@ -303,22 +346,31 @@ export function TrackingOverview({
             </div>
           </div>
           <div className="table-scroll">
-            <table>
+            <table className="tracking-round-table">
+              <colgroup>
+                <col className="col-block" />
+                <col className="col-version" />
+                <col className="col-version" />
+                <col className="col-corners" />
+                <col className="col-summary" />
+                <col className="col-status" />
+              </colgroup>
               <thead>
                 <tr>
                   <th>블록</th>
-                  <th>비교 기준 (NET_VER · REVISION · ECO)</th>
-                  <th>현재 버전 (NET_VER · REVISION · ECO)</th>
+                  <th>비교 기준</th>
+                  <th>현재 버전</th>
                   <th>코너 진행</th>
                   <th>Area · Power 요약</th>
                   <th>상태 · 결과</th>
                 </tr>
               </thead>
               <tbody>
-                {activeRound.blocks.map(row => {
+                {sortedRoundBlocks.map(row => {
                   const typ = object(object(row.power_evaluation).typical)
                   const target = object(typ.target)
-                  const baseInfo = describeBlockBaseline(row.block_id)
+                  const baseInfo = describeBlockBaseline(row.block_id, row.block_name)
+                  const currentScope = `${project.name} · ${row.block_name}`
                   const completedCornerMetrics = row.corners.filter(c => c.logic_area_delta_pct || c.power_current_mw)
                   const unexpected = Number(row.totals?.unexpected ?? 0)
                   const needsReview = Number(row.totals?.needs_review ?? 0)
@@ -334,12 +386,16 @@ export function TrackingOverview({
                         {row.post_top_mail_revised && <div className="tracking-tags"><Badge value="발송 후 수정" /></div>}
                       </td>
                       <td className="tracking-ver-cell">
-                        <div className="tracking-ver-scope">
+                        <div className="tracking-ver-scope" title={baseInfo.label}>
                           <span className={baseInfo.configured ? '' : 'text-muted'}>{baseInfo.label}</span>
+                          {baseInfo.scopeTag && <span className="tracking-scope-tag">{baseInfo.scopeTag}</span>}
                         </div>
                         {renderVersionMeta(baseInfo.version, baseInfo.emptyHint)}
                       </td>
                       <td className="tracking-ver-cell">
+                        <div className="tracking-ver-scope" title={currentScope}>
+                          <span>{currentScope}</span>
+                        </div>
                         {renderVersionMeta(resolveRoundVersionMeta(row, activeRound.net_ver), '리비전 대기')}
                       </td>
                       <td>
@@ -407,24 +463,32 @@ export function TrackingOverview({
               <small>각 블록의 비교 기준과 최신 업로드 버전을 확인하고 바로 비교할 수 있습니다.</small>
             </div>
           </div>
-          {project.blocks.length > 0 ? (
+          {sortedProjectBlocks.length > 0 ? (
             <div className="table-scroll">
-              <table>
+              <table className="tracking-latest-table">
+                <colgroup>
+                  <col className="col-block" />
+                  <col className="col-version" />
+                  <col className="col-version" />
+                  <col className="col-corners" />
+                  <col className="col-action" />
+                </colgroup>
                 <thead>
                   <tr>
                     <th>블록</th>
-                    <th>비교 기준 (NET_VER · REVISION · ECO)</th>
-                    <th>최신 버전 (NET_VER · REVISION · ECO)</th>
+                    <th>비교 기준</th>
+                    <th>최신 버전</th>
                     <th>업로드된 코너 (PVT · PEX)</th>
                     <th>바로가기</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {project.blocks.map(block => {
+                  {sortedProjectBlocks.map(block => {
                     const isFc = block.name.trim() === project.name.trim()
                     const latest = latestUploadByBlock.get(block.area_id || block.id)
+                    const currentScope = `${project.name} · ${block.name}`
                     const baseInfo = block.area_id
-                      ? describeBlockBaseline(block.area_id)
+                      ? describeBlockBaseline(block.area_id, block.name)
                       : { label: '미연결', emptyHint: '', version: null, configured: false }
                     return (
                       <tr key={block.id}>
@@ -435,23 +499,27 @@ export function TrackingOverview({
                           </div>
                         </td>
                         <td className="tracking-ver-cell">
-                          <div className="tracking-ver-scope">
+                          <div className="tracking-ver-scope" title={baseInfo.label}>
                             <span className={baseInfo.configured ? '' : 'text-muted'}>{baseInfo.label}</span>
+                            {baseInfo.scopeTag && <span className="tracking-scope-tag">{baseInfo.scopeTag}</span>}
                           </div>
                           {renderVersionMeta(baseInfo.version, baseInfo.emptyHint)}
                         </td>
                         <td className="tracking-ver-cell">
+                          <div className="tracking-ver-scope" title={currentScope}>
+                            <span className={latest?.version ? '' : 'text-muted'}>{currentScope}</span>
+                          </div>
                           {renderVersionMeta(latest?.version || null, '업로드 없음')}
                         </td>
                         <td>
                           <div className="tracking-corner-chips">
                             {latest?.corners.length ? (
                               <>
-                                {latest.corners.slice(0, 4).map(corner => (
-                                  <span key={corner.key} className="tracking-chip">{corner.label}</span>
+                                {latest.corners.slice(0, 6).map(corner => (
+                                  <span key={corner.key} className="tracking-chip" title={corner.label}>{corner.label}</span>
                                 ))}
-                                {latest.corners.length > 4 && (
-                                  <span className="tracking-chip">+{latest.corners.length - 4}</span>
+                                {latest.corners.length > 6 && (
+                                  <span className="tracking-chip">+{latest.corners.length - 6}</span>
                                 )}
                               </>
                             ) : (
@@ -459,7 +527,7 @@ export function TrackingOverview({
                             )}
                           </div>
                         </td>
-                        <td>
+                        <td className="tracking-action-cell">
                           {latest?.latestUploadId ? (
                             <Button variant="outline" size="sm" onClick={() => onOpenResult({ blockId: block.area_id || undefined, uploadId: latest.latestUploadId })}>
                               직접 비교 →

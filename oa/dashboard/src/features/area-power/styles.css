@@ -513,9 +513,26 @@
 .area-power .tracking-table-head h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 3px; font-size: 15px; }
 .area-power .tracking-table-head small { display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); font-size: var(--text-data); }
 .area-power .tracking-block-name { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
-.area-power .tracking-table-panel td { max-width: none; }
-.area-power .tracking-ver-cell { min-width: 245px; }
-.area-power .tracking-ver-scope { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-bottom: 5px; font-size: var(--text-caption); font-weight: 600; color: var(--text-secondary); }
+.area-power .tracking-block-name strong { margin-bottom: 0; overflow-wrap: anywhere; }
+.area-power .tracking-table-panel th { padding: 10px 12px; }
+.area-power .tracking-table-panel td { max-width: none; padding: 12px 12px; }
+.area-power .tracking-latest-table { table-layout: fixed; min-width: 1080px; }
+.area-power .tracking-latest-table col.col-block { width: 170px; }
+.area-power .tracking-latest-table col.col-version { width: 255px; }
+.area-power .tracking-latest-table col.col-corners { width: auto; }
+.area-power .tracking-latest-table col.col-action { width: 118px; }
+.area-power .tracking-round-table { table-layout: fixed; min-width: 1220px; }
+.area-power .tracking-round-table col.col-block { width: 165px; }
+.area-power .tracking-round-table col.col-version { width: 245px; }
+.area-power .tracking-round-table col.col-corners { width: 22%; }
+.area-power .tracking-round-table col.col-summary { width: auto; }
+.area-power .tracking-round-table col.col-status { width: 180px; }
+.area-power .tracking-ver-cell { min-width: 0; }
+.area-power .tracking-ver-scope { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; min-height: 18px; font-size: var(--text-caption); font-weight: 600; color: var(--text-secondary); }
+.area-power .tracking-ver-scope > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.area-power .tracking-scope-tag { flex: none; display: inline-flex; align-items: center; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-soft); color: var(--text-muted); font-size: 10.5px; font-weight: 600; line-height: 1.5; white-space: nowrap; }
+.area-power .tracking-ver-empty { padding: 7px 9px; border: 1px dashed var(--line); border-radius: 6px; font-size: var(--text-caption); color: var(--text-muted); }
+.area-power .tracking-action-cell { white-space: nowrap; }
 .area-power .tracking-ver-meta { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 10px; align-items: baseline; margin: 0; padding: 7px 9px; border: 1px solid var(--line-soft); border-radius: 6px; background: var(--surface-soft); }
 .area-power .tracking-ver-meta dt { font-size: 10.5px; font-weight: 650; letter-spacing: .04em; color: var(--text-muted); white-space: nowrap; }
 .area-power .tracking-ver-meta dd { margin: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; font-family: var(--font-mono); font-size: var(--text-caption); color: var(--ink); font-weight: 550; overflow-wrap: anywhere; line-height: 1.45; }
@@ -540,7 +557,7 @@
 .area-power .tracking-alert-text { display: inline-flex; align-items: center; gap: 4px; color: var(--danger); font-weight: 600; }
 .area-power .tracking-ok-text { display: inline-flex; align-items: center; gap: 4px; color: var(--success); font-weight: 550; }
 .area-power .tracking-corner-chips, .area-power .tracking-chip-list { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.area-power .tracking-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 5px; font-size: var(--text-caption); background: var(--surface-soft); color: var(--text-secondary); }
+.area-power .tracking-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 5px; font-size: var(--text-caption); background: var(--surface-soft); color: var(--text-secondary); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .area-power .tracking-chip button { border: 0; background: transparent; color: var(--text-muted); padding: 0; display: inline-flex; cursor: pointer; }
 .area-power .tracking-chip.status-completed { border-color: var(--success-line); background: var(--success-soft); color: var(--success); }
 .area-power .tracking-chip.status-waiting_upload, .area-power .tracking-chip.status-mapping_review, .area-power .tracking-chip.status-waiting_baseline { border-color: var(--warning-line); background: var(--warning-soft); color: var(--warning); }
