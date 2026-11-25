@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { cornerKey, uploadName, type Upload } from '../api'
 import { Button, Field } from '../components/workspace'
-import type { AtlasProject } from '@/features/atlas/atlasContext'
+import type { AtlasProject, AtlasVersion } from '@/features/atlas/atlasContext'
+import { versionEcoNumbers } from '../tracking/trackingUtils'
 import { emptySelection, type Selection } from './hierarchyUtils'
 
 interface RunSelectorProps {
@@ -16,19 +17,63 @@ interface RunSelectorProps {
   hint?: string
 }
 
+const revisionKey = (v: AtlasVersion) => `${v.revision}\0${v.layout}`
+
+function ecoLabel(v: AtlasVersion): string {
+  const ecos = versionEcoNumbers(v)
+  return ecos.length ? ecos.join(', ') : 'ECO 미기록'
+}
+
 export function RunSelector({ label, project, selection, onChange, uploads, busy, onPrepare, lockedBlock = false, hint }: RunSelectorProps) {
   const block = project.blocks.find(row => row.id === selection.block)
   const version = block?.versions.find(row => row.id === selection.version && row.net_ver === selection.net)
+  const [selectedRevKey, setSelectedRevKey] = useState('')
   const [previous, setPrevious] = useState('')
+
   useEffect(() => setPrevious(''), [project.id, selection.block, selection.version])
+  useEffect(() => {
+    if (version) setSelectedRevKey(revisionKey(version))
+    else if (!selection.net) setSelectedRevKey('')
+  }, [selection.block, selection.net, version?.id])
+
+  const netVersions = useMemo(
+    () => (block?.versions || []).filter(row => row.net_ver === selection.net),
+    [block, selection.net],
+  )
+  const revisionGroups = useMemo(() => {
+    const map = new Map<string, { key: string; label: string; versions: AtlasVersion[] }>()
+    for (const row of netVersions) {
+      const key = revisionKey(row)
+      const existing = map.get(key)
+      if (existing) existing.versions.push(row)
+      else map.set(key, { key, label: `${row.revision} · ${row.layout}`, versions: [row] })
+    }
+    return [...map.values()]
+  }, [netVersions])
+
+  const activeRevKey = version ? revisionKey(version) : (revisionGroups.some(g => g.key === selectedRevKey) ? selectedRevKey : '')
+  const ecoOptions = useMemo(
+    () => revisionGroups.find(g => g.key === activeRevKey)?.versions || [],
+    [revisionGroups, activeRevKey],
+  )
+
   const needsLineage = version && !Object.hasOwn(version, 'previous_version_id')
   const corners = new Map<string, string>()
   for (const upload of uploads) if (!corners.has(cornerKey(upload))) corners.set(cornerKey(upload), `${upload.process_label ?? '?'} · ${upload.voltage_v ?? '?'} V · ${upload.temp_c ?? '?'} °C · ${upload.pex ?? '?'}`)
   const runs = selection.corner ? uploads.filter(row => cornerKey(row) === selection.corner) : []
+
   return <fieldset className="run-selector"><legend>{label} · {project.name}</legend><div className="run-fields">
-    <Field label={`${label} Block`}><select value={selection.block} disabled={lockedBlock} onChange={event => { onChange({ ...emptySelection, block: event.target.value }); setPrevious('') }}><option value="">Block 선택</option>{project.blocks.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field>
-    <Field label={`${label} NET_VER`}><select value={selection.net} disabled={!block} onChange={event => { onChange({ ...selection, net: event.target.value, version: '', corner: '', upload: '' }); setPrevious('') }}><option value="">NET_VER 선택</option>{[...new Set(block?.versions.map(row => row.net_ver) || [])].map(value => <option key={value}>{value}</option>)}</select></Field>
-    <Field label={`${label} REVISION`}><select value={selection.version} disabled={!block || !selection.net} onChange={event => { onChange({ ...selection, version: event.target.value, corner: '', upload: '' }); setPrevious('') }}><option value="">REVISION 선택</option>{block?.versions.filter(row => row.net_ver === selection.net).map(row => <option key={row.id} value={row.id}>{[row.revision, row.layout, row.eco_num].filter(Boolean).join(' · ')}{row.id === block.por?.version_id ? ' (PoR)' : ''}</option>)}</select></Field>
+    <Field label={`${label} Block`}><select value={selection.block} disabled={lockedBlock} onChange={event => { setSelectedRevKey(''); onChange({ ...emptySelection, block: event.target.value }); setPrevious('') }}><option value="">Block 선택</option>{project.blocks.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field>
+    <Field label={`${label} NET_VER`}><select value={selection.net} disabled={!block} onChange={event => { setSelectedRevKey(''); onChange({ ...selection, net: event.target.value, version: '', corner: '', upload: '' }); setPrevious('') }}><option value="">NET_VER 선택</option>{[...new Set(block?.versions.map(row => row.net_ver) || [])].map(value => <option key={value}>{value}</option>)}</select></Field>
+    <Field label={`${label} REVISION`}><select value={activeRevKey} disabled={!block || !selection.net} onChange={event => {
+      const nextKey = event.target.value
+      setSelectedRevKey(nextKey)
+      setPrevious('')
+      const group = revisionGroups.find(g => g.key === nextKey)
+      const autoVer = group && group.versions.length === 1 ? group.versions[0].id : ''
+      onChange({ ...selection, version: autoVer, corner: '', upload: '' })
+    }}><option value="">REVISION 선택</option>{revisionGroups.map(group => <option key={group.key} value={group.key}>{group.label}</option>)}</select></Field>
+    <Field label={`${label} ECO_NUM`}><select value={selection.version} disabled={!block || !selection.net || !activeRevKey} onChange={event => { onChange({ ...selection, version: event.target.value, corner: '', upload: '' }); setPrevious('') }}><option value="">ECO_NUM 선택</option>{ecoOptions.map(row => <option key={row.id} value={row.id}>{ecoLabel(row)}{row.id === block?.por?.version_id ? ' (PoR)' : ''}</option>)}</select></Field>
     <Field label={`${label} corner`}><select value={selection.corner} disabled={!version?.area_id} onChange={event => onChange({ ...selection, corner: event.target.value, upload: '' })}><option value="">corner 선택</option>{[...corners].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
     <Field label={`${label} 실행 파일`} className="run-file"><select value={selection.upload} disabled={!selection.corner} onChange={event => onChange({ ...selection, upload: event.target.value })}><option value="">실행 파일 선택</option>{runs.map(row => <option key={row.id} value={row.id}>{uploadName(row)}</option>)}</select></Field>
   </div>

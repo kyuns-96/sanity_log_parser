@@ -4,7 +4,7 @@ import { array, format, object, request, text, unknownSchema, uploadName, type A
 import { Badge, Button, Field } from '../components/workspace'
 import type { AtlasBlock, AtlasProject } from '@/features/atlas/atlasContext'
 import { cornerSpecId, type CornerSpec, type TrackingOverviewData } from '../trackingApi'
-import { formatBlockBaselineVersion, uploadMatchesCorner } from './trackingUtils'
+import { formatBlockBaselineVersion, uploadMatchesCorner, versionEcoNumbers } from './trackingUtils'
 
 interface BlockTrackingConfigCardProps {
   auth: Auth
@@ -58,6 +58,7 @@ export function BlockTrackingConfigCard({
   const [blockKind, setBlockKind] = useState<'previous_project' | 'previous_version'>('previous_project')
   const [baselineBlockId, setBaselineBlockId] = useState('')
   const [baselineNetVer, setBaselineNetVer] = useState('')
+  const [baselineRevKey, setBaselineRevKey] = useState('')
   const [baselineVersionId, setBaselineVersionId] = useState('')
   const [blockRecipients, setBlockRecipients] = useState('')
   const [blockCorners, setBlockCorners] = useState<CornerSpec[]>([])
@@ -74,9 +75,26 @@ export function BlockTrackingConfigCard({
     () => [...new Set((selectedBaselineBlock?.versions || []).filter(v => Boolean(v.area_id)).map(v => v.net_ver))],
     [selectedBaselineBlock],
   )
-  const baselineRevisionOptions = useMemo(
-    () => (selectedBaselineBlock?.versions || []).filter(v => Boolean(v.area_id) && v.net_ver === baselineNetVer),
-    [selectedBaselineBlock, baselineNetVer],
+  const baselineRevisionGroups = useMemo(() => {
+    const map = new Map<string, { key: string; label: string; versions: typeof selectedBaselineBlock extends undefined ? never : NonNullable<typeof selectedBaselineBlock>['versions'] }>()
+    for (const v of (selectedBaselineBlock?.versions || []).filter(ver => Boolean(ver.area_id) && ver.net_ver === baselineNetVer)) {
+      const key = `${v.revision}\0${v.layout}`
+      const existing = map.get(key)
+      if (existing) existing.versions.push(v)
+      else map.set(key, { key, label: `${v.revision} · ${v.layout}`, versions: [v] })
+    }
+    return [...map.values()]
+  }, [selectedBaselineBlock, baselineNetVer])
+  const selectedBaselineVersion = useMemo(
+    () => (selectedBaselineBlock?.versions || []).find(v => v.area_id === baselineVersionId),
+    [selectedBaselineBlock, baselineVersionId],
+  )
+  const activeBaselineRevKey = selectedBaselineVersion
+    ? `${selectedBaselineVersion.revision}\0${selectedBaselineVersion.layout}`
+    : (baselineRevisionGroups.some(g => g.key === baselineRevKey) ? baselineRevKey : '')
+  const baselineEcoOptions = useMemo(
+    () => baselineRevisionGroups.find(g => g.key === activeBaselineRevKey)?.versions || [],
+    [baselineRevisionGroups, activeBaselineRevKey],
   )
 
   useEffect(() => {
@@ -98,7 +116,9 @@ export function BlockTrackingConfigCard({
     const porVer = !savedVerId && bBlk?.por?.version_id
       ? bBlk.versions.find(v => v.id === bBlk.por?.version_id && Boolean(v.area_id))
       : undefined
-    setBaselineNetVer(savedVer?.net_ver || text(object(cfg.baseline_version_info).net_ver) || porVer?.net_ver || '')
+    const targetVer = savedVer || porVer
+    setBaselineNetVer(targetVer?.net_ver || text(object(cfg.baseline_version_info).net_ver) || '')
+    setBaselineRevKey(targetVer ? `${targetVer.revision}\0${targetVer.layout}` : '')
     setBaselineVersionId(savedVerId || porVer?.area_id || '')
 
     setBlockRecipients(array(cfg.recipients).map(text).join(', '))
@@ -289,7 +309,7 @@ export function BlockTrackingConfigCard({
                 disabled={!project.can_write}
                 onChange={e => {
                   const nextKind = e.target.value as 'previous_project' | 'previous_version'
-                  setBlockKind(nextKind); setBaselineNetVer(''); setBaselineVersionId(''); setApprovedBaselines({})
+                  setBlockKind(nextKind); setBaselineNetVer(''); setBaselineRevKey(''); setBaselineVersionId(''); setApprovedBaselines({})
                 }}
               >
                 <option value="previous_project">기준 프로젝트 ({baselineProject?.name || '미설정'})</option>
@@ -309,6 +329,7 @@ export function BlockTrackingConfigCard({
                       ? nextBlk.versions.find(v => v.id === nextBlk.por?.version_id && Boolean(v.area_id))
                       : undefined
                     setBaselineNetVer(porVer?.net_ver || '')
+                    setBaselineRevKey(porVer ? `${porVer.revision}\0${porVer.layout}` : '')
                     setBaselineVersionId(porVer?.area_id || '')
                     setApprovedBaselines({})
                   }}
@@ -329,7 +350,9 @@ export function BlockTrackingConfigCard({
                   setBaselineNetVer(nextNet)
                   const matching = (selectedBaselineBlock?.versions || []).filter(v => Boolean(v.area_id) && v.net_ver === nextNet)
                   const porInNet = matching.find(v => v.id === selectedBaselineBlock?.por?.version_id)
-                  setBaselineVersionId(porInNet?.area_id || (matching.length === 1 ? matching[0].area_id! : ''))
+                  const autoVer = porInNet || (matching.length === 1 ? matching[0] : undefined)
+                  setBaselineRevKey(autoVer ? `${autoVer.revision}\0${autoVer.layout}` : '')
+                  setBaselineVersionId(autoVer?.area_id || '')
                   setApprovedBaselines({})
                 }}
               >
@@ -337,16 +360,40 @@ export function BlockTrackingConfigCard({
                 {baselineNetVerOptions.map(nv => <option key={nv} value={nv}>{nv}</option>)}
               </select>
             </Field>
-            <Field label="기준 REVISION · ECO">
+            <Field label="기준 REVISION">
               <select
-                value={baselineVersionId}
+                value={activeBaselineRevKey}
                 disabled={!project.can_write || !baselineNetVer}
-                onChange={e => { setBaselineVersionId(e.target.value); setApprovedBaselines({}) }}
+                onChange={e => {
+                  const nextKey = e.target.value
+                  setBaselineRevKey(nextKey)
+                  const group = baselineRevisionGroups.find(g => g.key === nextKey)
+                  const porInGroup = group?.versions.find(v => v.id === selectedBaselineBlock?.por?.version_id)
+                  const autoVer = porInGroup || (group && group.versions.length === 1 ? group.versions[0] : undefined)
+                  setBaselineVersionId(autoVer?.area_id || '')
+                  setApprovedBaselines({})
+                }}
               >
                 <option value="">기준 REVISION 선택</option>
-                {baselineRevisionOptions.map(v => (
-                  <option key={v.area_id!} value={v.area_id!}>{[v.revision, v.layout, v.eco_num].filter(Boolean).join(' · ')}{v.id === selectedBaselineBlock?.por?.version_id ? ' (PoR)' : ''}</option>
+                {baselineRevisionGroups.map(group => (
+                  <option key={group.key} value={group.key}>{group.label}</option>
                 ))}
+              </select>
+            </Field>
+            <Field label="기준 ECO_NUM">
+              <select
+                value={baselineVersionId}
+                disabled={!project.can_write || !baselineNetVer || !activeBaselineRevKey}
+                onChange={e => { setBaselineVersionId(e.target.value); setApprovedBaselines({}) }}
+              >
+                <option value="">기준 ECO_NUM 선택</option>
+                {baselineEcoOptions.map(v => {
+                  const ecos = versionEcoNumbers(v)
+                  const ecoText = ecos.length ? ecos.join(', ') : 'ECO 미기록'
+                  return (
+                    <option key={v.area_id!} value={v.area_id!}>{ecoText}{v.id === selectedBaselineBlock?.por?.version_id ? ' (PoR)' : ''}</option>
+                  )
+                })}
               </select>
             </Field>
             <Field label="블록 담당자 메일 (쉼표 구분)">

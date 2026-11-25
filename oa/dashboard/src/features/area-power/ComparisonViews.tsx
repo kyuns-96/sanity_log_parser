@@ -168,10 +168,10 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
   const sideLabel = (owner: AtlasProject | undefined, upload: Upload | undefined, fallback: string) =>
     [owner?.name, owner?.blocks.find(row => row.area_id === upload?.block_id)?.name].filter(Boolean).join(' · ') || fallback
   const sideLabels = { current: sideLabel(currentOwner, displayedCurrent, project.name), baseline: sideLabel(beforeOwner, displayedBefore, savedProject?.name || '') }
-  // Project · Block · NET_VER · REVISION for mail subjects and analysis records.
+  // Project · Block · NET_VER · REVISION · ECO for mail subjects and analysis records.
   const runLabel = (owner: AtlasProject | undefined, upload: Upload | undefined, label: string) => {
     const version = owner?.blocks.find(row => row.area_id === upload?.block_id)?.versions.find(row => row.area_id === upload?.version_id)
-    return [label, version && `${version.net_ver} ${version.revision} ${version.layout}`].filter(Boolean).join(' · ').slice(0, 280)
+    return [label, version && [version.net_ver, version.revision, version.layout, version.eco_num].filter(Boolean).join(' ')].filter(Boolean).join(' · ').slice(0, 280)
   }
   const triageLabels = { current: runLabel(currentOwner, displayedCurrent, sideLabels.current), baseline: runLabel(beforeOwner, displayedBefore, sideLabels.baseline) }
   const marks = useMemo(() => new Map(triageItems.map(item => [item.group_id, item.verdict])), [triageItems])
