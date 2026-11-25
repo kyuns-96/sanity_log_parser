@@ -5,18 +5,43 @@ import { display, divide, fraction, multiply, parseDecimal, subtract, type Fract
 
 type Basis = { factor: Fraction | null; note: string }
 export type GateBases = { baseline: Basis; current: Basis }
-const squareMicrometres = new Map([['nm2', fraction(1n, 1000000n)], ['um2', fraction(1n)], ['mm2', fraction(1000000n)]])
+const squareMicrometres = new Map<string, Fraction>([
+  ['nm2', fraction(1n, 1000000n)],
+  ['sqnm', fraction(1n, 1000000n)],
+  ['squarenm', fraction(1n, 1000000n)],
+  ['um2', fraction(1n)],
+  ['squm', fraction(1n)],
+  ['squareum', fraction(1n)],
+  ['um*um', fraction(1n)],
+  ['micron2', fraction(1n)],
+  ['microns2', fraction(1n)],
+  ['squaremicron', fraction(1n)],
+  ['squaremicrons', fraction(1n)],
+  ['squaremicrometer', fraction(1n)],
+  ['squaremicrometers', fraction(1n)],
+  ['squaremicrometre', fraction(1n)],
+  ['squaremicrometres', fraction(1n)],
+  ['mm2', fraction(1000000n)],
+  ['sqmm', fraction(1000000n)],
+  ['squaremm', fraction(1000000n)],
+])
+const UNKNOWN_UNITS = new Set(['', 'unknown', 'unconfirmed', 'none', 'null', 'na', 'n/a', '-'])
 
 export function gateBasis(upload: Upload | undefined, process: string | null | undefined, definitions: ProcessDefinition[]): Basis {
   if (!upload) return { factor: null, note: '실행 미선택' }
-  const definition = definitions.find(item => item.name === process)
+  const procName = (process || '').trim()
+  const definition = procName
+    ? (definitions.find(item => item.name === procName)
+      || definitions.find(item => item.name.trim().toLowerCase() === procName.toLowerCase()))
+    : undefined
   const unitArea = parseDecimal(definition?.unit_area)
-  const reported = String(object(object(upload.input_contract).metadata).area_unit ?? '').trim()
-  const unit = (reported || 'um2').normalize('NFKC').toLowerCase().replace(/μ/g, 'u').replace(/[\s^]/g, '')
+  const rawReported = String(object(object(upload.input_contract).metadata).area_unit ?? '').trim()
+  const reported = UNKNOWN_UNITS.has(rawReported.toLowerCase()) ? '' : rawReported
+  const unit = (reported || 'um2').normalize('NFKC').toLowerCase().replace(/μ/g, 'u').replace(/[\s^_-]/g, '')
   const scale = squareMicrometres.get(unit)
-  const notes = [process || '프로젝트 공정 미지정']
+  const notes = [procName || '프로젝트 공정 미지정']
   if (definition && unitArea && unitArea.n > 0n) notes.push(`NAND2_D1 ${definition.unit_area} µm²`)
-  else if (process) notes.push('Unit area 미등록')
+  else if (procName) notes.push('Unit area 미등록')
   if (!reported) notes.push('Area 단위 미입력 → µm² 적용')
   else if (!scale) notes.push(`Area 단위 ${reported} 환산 불가`)
   else if (unit !== 'um2') notes.push(`원본 Area 단위 ${reported}`)

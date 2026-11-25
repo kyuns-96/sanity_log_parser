@@ -139,7 +139,7 @@ export function EffectiveFormulaHint({
             </div>
           )}
           <p className="eff-pop-note">
-            표의 <strong>Δ% 숫자 원문은 그대로 유지</strong>하며, 미소 분모의 과장(예: 0.01 → 0.06 mW = +500%)은 <em>ε</em> 완충으로 걸러 정렬·강조·AI 후보 선별에 반영합니다.
+            기본 <strong>Effective Δ%</strong> 모드에서는 완충된 값을 표시·정렬하며, 원시 비율은 <strong>단순 Δ%</strong> 탭이나 셀 툴팁에서 바로 확인할 수 있습니다. (예: 0.01 → 0.06 mW = 단순 +500%, Effective +6.7%)
           </p>
         </div>,
         document.body,

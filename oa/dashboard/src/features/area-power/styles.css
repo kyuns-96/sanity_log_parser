@@ -475,6 +475,8 @@
 .area-power .gate-count-switch[aria-checked=true] i::before { transform: translateX(12px); }
 .area-power .gate-count-switch[aria-checked=false] span:first-child, .area-power .gate-count-switch[aria-checked=true] span:last-child { font-weight: 650; color: var(--ink); }
 .area-power .gate-count-basis { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 0; padding: 5px 10px; border-bottom: 1px solid var(--line); color: var(--text-secondary); font-size: var(--text-caption); }
+.area-power .gate-count-basis.is-missing { background: color-mix(in srgb, var(--warning, #d97706) 10%, var(--surface)); color: var(--ink); font-weight: 550; }
+.area-power .toolbar-change-group { display: inline-flex; align-items: center; gap: 4px; }
 @media (prefers-reduced-motion: reduce) { .area-power .gate-count-switch i::before { transition: none; } }
 
 /* Phase 2: Project overview, context header, and streamlined automation settings */
