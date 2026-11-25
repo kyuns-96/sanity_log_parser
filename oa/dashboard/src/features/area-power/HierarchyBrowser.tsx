@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, ChevronsDownUp, Columns3, LoaderCircle, Maximize2, Minimize2, StepBack, StepForward } from 'lucide-react'
 import { compareNumber, isNumber } from 'lossless-json'
+import { add, compare as compareFraction, divide, fraction, magnitude as absFraction, multiply, parseDecimal, subtract, type Fraction } from './fraction'
 import { gateCountRow, type GateBases } from './gateCount'
 import { format, formatPercent, text, type TrackingRecord } from './api'
 import { Button } from './components/workspace'
@@ -156,7 +157,17 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
   const [sort, setSort] = useState<Sort>(defaultSort)
   const [changedOnly, setChangedOnly] = useState(false)
   const [mode, setMode] = useState<'split' | 'single'>('split')
+  const [changeMode, setChangeMode] = useState<'pct' | 'abs'>('pct')
   const [maximized, setMaximized] = useState(false)
+  const activeChangeOf = (metric: MetricDef): [Field, string] => metric.ratio ? ['pct_point_change', 'Δ%p'] : changeMode === 'abs' ? ['delta', 'Δ'] : ['relative_change_pct', 'Δ%']
+  function switchChangeMode(val: 'pct' | 'abs') {
+    setChangeMode(val)
+    setSort(prev => {
+      if (val === 'abs' && prev.key.endsWith('.relative_change_pct')) return { ...prev, key: prev.key.replace(/\.relative_change_pct$/, '.delta') }
+      if (val === 'pct' && prev.key.endsWith('.delta')) return { ...prev, key: prev.key.replace(/\.delta$/, '.relative_change_pct') }
+      return prev
+    })
+  }
   useEffect(() => {
     if (!maximized) return
     const close = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') setMaximized(false) }
@@ -172,27 +183,6 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
     else setExpanded(new Set())
   }, [rootKeys, flat])
 
-  function order(rows: BrowserRow[]) {
-    const kept = changedOnly ? rows.filter(row => row.childCount > 0 || !unchanged(row)) : rows
-    if (sort.key === 'name') {
-      const label = (row: BrowserRow) => row.currentPaths[0] || row.baselinePaths[0] || ''
-      return [...kept].sort((a, b) => (sort.descending ? -1 : 1) * label(a).localeCompare(label(b), undefined, { numeric: true }))
-    }
-    const read = (row: BrowserRow, metric: string, field: Field) => {
-      const number = text(value(row, metric, field))
-      return isNumber(number) ? number : null
-    }
-    // Default: largest instance first (current area, else baseline area), the
-    // same order the server pages children in.
-    const [sortMetric, sortField] = sort.key.split('.') as [string, Field]
-    const numeric = sort.key === 'size' ? (row: BrowserRow) => read(row, 'total_area', 'current') ?? read(row, 'total_area', 'baseline') : (row: BrowserRow) => read(row, sortMetric, sortField)
-    return [...kept].sort((a, b) => {
-      const left = numeric(a), right = numeric(b)
-      if (left === null || right === null) return left === right ? 0 : left === null ? 1 : -1
-      return sort.descending ? compareNumber(right, left) : compareNumber(left, right)
-    })
-  }
-
   const projectRow = useMemo(() => {
     if (!gateBases) return null
     const cache = new WeakMap<BrowserRow, BrowserRow>()
@@ -204,6 +194,91 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
       return converted
     }
   }, [gateBases])
+
+  // Symmetric positive root reference per metric group (s = 0.10%, p = 10% => eps = 1.0% of Root).
+  const rootRefs = useMemo(() => {
+    const ZERO = fraction(0n)
+    const TWO = fraction(2n)
+    const mappedRoots = projectRow ? roots.map(projectRow) : roots
+    const sideSum = (key: string, side: 'baseline' | 'current'): Fraction | null => {
+      let acc = ZERO, found = false
+      for (const r of mappedRoots) {
+        const f = parseDecimal(value(r, key, side))
+        if (f && f.n > 0n) { acc = add(acc, f); found = true }
+      }
+      return found ? acc : null
+    }
+    const symRef = (key: string): Fraction => {
+      const b = sideSum(key, 'baseline'), c = sideSum(key, 'current')
+      if (b && c) return divide(add(b, c), TWO)
+      return b || c || ZERO
+    }
+    const totalArea = symRef('total_area')
+    const logicRaw = symRef('logic_area')
+    const logicArea = logicRaw.n > 0n ? logicRaw : totalArea
+    const powerTotal = symRef('pwr_all_total_mw')
+    const totalCells = symRef('total_cells')
+    return { logicArea, totalArea, powerTotal, totalCells }
+  }, [roots, projectRow])
+
+  function rootForMetric(metricId: string): Fraction {
+    if (metricId === 'logic_area' || metricId === 'cts_area' || metricId === 'others_area') return rootRefs.logicArea
+    if (metricId.endsWith('_area')) return rootRefs.totalArea
+    if (metricId.startsWith('pwr_')) return rootRefs.powerTotal
+    return rootRefs.totalCells
+  }
+
+  function scaleMetrics(row: BrowserRow, metric: MetricDef): { dampedPct: Fraction | null; rootSharePct: Fraction | null; isNoise: boolean } {
+    if (metric.ratio) return { dampedPct: null, rootSharePct: null, isNoise: false }
+    const HUNDRED = fraction(100n)
+    const EPS_FACTOR = fraction(1n, 100n) // s=0.10% / p=10% = 1.0% of Root
+    const TEN = fraction(10n)
+    const HALF = fraction(1n, 2n)
+    const cFrac = parseDecimal(value(row, metric.id, 'current'))
+    let bFrac = parseDecimal(value(row, metric.id, 'baseline'))
+    if (!bFrac && !row.baselinePaths.length && row.currentPaths.length && cFrac) bFrac = fraction(0n)
+    const deltaFrac = parseDecimal(value(row, metric.id, 'delta')) ?? (bFrac && cFrac ? subtract(cFrac, bFrac) : null)
+    if (!deltaFrac || deltaFrac.n === 0n) return { dampedPct: fraction(0n), rootSharePct: fraction(0n), isNoise: false }
+    const rootRef = rootForMetric(metric.id)
+    const eps = rootRef.n > 0n ? multiply(rootRef, EPS_FACTOR) : fraction(0n)
+    const denom = bFrac ? add(bFrac, eps) : eps
+    const dampedPct = denom.n > 0n ? multiply(divide(deltaFrac, denom), HUNDRED) : null
+    const rootSharePct = rootRef.n > 0n ? multiply(divide(absFraction(deltaFrac), rootRef), HUNDRED) : null
+    const belowDamped = dampedPct ? compareFraction(absFraction(dampedPct), TEN) < 0 : false
+    const belowShare = rootSharePct ? compareFraction(rootSharePct, HALF) < 0 : true
+    return { dampedPct, rootSharePct, isNoise: belowDamped && belowShare }
+  }
+
+  function order(rows: BrowserRow[]) {
+    const kept = changedOnly ? rows.filter(row => row.childCount > 0 || !unchanged(row)) : rows
+    if (sort.key === 'name') {
+      const label = (row: BrowserRow) => row.currentPaths[0] || row.baselinePaths[0] || ''
+      return [...kept].sort((a, b) => (sort.descending ? -1 : 1) * label(a).localeCompare(label(b), undefined, { numeric: true }))
+    }
+    const read = (row: BrowserRow, metric: string, field: Field) => {
+      const number = text(value(row, metric, field))
+      return isNumber(number) ? number : null
+    }
+    const [sortMetric, sortField] = sort.key.split('.') as [string, Field]
+    if (sortField === 'relative_change_pct') {
+      const mDef = metricDef.get(sortMetric)
+      if (mDef && !mDef.ratio) {
+        return [...kept].sort((a, b) => {
+          const left = scaleMetrics(a, mDef).dampedPct, right = scaleMetrics(b, mDef).dampedPct
+          if (left === null || right === null) return left === right ? 0 : left === null ? 1 : -1
+          return sort.descending ? compareFraction(right, left) : compareFraction(left, right)
+        })
+      }
+    }
+    // Default: largest instance first (current area, else baseline area), the
+    // same order the server pages children in.
+    const numeric = sort.key === 'size' ? (row: BrowserRow) => read(row, 'total_area', 'current') ?? read(row, 'total_area', 'baseline') : (row: BrowserRow) => read(row, sortMetric, sortField)
+    return [...kept].sort((a, b) => {
+      const left = numeric(a), right = numeric(b)
+      if (left === null || right === null) return left === right ? 0 : left === null ? 1 : -1
+      return sort.descending ? compareNumber(right, left) : compareNumber(left, right)
+    })
+  }
   const lines = useMemo(() => {
     const result: Line[] = []
     const walk = (rows: BrowserRow[], depth: number, parent: string, parentRow?: BrowserRow) => {
@@ -276,14 +351,43 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
   // `short` is what the header shows when the zone header above already names the unit.
   const sortHead = (key: string, label: string, extra = '', short = label) => <th key={key} className={`numeric${extra ? ` ${extra}` : ''}`} aria-sort={ariaSort(key)} title={label}><button type="button" aria-label={label} onClick={() => sortBy(key)}><span className="head-label">{short}</span>{sortMark(key)}</button></th>
 
+  const fracToApproxPct = (f: Fraction | null): string => {
+    if (!f) return '—'
+    const signStr = f.n < 0n ? '-' : f.n > 0n ? '+' : ''
+    const scaled100 = (absFraction(f).n * 200n + f.d) / (2n * f.d)
+    return `${signStr}${scaled100 / 100n}.${(scaled100 % 100n).toString().padStart(2, '0')}%`
+  }
+
   const toggleColumn = (id: string) => onColumns(columns.includes(id) ? columns.filter(item => item !== id) : METRIC_CATALOG.map(metric => metric.id).filter(item => item === id || columns.includes(item)))
   const numberCell = (row: BrowserRow, metric: MetricDef, field: Field, extra = '') => {
     const raw = value(row, metric.id, field)
-    const direction = field === 'delta' || ABS_PERCENT_FIELDS.has(field) ? sign(raw) : 0
-    const magnitude = field === 'relative_change_pct' && direction ? Math.min(100, Math.abs(Number(text(raw)))) : field === 'pct_point_change' && direction ? Math.min(100, Math.abs(Number(text(raw))) * 5) : 0
+    const isChangeField = field === 'delta' || ABS_PERCENT_FIELDS.has(field)
+    const direction = isChangeField ? sign(raw) : 0
+    const scale = isChangeField && direction && !metric.ratio ? scaleMetrics(row, metric) : null
+    const isNoise = Boolean(scale?.isNoise)
+    let barMagnitude = 0
+    if (field === 'pct_point_change' && direction) {
+      barMagnitude = Math.min(100, Math.abs(Number(text(raw))) * 5)
+    } else if (isChangeField && direction && !metric.ratio && !isNoise && scale?.rootSharePct) {
+      const absShare = absFraction(scale.rootSharePct)
+      if (compareFraction(absShare, fraction(40n)) >= 0) {
+        barMagnitude = 100
+      } else {
+        const bps = Number((absShare.n * 10000n) / absShare.d)
+        const scaledBar = Math.min(100, (bps / 10000) * 2.5)
+        barMagnitude = scaledBar >= 1 ? scaledBar : 0
+      }
+    }
     const label = shown(row, metric, field)
-    // The size of a change is a bar along the bottom of the cell, so it costs no column width.
-    return <td key={`${metric.id}.${field}`} className={`numeric${extra ? ` ${extra}` : ''}${direction > 0 ? ' up' : direction < 0 ? ' down' : ''}${magnitude ? ' change-bar' : ''}`} style={magnitude ? { '--magnitude': magnitude / 100 } as CSSProperties : undefined} title={raw == null || raw === '' ? undefined : text(raw)}>{label}</td>
+    let tooltip: string | undefined = raw == null || raw === '' ? undefined : text(raw)
+    if (scale && direction) {
+      const rawDelta = amount(value(row, metric.id, 'delta'), metric)
+      const u = unitOf(metric)
+      tooltip = `Δ ${direction > 0 ? '+' : ''}${rawDelta}${u} · 체급 연동 ${fracToApproxPct(scale.dampedPct)} · 루트 비중 ${fracToApproxPct(scale.rootSharePct).replace(/^\+/, '')}${isNoise ? ' (미소 변화 완충)' : ''}`
+    }
+    const toneClass = isNoise ? ' noise-muted' : direction > 0 ? ' up' : direction < 0 ? ' down' : ''
+    // The size of a change is a bar along the cell proportional to share of root total.
+    return <td key={`${metric.id}.${field}`} className={`numeric${extra ? ` ${extra}` : ''}${toneClass}${barMagnitude ? ' change-bar' : ''}`} style={barMagnitude ? { '--magnitude': barMagnitude / 100 } as CSSProperties : undefined} title={tooltip}>{label}</td>
   }
   const splitColumns = 2 + metrics.length * 3 + 1
   const singleColumns = 1 + metrics.reduce((sum, metric) => sum + fieldsOf(metric).length, 0) + 1
@@ -295,14 +399,14 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
     for (const line of lines) {
       if (line.kind !== 'row') continue
       note('state', stateWidth(stateLabel[stateOf(line.row)] || stateOf(line.row)))
-      for (const metric of metrics) for (const field of mode === 'split' ? ['baseline', 'current', changeOf(metric)[0]] as Field[] : fieldsOf(metric).map(([field]) => field)) note(`${metric.id}.${field}`, valueWidth(shown(line.row, metric, field)))
+      for (const metric of metrics) for (const field of mode === 'split' ? ['baseline', 'current', activeChangeOf(metric)[0]] as Field[] : fieldsOf(metric).map(([field]) => field)) note(`${metric.id}.${field}`, valueWidth(shown(line.row, metric, field)))
     }
     return result
-  }, [lines, columns.join('\n'), mode, hasResult])
+  }, [lines, columns.join('\n'), mode, changeMode, hasResult])
   const widthOf = (metric: MetricDef, field: Field, label: string) => columnWidth(label, longest.get(`${metric.id}.${field}`) || 0, sort.key === `${metric.id}.${field}`)
   // Both panes use one width per metric so the two sides line up.
   const paneWidth = (metric: MetricDef) => Math.max(widthOf(metric, 'baseline', `${metric.label}${unitOf(metric)}`), widthOf(metric, 'current', `${metric.label}${unitOf(metric)}`))
-  const gutterWidth = (metric: MetricDef) => widthOf(metric, changeOf(metric)[0], metric.label)
+  const gutterWidth = (metric: MetricDef) => widthOf(metric, activeChangeOf(metric)[0], metric.label)
   const singleWidths = metrics.flatMap(metric => fieldsOf(metric).map(([field, label]) => widthOf(metric, field, label)))
   const stateColumn = Math.max(52, longest.get('state') || 0)
   const minWidth = mode === 'split'
@@ -313,6 +417,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
     <div className="browser-toolbar" role="toolbar" aria-label="Hierarchy 보기">
       {maximized && unitSwitch}
       <div className="view-switch" role="group" aria-label="보기 방식">{([['split', '좌우 비교'], ['single', '단일 표']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)}>{label}</button>)}</div>
+      {mode === 'split' && <div className="view-switch" role="group" aria-label="변화 표시">{([['pct', '변화 Δ%'], ['abs', '변화 Δ']] as const).map(([val, lbl]) => <button key={val} type="button" aria-pressed={changeMode === val} onClick={() => switchChangeMode(val)} title={val === 'pct' ? '상대 변화율 표시 (정렬 시 미소 노이즈를 완충한 체급 연동 순)' : '절대 변화량(Δ) 표시 및 크기순 정렬'}>{lbl}</button>)}</div>}
       <Button variant="outline" size="xs" aria-expanded={choosing} onClick={() => setChoosing(value => !value)}><Columns3 size={13} />열 선택 · {metrics.length}</Button>
       <label className="browser-threshold" title="현재·기준 중 큰 total area가 이 값보다 작은 하위 instance를 숨깁니다. 비우면 모두 표시합니다. 루트는 항상 표시합니다.">{gateBases ? '원본 Area' : 'Area'} ≥<input type="text" inputMode="decimal" value={areaDraft} placeholder="전체" onChange={event => setAreaDraft(event.target.value)} onBlur={commitArea} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commitArea() } if (event.key === 'Escape') setAreaDraft(minArea) }} aria-invalid={areaDraft.trim() !== '' && !AREA_THRESHOLD.test(areaDraft.trim())} /></label>
       <Button variant="outline" size="xs" disabled={!differences} onClick={() => jump(-1)} title="이전 차이 (Alt+↑)"><StepBack size={13} />이전 차이</Button>
@@ -340,11 +445,11 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
           : <colgroup><col className="col-instance" />{singleWidths.map((width, index) => <col key={index} style={{ width }} />)}<col className="col-state" style={{ width: stateColumn }} /></colgroup>}
         <thead>
           {mode === 'split' ? <>
-            <tr><th colSpan={1 + metrics.length} className="pane-head" title={sideName('baseline')}><span className="zone-label">{sideName('baseline')}</span></th><th colSpan={metrics.length} className="group-head gutter-head" title="현재가 기준보다 얼마나 달라졌는지입니다. 값은 Δ%, 비율 지표(%)는 Δ%p입니다."><span className="zone-label">변화 <small>Δ% · 비율은 Δ%p</small></span></th><th colSpan={2 + metrics.length} className="pane-head current-pane" title={sideName('current')}><span className="zone-label">{sideName('current')}</span></th></tr>
+            <tr><th colSpan={1 + metrics.length} className="pane-head" title={sideName('baseline')}><span className="zone-label">{sideName('baseline')}</span></th><th colSpan={metrics.length} className="group-head gutter-head" title="현재가 기준보다 얼마나 달라졌는지입니다. 막대 길이는 루트 전체 대비 절대 기여도이며, Δ% 정렬은 미소 노이즈를 완충한 체급 연동 순입니다."><span className="zone-label">변화 <small>{changeMode === 'abs' ? 'Δ · 비율은 Δ%p' : 'Δ% · 비율은 Δ%p'}</small></span></th><th colSpan={2 + metrics.length} className="pane-head current-pane" title={sideName('current')}><span className="zone-label">{sideName('current')}</span></th></tr>
             <tr>
               <th className="instance-head" aria-sort={ariaSort('name')}><button type="button" onClick={() => sortBy('name')}>Instance {sortMark('name')}</button></th>
               {metrics.map(metric => sortHead(`${metric.id}.baseline`, `${metric.label}${unitOf(metric)}`))}
-              {metrics.map((metric, index) => sortHead(`${metric.id}.${changeOf(metric)[0]}`, `${metric.label} ${changeOf(metric)[1]}`, index ? '' : 'group-start', metric.label))}
+              {metrics.map((metric, index) => sortHead(`${metric.id}.${activeChangeOf(metric)[0]}`, `${metric.label} ${activeChangeOf(metric)[1]}`, index ? '' : 'group-start', metric.label))}
               <th className="instance-head group-start"><button type="button" onClick={() => sortBy('name')}>Instance</button></th>
               {metrics.map(metric => sortHead(`${metric.id}.current`, `${metric.label}${unitOf(metric)}`))}
               <th className="state-head">상태</th>
@@ -386,7 +491,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
                 : <><td className={`instance void pane-${kind}`}><span className="tree-cell">{guides}{toggleButton}<span className="void-label">{kind === 'baseline' ? '기준 없음' : '현재 없음'}</span>{kind === 'current' && mark}</span></td>{metrics.map(metric => <td key={metric.id} className={`void pane-${kind}`} />)}</>
               return <tr key={row.key} {...attributes} className={`diff-${diff}${selected === row.key ? ' selected' : ''}`}>
                 {side(row.baselinePaths.length > 0, baseName, row.baselinePaths, 'baseline')}
-                {metrics.map((metric, index) => numberCell(row, metric, changeOf(metric)[0], `${index ? '' : 'group-start '}gutter`))}
+                {metrics.map((metric, index) => numberCell(row, metric, activeChangeOf(metric)[0], `${index ? '' : 'group-start '}gutter`))}
                 {side(row.currentPaths.length > 0, name, row.currentPaths, 'current')}
                 {stateCell}
               </tr>
@@ -411,9 +516,12 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
     {current && <dl className="browser-detail" aria-live="polite">
       <div><dt title={sideName('current')}>{sideName('current')}</dt><dd>{current.row.currentPaths.join(' + ') || '대응 없음'}</dd></div>
       <div><dt title={sideName('baseline')}>{sideName('baseline')}</dt><dd>{current.row.baselinePaths.join(' + ') || '대응 없음'}</dd></div>
-      {metrics.map(metric => <div key={metric.id}><dt>{metric.label}{unitOf(metric)}</dt><dd>{metric.ratio
-        ? <>{percent(value(current.row, metric.id, 'baseline'))} → {percent(value(current.row, metric.id, 'current'))} · Δ {formatPercent(value(current.row, metric.id, 'pct_point_change'))}%p</>
-        : <>{amount(value(current.row, metric.id, 'baseline'), metric)} → {amount(value(current.row, metric.id, 'current'), metric)} · Δ {amount(value(current.row, metric.id, 'delta'), metric)} · {percent(value(current.row, metric.id, 'relative_change_pct'))}</>}</dd></div>)}
+      {metrics.map(metric => {
+        const sc = !metric.ratio ? scaleMetrics(current.row, metric) : null
+        return <div key={metric.id}><dt>{metric.label}{unitOf(metric)}</dt><dd>{metric.ratio
+          ? <>{percent(value(current.row, metric.id, 'baseline'))} → {percent(value(current.row, metric.id, 'current'))} · Δ {formatPercent(value(current.row, metric.id, 'pct_point_change'))}%p</>
+          : <>{amount(value(current.row, metric.id, 'baseline'), metric)} → {amount(value(current.row, metric.id, 'current'), metric)} · Δ {amount(value(current.row, metric.id, 'delta'), metric)} · {percent(value(current.row, metric.id, 'relative_change_pct'))}{sc?.dampedPct ? ` (체급 연동 ${fracToApproxPct(sc.dampedPct)} · 비중 ${fracToApproxPct(sc.rootSharePct).replace(/^\+/, '')})` : ''}</>}</dd></div>
+      })}
       {reasonOf(current.row, hasResult) && <div><dt>사유</dt><dd>{reasonOf(current.row, hasResult)}</dd></div>}
     </dl>}
   </div>

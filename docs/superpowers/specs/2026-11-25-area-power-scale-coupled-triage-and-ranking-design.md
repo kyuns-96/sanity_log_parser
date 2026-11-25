@@ -1,11 +1,11 @@
 # 프로젝트 비교 후속 설계 — Area · Power 통합 체급 연동 변화율과 이중 Top-10 랭킹
 
-2026-11-25 · 합의한 설계 방향 · 구현 대기
+2026-11-25 · 합의한 설계 방향 · 구현 완료
 
 이 문서는 Hierarchy 비교 표, AI 이상 후보 선별(`common/area_power/triage.py`), 자동 추적 결과 메일에서 **Area·Power·Cells 전 양적 지표에 대해 미소 인스턴스의 변화율 과장(`0.01 → 0.06 mW = +500%`, `60 → 240 µm² = +300%`)을 제거하면서도 개별 인스턴스의 실제 국소 이상은 놓치지 않기 위한** 통합 수치·화면·리포트 규칙을 정의한다.
 
 > [!NOTE]
-> 본 문서는 후속 구현을 위한 설계 사양이며 현재 실행 코드에는 아직 반영되지 않았다. 기존 DB 테이블(`di_area_power_csv`, `di_area_power_tracking_record`)의 DDL 변경 없이 호환되도록 설계하며, 내부 연동 AI에게 공통 코드 수정 권한을 부여하지 않는다. 관련 문서: [현재 제품 사용법](../../area_power/README.md) · [1단계 AI 분석 설계](2026-11-17-area-power-ai-triage-design.md) · [2단계 자동 추적 설계](2026-11-23-area-power-net-ver-tracking-design.md)
+> 본 사양은 `common/area_power/`, `oa/area_power/`, `vwp_bridge/area_power/`, `oa/dashboard/`에 반영되었다. 기존 DB 테이블(`di_area_power_csv`, `di_area_power_tracking_record`)의 DDL 변경 없이 호환되도록 구성되며, 내부 연동 AI에게 공통 코드 수정 권한을 부여하지 않는다. 관련 문서: [현재 제품 사용법](../../area_power/README.md) · [1단계 AI 분석 설계](2026-11-17-area-power-ai-triage-design.md) · [2단계 자동 추적 설계](2026-11-23-area-power-net-ver-tracking-design.md)
 
 ---
 

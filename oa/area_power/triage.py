@@ -169,6 +169,7 @@ def select(raw, prepared, thresholds):
 
 def preview_result(prepared, context, selection, thresholds) -> dict:
     return {'thresholds': thresholds.model_dump(mode='python'), 'counts': selection.counts,
+            'attribution': selection.attribution,
             'estimated_calls': -(-len(selection.items) // BATCH_SIZE), 'max_items': MAX_ITEMS,
             'over_limit': selection.over_limit, 'missing_watched': selection.missing_watched,
             'watched_paths': prepared['watched_paths'], 'context': context,
@@ -197,6 +198,7 @@ def request_run(service, prepared, selection, body: TriageInput, actor) -> dict:
         ai_model = {key: model_meta.get(key) for key in ('connection_label', 'model', 'site')}
         retry_limit = settings['area_retry_limit'] if settings else DEFAULT_AREA_RETRY_LIMIT
         payload = {'engine': ENGINE, 'retry_limit': retry_limit, 'thresholds': body.thresholds.model_dump(mode='python'),
+                   'attribution': selection.attribution, 'counts': selection.counts,
                    'notes': prepared['notes'], 'note_warnings': prepared['note_warnings'], 'same_rtl': prepared['same_rtl'],
                    'watched_paths': prepared['watched_paths'], 'approved_expectations': prepared.get('approved_expectations', []),
                    'process': prepared['process'],
@@ -218,7 +220,7 @@ def _summary(run, actor):
     payload = run['payload']
     return {**{key: run.get(key) for key in ('id', 'state', 'created_at', 'updated_at', 'error_detail', 'parent_id')},
             'payload': {key: payload.get(key) for key in ('engine', 'retry_limit', 'thresholds', 'coverage', 'missing_watched', 'note_warnings',
-                                                           'same_rtl', 'requested_by', 'side_context', 'counts', 'labels', 'progress', 'ai_model')},
+                                                           'same_rtl', 'requested_by', 'side_context', 'counts', 'attribution', 'labels', 'progress', 'ai_model')},
             'can_delete': actor.auth_method == 'sso' and request_owner(run) == actor.user_id,
             'note_count': len(payload.get('notes', []))}
 

@@ -261,6 +261,7 @@
 .area-power.area-power .hierarchy-browser .zone-label small { margin-left: 6px; color: var(--text-muted); font-size: var(--text-micro); font-weight: 500; }
 .area-power.area-power .hierarchy-browser td.up { color: var(--warning); }
 .area-power.area-power .hierarchy-browser td.down { color: var(--accent); }
+.area-power.area-power .hierarchy-browser td.noise-muted { color: var(--text-muted); }
 .area-power.area-power .tree-cell { display: flex; align-items: center; height: 26px; min-width: 0; }
 .area-power.area-power .tree-guide { flex: none; align-self: stretch; width: 16px; background: linear-gradient(var(--line), var(--line)) 7px 0 / 1px 100% no-repeat; }
 .area-power.area-power .tree-toggle, .area-power.area-power .tree-spacer { flex: none; width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; }
@@ -385,6 +386,13 @@
 .area-power.area-power .triage-preview { margin-top: 8px; padding: 8px 10px; border-radius: 6px; background: var(--surface-soft); font-size: var(--text-data); color: var(--text-secondary); }
 .area-power.area-power .triage-preview p { margin: 0; line-height: 1.8; }
 .area-power.area-power .triage-preview strong { color: var(--ink); }
+.area-power .triage-attribution { display: flex; flex-direction: column; gap: 5px; margin: 6px 0; padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: 6px; background: var(--surface-soft); font-size: var(--text-caption); }
+.area-power .triage-attr-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 10px; }
+.area-power .triage-attr-label { font-weight: 650; color: var(--ink); white-space: nowrap; }
+.area-power .triage-attr-chips { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+.area-power .triage-attr-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); font-family: var(--font-mono); color: var(--text-secondary); }
+.area-power .triage-attr-chip b { color: var(--ink); font-weight: 600; }
+.area-power .triage-attr-rest { color: var(--text-muted); font-family: var(--font-mono); }
 .area-power.area-power .triage-result { margin-top: 10px; }
 .area-power.area-power .triage-summary { cursor: pointer; font-size: var(--text-body); color: var(--text-secondary); padding: 2px 0; }
 .area-power.area-power .triage-progress { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }

@@ -57,11 +57,53 @@ function elapsedSeconds(fromIso: unknown, nowMs: number): number | null {
   return Number.isFinite(ms) ? Math.max(0, (nowMs - ms) / 1000) : null
 }
 
+const RANKING_LABEL: Record<string, string> = {
+  power_abs_top: 'Power 절대량 Top',
+  power_damped_top: 'Power 체급급증 Top',
+  area_abs_top: 'Area 절대량 Top',
+  area_damped_top: 'Area 체급급증 Top',
+}
+
 function summary(card: Record<string, unknown>) {
   const area = object(card.area), power = object(card.power_mw)
-  const parts = [`Logic Area ${signed(area.delta_pct, '%')}`]
-  if (!('excluded' in power)) parts.unshift(`Total Power ${signed(power.delta_pct, '%')}`)
+  const areaPart = `Logic Area ${signed(area.delta_pct, '%')}${area.damped_pct != null ? ` (보정 ${signed(area.damped_pct, '%')})` : ''}`
+  const parts = [areaPart]
+  if (!('excluded' in power)) {
+    const pwrDelta = power.delta != null && text(power.delta) !== '' ? `${text(power.delta).startsWith('-') ? '' : '+'}${format(power.delta)} mW · ` : ''
+    const pwrDamped = power.damped_pct != null ? ` (보정 ${signed(power.damped_pct, '%')})` : ''
+    parts.unshift(`Total Power ${pwrDelta}${signed(power.delta_pct, '%')}${pwrDamped}`)
+  }
   return parts.join(' · ')
+}
+
+function renderAttributionBox(rawAttr: unknown) {
+  const attr = object(rawAttr)
+  const sections: Array<{ key: string; title: string; unit: string }> = [
+    { key: 'power', title: 'Total Power', unit: ' mW' },
+    { key: 'area', title: 'Logic Area', unit: '' },
+  ]
+  const lines = sections.map(({ key, title, unit }) => {
+    const info = object(attr[key])
+    const rows = array(info.items).map(object)
+    if (!info.analyzed || !rows.length) return null
+    const chips = rows.slice(0, 5).map((r, idx) => (
+      <span key={text(r.path) || idx} className="triage-attr-chip">
+        <b>{idx + 1}. {text(r.path)}</b> {text(r.delta).startsWith('-') ? '' : '+'}{format(r.delta)}{unit} ({formatPercent(r.share_of_increase_pct)}%)
+      </span>
+    ))
+    const restCount = Number(info.rest_count || 0)
+    return (
+      <div key={key} className="triage-attr-row">
+        <span className="triage-attr-label">{title} 1단계 기여 ({signed(info.root_delta_pct, '%')})</span>
+        <div className="triage-attr-chips">
+          {chips}
+          {restCount > 0 && <span className="triage-attr-rest">외 {restCount}개 {text(info.rest_delta).startsWith('-') ? '' : '+'}{format(info.rest_delta)}{unit}</span>}
+        </div>
+      </div>
+    )
+  }).filter(Boolean)
+  if (!lines.length) return null
+  return <div className="triage-attribution" aria-label="1단계 Sub-block 증가 지분 요약">{lines}</div>
 }
 
 const DRIVE_SHARE_LABEL: Record<string, string> = {
@@ -91,7 +133,7 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
   const action = useAction()
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
-  const [thresholds, setThresholds] = useState({ area_increase_pct: '10', power_increase_pct: '10', min_area: '50' })
+  const [thresholds, setThresholds] = useState({ area_increase_pct: '10', power_increase_pct: '10', noise_share_pct: '0.1', min_area: '50' })
   const [preview, setPreview] = useState<TriagePreview | null>(null)
   const [runs, setRuns] = useState<TriageRun[]>([])
   const [historyVersion, setHistoryVersion] = useState(0)
@@ -264,11 +306,32 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
     const card = object(item.card)
     const flags = array(card.flags).map(flag => FLAG_LABEL[text(flag)] || text(flag))
     const ancestors = array(card.rolled_up_ancestors).map(text)
+    const rankingTags = array(card.ranking_tags).map(text).filter(Boolean)
+    const depth1Block = text(card.depth1_block)
+    const distMetrics = array(card.distributed_metrics).map(text)
+    const topByMetric = object(card.top_children_by_metric)
+    const distNotes = distMetrics.map(part => {
+      const bucket = object(topByMetric[part])
+      const rows = array(bucket.items).map(object)
+      if (!rows.length) return ''
+      const unit = part === 'power' ? ' mW' : ''
+      const topText = rows.slice(0, 3).map(r => `${text(r.path)} (${text(r.delta).startsWith('-') ? '' : '+'}${format(r.delta)}${unit})`).join(', ')
+      const rest = Math.max(0, Number(bucket.positive_count || rows.length) - Math.min(3, rows.length))
+      return `하위 분산(${part === 'power' ? 'Power' : 'Area'}): ${topText}${rest > 0 ? ` 외 ${rest}개` : ''}`
+    }).filter(Boolean)
     return <li key={item.group_id} className={`triage-item verdict-${item.verdict}`}>
       <label className="triage-exclude" title="메일에서 이 항목을 뺍니다"><input type="checkbox" checked={excluded.has(item.group_id)} onChange={event => { const next = new Set(excluded); if (event.target.checked) next.add(item.group_id); else next.delete(item.group_id); setExcluded(next) }} />제외</label>
       <button type="button" onClick={() => onLocate(item)} title="표에서 이 instance로 이동">
-        <span className="triage-head"><span className={`verdict-tag verdict-${item.verdict}`}>{VERDICT_LABEL[item.verdict] || item.verdict}</span><strong>{text(card.current_path) || text(card.baseline_path)}</strong>{object(item.card).watched === true && <span className="side-tag">주요</span>}<span className="triage-delta">{summary(card)}</span></span>
+        <span className="triage-head">
+          <span className={`verdict-tag verdict-${item.verdict}`}>{VERDICT_LABEL[item.verdict] || item.verdict}</span>
+          {depth1Block && <span className="side-tag" title="소속 1단계 Sub-block">{depth1Block}</span>}
+          <strong>{text(card.current_path) || text(card.baseline_path)}</strong>
+          {object(item.card).watched === true && <span className="side-tag">주요</span>}
+          {rankingTags.map(tag => <span key={tag} className="side-tag">{RANKING_LABEL[tag] || tag}</span>)}
+          <span className="triage-delta">{summary(card)}</span>
+        </span>
         <span className="triage-reason">원인: {CAUSE_LABEL[item.cause] || item.cause} · {item.explanation}</span>
+        {distNotes.map(note => <span key={note} className="triage-evidence">{note}</span>)}
         {shares(card, 'vth') && <span className="triage-evidence">Vth: {shares(card, 'vth')}</span>}
         {shares(card, 'drive_groups') && <span className="triage-evidence">Drive (그룹): {shares(card, 'drive_groups')}</span>}
         {shares(card, 'drive') && <span className="triage-evidence">{shares(card, 'drive_groups') ? 'Drive (세부)' : 'Drive'}: {shares(card, 'drive')}</span>}
@@ -282,7 +345,7 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
   return <section className="triage-panel" aria-label="AI 이상치 분석">
     <div className="triage-controls">
       <h3><Sparkles size={15} aria-hidden="true" />AI 분석</h3>
-      {([['area_increase_pct', 'Logic Area 증가 ≥', '%'], ['power_increase_pct', 'Total Power 증가 ≥', '%'], ['min_area', 'Logic Area 최소', '']] as const).map(([key, label, unit]) => <label key={key} className="browser-threshold">{label}<input type="text" inputMode="decimal" value={thresholds[key]} aria-invalid={!NUMBER.test(thresholds[key].trim())} onChange={event => { setThresholds({ ...thresholds, [key]: event.target.value }); setPreview(null) }} />{unit}</label>)}
+      {([['area_increase_pct', 'Logic Area 증가 ≥', '%'], ['power_increase_pct', 'Total Power 증가 ≥', '%'], ['noise_share_pct', '기본 노이즈 비율', '%'], ['min_area', 'Logic Area 최소', '']] as const).map(([key, label, unit]) => <label key={key} className="browser-threshold" title={key === 'noise_share_pct' ? '루트 전체 대비 최소 유의미 노이즈 바닥 비율 (기본 0.1% → 분모 완충 쿠션 1.0%)' : undefined}>{label}<input type="text" inputMode="decimal" value={thresholds[key]} aria-invalid={!NUMBER.test(thresholds[key].trim())} onChange={event => { setThresholds({ ...thresholds, [key]: event.target.value }); setPreview(null) }} />{unit}</label>)}
       <Button variant="outline" size="sm" disabled={action.busy || !valid} onClick={() => action.run(loadPreview, '후보를 계산했습니다.')}><Search size={14} />미리보기</Button>
       <Button size="sm" disabled={action.busy || !valid || !canWrite || preview?.over_limit === true} onClick={() => action.run(start, 'AI 분석을 요청했습니다. 진행 상황을 자동으로 갱신합니다.')}><Sparkles size={14} />AI 분석 실행</Button>
       {runs.length > 0 && <label className="triage-runs">지난 분석<select value={runId} onChange={event => { setExcluded(new Set()); setRunId(event.target.value) }}>{runs.map(row => <option key={row.id} value={row.id}>{date(row.created_at)} · {row.state}</option>)}</select></label>}
@@ -295,7 +358,8 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
     {loadError && <div className="notice error" role="alert">{loadError}</div>}
     {preview && counts && <div className="triage-preview" role="status">
       {preview.ai_model && <p>분석 모델: {preview.ai_model.model ? `${preview.ai_model.site === 'vwp' ? 'VWP' : 'OA'} · ${preview.ai_model.connection_label} · ${preview.ai_model.model}` : '미설정'}{!preview.ai_model.ready && ` · ${preview.ai_model.error === 'AI_TASK_MODEL_REQUIRED' ? '관리자 → AI 연결·모델 관리 → 프로젝트 비교 AI 분석에서 지정하세요.' : `연결 또는 본인 인증값 확인 필요 (${preview.ai_model.error || 'AI_CONNECTION_UNAVAILABLE'})`}`}</p>}
-      <p><strong>분석 대상 {counts.total?.toLocaleString() ?? 0}개</strong> · Area 증가 {counts.area_increase ?? 0} · Power 증가 {counts.power_increase ?? 0} · 신규 {counts.new_instance ?? 0} · 주요 {counts.watched ?? 0} · 상위로 묶임 {counts.rolled_up ?? 0} · 최초 예상 AI 호출 {preview.estimated_calls}회</p>
+      <p><strong>분석 대상 {counts.total?.toLocaleString() ?? 0}개</strong> · Area 증가 {counts.area_increase ?? 0} (절대Top {counts.area_abs_top ?? 0} · 급증Top {counts.area_damped_top ?? 0}) · Power 증가 {counts.power_increase ?? 0} (절대Top {counts.power_abs_top ?? 0} · 급증Top {counts.power_damped_top ?? 0}) · 신규 {counts.new_instance ?? 0} · 주요 {counts.watched ?? 0} · 상위로 묶임 {counts.rolled_up ?? 0} · 최초 예상 AI 호출 {preview.estimated_calls}회</p>
+      {renderAttributionBox(preview.attribution)}
       <p>적용 메모 {preview.notes.length}건{preview.applicable_net_vers.length ? ` (${preview.applicable_net_vers.join(', ')})` : ''}{preview.same_rtl ? ' · 같은 NET_VER(RTL 동일)' : ''} · 주요 instance {preview.watched_paths.length}개 · library {{ same: '같음', unknown: '미확인(공정 미등록)', different: '다름' }[text(previewContext.library)] || text(previewContext.library)}</p>
       {preview.over_limit && <p className="notice warning">분석 대상이 {preview.max_items}개를 넘습니다. 기준을 올린 뒤 다시 미리보기 하세요. 일부만 분석하지 않습니다.</p>}
       {(['power', 'area'] as const).map(part => object(previewContext[part]).analyzed === false && <p className="notice warning" key={part}>{part === 'power' ? 'Power' : 'Area'}는 분석에서 뺍니다 · {EXCLUSION_LABEL[text(object(previewContext[part]).reason)] || text(object(previewContext[part]).reason)}</p>)}
@@ -378,6 +442,7 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
       {(['power', 'area'] as const).map(part => object(context[part]).analyzed === false && <p className="notice warning" key={part}>{part === 'power' ? 'Power' : 'Area'}는 분석에서 뺐습니다 · {EXCLUSION_LABEL[text(object(context[part]).reason)] || text(object(context[part]).reason)}</p>)}
       {array(run.payload.missing_watched).length > 0 && <p className="notice warning">현재 실행에 없는 주요 instance · {array(run.payload.missing_watched).map(text).slice(0, 8).join(', ')}</p>}
       {!isActive && !jobFailed && items.length === 0 && <p className="muted">기준을 넘는 변화와 주요 instance가 없어 분석할 항목이 없습니다.</p>}
+      {!isActive && !jobFailed && renderAttributionBox(run.payload.attribution)}
       {items.length > 0 && <>
         <div className="triage-lists">
           {section('이상', of('unexpected'))}

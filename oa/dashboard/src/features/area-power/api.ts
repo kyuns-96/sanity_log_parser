@@ -54,6 +54,7 @@ const loose = z.record(z.string(), z.unknown())
 export const triageNoteSchema = z.object({ id: z.string(), kind: z.string(), net_ver: z.string().nullish(), text: z.string().optional() }).passthrough()
 export const triagePreviewSchema = z.object({
   counts: z.record(z.string(), count), estimated_calls: count, max_items: count, over_limit: z.boolean(),
+  attribution: loose.nullish(),
   missing_watched: z.array(z.string()), watched_paths: z.array(z.string()), context: loose,
   notes: z.array(triageNoteSchema), note_warnings: z.array(loose), same_rtl: z.boolean(),
   applicable_net_vers: z.array(z.string()), process: loose,

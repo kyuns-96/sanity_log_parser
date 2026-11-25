@@ -48,6 +48,7 @@ export function ProjectTrackingConfigCard({
   const [topRecipients, setTopRecipients] = useState('')
   const [areaPct, setAreaPct] = useState('10')
   const [powerPct, setPowerPct] = useState('10')
+  const [noiseSharePct, setNoiseSharePct] = useState('0.1')
   const [minArea, setMinArea] = useState('50')
   const [newCornerName, setNewCornerName] = useState('')
   const [showCornerDetail, setShowCornerDetail] = useState(false)
@@ -72,6 +73,7 @@ export function ProjectTrackingConfigCard({
     const th = object(projCfg.thresholds)
     setAreaPct(text(th.area_increase_pct ?? 10))
     setPowerPct(text(th.power_increase_pct ?? 10))
+    setNoiseSharePct(text(th.noise_share_pct ?? '0.1'))
     setMinArea(text(th.min_area ?? 50))
     setDefaultCorners(array(projCfg.default_required_corners).map(item => {
       const o = object(item)
@@ -130,6 +132,7 @@ export function ProjectTrackingConfigCard({
       thresholds: {
         area_increase_pct: areaPct.trim(),
         power_increase_pct: powerPct.trim(),
+        noise_share_pct: noiseSharePct.trim() || '0.1',
         min_area: minArea.trim(),
       },
       typical_specs: typicalSpecs.map(s => ({ effective_net_ver: s.effective_net_ver, corner: s.corner, analysis_conditions: {}, label: s.label })),
@@ -235,7 +238,7 @@ export function ProjectTrackingConfigCard({
             <ChevronRight size={15} className="chevron" aria-hidden="true" />
             <span>세부 기준 설정</span>
             <small>
-              Logic Area +{areaPct}% · Total Power +{powerPct}% · 최소 {minArea}
+              Logic Area +{areaPct}% · Total Power +{powerPct}% · 노이즈 {noiseSharePct}% · 최소 {minArea}
               {latestPowerTarget ? ` · 목표 전력 ${latestPowerTarget.target_mw} mW` : ''}
               {typicalSpecs.length ? ` · 대표 조건 ${typicalSpecs.length}건` : ''}
               {deadlineTz !== 'Asia/Seoul' ? ` · ${deadlineTz}` : ''}
@@ -248,6 +251,9 @@ export function ProjectTrackingConfigCard({
               </Field>
               <Field label="이상 감지 · Total Power 증가 (%)">
                 <input type="text" value={powerPct} disabled={!project.can_write} onChange={event => setPowerPct(event.target.value)} />
+              </Field>
+              <Field label="기본 노이즈 비율 (루트 대비 %, 기본 0.1)">
+                <input type="text" value={noiseSharePct} disabled={!project.can_write} onChange={event => setNoiseSharePct(event.target.value)} placeholder="0.1" />
               </Field>
               <Field label="최소 Logic Area 크기">
                 <input type="text" value={minArea} disabled={!project.can_write} onChange={event => setMinArea(event.target.value)} />

@@ -58,18 +58,29 @@ def slot_summary_from_run(db, conn, run: dict, comparison: dict, proj_cfg: dict,
     for item in judgements:
         if item.get("verdict") in ("unexpected", "needs_review"):
             card = item.get("card") or {}
+            area_c = card.get("area") or {}
+            pwr_c = card.get("power_mw") or {}
+            pwr_ok = "excluded" not in pwr_c
             highlights.append({
                 "group_id": item.get("group_id"),
                 "path": card.get("current_path") or card.get("baseline_path") or item.get("group_id"),
+                "depth1_block": card.get("depth1_block"),
                 "verdict": item.get("verdict"),
                 "cause": item.get("cause"),
-                "logic_area_delta_pct": (card.get("area") or {}).get("delta_pct"),
-                "power_delta_pct": (card.get("power_mw") or {}).get("delta_pct") if "excluded" not in (card.get("power_mw") or {}) else None,
+                "ranking_tags": card.get("ranking_tags") or [],
+                "distributed_metrics": card.get("distributed_metrics") or [],
+                "logic_area_delta": area_c.get("delta") if "excluded" not in area_c else None,
+                "logic_area_delta_pct": area_c.get("delta_pct") if "excluded" not in area_c else None,
+                "logic_area_damped_pct": area_c.get("damped_pct") if "excluded" not in area_c else None,
+                "power_delta_mw": pwr_c.get("delta") if pwr_ok else None,
+                "power_delta_pct": pwr_c.get("delta_pct") if pwr_ok else None,
+                "power_damped_pct": pwr_c.get("damped_pct") if pwr_ok else None,
                 "explanation": item.get("explanation") or "",
             })
     highlights.sort(key=lambda h: (0 if h["verdict"] == "unexpected" else 1, h["path"]))
     return {
         "counts": counts,
+        "attribution": run["payload"].get("attribution"),
         "logic_area_baseline": b_la,
         "logic_area_current": c_la,
         "logic_area_delta_pct": la_pct,
@@ -77,7 +88,7 @@ def slot_summary_from_run(db, conn, run: dict, comparison: dict, proj_cfg: dict,
         "power_current_mw": c_pw,
         "power_delta_pct": pw_pct,
         "power_evaluation": power_eval,
-        "highlights": highlights[:30],
+        "highlights": highlights[:40],
     }
 
 
@@ -163,6 +174,7 @@ def block_snapshot(db, conn, round_row: dict, project_row: dict, block_id: UUID,
             "unexpected_count": c_counts.get("unexpected", 0),
             "needs_review_count": c_counts.get("needs_review", 0),
             "code_explained_count": c_counts.get("code_explained", 0),
+            "attribution": summary.get("attribution"),
             "highlights": summary.get("highlights") or [],
             "last_failed_upload": sp.get("last_failed_upload"),
             "post_top_mail_revised": bool(sp.get("post_top_mail_revised")),

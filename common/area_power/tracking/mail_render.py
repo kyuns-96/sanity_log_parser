@@ -74,12 +74,70 @@ def render_block_mail_text(snapshot: dict[str, Any], *, mail_id: str | None = No
             f"  Total Power: {_fmt_num(corner.get('power_baseline_mw'), ' mW')} → {_fmt_num(corner.get('power_current_mw'), ' mW')} ({_fmt_signed(corner.get('power_delta_pct'), '%')})",
             f"  설명됨 {corner.get('expected_count', 0)}건 · 이상 {corner.get('unexpected_count', 0)}건 · 확인 필요 {corner.get('needs_review_count', 0)}건",
         ]
+        attr = corner.get("attribution") or {}
+        for part, title, unit in (("power", "Power", " mW"), ("area", "Logic Area", "")):
+            info = attr.get(part) or {}
+            rows = info.get("items") or []
+            if info.get("analyzed") and rows:
+                summary_parts = [f"{r.get('path')} {_fmt_signed(r.get('delta'), unit)} ({_fmt_num(r.get('share_of_increase_pct'), '%')})" for r in rows[:3]]
+                if int(info.get("rest_count") or 0) > 0:
+                    summary_parts.append(f"외 {info['rest_count']}개 {_fmt_signed(info.get('rest_delta'), unit)}")
+                lines.append(f"  1단계 {title} 기여: " + ", ".join(summary_parts))
         highlights = corner.get("highlights") or []
         if highlights:
-            for item in highlights[:25]:
-                lines.append(
-                    f"  - [{item.get('verdict')}] {item.get('path')} · Logic Area {_fmt_signed(item.get('logic_area_delta_pct'), '%')} · Power {_fmt_signed(item.get('power_delta_pct'), '%')} · {item.get('explanation', '')}"
-                )
+            has_ranking = any(item.get("power_delta_mw") is not None or item.get("logic_area_delta") is not None for item in highlights)
+            if has_ranking:
+                def _dec(v):
+                    from decimal import Decimal, InvalidOperation
+                    try:
+                        return Decimal(str(v)) if v is not None else None
+                    except InvalidOperation:
+                        return None
+
+                def _render_dual(part_label: str, delta_key: str, raw_key: str, damped_key: str, unit: str):
+                    valid = []
+                    for it in highlights:
+                        d = _dec(it.get(delta_key))
+                        dp = _dec(it.get(damped_key))
+                        rp = _dec(it.get(raw_key))
+                        eff = dp if dp is not None else rp
+                        if d is not None and d > 0:
+                            valid.append((d, eff if eff is not None else d, rp, dp, it))
+                    if not valid:
+                        return []
+                    top_abs = sorted(valid, key=lambda r: (-r[0], -r[1], str(r[4].get("path") or "")))[:10]
+                    abs_ids = {r[4].get("group_id") or r[4].get("path") for r in top_abs}
+                    top_spike = sorted(
+                        [r for r in valid if (r[4].get("group_id") or r[4].get("path")) not in abs_ids],
+                        key=lambda r: (-r[1], -r[0], str(r[4].get("path") or "")),
+                    )[:10]
+                    sec = [f"  [{part_label} 절대 증가 Top {len(top_abs)}]"]
+                    for d, _eff, rp, dp, it in top_abs:
+                        d1 = f"[{it['depth1_block']}] " if it.get("depth1_block") else ""
+                        rate = f"단순 {_fmt_signed(rp, '%')}" + (f" · 체급연동 {_fmt_signed(dp, '%')}" if dp is not None else "")
+                        sec.append(f"    - [{it.get('verdict')}] {d1}{it.get('path')} · {_fmt_signed(d, unit)} ({rate}) · {it.get('explanation', '')}")
+                    if top_spike:
+                        sec.append(f"  [{part_label} 체급 대비 급증 Top {len(top_spike)} — 중복 제외]")
+                        for d, _eff, rp, dp, it in top_spike:
+                            d1 = f"[{it['depth1_block']}] " if it.get("depth1_block") else ""
+                            rate = f"단순 {_fmt_signed(rp, '%')}" + (f" · 체급연동 {_fmt_signed(dp, '%')}" if dp is not None else "")
+                            sec.append(f"    - [{it.get('verdict')}] {d1}{it.get('path')} · {_fmt_signed(d, unit)} ({rate}) · {it.get('explanation', '')}")
+                    return sec
+
+                rendered = _render_dual("Power", "power_delta_mw", "power_delta_pct", "power_damped_pct", " mW")
+                rendered += _render_dual("Logic Area", "logic_area_delta", "logic_area_delta_pct", "logic_area_damped_pct", "")
+                if rendered:
+                    lines.extend(rendered)
+                else:
+                    for item in highlights[:20]:
+                        lines.append(
+                            f"  - [{item.get('verdict')}] {item.get('path')} · Logic Area {_fmt_signed(item.get('logic_area_delta_pct'), '%')} · Power {_fmt_signed(item.get('power_delta_pct'), '%')} · {item.get('explanation', '')}"
+                        )
+            else:
+                for item in highlights[:25]:
+                    lines.append(
+                        f"  - [{item.get('verdict')}] {item.get('path')} · Logic Area {_fmt_signed(item.get('logic_area_delta_pct'), '%')} · Power {_fmt_signed(item.get('power_delta_pct'), '%')} · {item.get('explanation', '')}"
+                    )
         else:
             lines.append("  검토가 필요한 이상 항목 없음")
 

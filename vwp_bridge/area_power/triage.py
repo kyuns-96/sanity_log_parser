@@ -44,9 +44,9 @@ def _http_status(error) -> int | None:
     return status if isinstance(status, int) and 100 <= status <= 599 else None
 
 
-def judge(runtime, cards, notes, context, same_rtl, kind, task, retry_limit, coverage, *, on_progress=None):
+def judge(runtime, cards, notes, context, same_rtl, kind, task, retry_limit, coverage, *, on_progress=None, attribution=None):
     """Retry this batch only after a confirmed, retryable failure."""
-    evidence, instructions = batch_request(cards, notes, context, same_rtl, kind)
+    evidence, instructions = batch_request(cards, notes, context, same_rtl, kind, attribution=attribution)
     retries = 0
     max_attempts = retry_limit + 1
 
@@ -248,7 +248,8 @@ def _run(db, settings, run, comparison):
         sub_phase='preparing' if batches else None,
         total_batches=len(batches),
         extra={'prompt_version': PROMPT_VERSION, 'side_context': context,
-               'counts': selection.counts, 'missing_watched': selection.missing_watched},
+               'counts': selection.counts, 'attribution': selection.attribution,
+               'missing_watched': selection.missing_watched},
     )
     if code_explained_results:
         _store(db, run, code_explained_results)
@@ -283,7 +284,7 @@ def _run(db, settings, run, comparison):
                 try:
                     results = judge(runtime, part, notes, context, payload.get('same_rtl', False),
                                     payload.get('comparison_kind'), task, payload.get('retry_limit', 0),
-                                    coverage, on_progress=on_call_progress)
+                                    coverage, on_progress=on_call_progress, attribution=selection.attribution)
                 except ReviewError as exc:
                     if exc.code == 'AI_INPUT_LIMIT':
                         if len(part) > 1:

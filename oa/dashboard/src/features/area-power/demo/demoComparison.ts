@@ -212,7 +212,8 @@ export function triageSelection(comparison: TrackingRecord, thresholds: Payload,
   if (!input.baseline_upload_id) fail('AI 분석에는 기준 실행이 필요합니다.')
   const current = scopedUpload(text(input.current_upload_id), visible), baseline = scopedUpload(text(input.baseline_upload_id), visible)
   const limit = (key: string, fallback: number) => { const value = Number(text(thresholds[key]) || fallback); if (!Number.isFinite(value) || value < 0) fail('기준 숫자는 0 이상이어야 합니다.'); return value }
-  const areaLimit = limit('area_increase_pct', 10), powerLimit = limit('power_increase_pct', 10), minArea = limit('min_area', 50)
+  const areaLimit = limit('area_increase_pct', 10), powerLimit = limit('power_increase_pct', 10), noiseShare = limit('noise_share_pct', 0.1), minArea = limit('min_area', 50)
+  if (noiseShare > 100) fail('기본 노이즈 비율은 100 이하여야 합니다.')
   const groups = new Map<string, { id: string; baseline: string[]; current: string[]; metrics: Record<string, Payload> }>()
   for (const row of records.values()) if (row.record_type === 'metric_result' && row.parent_id === comparison.id) {
     const id = text(row.payload.group_id), group = groups.get(id) || { id, baseline: strings(row.payload.baseline_paths), current: strings(row.payload.current_paths), metrics: {} }
@@ -229,27 +230,54 @@ export function triageSelection(comparison: TrackingRecord, thresholds: Payload,
   const context = { same_project: current.project_id === baseline.project_id, same_corner: sameCorner, library,
     area: { analyzed: true, unconfirmed: false, reason: null }, power: sameCorner ? { analyzed: true, unconfirmed: false, reason: null } : { analyzed: false, unconfirmed: false, reason: 'corner_different' } }
   const number = (value: unknown) => value == null || value === '' ? null : Number(text(value))
+  const allGroups = [...groups.values()]
+  const rootGroup = allGroups.find(g => (g.current[0] || g.baseline[0] || '').split('/').filter(Boolean).length <= 1) || allGroups[0]
+  const symRoot = (metricKey: string) => {
+    const m = object(rootGroup?.metrics[metricKey])
+    const b = number(m.baseline) ?? 0, c = number(m.current) ?? 0
+    return b > 0 && c > 0 ? (b + c) / 2 : Math.max(b, c, 0)
+  }
+  const rootArea = symRoot('logic_area') || symRoot('total_area')
+  const rootPower = symRoot('pwr_all_total_mw')
+  const areaD0 = noiseShare > 0 ? rootArea * (noiseShare / 100) : 0
+  const powerD0 = noiseShare > 0 ? rootPower * (noiseShare / 100) : 0
+  const areaEps = areaD0 > 0 ? areaD0 / (Math.max(areaLimit, 0.1) / 100) : 0
+  const powerEps = powerD0 > 0 ? powerD0 / (Math.max(powerLimit, 0.1) / 100) : 0
+
   const cards: Payload[] = []
-  const counts = { area_increase: 0, power_increase: 0, new_instance: 0, watched: 0, rolled_up: 0, total: 0 }
-  for (const group of groups.values()) {
-    const area = object(group.metrics.logic_area), power = object(group.metrics.pwr_all_total_mw)
-    const size = Math.max(number(area.baseline) ?? 0, number(area.current) ?? 0)
+  const counts = { area_increase: 0, power_increase: 0, area_abs_top: 0, area_damped_top: 0, power_abs_top: 0, power_damped_top: 0, new_instance: 0, watched: 0, rolled_up: 0, total: 0 }
+  for (const group of allGroups) {
+    if (group === rootGroup && allGroups.length > 1) continue
+    const area = object(group.metrics.logic_area), power = object(group.metrics.pwr_all_total_mw), totalAreaM = object(group.metrics.total_area)
+    const size = Math.max(number(area.baseline) ?? 0, number(area.current) ?? 0, number(totalAreaM.baseline) ?? 0, number(totalAreaM.current) ?? 0)
+    const bArea = group.baseline.length ? (number(area.baseline) ?? 0) : 0, cArea = number(area.current) ?? 0
+    const bPwr = group.baseline.length ? (number(power.baseline) ?? 0) : 0, cPwr = number(power.current) ?? 0
+    const dArea = cArea - bArea, dPwr = cPwr - bPwr
+    const dampedArea = (bArea + areaEps) > 0 ? (dArea / (bArea + areaEps)) * 100 : 0
+    const dampedPwr = (bPwr + powerEps) > 0 ? (dPwr / (bPwr + powerEps)) * 100 : 0
     const reasons: string[] = []
-    if (group.baseline.length && group.current.length && size >= minArea) {
-      if ((number(area.relative_change_pct) ?? -Infinity) >= areaLimit) reasons.push('area_increase')
-      if (context.power.analyzed && (number(power.relative_change_pct) ?? -Infinity) >= powerLimit) reasons.push('power_increase')
+    const ranking_tags: string[] = []
+    if (group.current.length && size >= minArea && dArea > 0 && dampedArea >= areaLimit) {
+      reasons.push('area_increase')
+      ranking_tags.push(dArea >= areaD0 ? 'area_abs_top' : 'area_damped_top')
     }
-    if (!group.baseline.length && group.current.length && size >= minArea) reasons.push('new_instance')
+    if (context.power.analyzed && group.current.length && (size >= minArea || dPwr >= powerD0) && dPwr > 0 && dampedPwr >= powerLimit) {
+      reasons.push('power_increase')
+      ranking_tags.push(dPwr >= powerD0 ? 'power_abs_top' : 'power_damped_top')
+    }
+    if (!group.baseline.length && group.current.length && size >= minArea && reasons.length) reasons.push('new_instance')
     const isWatched = group.current.some(path => watched.includes(path))
     if (!reasons.length && !isWatched) continue
     for (const reason of reasons) counts[reason as 'area_increase'] += 1
+    for (const tag of ranking_tags) counts[tag as 'area_abs_top'] += 1
     if (isWatched) counts.watched += 1
     const driveGroupSet = new Set(driveGroupKeys)
     const shares = (predicate: (metric: string) => boolean) => Object.entries(group.metrics).filter(([metric, value]) => predicate(metric) && value.pct_point_change != null && Number(text(value.pct_point_change)) !== 0)
       .map(([metric, value]) => ({ name: metric.replace(/_pct$/, ''), baseline_pct: value.baseline, current_pct: value.current, delta_pp: value.pct_point_change }))
-    cards.push({ id: group.id, current_path: group.current.join(' + ') || null, baseline_path: group.baseline.join(' + ') || null, reasons, watched: isWatched, notable: reasons.length > 0,
-      flags: library === 'same' ? [] : [`library_${library}`], area: { baseline: area.baseline, current: area.current, delta: area.delta, delta_pct: area.relative_change_pct },
-      power_mw: context.power.analyzed ? { baseline: power.baseline, current: power.current, delta: power.delta, delta_pct: power.relative_change_pct } : { excluded: 'corner_different' },
+    cards.push({ id: group.id, current_path: group.current.join(' + ') || null, baseline_path: group.baseline.join(' + ') || null, reasons, ranking_tags, distributed_metrics: [], depth1_block: null, watched: isWatched, notable: reasons.length > 0,
+      flags: library === 'same' ? [] : [`library_${library}`],
+      area: { baseline: area.baseline, current: area.current, delta: area.delta, delta_pct: area.relative_change_pct, damped_pct: dampedArea.toFixed(2) },
+      power_mw: context.power.analyzed ? { baseline: power.baseline, current: power.current, delta: power.delta, delta_pct: power.relative_change_pct, damped_pct: dampedPwr.toFixed(2) } : { excluded: 'corner_different' },
       vth: shares(m => m.startsWith('vt_') && m.endsWith('_pct')),
       drive_groups: shares(m => driveGroupSet.has(m)),
       drive: shares(m => m.startsWith('drv_') && m.endsWith('_pct') && !driveGroupSet.has(m)),
@@ -258,10 +286,29 @@ export function triageSelection(comparison: TrackingRecord, thresholds: Payload,
   counts.total = cards.length
   const known = new Set([...groups.values()].flatMap(group => group.current))
   const missing = watched.filter(path => !known.has(path))
-  const applied = { area_increase_pct: String(areaLimit), power_increase_pct: String(powerLimit), min_area: String(minArea) }
-  const preview = { thresholds: applied, counts, estimated_calls: 0, max_items: 400, over_limit: cards.length > 400, missing_watched: missing, watched_paths: watched, context,
+  const applied = { area_increase_pct: String(areaLimit), power_increase_pct: String(powerLimit), noise_share_pct: String(noiseShare), min_area: String(minArea) }
+  const depth1Groups = allGroups.filter(g => g !== rootGroup && (g.current[0] || '').split('/').filter(Boolean).length === 2)
+  const buildAttr = (metricKey: string, analyzed: boolean, reason: string | null) => {
+    if (!analyzed) return { analyzed: false, reason, items: [] }
+    const rm = object(rootGroup?.metrics[metricKey])
+    const rDelta = number(rm.delta) ?? 0
+    const rPct = rm.relative_change_pct ?? null
+    if (rDelta <= 0 || !depth1Groups.length) return { analyzed: true, metric: metricKey, root_delta: rm.delta ?? '0', root_delta_pct: rPct, items: [], rest_count: 0, rest_delta: '0' }
+    const contribs = depth1Groups.map(g => {
+      const m = object(g.metrics[metricKey]), d = number(m.delta) ?? 0
+      return { path: g.current.join(' + '), baseline: m.baseline, current: m.current, delta: m.delta, delta_pct: m.relative_change_pct, dNum: d, share_of_increase_pct: ((d / rDelta) * 100).toFixed(2) }
+    }).filter(r => r.dNum > 0).sort((a, b) => b.dNum - a.dNum)
+    const rest = contribs.slice(5)
+    const restDelta = rest.reduce((acc, r) => acc + r.dNum, 0)
+    return { analyzed: true, metric: metricKey, root_baseline: rm.baseline, root_current: rm.current, root_delta: rm.delta, root_delta_pct: rPct, items: contribs.slice(0, 5), rest_count: rest.length, rest_delta: String(restDelta) }
+  }
+  const attribution = {
+    area: buildAttr('logic_area', context.area.analyzed, context.area.reason),
+    power: buildAttr('pwr_all_total_mw', context.power.analyzed, context.power.reason),
+  }
+  const preview = { thresholds: applied, counts, attribution, estimated_calls: 0, max_items: 400, over_limit: cards.length > 400, missing_watched: missing, watched_paths: watched, context,
     notes: notes.map(({ text: _text, ...note }) => note), note_warnings: [], same_rtl: false, applicable_net_vers: [...new Set(notes.map(note => text(note.net_ver)).filter(Boolean))], process }
-  return { preview, cards, notes, context, counts, missing, thresholds: applied, kind }
+  return { preview, cards, notes, context, counts, attribution, missing, thresholds: applied, kind }
 }
 
 export function triageRun(comparison: TrackingRecord, body: Payload, visible: Set<string>, actor: string) {
@@ -269,7 +316,7 @@ export function triageRun(comparison: TrackingRecord, body: Payload, visible: Se
   if (selection.preview.over_limit) fail('분석 대상이 400개를 넘습니다. 기준을 올리세요.')
   const reason = 'synthetic_demo_model_not_called'
   const run = record('ai_run', { ...scopeFromRecord(comparison), parent_id: comparison.id }, { engine: TRIAGE_ENGINE, retry_limit: 5, thresholds: selection.thresholds, notes: selection.notes, note_warnings: [], same_rtl: false,
-    watched_paths: selection.preview.watched_paths, comparison_kind: selection.kind, labels: object(body.labels), requested_by: actor, side_context: selection.context, counts: selection.counts,
+    watched_paths: selection.preview.watched_paths, comparison_kind: selection.kind, labels: object(body.labels), requested_by: actor, side_context: selection.context, counts: selection.counts, attribution: selection.attribution,
     missing_watched: selection.missing, coverage: { expected_items: selection.cards.length, processed_items: selection.cards.length, failed_items: selection.cards.length, batches: 0, processed_batches: 0 },
     error: selection.cards.length ? { code: reason } : null, model_called: false, source: 'synthetic_memory_demo', notice }, selection.cards.length ? 'failed' : 'completed')
   for (const card of selection.cards) record('judgement', { ...scopeFromRecord(comparison), parent_id: run.id }, { group_id: card.id, card, verdict: 'needs_review', cause: 'unknown',
