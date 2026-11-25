@@ -228,7 +228,10 @@ class WorkspaceCoreStore:
             return value
         ecos = self.db.execute("SELECT DISTINCT payload->>'eco' AS eco FROM {oa} WHERE record_type='WS_REPORT' "
                               "AND workspace_version_ref=%s ORDER BY 1",(row['record_id'],)).fetchall()
-        return {**value,'ecos':[r['eco'] for r in ecos] if value['layout']=='POST' else [None]}
+        received = [r['eco'] for r in ecos]
+        if value.get('eco_num') is not None:
+            return {**value, 'ecos': received}
+        return {**value, 'ecos': received if value['layout'] == 'POST' else [None]}
 
     def por(self, block_id):
         row = self.get("WS_POR", block_id)

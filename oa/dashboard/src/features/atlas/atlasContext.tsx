@@ -7,7 +7,7 @@ import { appUrl } from '@/lib/appUrl'
 
 export type AtlasScope = { projectId: string; blockId: string; versionId: string }
 export type AtlasPor = { revision: number; version_id: string | null; assigned_by?: { id?: string; name?: string } | null; assigned_at?: string | null }
-export type AtlasVersion = { id: string; project_id: string; block_id: string; source_namespace: string; net_ver: string; revision: string; layout: 'PRE' | 'POST'; ecos: (string | null)[]; declared_ecos?: (string | null)[]; source_pre_id: string | null; previous_version_id?: string | null; area_id?: string | null }
+export type AtlasVersion = { id: string; project_id: string; block_id: string; source_namespace: string; net_ver: string; revision: string; layout: 'PRE' | 'POST'; eco_num?: string | null; ecos: (string | null)[]; declared_ecos?: (string | null)[]; source_pre_id: string | null; previous_version_id?: string | null; area_id?: string | null }
 export type AtlasBlock = { id: string; name: string; versions: AtlasVersion[]; area_id?: string | null; por?: AtlasPor }
 export type AtlasProject = { id: string; process?: string | null; status?: 'active' | 'completed'; name: string; description?: string; can_write: boolean; blocks: AtlasBlock[]; area_id?: string | null }
 export type UnboundArea = { id: string; project_id?: string | null; block_id?: string | null; payload?: Record<string, unknown>; name?: string }

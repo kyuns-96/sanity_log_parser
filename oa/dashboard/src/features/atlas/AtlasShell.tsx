@@ -69,14 +69,14 @@ export default function AtlasShell({ children, demoToolbar }: { children: ReactN
           <label>프로젝트<select value={atlas.scope.projectId} onChange={event => choose(event.target.value, '', '')}><option value="">프로젝트 선택</option>{atlas.catalog?.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
           <label>블록<select disabled={!atlas.project} value={atlas.scope.blockId} onChange={event => choose(atlas.scope.projectId, event.target.value, '')}><option value="">블록 선택</option>{atlas.project?.blocks.map(block => <option key={block.id} value={block.id}>{block.name}</option>)}</select></label>
           <label>NET_VER<select disabled={!atlas.block} value={netVer} onChange={event => { setError(''); void atlas.selectNetVer(event.target.value).catch(cause => setError(cause instanceof Error ? cause.message : '범위를 변경하지 못했습니다.')) }}><option value="">NET_VER 선택</option>{netVersions.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-          <label>REVISION<select disabled={!atlas.block || !netVer} value={atlas.scope.versionId} onChange={event => choose(atlas.scope.projectId, atlas.scope.blockId, event.target.value)}><option value="">REVISION 선택</option>{revisions?.map(version => <option key={version.id} value={version.id}>{version.revision} · {version.layout}</option>)}</select></label>
+          <label>REVISION<select disabled={!atlas.block || !netVer} value={atlas.scope.versionId} onChange={event => choose(atlas.scope.projectId, atlas.scope.blockId, event.target.value)}><option value="">REVISION 선택</option>{revisions?.map(version => <option key={version.id} value={version.id}>{[version.revision, version.layout, version.eco_num].filter(Boolean).join(' · ')}</option>)}</select></label>
           <button className="atlas-button secondary" disabled={atlas.loading} onClick={() => void atlas.reload().catch(() => undefined)}>{atlas.loading ? '조회 중…' : '범위 새로고침'}</button>
         </div>
         {!scopeExpanded && <dl className="atlas-scope-overview" aria-label="선택한 공통 범위">
           <div><dt>프로젝트</dt><dd title={atlas.project?.name}>{atlas.project?.name || (atlas.scope.projectId ? '확인 필요' : '미선택')}</dd></div>
           <div><dt>블록</dt><dd title={atlas.block?.name}>{atlas.block?.name || (atlas.scope.blockId ? '확인 필요' : '미선택')}</dd></div>
           <div><dt>NET_VER</dt><dd title={netVer}>{netVer || '미선택'}</dd></div>
-          <div><dt>REVISION</dt><dd title={atlas.version?.revision || atlas.scope.versionId}>{atlas.version ? `${atlas.version.revision} · ${atlas.version.layout}` : atlas.scope.versionId || '미선택'}</dd></div>
+          <div><dt>REVISION</dt><dd title={atlas.version?.revision || atlas.scope.versionId}>{atlas.version ? [atlas.version.revision, atlas.version.layout, atlas.version.eco_num].filter(Boolean).join(' · ') : atlas.scope.versionId || '미선택'}</dd></div>
         </dl>}
         <button type="button" className="atlas-button secondary atlas-scope-toggle" aria-label={`공통 범위 ${scopeExpanded ? '접기' : '펼치기'}`} aria-expanded={scopeExpanded} aria-controls="atlas-scope-fields" onClick={() => setScopeExpanded(value => !value)}>{scopeExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}{scopeExpanded ? '접기' : '펼치기'}</button>
       </section>

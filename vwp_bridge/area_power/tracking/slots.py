@@ -37,6 +37,7 @@ def _slot_identity(upload: dict) -> dict[str, Any]:
     meta = (upload.get("input_contract") or {}).get("metadata") or {}
     return {
         "design_stage": meta.get("design_stage"),
+        "eco_num": meta.get("eco_num") or "",
         "condition_key": bytes(upload["condition_key"]).hex() if upload.get("condition_key") else None,
         "corner_label": upload_corner_label(upload),
     }
@@ -52,7 +53,7 @@ def upsert_slot(
     existing = existing_dedupe(db, conn, "tracking_slot", key, lock=True)
     top_sent = bool(round_row["payload"].get("top_mail_record_id"))
     if existing is None:
-        ident = _slot_identity(upload) if upload else {"design_stage": None, "condition_key": None}
+        ident = _slot_identity(upload) if upload else {"design_stage": None, "eco_num": "", "condition_key": None}
         payload = {
             "round_id": str(round_row["id"]),
             "net_ver": round_row["payload"]["net_ver"],
@@ -64,6 +65,7 @@ def upsert_slot(
             "latest_upload_created_at": upload.get("created_at") if upload else None,
             "revision_label": version_info.get("revision") or "",
             "layout_label": version_info.get("layout") or "",
+            "eco_label": version_info.get("eco_num") or ident["eco_num"] or "",
             "design_stage": ident["design_stage"],
             "condition_key_hex": ident["condition_key"],
             "last_failed_upload": None,
@@ -99,6 +101,7 @@ def upsert_slot(
             payload["revision_label"] = version_info.get("revision") or payload.get("revision_label") or ""
             payload["layout_label"] = version_info.get("layout") or payload.get("layout_label") or ""
             ident = _slot_identity(upload)
+            payload["eco_label"] = version_info.get("eco_num") or ident["eco_num"] or payload.get("eco_label") or ""
             payload["design_stage"] = ident["design_stage"]
             payload["condition_key_hex"] = ident["condition_key"]
             payload["last_failed_upload"] = None

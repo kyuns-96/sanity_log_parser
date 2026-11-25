@@ -155,12 +155,11 @@ class AtlasCatalog:
         self.scope(body.project_id, body.block_id, write=True)
         if body.version_id != self.identity(body):
             fail("INVALID_VERSION_IDENTITY")
-        if body.layout == "PRE":
-            if body.ecos not in ([], [None]) or body.source_pre_id is not None:
-                fail("INVALID_REQUEST")
-        elif any(eco is None for eco in body.ecos):
+        if body.layout == "PRE" and body.source_pre_id is not None:
             fail("INVALID_REQUEST")
-        if len(body.ecos) != len(set(body.ecos)):
+        if any(eco is None for eco in body.ecos) or len(body.ecos) != len(set(body.ecos)):
+            fail("INVALID_REQUEST")
+        if body.ecos and body.ecos != [body.eco_num]:
             fail("INVALID_REQUEST")
         if body.source_pre_id:
             pre = self.scope(body.project_id, body.block_id, body.source_pre_id)[2]["payload"]
@@ -173,10 +172,10 @@ class AtlasCatalog:
                 fail("INVALID_REQUEST")
         payload = {"id": body.version_id, "project_id": body.project_id, "block_id": body.block_id,
                    "net_ver": body.net_ver, "revision": body.revision, "layout": body.layout,
-                   "ecos": [None] if body.layout == "PRE" else [], "source_pre_id": body.source_pre_id,
+                   "eco_num": body.eco_num, "ecos": [], "source_pre_id": body.source_pre_id,
                    "source_namespace": body.source_namespace}
         metadata = {"previous_version_id": body.previous_version_id,
-                    "declared_ecos": [None] if body.layout == "PRE" else body.ecos}
+                    "declared_ecos": [body.eco_num]}
         def create():
             old = self.db.execute("SELECT payload FROM {oa} WHERE record_type='WS_VERSION' AND workspace_key=%s", (body.version_id,)).fetchone()
             if old:
@@ -504,9 +503,18 @@ class AreaAdapters:
                     if previous and previous_row is None:
                         fail("AREA_PREVIOUS_NOT_PREPARED")
                     identifier = uuid4()
-                    v = self.db.insert_record(conn, "version",
-                        {"name": vid, "sanity_version_id": vid,
-                         "previous_version_id": str(previous_row["id"]) if previous_row else None},
+                    vp = version["payload"] or {}
+                    area_ver_payload = {
+                        "name": vid,
+                        "sanity_version_id": vid,
+                        "net_ver": vp.get("net_ver"),
+                        "revision": vp.get("revision"),
+                        "layout": vp.get("layout"),
+                        "previous_version_id": str(previous_row["id"]) if previous_row else None,
+                    }
+                    if vp.get("eco_num") is not None:
+                        area_ver_payload["eco_num"] = vp["eco_num"]
+                    v = self.db.insert_record(conn, "version", area_ver_payload,
                         catalog.actor.user_id, id=identifier, entity_id=identifier, version_id=identifier,
                         project_id=p["id"], parent_id=p["id"])
                     rows.append(v)

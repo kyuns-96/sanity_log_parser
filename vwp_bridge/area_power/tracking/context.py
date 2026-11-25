@@ -60,7 +60,7 @@ def latest_one(db, conn, record_type: str, **filters) -> dict[str, Any] | None:
 
 
 def resolve_version_info(db, conn, version_id: UUID, block_id: UUID | None = None, *, host_db=None) -> dict[str, str | None]:
-    """Resolve explicit (net_ver, revision, layout) from version payload or host OA WS_VERSION."""
+    """Resolve explicit (net_ver, revision, layout, eco_num) from version payload or host OA WS_VERSION."""
     version = db.record(conn, version_id, kind="version")
     payload = version.get("payload") or {}
     if payload.get("net_ver"):
@@ -68,6 +68,7 @@ def resolve_version_info(db, conn, version_id: UUID, block_id: UUID | None = Non
             "net_ver": str(payload["net_ver"]),
             "revision": str(payload.get("revision") or ""),
             "layout": str(payload.get("layout") or ""),
+            "eco_num": str(payload.get("eco_num") or ""),
         }
     close_host = False
     if host_db is None:
@@ -78,7 +79,7 @@ def resolve_version_info(db, conn, version_id: UUID, block_id: UUID | None = Non
         except Exception:
             host_db = None
     if host_db is None:
-        return {"net_ver": None, "revision": None, "layout": None}
+        return {"net_ver": None, "revision": None, "layout": None, "eco_num": None}
     try:
         bindings = [
             row["payload"]
@@ -111,10 +112,11 @@ def resolve_version_info(db, conn, version_id: UUID, block_id: UUID | None = Non
                 "net_ver": sample.get("net_ver"),
                 "revision": sample.get("revision"),
                 "layout": sample.get("layout"),
+                "eco_num": sample.get("eco_num") or "",
             }
-        return {"net_ver": None, "revision": None, "layout": None}
+        return {"net_ver": None, "revision": None, "layout": None, "eco_num": None}
     except Exception:
-        return {"net_ver": None, "revision": None, "layout": None}
+        return {"net_ver": None, "revision": None, "layout": None, "eco_num": None}
     finally:
         if close_host and host_db is not None:
             try:

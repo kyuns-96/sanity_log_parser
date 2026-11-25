@@ -51,6 +51,7 @@ class VersionIdentity(Input):
     net_ver: SourceText
     revision: SourceText
     layout: Literal["PRE", "POST"]
+    eco_num: Text
 
 
 class Version(VersionIdentity):

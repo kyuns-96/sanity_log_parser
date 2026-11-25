@@ -147,7 +147,7 @@ def validate_collection(c):
         check(text(c[key]))
     identifier(c["project_key"]); identifier(c["block_key"])
     check(c["layout"] in ("PRE", "POST"))
-    check((c["layout"] == "PRE" and c["target_eco"] is None and c["pre_revision"] is None)
+    check((c["layout"] == "PRE" and (c["target_eco"] is None or text(c["target_eco"], 100)) and c["pre_revision"] is None)
           or (c["layout"] == "POST" and text(c["target_eco"], 100)
               and (c["pre_revision"] is None or text(c["pre_revision"]))))
     return c
@@ -185,8 +185,9 @@ def validate_plan(plan):
         check(type(s["execution_order"]) is int and s["execution_order"] >= 0)
         check(s["layout"] in ("PRE", "POST") and s["net_ver"] == c["net_ver"])
         check(unit["condition"].get("mode") == s["mode"])
-        check((s["layout"] == "PRE" and s["eco"] is None
-               and s["revision"] == (c["submission_revision"] if c["layout"] == "PRE" else c["pre_revision"]))
+        check((s["layout"] == "PRE" and (s["eco"] is None or text(s["eco"], 100))
+               and s["revision"] == (c["submission_revision"] if c["layout"] == "PRE" else c["pre_revision"])
+               and (c["layout"] != "PRE" or s["eco"] == c["target_eco"]))
               or (s["layout"] == "POST" and c["layout"] == "POST" and text(s["eco"], 100)
                   and s["revision"] == c["submission_revision"]))
         key = source_unit(c, unit)

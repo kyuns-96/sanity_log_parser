@@ -8,7 +8,7 @@ export type DemoVersion = WorkspaceVersion & { source_namespace: string; previou
 export type DemoProject = { id: string; name: string; description: string; process?: string; status?: 'active' | 'completed'; tops: WorkspaceUser[]; area_id: string | null }
 export type DemoBlock = { id: string; project_id: string; name: string; owner: WorkspaceUser; versions: DemoVersion[]; por: WorkspacePor; events: WorkspaceEvent[]; area_id: string | null }
 type Input = Record<string, unknown>
-type VersionIdentity = { project_id: string; block_id: string; source_namespace: string; net_ver: string; revision: string; layout: 'PRE' | 'POST' }
+type VersionIdentity = { project_id: string; block_id: string; source_namespace: string; net_ver: string; revision: string; layout: 'PRE' | 'POST'; eco_num: string }
 const fail = (code = 'INVALID_REQUEST'): never => { throw new WorkspaceError(code) }
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -26,7 +26,7 @@ function input(body: unknown, fields: string[]): Input {
   return body as Input
 }
 const scopeFields = ['project_id', 'block_id', 'version_id', 'previous_version_id']
-const identityFields = ['project_id', 'block_id', 'source_namespace', 'net_ver', 'revision', 'layout']
+const identityFields = ['project_id', 'block_id', 'source_namespace', 'net_ver', 'revision', 'layout', 'eco_num']
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
   if (value && typeof value === 'object') return `{${Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`
@@ -68,14 +68,14 @@ export function makeWorkspaceDemoCatalog(state: {
   }
   function identity(body: Input): VersionIdentity {
     const fields = { project_id: id(body.project_id), block_id: id(body.block_id), source_namespace: text(body.source_namespace, 1000, false),
-      net_ver: text(body.net_ver, 1000, false), revision: text(body.revision, 1000, false), layout: body.layout }
+      net_ver: text(body.net_ver, 1000, false), revision: text(body.revision, 1000, false), layout: body.layout, eco_num: text(body.eco_num, 100, true) }
     if (fields.layout !== 'PRE' && fields.layout !== 'POST') return fail()
     scope(fields.project_id, fields.block_id)
     return { ...fields, layout: fields.layout as 'PRE' | 'POST' }
   }
   async function versionIdentity(fields: VersionIdentity) {
     // common.sanity_submission.source_version: UTF-8 canonical JSON array, SHA-256.
-    const bytes = new TextEncoder().encode(JSON.stringify([fields.source_namespace, fields.project_id, fields.block_id, fields.net_ver, fields.revision, fields.layout]))
+    const bytes = new TextEncoder().encode(JSON.stringify([fields.source_namespace, fields.project_id, fields.block_id, fields.net_ver, fields.revision, fields.layout, fields.eco_num]))
     const digest = await crypto.subtle.digest('SHA-256', bytes)
     return 'sv-' + Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
   }
@@ -179,7 +179,7 @@ export function makeWorkspaceDemoCatalog(state: {
       if (bodyFields.ecos !== undefined && !Array.isArray(bodyFields.ecos)) return fail()
       const ecos = ((bodyFields.ecos || []) as unknown[]).map(eco => eco === null ? null : text(eco))
       const sourcePreId = optionalId(bodyFields.source_pre_id), previousVersionId = optionalId(bodyFields.previous_version_id)
-      if (new Set(ecos).size !== ecos.length || fields.layout === 'PRE' && (ecos.some(eco => eco !== null) || sourcePreId !== null) || fields.layout === 'POST' && ecos.includes(null)) return fail()
+      if (new Set(ecos).size !== ecos.length || ecos.includes(null) || fields.layout === 'PRE' && sourcePreId !== null || ecos.length && (ecos.length !== 1 || ecos[0] !== fields.eco_num)) return fail()
       if (sourcePreId) {
         const pre = scope(fields.project_id, fields.block_id, sourcePreId).version!
         if (pre.layout !== 'PRE' || pre.net_ver !== fields.net_ver || pre.source_namespace !== fields.source_namespace) return fail()
@@ -191,8 +191,8 @@ export function makeWorkspaceDemoCatalog(state: {
         const { project } = scope(fields.project_id, fields.block_id)
         const canPrepare = !previousVersionId || Boolean(scope(fields.project_id, fields.block_id, previousVersionId).version?.area_id)
         const existing = blocks.flatMap(block => block.versions).find(version => version.id === versionId)
-        const version: DemoVersion = { ...fields, id: versionId, ecos: fields.layout === 'PRE' ? [null] : [],
-          declared_ecos: fields.layout === 'PRE' ? [null] : ecos,
+        const version: DemoVersion = { ...fields, id: versionId, ecos: [],
+          declared_ecos: [fields.eco_num],
           source_pre_id: sourcePreId, previous_version_id: previousVersionId, area_id: null }
         if (existing) {
           const { area_id: _area, ...native } = existing

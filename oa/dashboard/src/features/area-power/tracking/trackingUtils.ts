@@ -11,12 +11,23 @@ export interface ResolvedVersionMeta {
   isPor: boolean
 }
 
-export function versionEcoNumbers(version?: AtlasVersion | null): string[] {
-  if (!version) return []
-  const received = (version.ecos || []).filter((item): item is string => Boolean(item && item.trim()))
-  if (received.length) return [...new Set(received)]
-  const declared = (version.declared_ecos || []).filter((item): item is string => Boolean(item && item.trim()))
-  return [...new Set(declared)]
+export function uploadEcoNum(upload?: Upload | null): string {
+  if (!upload) return ''
+  const meta = object(object(upload.input_contract).metadata)
+  return text(meta.eco_num).trim()
+}
+
+export function versionEcoNumbers(version?: AtlasVersion | null, upload?: Upload | null): string[] {
+  const own = version?.eco_num?.trim()
+  if (own) return [own]
+  if (version) {
+    const received = (version.ecos || []).filter((item): item is string => Boolean(item && item.trim()))
+    if (received.length) return [...new Set(received)]
+    const declared = (version.declared_ecos || []).filter((item): item is string => Boolean(item && item.trim()))
+    if (declared.length) return [...new Set(declared)]
+  }
+  const fromUpload = uploadEcoNum(upload)
+  return fromUpload ? [fromUpload] : []
 }
 
 export function resolveBaselineVersionMeta(
@@ -39,11 +50,12 @@ export function resolveBaselineVersionMeta(
   }
   const info = object(cfg.baseline_version_info)
   if (text(info.net_ver) || text(info.revision)) {
+    const eco = text(info.eco_num).trim()
     return {
       netVer: text(info.net_ver),
       revision: text(info.revision),
       layout: text(info.layout),
-      ecos: [],
+      ecos: eco ? [eco] : [],
       isPor: false,
     }
   }

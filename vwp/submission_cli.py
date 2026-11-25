@@ -206,7 +206,8 @@ def main(argv=None, *, provider=None, authority=None, state_root=None):
             provider, authority = create_submission_adapters()
         client = SubmissionClient(config, provider, authority, state_root=state_root)
         if args.command == "submit":
-            check((args.layout == "post" and args.eco) or (args.layout == "pre" and args.eco is None))
+            check((args.layout == "post" and bool(args.eco and args.eco.strip()))
+                  or (args.layout == "pre" and (args.eco is None or bool(args.eco.strip()))))
             target = {key: getattr(args, key) for key in ("project", "block", "net_ver", "revision", "eco")}
             target.update(layout=args.layout.upper(), profile=args.profile or config["default_profile"])
             value = client.submit(target, confirm=lambda _: input("이 범위로 제출할까요? [y/N] ").strip().lower() == "y",

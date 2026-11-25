@@ -52,10 +52,14 @@ def relative_report(value):
 
 
 def source_version(collection, source):
-    return "sv-" + digest([
+    eco = source.get("eco_num") if "eco_num" in source else source.get("eco")
+    parts = [
         collection["source_namespace"], collection["project_key"], collection["block_key"],
         source["net_ver"], source["revision"], source["layout"],
-    ])
+    ]
+    if eco is not None:
+        parts.append(eco)
+    return "sv-" + digest(parts)
 
 
 def source_unit(collection, unit):

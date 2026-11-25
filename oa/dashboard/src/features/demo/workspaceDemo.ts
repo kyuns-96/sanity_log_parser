@@ -47,8 +47,8 @@ export function makeWorkspaceDemo() {
     const versions: DemoVersion[] = [2, 1].flatMap(sequence => (['POST', 'PRE'] as const).map(layout => ({
       id: `${id}-net${sequence}-${layout.toLowerCase()}`, project_id: project.id, block_id: id,
       net_ver: `NET_00${sequence}`, revision: `REV00${sequence}-${name.toLowerCase()}${layout === 'POST' ? '-BE' : ''}`,
-      layout, source_pre_id: layout === 'POST' ? `${id}-net${sequence}-pre` : null,
-      ecos: layout === 'POST' ? ['chip_finish', 'eco01'] : [null],
+      layout, eco_num: layout === 'POST' ? 'chip_finish' : 'eco00', source_pre_id: layout === 'POST' ? `${id}-net${sequence}-pre` : null,
+      ecos: layout === 'POST' ? ['chip_finish', 'eco01'] : ['eco00'],
       source_namespace: 'synthetic_workspace_demo_v1',
       // Layout-specific numerical ancestry is independent of the POST → PRE source link.
       previous_version_id: sequence === 2 ? `${id}-net1-${layout.toLowerCase()}` : null,

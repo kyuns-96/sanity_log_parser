@@ -4,12 +4,12 @@ Run from the host release with bin/area-power or python -m vwp.area_power.
 Set AREA_POWER_SERVER_URL or use --url for the internal VWP service.
 
 Read-only catalog UUID lookup (pre-registered & OA-bound scopes only):
-  bin/area-power --resolve --project PROJ --block BLK --net-ver NET_01 [--revision REV] [--layout PRE|POST]
+  bin/area-power --resolve --project PROJ --block BLK --net-ver NET_01 [--revision REV] [--layout PRE|POST] [--eco-num ECO]
 
-Register (or reuse) a new net_ver + revision under an already OA-registered & bound project/block
+Register (or reuse) a new net_ver + revision + eco_num under an already OA-registered & bound project/block
 (projects and blocks are never auto-created on VWP):
-  bin/area-power --register-version --project PROJ --block BLK --net-ver NET_02 --revision r1 --layout POST
-  bin/area-power out.csv --metadata meta.json --project PROJ --block BLK --net-ver NET_02 --revision r1 --layout POST --register-version
+  bin/area-power --register-version --project PROJ --block BLK --net-ver NET_02 --revision r1 --layout POST --eco-num ECO01
+  bin/area-power out.csv --metadata meta.json --project PROJ --block BLK --net-ver NET_02 --revision r1 --layout POST --eco-num ECO01 --register-version
 
 The same --project/--block/--net-ver selector (or a "catalog" object in --config, with optional
 "register_version": true) can be passed during upload to resolve/register version UUIDs before
@@ -35,28 +35,30 @@ import httpx
 
 from common.area_power.jsonutil import dumps, loads
 
-CATALOG_KEYS = ("project", "block", "net_ver", "revision", "layout", "source_namespace", "version")
-PREVIOUS_KEYS = ("previous_version", "previous_net_ver", "previous_revision", "previous_layout", "previous_source_namespace")
+CATALOG_KEYS = ("project", "block", "net_ver", "revision", "layout", "eco_num", "source_namespace", "version")
+PREVIOUS_KEYS = ("previous_version", "previous_net_ver", "previous_revision", "previous_layout", "previous_eco_num", "previous_source_namespace")
 ALL_CATALOG_CONFIG_KEYS = set(CATALOG_KEYS) | set(PREVIOUS_KEYS) | {"register_version"}
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="area-power", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("csv", nargs="?", type=Path, help="Existing CSV or gzip output path to upload (checked after optional export)")
-    parser.add_argument("--metadata", type=Path, help="UTF-8 JSON file containing UploadMetadata, including catalog IDs and hierarchy_separator")
+    parser.add_argument("--metadata", type=Path, help="UTF-8 JSON file containing UploadMetadata, including catalog IDs, eco_num and hierarchy_separator")
     parser.add_argument("--config", type=Path, help="PC JSON configuration with csv, metadata, optional catalog lookup/version registration, and optional report_export argv; exclusive with explicit input options")
     parser.add_argument("--resolve", action="store_true", help="Read-only lookup of pre-registered Area/Power catalog UUIDs on VWP and exit")
-    parser.add_argument("--register-version", dest="register_version", action="store_true", help="Register (or reuse) net_ver + revision under an already OA-registered & Area-bound project/block; standalone or combined with upload")
+    parser.add_argument("--register-version", dest="register_version", action="store_true", help="Register (or reuse) net_ver + revision + eco_num under an already OA-registered & Area-bound project/block; standalone or combined with upload")
     parser.add_argument("--project", help="Registered project name or native project ID")
     parser.add_argument("--block", help="Registered block name or native block ID")
     parser.add_argument("--net-ver", dest="net_ver", help="NET_VER for catalog lookup or version registration")
     parser.add_argument("--revision", help="Revision for catalog lookup or version registration (required when creating a new version)")
     parser.add_argument("--layout", choices=("PRE", "POST"), help="Layout (PRE or POST; required when creating a new version)")
+    parser.add_argument("--eco-num", "--eco", dest="eco_num", help="ECO_NUM for catalog lookup or version registration (required when registering a version)")
     parser.add_argument("--source-namespace", dest="source_namespace", help="Optional source_namespace to narrow lookup or declare for a new version")
     parser.add_argument("--version", help="Optional registered native version ID or Area version name for read-only lookup")
     parser.add_argument("--previous-net-ver", dest="previous_net_ver", help="Optional previous NET_VER lineage when registering a new version")
     parser.add_argument("--previous-revision", dest="previous_revision", help="Optional previous revision lineage when registering a new version")
     parser.add_argument("--previous-layout", dest="previous_layout", choices=("PRE", "POST"), help="Optional previous layout lineage when registering a new version")
+    parser.add_argument("--previous-eco-num", "--previous-eco", dest="previous_eco_num", help="Optional previous ECO_NUM lineage when registering a new version")
     parser.add_argument("--previous-source-namespace", dest="previous_source_namespace", help="Optional previous source_namespace lineage when registering a new version")
     parser.add_argument("--previous-version", dest="previous_version", help="Optional previous native version ID lineage when registering a new version")
     parser.add_argument("--url", default=os.environ.get("AREA_POWER_SERVER_URL"), help="VWP service base URL (or AREA_POWER_SERVER_URL)")
@@ -88,9 +90,9 @@ def _clean_catalog_selector(raw: dict, *, allow_register: bool = False) -> tuple
         raise ValueError("Catalog lookup/registration requires both project and block")
     if register:
         if "version" in selector:
-            raise ValueError("Version registration uses net_ver and revision, not --version")
-        if "net_ver" not in selector or "revision" not in selector:
-            raise ValueError("Version registration requires --project, --block, --net-ver and --revision")
+            raise ValueError("Version registration uses net_ver, revision and eco_num, not --version")
+        if "net_ver" not in selector or "revision" not in selector or "eco_num" not in selector:
+            raise ValueError("Version registration requires --project, --block, --net-ver, --revision and --eco-num")
     else:
         if any(key in selector for key in PREVIOUS_KEYS):
             raise ValueError("Previous version lineage options require --register-version")
@@ -252,6 +254,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Metadata {key} conflicts with the resolved catalog UUID.", file=sys.stderr)
                 return 2
             metadata[key] = resolved[key]
+        resolved_eco = resolved.get("eco_num") or (resolved.get("version") or {}).get("eco_num") or catalog_selector.get("eco_num")
+        if resolved_eco:
+            existing_eco = metadata.get("eco_num")
+            if existing_eco is not None and str(existing_eco).strip() != str(resolved_eco).strip():
+                print("Metadata eco_num conflicts with the resolved catalog version eco_num.", file=sys.stderr)
+                return 2
+            metadata["eco_num"] = str(resolved_eco).strip()
     metadata_json = dumps(metadata)
 
     if args.report_export is not None:

@@ -37,12 +37,14 @@ class CatalogVersionInput(BaseModel):
     block: str
     net_ver: str
     revision: str
+    eco_num: str
     layout: str | None = None
     source_namespace: str | None = None
     previous_version: str | None = None
     previous_net_ver: str | None = None
     previous_revision: str | None = None
     previous_layout: str | None = None
+    previous_eco_num: str | None = None
     previous_source_namespace: str | None = None
 
 
@@ -184,6 +186,8 @@ def create_app(settings=None, db=None) -> FastAPI:
                 metadata = UploadMetadata.model_validate(loads(metadata_json))
             except (ValueError, TypeError, ValidationError) as exc:
                 raise DomainError("Upload metadata is invalid.", code="invalid_metadata") from exc
+            if not metadata.eco_num:
+                raise DomainError("eco_num is required for all Area/Power uploads.", code="eco_num_required", status_code=422)
             filename = file.filename
             if not filename or not filename.strip() or len(filename) > 1024 or any(ord(char) < 32 for char in filename):
                 raise DomainError("A valid original filename is required.", code="invalid_request")
@@ -207,6 +211,7 @@ def create_app(settings=None, db=None) -> FastAPI:
         net_ver: str | None = None,
         revision: str | None = None,
         layout: str | None = None,
+        eco_num: str | None = None,
         source_namespace: str | None = None,
         version: str | None = None,
     ):
@@ -219,6 +224,7 @@ def create_app(settings=None, db=None) -> FastAPI:
             net_ver=net_ver,
             revision=revision,
             layout=layout,
+            eco_num=eco_num,
             source_namespace=source_namespace,
         )
         return JSONResponse(public(result))
@@ -232,12 +238,14 @@ def create_app(settings=None, db=None) -> FastAPI:
             block=body.block,
             net_ver=body.net_ver,
             revision=body.revision,
+            eco_num=body.eco_num,
             layout=body.layout,
             source_namespace=body.source_namespace,
             previous_version=body.previous_version,
             previous_net_ver=body.previous_net_ver,
             previous_revision=body.previous_revision,
             previous_layout=body.previous_layout,
+            previous_eco_num=body.previous_eco_num,
             previous_source_namespace=body.previous_source_namespace,
         )
         status = 201 if result.get("created") or result.get("bound") else 200

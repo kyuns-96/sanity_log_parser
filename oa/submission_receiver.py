@@ -332,8 +332,9 @@ class SourceReceiver:
             blockers.discard('INVENTORY_UNCONFIRMED')
         confirmed = output['inventory_confirmed'] or unverified(packet['actor']) and confirmation is not None
         # PRE must exist before a POST points to it. Version metadata never changes.
+        pre_source = next((r['source'] for r in output['reports'] if r['source']['layout'] == 'PRE'), None)
         for value in sorted(output['reports'],key=lambda r:r['source']['layout']!='PRE'):
-            self.save_version(packet['scope'],value)
+            self.save_version(packet['scope'],value,pre_source=pre_source)
         links = []
         for value in output['reports']:
             self.save_report(packet['scope'],value,confirmed)
@@ -353,14 +354,21 @@ class SourceReceiver:
                 'collection_blockers':[b for b in output['global_blockers']
                                        if b!='INVENTORY_UNCONFIRMED' or not confirmed]}
 
-    def save_version(self, collection, value):
+    def save_version(self, collection, value, *, pre_source=None):
         s, vid = value['source'], value['version_id']
         pre = None
         if s['layout']=='POST' and collection['pre_revision'] is not None:
-            pre = source_version(collection,{'net_ver':collection['net_ver'],'revision':collection['pre_revision'],'layout':'PRE'})
+            pre_spec = pre_source if (pre_source and pre_source.get('revision') == collection['pre_revision']) else {
+                'net_ver': collection['net_ver'], 'revision': collection['pre_revision'], 'layout': 'PRE',
+            }
+            pre = source_version(collection, pre_spec)
+        eco_num = s.get('eco')
         payload = {'id':vid,'project_id':collection['project_key'],'block_id':collection['block_key'],
             'net_ver':s['net_ver'],'revision':s['revision'],'layout':s['layout'],
-            'ecos':[None] if s['layout']=='PRE' else [],'source_pre_id':pre,'source_namespace':collection['source_namespace']}
+            'ecos':[None] if (s['layout']=='PRE' and eco_num is None) else [],
+            'source_pre_id':pre,'source_namespace':collection['source_namespace']}
+        if eco_num is not None:
+            payload['eco_num'] = eco_num
         old = self.existing('WS_VERSION',vid)
         if old:
             check(old['payload']==payload,'SOURCE_VERSION_CONFLICT')

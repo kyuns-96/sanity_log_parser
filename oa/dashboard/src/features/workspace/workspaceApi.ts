@@ -2,7 +2,7 @@ import { appPathname, appUrl } from '@/lib/appUrl'
 import type { PreservedSource, PreservedCitation, PreservedCitationSource } from './PreservedSources'
 export type WorkspaceUser = { id: string; name: string; username: string; role: string }
 export type WorkspaceSession = { user: WorkspaceUser; csrf: string; expires_at: string; environment: string; is_admin?: boolean }
-export type WorkspaceVersion = { id: string; project_id: string; block_id: string; net_ver: string; revision: string; layout: 'PRE' | 'POST'; source_pre_id: string | null; ecos: (string | null)[] }
+export type WorkspaceVersion = { id: string; project_id: string; block_id: string; net_ver: string; revision: string; layout: 'PRE' | 'POST'; eco_num?: string | null; source_pre_id: string | null; ecos: (string | null)[] }
 export type WorkspacePor = { revision: number; version: WorkspaceVersion | null; assigned_by: WorkspaceUser | null; assigned_at: string | null }
 export type WorkspaceBlock = { id: string; project_id: string; name: string; owners: WorkspaceUser[]; can_assign_por: boolean; por: WorkspacePor; report_version: WorkspaceVersion | null; counts: Record<string, number>; total: number }
 export type WorkspaceProject = { id: string; name: string; description: string; tops: WorkspaceUser[]; blocks: WorkspaceBlock[] }

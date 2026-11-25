@@ -62,7 +62,7 @@ export function ComparisonHistoryView({
       blockName: blk?.name || '',
       blockId: blk?.id || '',
       netVer: ver?.net_ver || '',
-      revision: ver ? [ver.revision, ver.layout].filter(Boolean).join(' ') : '',
+      revision: ver ? [ver.revision, ver.layout, ver.eco_num].filter(Boolean).join(' ') : '',
       corner: [u.process_label, u.voltage_v && `${u.voltage_v}V`, u.temp_c && `${u.temp_c}°C`, u.pex].filter(Boolean).join(' / ') || cornerKey(u),
       fileName: uploadName(u),
     }

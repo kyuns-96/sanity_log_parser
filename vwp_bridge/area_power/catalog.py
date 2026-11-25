@@ -68,7 +68,7 @@ def _format_candidates(rows: list[dict[str, Any]]) -> str:
     labels = []
     for row in rows[:5]:
         p = row.get("payload") or {}
-        parts = [p.get("net_ver"), p.get("revision"), p.get("layout"), p.get("source_namespace")]
+        parts = [p.get("net_ver"), p.get("revision"), p.get("layout"), p.get("eco_num"), p.get("source_namespace")]
         text = " / ".join(str(part) for part in parts if part)
         labels.append(text or str(row.get("workspace_key") or row.get("id")))
     suffix = ", ..." if len(rows) > 5 else ""
@@ -85,6 +85,7 @@ def _resolve_with_oa(
     net_ver: str | None,
     revision: str | None,
     layout: str | None,
+    eco_num: str | None,
     source_namespace: str | None,
 ) -> dict[str, Any]:
     area_projects, area_blocks, area_versions = _active_area_catalog(db)
@@ -167,6 +168,8 @@ def _resolve_with_oa(
                 continue
             if layout is not None and payload.get("layout") != layout:
                 continue
+            if eco_num is not None and payload.get("eco_num") != eco_num:
+                continue
             if source_namespace is not None and payload.get("source_namespace") != source_namespace:
                 continue
             matched_versions.append(row)
@@ -178,7 +181,7 @@ def _resolve_with_oa(
         if len(matched_versions) > 1:
             raise DomainError(
                 f"Matched {len(matched_versions)} versions ({_format_candidates(matched_versions)}). "
-                "Narrow with --revision, --layout, --source-namespace, or --version.",
+                "Narrow with --revision, --layout, --eco-num, --source-namespace, or --version.",
                 code="catalog_ambiguous", status_code=409,
             )
         ws_version = matched_versions[0]
@@ -220,12 +223,14 @@ def _resolve_with_oa(
         "project_id": area_project["id"],
         "block_id": area_block["id"],
         "version_id": area_version["id"],
+        "eco_num": vp.get("eco_num"),
         "project": {"id": area_project["id"], "native_id": native_pid, "name": (ws_project["payload"] or {}).get("name")},
         "block": {"id": area_block["id"], "native_id": native_bid, "name": (ws_block["payload"] or {}).get("name")},
         "version": {
             "id": area_version["id"], "native_id": native_vid,
             "net_ver": vp.get("net_ver"), "revision": vp.get("revision"),
-            "layout": vp.get("layout"), "source_namespace": vp.get("source_namespace"),
+            "layout": vp.get("layout"), "eco_num": vp.get("eco_num"),
+            "source_namespace": vp.get("source_namespace"),
         },
     }
 
@@ -239,6 +244,7 @@ def _resolve_area_only(
     net_ver: str | None,
     revision: str | None,
     layout: str | None,
+    eco_num: str | None,
     source_namespace: str | None,
 ) -> dict[str, Any]:
     area_projects, area_blocks, area_versions = _active_area_catalog(db)
@@ -276,6 +282,8 @@ def _resolve_area_only(
             continue
         if layout is not None and p.get("layout") != layout:
             continue
+        if eco_num is not None and p.get("eco_num") != eco_num:
+            continue
         if source_namespace is not None and p.get("source_namespace") != source_namespace:
             continue
         matched_versions.append(row)
@@ -284,7 +292,7 @@ def _resolve_area_only(
     if len(matched_versions) > 1:
         raise DomainError(
             f"Matched {len(matched_versions)} versions ({_format_candidates(matched_versions)}). "
-            "Narrow with --revision, --layout, --source-namespace, or --version.",
+            "Narrow with --revision, --layout, --eco-num, --source-namespace, or --version.",
             code="catalog_ambiguous", status_code=409,
         )
     area_version = matched_versions[0]
@@ -294,12 +302,14 @@ def _resolve_area_only(
         "project_id": area_project["id"],
         "block_id": area_block["id"],
         "version_id": area_version["id"],
+        "eco_num": vp.get("eco_num"),
         "project": {"id": area_project["id"], "native_id": (area_project["payload"] or {}).get("sanity_project_id"), "name": (area_project["payload"] or {}).get("name")},
         "block": {"id": area_block["id"], "native_id": (area_block["payload"] or {}).get("sanity_block_id"), "name": (area_block["payload"] or {}).get("name")},
         "version": {
             "id": area_version["id"], "native_id": vp.get("sanity_version_id"),
             "net_ver": vp.get("net_ver"), "revision": vp.get("revision"),
-            "layout": vp.get("layout"), "source_namespace": vp.get("source_namespace"),
+            "layout": vp.get("layout"), "eco_num": vp.get("eco_num"),
+            "source_namespace": vp.get("source_namespace"),
             "name": vp.get("name"),
         },
     }
@@ -314,6 +324,7 @@ def resolve_catalog(
     net_ver: str | None = None,
     revision: str | None = None,
     layout: str | None = None,
+    eco_num: str | None = None,
     source_namespace: str | None = None,
     host_db_factory=None,
 ) -> dict[str, Any]:
@@ -324,6 +335,7 @@ def resolve_catalog(
     net_ver = _clean(net_ver, "net_ver", max_len=1000)
     revision = _clean(revision, "revision", max_len=1000)
     layout = _clean(layout, "layout", max_len=16)
+    eco_num = _clean(eco_num, "eco_num", max_len=100)
     source_namespace = _clean(source_namespace, "source_namespace", max_len=1000)
     if version is None and net_ver is None:
         raise DomainError("Provide at least --net-ver or --version to resolve a catalog version.", code="invalid_request")
@@ -332,7 +344,7 @@ def resolve_catalog(
 
     params = dict(
         project=project, block=block, version=version, net_ver=net_ver,
-        revision=revision, layout=layout, source_namespace=source_namespace,
+        revision=revision, layout=layout, eco_num=eco_num, source_namespace=source_namespace,
     )
     if host_db_factory is not None or _oa_db_configured():
         factory = host_db_factory or (lambda: HostDatabase("oa"))
@@ -353,6 +365,7 @@ def _match_oa_version_list(
     net_ver: str | None = None,
     revision: str | None = None,
     layout: str | None = None,
+    eco_num: str | None = None,
     source_namespace: str | None = None,
 ) -> list[dict[str, Any]]:
     matched = []
@@ -365,6 +378,8 @@ def _match_oa_version_list(
         if revision is not None and payload.get("revision") != revision:
             continue
         if layout is not None and payload.get("layout") != layout:
+            continue
+        if eco_num is not None and payload.get("eco_num") != eco_num:
             continue
         if source_namespace is not None and payload.get("source_namespace") != source_namespace:
             continue
@@ -414,16 +429,21 @@ def _register_version_with_oa(
     block: str,
     net_ver: str,
     revision: str,
+    eco_num: str,
     layout: str | None,
     source_namespace: str | None,
     previous_version: str | None,
     previous_net_ver: str | None,
     previous_revision: str | None,
     previous_layout: str | None,
+    previous_eco_num: str | None,
     previous_source_namespace: str | None,
 ) -> dict[str, Any]:
     has_prev_selector = any(
-        val is not None for val in (previous_version, previous_net_ver, previous_revision, previous_layout, previous_source_namespace)
+        val is not None for val in (
+            previous_version, previous_net_ver, previous_revision,
+            previous_layout, previous_eco_num, previous_source_namespace,
+        )
     )
     with host_db.transaction():
         host_db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("design-atlas-catalog"),))
@@ -512,6 +532,7 @@ def _register_version_with_oa(
                 ws_versions,
                 version=previous_version, net_ver=previous_net_ver,
                 revision=previous_revision, layout=previous_layout,
+                eco_num=previous_eco_num,
                 source_namespace=previous_source_namespace,
             )
             if not prev_matches:
@@ -528,7 +549,8 @@ def _register_version_with_oa(
 
         # Check whether the requested version already exists in OA WS_VERSION.
         existing_matches = _match_oa_version_list(
-            ws_versions, net_ver=net_ver, revision=revision, layout=layout, source_namespace=source_namespace,
+            ws_versions, net_ver=net_ver, revision=revision, layout=layout,
+            eco_num=eco_num, source_namespace=source_namespace,
         )
         created_version = False
         if len(existing_matches) > 1:
@@ -551,12 +573,12 @@ def _register_version_with_oa(
             actual_ns = source_namespace or _infer_source_namespace(host_db, ws_project["record_id"], ws_block["record_id"], ws_versions)
             native_vid = source_version(
                 {"source_namespace": actual_ns, "project_key": native_pid, "block_key": native_bid},
-                {"net_ver": net_ver, "revision": revision, "layout": layout},
+                {"net_ver": net_ver, "revision": revision, "layout": layout, "eco_num": eco_num},
             )
             vp = {
                 "id": native_vid, "project_id": native_pid, "block_id": native_bid,
                 "net_ver": net_ver, "revision": revision, "layout": layout,
-                "ecos": [None] if layout == "PRE" else [],
+                "eco_num": eco_num, "ecos": [],
                 "source_pre_id": None, "source_namespace": actual_ns,
             }
             old_by_id = host_db.execute(
@@ -590,7 +612,7 @@ def _register_version_with_oa(
             ws.put(
                 "WS_CONFIG",
                 VERSION_META_PREFIX + native_vid,
-                {"previous_version_id": previous_native_vid, "declared_ecos": [None] if actual_layout == "PRE" else []},
+                {"previous_version_id": previous_native_vid, "declared_ecos": [eco_num]},
             )
 
         # Resolve previous version's Area UUID if lineage is declared.
@@ -645,10 +667,17 @@ def _register_version_with_oa(
 
             if area_version is None:
                 identifier = uuid4()
+                area_ver_payload = {
+                    "name": native_vid,
+                    "sanity_version_id": native_vid,
+                    "net_ver": vp.get("net_ver"),
+                    "revision": vp.get("revision"),
+                    "layout": vp.get("layout"),
+                    "eco_num": vp.get("eco_num"),
+                    "previous_version_id": str(previous_area_vid) if previous_area_vid else None,
+                }
                 area_version = db.insert_record(
-                    conn, "version",
-                    {"name": native_vid, "sanity_version_id": native_vid,
-                     "previous_version_id": str(previous_area_vid) if previous_area_vid else None},
+                    conn, "version", area_ver_payload,
                     VWP_CATALOG_ACTOR,
                     id=identifier, entity_id=identifier, version_id=identifier,
                     project_id=area_project["id"], parent_id=area_project["id"],
@@ -684,12 +713,14 @@ def _register_version_with_oa(
         "project_id": area_project["id"],
         "block_id": area_block["id"],
         "version_id": area_version["id"],
+        "eco_num": vp.get("eco_num"),
         "project": {"id": area_project["id"], "native_id": native_pid, "name": (ws_project["payload"] or {}).get("name")},
         "block": {"id": area_block["id"], "native_id": native_bid, "name": (ws_block["payload"] or {}).get("name")},
         "version": {
             "id": area_version["id"], "native_id": native_vid,
             "net_ver": vp.get("net_ver"), "revision": vp.get("revision"),
-            "layout": vp.get("layout"), "source_namespace": vp.get("source_namespace"),
+            "layout": vp.get("layout"), "eco_num": vp.get("eco_num"),
+            "source_namespace": vp.get("source_namespace"),
             "previous_version_id": previous_area_vid,
         },
     }
@@ -702,16 +733,21 @@ def _register_version_area_only(
     block: str,
     net_ver: str,
     revision: str,
+    eco_num: str,
     layout: str | None,
     source_namespace: str | None,
     previous_version: str | None,
     previous_net_ver: str | None,
     previous_revision: str | None,
     previous_layout: str | None,
+    previous_eco_num: str | None,
     previous_source_namespace: str | None,
 ) -> dict[str, Any]:
     has_prev_selector = any(
-        val is not None for val in (previous_version, previous_net_ver, previous_revision, previous_layout, previous_source_namespace)
+        val is not None for val in (
+            previous_version, previous_net_ver, previous_revision,
+            previous_layout, previous_eco_num, previous_source_namespace,
+        )
     )
     with db.connect() as conn:
         conn.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("design-atlas-area-bindings"),))
@@ -757,6 +793,7 @@ def _register_version_area_only(
                 and (previous_net_ver is None or (r["payload"] or {}).get("net_ver") == previous_net_ver)
                 and (previous_revision is None or (r["payload"] or {}).get("revision") == previous_revision)
                 and (previous_layout is None or (r["payload"] or {}).get("layout") == previous_layout)
+                and (previous_eco_num is None or (r["payload"] or {}).get("eco_num") == previous_eco_num)
                 and (previous_source_namespace is None or (r["payload"] or {}).get("source_namespace") == previous_source_namespace)
             ]
             if not prev_matches:
@@ -770,6 +807,7 @@ def _register_version_area_only(
             if (r["payload"] or {}).get("net_ver") == net_ver
             and (r["payload"] or {}).get("revision") == revision
             and (layout is None or (r["payload"] or {}).get("layout") == layout)
+            and (r["payload"] or {}).get("eco_num") == eco_num
             and (source_namespace is None or (r["payload"] or {}).get("source_namespace") == source_namespace)
         ]
         if len(existing) > 1:
@@ -784,8 +822,9 @@ def _register_version_area_only(
             area_version = db.insert_record(
                 conn, "version",
                 {
-                    "name": f"{net_ver} · {revision} · {layout}",
+                    "name": f"{net_ver} · {revision} · {layout} · {eco_num}",
                     "net_ver": net_ver, "revision": revision, "layout": layout,
+                    "eco_num": eco_num,
                     "source_namespace": source_namespace or DEFAULT_SOURCE_NAMESPACE,
                     "previous_version_id": prev_area_id,
                 },
@@ -802,12 +841,14 @@ def _register_version_area_only(
         "project_id": area_project["id"],
         "block_id": area_block["id"],
         "version_id": area_version["id"],
+        "eco_num": vp.get("eco_num"),
         "project": {"id": area_project["id"], "native_id": (area_project["payload"] or {}).get("sanity_project_id"), "name": (area_project["payload"] or {}).get("name")},
         "block": {"id": area_block["id"], "native_id": (area_block["payload"] or {}).get("sanity_block_id"), "name": (area_block["payload"] or {}).get("name")},
         "version": {
             "id": area_version["id"], "native_id": vp.get("sanity_version_id"),
             "net_ver": vp.get("net_ver"), "revision": vp.get("revision"),
-            "layout": vp.get("layout"), "source_namespace": vp.get("source_namespace"),
+            "layout": vp.get("layout"), "eco_num": vp.get("eco_num"),
+            "source_namespace": vp.get("source_namespace"),
             "previous_version_id": vp.get("previous_version_id"),
         },
     }
@@ -820,12 +861,14 @@ def register_version(
     block: str,
     net_ver: str,
     revision: str,
+    eco_num: str,
     layout: str | None = None,
     source_namespace: str | None = None,
     previous_version: str | None = None,
     previous_net_ver: str | None = None,
     previous_revision: str | None = None,
     previous_layout: str | None = None,
+    previous_eco_num: str | None = None,
     previous_source_namespace: str | None = None,
     host_db_factory=None,
 ) -> dict[str, Any]:
@@ -834,12 +877,14 @@ def register_version(
     block = _clean(block, "block", required=True, max_len=200)
     net_ver = _clean(net_ver, "net_ver", required=True, max_len=1000)
     revision = _clean(revision, "revision", required=True, max_len=1000)
+    eco_num = _clean(eco_num, "eco_num", required=True, max_len=100)
     layout = _clean(layout, "layout", max_len=16)
     source_namespace = _clean(source_namespace, "source_namespace", max_len=1000)
     previous_version = _clean(previous_version, "previous_version", max_len=200)
     previous_net_ver = _clean(previous_net_ver, "previous_net_ver", max_len=1000)
     previous_revision = _clean(previous_revision, "previous_revision", max_len=1000)
     previous_layout = _clean(previous_layout, "previous_layout", max_len=16)
+    previous_eco_num = _clean(previous_eco_num, "previous_eco_num", max_len=100)
     previous_source_namespace = _clean(previous_source_namespace, "previous_source_namespace", max_len=1000)
     if layout is not None and layout not in ALLOWED_LAYOUTS:
         raise DomainError("layout must be PRE or POST.", code="invalid_request")
@@ -848,9 +893,10 @@ def register_version(
 
     params = dict(
         project=project, block=block, net_ver=net_ver, revision=revision,
-        layout=layout, source_namespace=source_namespace,
+        eco_num=eco_num, layout=layout, source_namespace=source_namespace,
         previous_version=previous_version, previous_net_ver=previous_net_ver,
         previous_revision=previous_revision, previous_layout=previous_layout,
+        previous_eco_num=previous_eco_num,
         previous_source_namespace=previous_source_namespace,
     )
     if host_db_factory is not None or _oa_db_configured():

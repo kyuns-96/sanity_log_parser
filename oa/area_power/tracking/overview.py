@@ -96,6 +96,7 @@ def _block_live_row(
     completed = 0
     totals = {"unexpected": 0, "needs_review": 0, "expected": 0, "minor": 0, "code_explained": 0}
     revisions = set()
+    eco_labels = set()
     post_top_revised = False
     issues = []
     typical_power_eval = None
@@ -118,6 +119,8 @@ def _block_live_row(
         arrived += 1
         if sp.get("revision_label"):
             revisions.add(sp["revision_label"])
+        if sp.get("eco_label"):
+            eco_labels.add(sp["eco_label"])
         post_top_revised |= bool(sp.get("post_top_mail_revised"))
         status = sp.get("status") or "queued"
         summary = sp.get("summary") or {}
@@ -208,6 +211,7 @@ def _block_live_row(
         "block_name": block_row["payload"].get("name") or "",
         "is_full_chip": full_chip,
         "revision_label": ", ".join(sorted(revisions)),
+        "eco_label": ", ".join(sorted(eco_labels)),
         "required_corners": len(req_corners),
         "arrived_corners": arrived,
         "completed_corners": completed,
@@ -331,6 +335,7 @@ def overview(service, project_id: UUID) -> dict[str, Any]:
                         "net_ver": bp.get("net_ver") or "",
                         "revision": bp.get("revision") or "",
                         "layout": bp.get("layout") or "",
+                        "eco_num": bp.get("eco_num") or "",
                     }
                 except Exception:
                     entry["baseline_version_info"] = None

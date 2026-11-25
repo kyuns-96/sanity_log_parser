@@ -31,6 +31,7 @@ class UploadMetadata(ContractModel):
     version_id: UUID
     block_id: UUID
     snapshot_id: UUID | None = None
+    eco_num: str | None = Field(default=None, min_length=1, max_length=100)
     execution_name: str = Field(min_length=1, max_length=500)
     design_stage: str = Field(min_length=1, max_length=500)
     hierarchy_separator: str = Field(min_length=1, max_length=8)
@@ -42,6 +43,16 @@ class UploadMetadata(ContractModel):
     analysis_conditions: dict = Field(default_factory=dict)
     pct_tolerance: Decimal | None = None
     power_tolerance_mw: Decimal | None = None
+
+    @field_validator("eco_num")
+    @classmethod
+    def valid_eco_num(cls, value):
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped or any(ord(char) < 32 or ord(char) == 127 for char in stripped):
+            raise ValueError("A nonblank single-line eco_num is required")
+        return stripped
 
     @field_validator("execution_name", "design_stage", "hierarchy_separator", "area_unit", "area_basis", "library", "classification")
     @classmethod

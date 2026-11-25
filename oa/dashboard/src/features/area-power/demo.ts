@@ -30,7 +30,7 @@ async function synchronize(): Promise<{ catalog: AtlasCatalog; visible: Set<stri
         if (!version.area_id) continue
         versions.set(version.area_id, version)
         const previous = block.versions.find(candidate => candidate.id === version.previous_version_id)
-        if (!records.has(version.area_id)) record('version', { project_id: project.area_id, block_id: block.area_id, version_id: version.area_id }, { name: `${version.net_ver} · ${version.revision} · ${version.layout}`, sanity_version_id: version.id, previous_version_id: previous?.area_id || null, source_namespace: version.source_namespace, source: 'synthetic_memory_demo' }, 'active', version.area_id)
+        if (!records.has(version.area_id)) record('version', { project_id: project.area_id, block_id: block.area_id, version_id: version.area_id }, { name: [version.net_ver, version.revision, version.layout, version.eco_num].filter(Boolean).join(' · '), net_ver: version.net_ver, revision: version.revision, layout: version.layout, eco_num: version.eco_num || null, sanity_version_id: version.id, previous_version_id: previous?.area_id || null, source_namespace: version.source_namespace, source: 'synthetic_memory_demo' }, 'active', version.area_id)
         if (version.id.startsWith('demo-')) seedVersion(project.area_id, block.area_id, version, block.name)
       }
     }

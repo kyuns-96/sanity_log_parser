@@ -140,7 +140,7 @@ export function TrackingOverview({
               netVer: latestVer.net_ver || '',
               revision: latestVer.revision || '',
               layout: latestVer.layout || '',
-              ecos: versionEcoNumbers(latestVer),
+              ecos: versionEcoNumbers(latestVer, latestUpload),
               isPor: Boolean(block.por?.version_id && latestVer.id === block.por.version_id),
             }
           : null,
@@ -163,16 +163,19 @@ export function TrackingOverview({
         || blk.versions.find(v => v.net_ver === roundNetVer && (!row.revision_label || v.revision === row.revision_label))
         || blk.versions.find(v => v.net_ver === roundNetVer)
       if (matched) {
+        const ecos = versionEcoNumbers(matched, cornerUpload)
+        const fallbackEcos = !ecos.length && row.eco_label ? row.eco_label.split(',').map(v => v.trim()).filter(Boolean) : ecos
         return {
           netVer: matched.net_ver || roundNetVer,
           revision: matched.revision || row.revision_label || '',
           layout: matched.layout || '',
-          ecos: versionEcoNumbers(matched),
+          ecos: fallbackEcos,
           isPor: Boolean(blk.por?.version_id && matched.id === blk.por.version_id),
         }
       }
     }
-    return { netVer: roundNetVer, revision: row.revision_label || '', layout: '', ecos: [], isPor: false }
+    const rowEcos = row.eco_label ? row.eco_label.split(',').map(v => v.trim()).filter(Boolean) : []
+    return { netVer: roundNetVer, revision: row.revision_label || '', layout: '', ecos: rowEcos, isPor: false }
   }
 
   function renderVersionMeta(meta: ResolvedVersionMeta | null, emptyText: string) {
@@ -193,7 +196,7 @@ export function TrackingOverview({
         <dd>
           {meta.ecos.length > 0
             ? meta.ecos.map(eco => <span key={eco} className="tracking-eco-pill">{eco}</span>)
-            : <span className="text-muted">{meta.layout === 'PRE' ? '해당 없음 (PRE)' : '—'}</span>}
+            : <span className="text-muted">—</span>}
         </dd>
       </dl>
     )

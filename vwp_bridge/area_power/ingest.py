@@ -30,6 +30,9 @@ def _validate_catalog(db: Any, conn: Any, metadata: UploadMetadata) -> None:
         raise DomainError("Version and block must belong to the selected project.", code="invalid_scope")
     if version.get("version_id") != metadata.version_id or block.get("block_id") != metadata.block_id:
         raise DomainError("Catalog scope identifiers do not match.", code="invalid_scope")
+    version_eco = (version.get("payload") or {}).get("eco_num")
+    if version_eco is not None and str(version_eco).strip() and metadata.eco_num and metadata.eco_num.strip() != str(version_eco).strip():
+        raise DomainError("Upload eco_num does not match the target version's eco_num.", code="eco_num_mismatch", status_code=422)
 
 
 def _snapshot_source(snapshot: dict[str, Any], metadata: UploadMetadata) -> UUID:
@@ -48,6 +51,8 @@ def _snapshot_source(snapshot: dict[str, Any], metadata: UploadMetadata) -> UUID
 
 def ingest_upload(db: Any, settings: Any, data: bytes, filename: str, metadata: UploadMetadata, actor: str) -> dict[str, Any]:
     """Every invocation creates an independent execution; no automatic selection."""
+    if not metadata.eco_num or not metadata.eco_num.strip():
+        raise DomainError("eco_num is required for all Area/Power uploads.", code="eco_num_required", status_code=422)
     try:
         parsed = parse_csv(data, filename, metadata, settings.max_uncompressed_bytes)
     except DomainError as exc:

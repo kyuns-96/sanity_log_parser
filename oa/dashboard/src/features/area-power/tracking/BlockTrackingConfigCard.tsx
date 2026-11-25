@@ -337,7 +337,7 @@ export function BlockTrackingConfigCard({
                 {baselineNetVerOptions.map(nv => <option key={nv} value={nv}>{nv}</option>)}
               </select>
             </Field>
-            <Field label="기준 REVISION">
+            <Field label="기준 REVISION · ECO">
               <select
                 value={baselineVersionId}
                 disabled={!project.can_write || !baselineNetVer}
@@ -345,7 +345,7 @@ export function BlockTrackingConfigCard({
               >
                 <option value="">기준 REVISION 선택</option>
                 {baselineRevisionOptions.map(v => (
-                  <option key={v.area_id!} value={v.area_id!}>{v.revision} · {v.layout}{v.id === selectedBaselineBlock?.por?.version_id ? ' (PoR)' : ''}</option>
+                  <option key={v.area_id!} value={v.area_id!}>{[v.revision, v.layout, v.eco_num].filter(Boolean).join(' · ')}{v.id === selectedBaselineBlock?.por?.version_id ? ' (PoR)' : ''}</option>
                 ))}
               </select>
             </Field>
