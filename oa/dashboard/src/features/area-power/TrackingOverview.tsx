@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CalendarClock, CheckCircle2 } from 'lucide-react'
 import { cornerKey, format, formatCornerLabel, object, request, text, type Auth, type Upload } from './api'
 import { Badge, Button } from './components/workspace'
@@ -36,6 +36,14 @@ function compareTrackingBlocks(
   const bName = b.name.trim()
   return aName.localeCompare(bName, 'en', { numeric: true, sensitivity: 'base' })
     || aName.localeCompare(bName)
+}
+
+// Long block names wrap after "_" rather than mid-word.
+function breakableName(name: string) {
+  const parts = name.split(/(?<=_)/)
+  return parts.map((part, index) => (
+    <Fragment key={index}>{part}{index < parts.length - 1 && <wbr />}</Fragment>
+  ))
 }
 
 interface TrackingOverviewProps {
@@ -380,23 +388,27 @@ export function TrackingOverview({
                     <tr key={row.block_id} className={row.needs_attention ? 'tracking-row-attention' : ''}>
                       <td>
                         <div className="tracking-block-name">
-                          <strong>{row.is_full_chip ? `${project.name} (Full-chip)` : row.block_name}</strong>
+                          <strong>{breakableName(row.is_full_chip ? `${project.name} (Full-chip)` : row.block_name)}</strong>
                           {row.is_full_chip && <span className="side-tag">Full-chip</span>}
                         </div>
                         {row.post_top_mail_revised && <div className="tracking-tags"><Badge value="발송 후 수정" /></div>}
                       </td>
                       <td className="tracking-ver-cell">
-                        <div className="tracking-ver-scope" title={baseInfo.label}>
-                          <span className={baseInfo.configured ? '' : 'text-muted'}>{baseInfo.label}</span>
-                          {baseInfo.scopeTag && <span className="tracking-scope-tag">{baseInfo.scopeTag}</span>}
+                        <div className="tracking-ver-box">
+                          <div className="tracking-ver-scope" title={baseInfo.label}>
+                            <span className={baseInfo.configured ? '' : 'text-muted'}>{baseInfo.label}</span>
+                            {baseInfo.scopeTag && <span className="tracking-scope-tag">{baseInfo.scopeTag}</span>}
+                          </div>
+                          {renderVersionMeta(baseInfo.version, baseInfo.emptyHint)}
                         </div>
-                        {renderVersionMeta(baseInfo.version, baseInfo.emptyHint)}
                       </td>
                       <td className="tracking-ver-cell">
-                        <div className="tracking-ver-scope" title={currentScope}>
-                          <span>{currentScope}</span>
+                        <div className="tracking-ver-box">
+                          <div className="tracking-ver-scope" title={currentScope}>
+                            <span>{currentScope}</span>
+                          </div>
+                          {renderVersionMeta(resolveRoundVersionMeta(row, activeRound.net_ver), '리비전 대기')}
                         </div>
-                        {renderVersionMeta(resolveRoundVersionMeta(row, activeRound.net_ver), '리비전 대기')}
                       </td>
                       <td>
                         <div className="tracking-corner-chips">
@@ -494,22 +506,26 @@ export function TrackingOverview({
                       <tr key={block.id}>
                         <td>
                           <div className="tracking-block-name">
-                            <strong>{isFc ? `${project.name} (Full-chip)` : block.name}</strong>
+                            <strong>{breakableName(isFc ? `${project.name} (Full-chip)` : block.name)}</strong>
                             {isFc && <span className="side-tag">Full-chip</span>}
                           </div>
                         </td>
                         <td className="tracking-ver-cell">
-                          <div className="tracking-ver-scope" title={baseInfo.label}>
-                            <span className={baseInfo.configured ? '' : 'text-muted'}>{baseInfo.label}</span>
-                            {baseInfo.scopeTag && <span className="tracking-scope-tag">{baseInfo.scopeTag}</span>}
+                          <div className="tracking-ver-box">
+                            <div className="tracking-ver-scope" title={baseInfo.label}>
+                              <span className={baseInfo.configured ? '' : 'text-muted'}>{baseInfo.label}</span>
+                              {baseInfo.scopeTag && <span className="tracking-scope-tag">{baseInfo.scopeTag}</span>}
+                            </div>
+                            {renderVersionMeta(baseInfo.version, baseInfo.emptyHint)}
                           </div>
-                          {renderVersionMeta(baseInfo.version, baseInfo.emptyHint)}
                         </td>
                         <td className="tracking-ver-cell">
-                          <div className="tracking-ver-scope" title={currentScope}>
-                            <span className={latest?.version ? '' : 'text-muted'}>{currentScope}</span>
+                          <div className="tracking-ver-box">
+                            <div className="tracking-ver-scope" title={currentScope}>
+                              <span className={latest?.version ? '' : 'text-muted'}>{currentScope}</span>
+                            </div>
+                            {renderVersionMeta(latest?.version || null, '업로드 없음')}
                           </div>
-                          {renderVersionMeta(latest?.version || null, '업로드 없음')}
                         </td>
                         <td>
                           <div className="tracking-corner-chips">

@@ -513,21 +513,30 @@
 .area-power .tracking-table-head h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 3px; font-size: 15px; }
 .area-power .tracking-table-head small { display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); font-size: var(--text-data); }
 .area-power .tracking-block-name { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
-.area-power .tracking-block-name strong { margin-bottom: 0; overflow-wrap: anywhere; }
-.area-power .tracking-table-panel th { padding: 10px 12px; }
-.area-power .tracking-table-panel td { max-width: none; padding: 12px 12px; }
-.area-power .tracking-latest-table { table-layout: fixed; min-width: 1080px; }
-.area-power .tracking-latest-table col.col-block { width: 170px; }
-.area-power .tracking-latest-table col.col-version { width: 255px; }
+.area-power .tracking-block-name strong { margin-bottom: 0; overflow-wrap: break-word; }
+.area-power .tracking-table-panel th { padding: 10px 14px; }
+.area-power .tracking-table-panel td { max-width: none; padding: 12px 14px; vertical-align: top; }
+/* Proportional columns: every column grows with the screen, not just the corner list. */
+.area-power .tracking-latest-table, .area-power .tracking-round-table { table-layout: fixed; width: 100%; }
+.area-power .tracking-latest-table { min-width: 1100px; }
+.area-power .tracking-latest-table col.col-block { width: 13%; }
+.area-power .tracking-latest-table col.col-version { width: 22%; }
 .area-power .tracking-latest-table col.col-corners { width: auto; }
-.area-power .tracking-latest-table col.col-action { width: 118px; }
-.area-power .tracking-round-table { table-layout: fixed; min-width: 1220px; }
-.area-power .tracking-round-table col.col-block { width: 165px; }
-.area-power .tracking-round-table col.col-version { width: 245px; }
-.area-power .tracking-round-table col.col-corners { width: 22%; }
+.area-power .tracking-latest-table col.col-action { width: 132px; }
+.area-power .tracking-round-table { min-width: 1240px; }
+.area-power .tracking-round-table col.col-block { width: 11%; }
+.area-power .tracking-round-table col.col-version { width: 19%; }
+.area-power .tracking-round-table col.col-corners { width: 19%; }
 .area-power .tracking-round-table col.col-summary { width: auto; }
 .area-power .tracking-round-table col.col-status { width: 180px; }
+@media (min-width: 2560px) {
+  .area-power .tracking-latest-table col.col-block { width: 8%; }
+  .area-power .tracking-latest-table col.col-version { width: 12%; }
+  .area-power .tracking-round-table col.col-block { width: 7%; }
+  .area-power .tracking-round-table col.col-version { width: 12%; }
+}
 .area-power .tracking-ver-cell { min-width: 0; }
+.area-power .tracking-ver-box { container-type: inline-size; min-width: 0; max-width: 440px; }
 .area-power .tracking-ver-scope { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; min-height: 18px; font-size: var(--text-caption); font-weight: 600; color: var(--text-secondary); }
 .area-power .tracking-ver-scope > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .area-power .tracking-scope-tag { flex: none; display: inline-flex; align-items: center; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-soft); color: var(--text-muted); font-size: 10.5px; font-weight: 600; line-height: 1.5; white-space: nowrap; }
@@ -539,7 +548,11 @@
 .area-power .tracking-ver-meta dd strong { display: inline; margin: 0; font-family: var(--font-mono); font-size: var(--text-caption); font-weight: 700; color: var(--ink); }
 .area-power .tracking-layout-pill { display: inline-flex; align-items: center; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--text-secondary); font-family: var(--font-sans); font-size: 10.5px; font-weight: 600; line-height: 1.5; }
 .area-power .tracking-por-pill { display: inline-flex; align-items: center; padding: 0 5px; border: 1px solid var(--accent-line); border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-family: var(--font-sans); font-size: 10.5px; font-weight: 700; line-height: 1.5; }
-.area-power .tracking-eco-pill { display: inline-flex; align-items: center; padding: 0 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--ink); font-family: var(--font-mono); font-size: 11px; font-weight: 550; line-height: 1.55; }
+.area-power .tracking-eco-pill { display: inline-flex; align-items: center; padding: 0 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--ink); font-family: var(--font-mono); font-size: 11px; font-weight: 550; line-height: 1.55; white-space: nowrap; }
+/* Wide enough version cell: labels on top, values below, three columns in two rows. */
+@container (min-width: 300px) {
+  .area-power .tracking-ver-meta { grid-auto-flow: column; grid-template-rows: auto auto; grid-template-columns: minmax(132px, max-content) minmax(52px, max-content) max-content; justify-content: start; gap: 2px 18px; padding: 8px 12px; }
+}
 .area-power .tracking-cell-stack { display: flex; flex-direction: column; gap: 2px; }
 .area-power .tracking-cell-stack small { color: var(--text-secondary); font-size: var(--text-caption); }
 .area-power .tracking-version-tag { font-family: var(--font-mono); color: var(--ink); font-weight: 550; }
