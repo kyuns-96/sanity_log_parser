@@ -134,26 +134,33 @@ export function makeWorkspaceDemoCatalog(state: {
           const project = existing[0]
           scope(project.id)
           if ((data.description && data.description !== project.description) || (process && process !== project.process)) return fail('REQUEST_CONFLICT')
-          return { status: 'ALREADY_CREATED', project_id: project.id }
+          project.area_id ||= crypto.randomUUID()
+          return { status: 'ALREADY_CREATED', project_id: project.id, area_prepared: true, area_project_id: project.area_id }
         }
         if (projects.some(project => project.id === projectId)) return fail('REQUEST_CONFLICT')
-        projects.push({ id: projectId, ...data, tops: [state.user()], area_id: null })
-        return { status: 'CREATED', project_id: projectId }
+        const areaProjectId = crypto.randomUUID()
+        projects.push({ id: projectId, ...data, tops: [state.user()], area_id: areaProjectId })
+        return { status: 'CREATED', project_id: projectId, area_prepared: true, area_project_id: areaProjectId }
       })
     }
     if (path === '/atlas/blocks') {
       const bodyFields = input(body, ['request_id', 'project_id', 'name'])
       const data = { project_id: id(bodyFields.project_id), name: text(bodyFields.name) }
-      scope(data.project_id)
+      const { project } = scope(data.project_id)
       const blockId = await nameId('block-', ['atlas-block-v1', data.project_id, data.name])
       return command(bodyFields, 'BLOCK', data, () => {
+        project.area_id ||= crypto.randomUUID()
         const existing = blocks.filter(block => block.project_id === data.project_id && block.name === data.name)
         if (existing.length > 1) return fail('REQUEST_CONFLICT')
-        if (existing.length) return { status: 'ALREADY_CREATED', project_id: data.project_id, block_id: existing[0].id }
+        if (existing.length) {
+          existing[0].area_id ||= crypto.randomUUID()
+          return { status: 'ALREADY_CREATED', project_id: data.project_id, block_id: existing[0].id, area_prepared: true, area_project_id: project.area_id, area_block_id: existing[0].area_id }
+        }
         if (blocks.some(block => block.id === blockId)) return fail('REQUEST_CONFLICT')
+        const areaBlockId = crypto.randomUUID()
         blocks.push({ id: blockId, project_id: data.project_id, name: data.name, owner: state.user(), versions: [],
-          por: { revision: 0, version: null, assigned_by: null, assigned_at: null }, events: [], area_id: null })
-        return { status: 'CREATED', project_id: data.project_id, block_id: blockId }
+          por: { revision: 0, version: null, assigned_by: null, assigned_at: null }, events: [], area_id: areaBlockId })
+        return { status: 'CREATED', project_id: data.project_id, block_id: blockId, area_prepared: true, area_project_id: project.area_id, area_block_id: areaBlockId }
       })
     }
     if (path === '/atlas/version-identity') {
@@ -177,6 +184,8 @@ export function makeWorkspaceDemoCatalog(state: {
       if (previousVersionId) scope(fields.project_id, fields.block_id, previousVersionId)
       const data = { ...fields, version_id: versionId, ecos, source_pre_id: sourcePreId, previous_version_id: previousVersionId }
       return command(bodyFields, 'VERSION', data, () => {
+        const { project } = scope(fields.project_id, fields.block_id)
+        const canPrepare = !previousVersionId || Boolean(scope(fields.project_id, fields.block_id, previousVersionId).version?.area_id)
         const existing = blocks.flatMap(block => block.versions).find(version => version.id === versionId)
         const version: DemoVersion = { ...fields, id: versionId, ecos: fields.layout === 'PRE' ? [null] : [],
           declared_ecos: fields.layout === 'PRE' ? [null] : ecos,
@@ -185,10 +194,20 @@ export function makeWorkspaceDemoCatalog(state: {
           const { area_id: _area, ...native } = existing
           const { area_id: _newArea, ...expected } = version
           if (canonical(native) !== canonical(expected)) return fail('REQUEST_CONFLICT')
-          return { status: 'ALREADY_CREATED', version_id: versionId }
+          if (canPrepare) {
+            project.area_id ||= crypto.randomUUID()
+            block!.area_id ||= crypto.randomUUID()
+            existing.area_id ||= crypto.randomUUID()
+          }
+          return { status: 'ALREADY_CREATED', version_id: versionId, ...(existing.area_id ? { area_prepared: true, area_project_id: project.area_id, area_block_id: block!.area_id, area_version_id: existing.area_id } : {}) }
+        }
+        if (canPrepare) {
+          project.area_id ||= crypto.randomUUID()
+          block!.area_id ||= crypto.randomUUID()
+          version.area_id = crypto.randomUUID()
         }
         block!.versions.unshift(version)
-        return { status: 'CREATED', project_id: fields.project_id, block_id: fields.block_id, version_id: versionId }
+        return { status: 'CREATED', project_id: fields.project_id, block_id: fields.block_id, version_id: versionId, ...(version.area_id ? { area_prepared: true, area_project_id: project.area_id, area_block_id: block!.area_id, area_version_id: version.area_id } : {}) }
       })
     }
     if (path === '/atlas/area-scope') {

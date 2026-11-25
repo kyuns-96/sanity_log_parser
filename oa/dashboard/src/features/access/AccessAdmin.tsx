@@ -60,15 +60,17 @@ export default function AccessAdmin(props: AccessScreenProps) {
   function createProject(event: FormEvent) {
     event.preventDefault()
     void command(async () => {
-      const result = await api<{ project_id: string }>('/api/admin/projects', { request_id: projectRequest, name: projectName.trim(), description: description.trim(), process: process || null })
-      await refresh(); setBlockProject(result.project_id); setProjectName(''); setDescription(''); setProcess(''); setProjectRequest(crypto.randomUUID()); setNotice('프로젝트를 등록했습니다. 이어서 블록을 추가해 주세요.')
+      const result = await api<{ project_id: string; area_prepared?: boolean }>('/api/admin/projects', { request_id: projectRequest, name: projectName.trim(), description: description.trim(), process: process || null })
+      await refresh(); setBlockProject(result.project_id); setProjectName(''); setDescription(''); setProcess(''); setProjectRequest(crypto.randomUUID())
+      setNotice(result.area_prepared === false ? '프로젝트를 등록했습니다. (Area/Power 자동 연결은 대기 중입니다.) 이어서 블록을 추가해 주세요.' : '프로젝트를 등록했습니다. 이어서 블록을 추가해 주세요.')
     })
   }
   function createBlock(event: FormEvent) {
     event.preventDefault()
     void command(async () => {
-      await api(`/api/admin/projects/${encodeURIComponent(blockProject)}/blocks`, { request_id: blockRequest, name: blockName.trim() })
-      await refresh(); setBlockName(''); setBlockRequest(crypto.randomUUID()); setNotice('블록을 등록했습니다.')
+      const result = await api<{ block_id: string; area_prepared?: boolean }>(`/api/admin/projects/${encodeURIComponent(blockProject)}/blocks`, { request_id: blockRequest, name: blockName.trim() })
+      await refresh(); setBlockName(''); setBlockRequest(crypto.randomUUID())
+      setNotice(result.area_prepared === false ? '블록을 등록했습니다. (Area/Power 자동 연결은 대기 중입니다.)' : '블록을 등록했습니다.')
     })
   }
   function openDecision(value: Decision) { setDecision(value); setReason(''); setCommandId(crypto.randomUUID()); setError('') }

@@ -13,8 +13,15 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 from common.sanity_common import ReviewError
 from common.sanity_db import Database
 from oa.access_api import ProjectCommand
-from oa.atlas_catalog import AtlasCatalog, AreaAdapters, AreaPreparationError, fail
+from oa.atlas_catalog import (
+    AtlasCatalog,
+    AreaAdapters,
+    AreaPreparationError,
+    fail,
+    try_auto_prepare_area_scope,
+)
 from oa.sanity_access import require_mutation_request
+from oa.sanity_workspace import WorkspaceStore
 
 ID = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")]
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100, pattern=r"^[^\x00-\x1f\x7f]+$")]
@@ -149,14 +156,40 @@ def create_atlas_router(authorized_dependency):
             return store.ws.register_process(body.name, body.unit_area)
 
     @router.post("/projects")
-    def project(body: ProjectCommand, actor=Depends(mutation)):
+    def project(body: ProjectCommand, request: Request, actor=Depends(mutation)):
         with context(actor) as store:
-            return store.create_project(body)
+            result = store.create_project(body)
+            process = body.process
+            if process is None:
+                ws = store.ws if store.local else WorkspaceStore(store.access.db)
+                process = ws.initial_process(result["project_id"])
+        return try_auto_prepare_area_scope(
+            request,
+            result,
+            actor_id=actor.user_id,
+            project_id=result["project_id"],
+            project_name=body.name.strip(),
+            process=process,
+        )
 
     @router.post("/blocks")
-    def block(body: Block, actor=Depends(mutation)):
+    def block(body: Block, request: Request, actor=Depends(mutation)):
         with context(actor) as store:
-            return store.create_block(body)
+            result = store.create_block(body)
+            ws = store.ws if store.local else WorkspaceStore(store.access.db)
+            project_row = ws.get("WS_PROJECT", body.project_id)
+            project_name = project_row["payload"]["name"]
+            process = ws.initial_process(body.project_id)
+        return try_auto_prepare_area_scope(
+            request,
+            result,
+            actor_id=actor.user_id,
+            project_id=result["project_id"],
+            project_name=project_name,
+            process=process,
+            block_id=result["block_id"],
+            block_name=body.name.strip(),
+        )
 
     @router.post("/version-identity")
     def identity(body: VersionIdentity, actor=Depends(mutation)):
@@ -165,9 +198,31 @@ def create_atlas_router(authorized_dependency):
             return {"version_id": store.identity(body)}
 
     @router.post("/versions")
-    def version(body: Version, actor=Depends(mutation)):
+    def version(body: Version, request: Request, actor=Depends(mutation)):
         with context(actor) as store:
-            return store.create_version(body)
+            result = store.create_version(body)
+        if getattr(request.app.state, "area_power_enabled", False):
+            from common.area_power.errors import ConfigurationError, DomainError
+            try:
+                with context(actor) as store:
+                    prepared = AreaAdapters(store).prepare(
+                        Scope(project_id=body.project_id, block_id=body.block_id, version_id=body.version_id)
+                    )
+                result = {
+                    **result,
+                    "area_prepared": True,
+                    "area_project_id": prepared["area_project_id"],
+                    "area_block_id": prepared["area_block_id"],
+                    "area_version_id": prepared["area_version_id"],
+                }
+            except AreaPreparationError:
+                result = {**result, "area_prepared": False, "area_error": "AREA_BINDING_NOT_RECORDED"}
+            except ReviewError as exc:
+                result = {**result, "area_prepared": False, "area_error": exc.code}
+            except (ConfigurationError, DomainError) as exc:
+                code = "AREA_POWER_UNAVAILABLE" if isinstance(exc, ConfigurationError) else exc.code.upper()
+                result = {**result, "area_prepared": False, "area_error": code}
+        return result
 
     def prepare_area(body, request, actor, *, bind=False):
         area_enabled(request)

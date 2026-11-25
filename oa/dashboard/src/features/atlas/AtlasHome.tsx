@@ -81,10 +81,11 @@ function CatalogForm({ kind, onClose, onCreated }: { kind: 'project' | 'block' |
         const result = await auth.request<{ version_id: string }>('/api/atlas/version-identity', identity)
         path = '/api/atlas/versions'; body = { ...identity, request_id: requestId, version_id: result.version_id, ecos: fields.layout === 'PRE' ? [null] : fields.ecos.split('\n').map(value => value.trim()).filter(Boolean), ...(fields.layout === 'POST' && fields.source_pre_id ? { source_pre_id: fields.source_pre_id } : {}), previous_version_id: fields.previous_version_id || null }
       }
-      const result = await auth.request<{ status: string; project_id?: string; block_id?: string; version_id?: string }>(path, body)
+      const result = await auth.request<{ status: string; project_id?: string; block_id?: string; version_id?: string; area_prepared?: boolean; area_error?: string }>(path, body)
       await atlas.reload()
       await atlas.selectScope({ projectId: result.project_id || atlas.scope.projectId, blockId: kind === 'project' ? '' : result.block_id || atlas.scope.blockId, versionId: result.version_id || '' })
-      onCreated(`${kind === 'version' ? '버전을 선언했습니다. 실제 보고서·AI 결과는 아직 수신되지 않았습니다.' : '공통 카탈로그에 등록했습니다.'}${result.version_id ? ` ${result.version_id}` : ''}`)
+      const areaNote = result.area_prepared === false ? ' (Area/Power 자동 연결은 대기 중입니다. 프로젝트 비교 화면에서 다시 연결해 주세요.)' : result.area_prepared === true && kind !== 'version' ? ' (Area/Power 범위도 함께 연결했습니다.)' : ''
+      onCreated(`${kind === 'version' ? '버전을 선언했습니다. 실제 보고서·AI 결과는 아직 수신되지 않았습니다.' : '공통 카탈로그에 등록했습니다.'}${result.version_id ? ` ${result.version_id}` : ''}${areaNote}`)
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
     finally { setBusy(false) }
   }

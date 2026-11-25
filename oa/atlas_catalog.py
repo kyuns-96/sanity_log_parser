@@ -6,12 +6,15 @@ Atlas declarations and numerical ancestry live in a separate WS_CONFIG record.
 """
 from __future__ import annotations
 
+import logging
 from uuid import uuid4
 
 from common.sanity_common import ReviewError
 from common.sanity_db import lock_key
 from common.sanity_submission import source_version
 from oa.sanity_workspace import WorkspaceStore
+
+logger = logging.getLogger(__name__)
 
 
 def fail(code="REQUEST_CONFLICT"):
@@ -48,8 +51,8 @@ class AtlasCatalog:
                     fail("FORBIDDEN")
         return row
 
-    def scope(self, project_id, block_id=None, version_id=None, *, write=False):
-        project = self.project(project_id, write=write)
+    def scope(self, project_id, block_id=None, version_id=None, *, write=False, manage=False):
+        project = self.project(project_id, write=write, manage=manage)
         if version_id is not None and block_id is None:
             fail("INVALID_REQUEST")
         block = self.ws.get("WS_BLOCK", block_id) if block_id else None
@@ -57,7 +60,11 @@ class AtlasCatalog:
                       or block["workspace_project_ref"] != project["record_id"]):
             fail("RESOURCE_NOT_FOUND")
         if block and not self.local:
-            if {"schema_version": 1, "project_id": project_id, "block_id": block_id} not in self.access._scopes(self.actor.user_id, write=write):
+            if manage and self.can_manage:
+                reg_blocks = {(b["project_id"], b["id"]) for b in self.access.catalog()["blocks"]}
+                if (project_id, block_id) not in reg_blocks:
+                    fail("RESOURCE_NOT_FOUND")
+            elif {"schema_version": 1, "project_id": project_id, "block_id": block_id} not in self.access._scopes(self.actor.user_id, write=write):
                 fail("RESOURCE_NOT_FOUND")
         version = self.ws.get("WS_VERSION", version_id) if version_id else None
         if version and (version["workspace_project_ref"] != project["record_id"]
@@ -311,7 +318,8 @@ class AreaAdapters:
     def prepare(self, body, *, bind=False):
         catalog = self.catalog
         catalog.lock()
-        project, block, version = catalog.scope(body.project_id, body.block_id, body.version_id, write=True)
+        manage_scope = not bind and body.version_id is None and catalog.can_manage
+        project, block, version = catalog.scope(body.project_id, body.block_id, body.version_id, write=True, manage=manage_scope)
         if bind and not catalog.local:
             fail("FORBIDDEN")
         if version and "previous_version_id" not in catalog.metadata(body.version_id):
@@ -401,3 +409,109 @@ class AreaAdapters:
             except Exception as exc:
                 raise AreaPreparationError(result) from exc
         return result
+
+
+def ensure_area_project_block(
+    *,
+    actor_id: str,
+    project_id: str,
+    project_name: str,
+    process: str | None = None,
+    block_id: str | None = None,
+    block_name: str | None = None,
+) -> dict[str, str | None]:
+    """Idempotently create or reuse Area/Power project (and optional block) scope rows.
+
+    Uses the exact same advisory lock and sanity_project_id/sanity_block_id payload
+    contract as AreaAdapters.prepare() so newly registered projects and blocks are
+    immediately ready for Area/Power without a separate binding step.
+    """
+    from psycopg import sql
+    from common.area_power.db import Database as AreaDatabase
+
+    area_db = AreaDatabase()
+    with area_db.connect() as conn:
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("design-atlas-area-bindings"),))
+        rows = conn.execute(
+            sql.SQL("SELECT * FROM {} WHERE record_type IN ('project','block') ORDER BY id").format(
+                area_db.table("di_area_power_tracking_record")
+            )
+        ).fetchall()
+
+        def match(kind: str, native_id: str):
+            matches = [r for r in rows if r["record_type"] == kind and r["payload"].get("sanity_" + kind + "_id") == native_id]
+            if len(matches) > 1:
+                fail("AREA_BINDING_CONFLICT")
+            return matches[0] if matches else None
+
+        project_row = match("project", project_id)
+        if project_row is None:
+            pid = uuid4()
+            payload = {"name": project_name, "sanity_project_id": project_id}
+            if process:
+                payload["process"] = process
+            project_row = area_db.insert_record(conn, "project", payload, actor_id, id=pid, entity_id=pid)
+            rows.append(project_row)
+
+        block_row = None
+        if block_id is not None:
+            block_row = match("block", block_id)
+            if block_row is not None:
+                if block_row["project_id"] != project_row["id"]:
+                    fail("AREA_BINDING_CONFLICT")
+            else:
+                bid = uuid4()
+                block_row = area_db.insert_record(
+                    conn,
+                    "block",
+                    {"name": block_name or block_id, "sanity_block_id": block_id},
+                    actor_id,
+                    id=bid,
+                    entity_id=bid,
+                    project_id=project_row["id"],
+                    parent_id=project_row["id"],
+                    block_id=bid,
+                )
+        return {
+            "area_project_id": str(project_row["id"]),
+            "area_block_id": str(block_row["id"]) if block_row else None,
+        }
+
+
+def try_auto_prepare_area_scope(
+    request,
+    result: dict,
+    *,
+    actor_id: str,
+    project_id: str,
+    project_name: str,
+    process: str | None = None,
+    block_id: str | None = None,
+    block_name: str | None = None,
+) -> dict:
+    """Attach Area/Power project/block binding on creation when Area/Power is enabled.
+
+    Never fails the already-committed native project/block creation if Area DB is
+    temporarily unreachable; surfaces area_prepared=False so manual preparation can retry.
+    """
+    if not getattr(request.app.state, "area_power_enabled", False):
+        return result
+    from common.area_power.errors import ConfigurationError, DomainError
+
+    try:
+        bound = ensure_area_project_block(
+            actor_id=actor_id,
+            project_id=project_id,
+            project_name=project_name,
+            process=process,
+            block_id=block_id,
+            block_name=block_name,
+        )
+        return {**result, "area_prepared": True, **bound}
+    except ReviewError as exc:
+        logger.warning("Auto Area/Power scope binding skipped (%s) for project=%s block=%s", exc.code, project_id, block_id)
+        return {**result, "area_prepared": False, "area_error": exc.code}
+    except (ConfigurationError, DomainError) as exc:
+        code = "AREA_POWER_UNAVAILABLE" if isinstance(exc, ConfigurationError) else exc.code.upper()
+        logger.warning("Auto Area/Power scope binding failed (%s) for project=%s block=%s", code, project_id, block_id)
+        return {**result, "area_prepared": False, "area_error": code}
