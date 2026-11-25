@@ -249,14 +249,14 @@ def _dual_ranking_lines(candidates: list[dict], part: str, title: str, unit: str
         path = card.get("current_path") or card.get("baseline_path") or card["id"]
         d1 = card.get("depth1_block")
         prefix = f"[{d1}] " if d1 else ""
-        rate_txt = f"단순 {_signed(raw_pct, '%')}" + (f" · 체급연동 {_signed(damped, '%')}" if damped is not None else "")
+        rate_txt = f"단순 {_signed(raw_pct, '%')}" + (f" · Effective Δ% {_signed(damped, '%')}" if damped is not None else "")
         verdict_ko = {"unexpected": "이상", "needs_review": "확인 필요"}.get(item.get("verdict"), item.get("verdict"))
         return f"    {idx}. [{verdict_ko}] {prefix}{path} : {_signed(delta, unit)} ({rate_txt})"
 
     lines = ["", f"■ {title} 주요 증가 랭킹 (이상 · 확인 필요 기준)"]
     lines.append(f"  [절대 증가량 Top {len(abs_sorted)}]")
     lines.extend(fmt_row(i, r) for i, r in enumerate(abs_sorted, start=1))
-    lines.append(f"  [체급 대비 급증 Top {len(spike_sorted)} — 중복 제외]")
+    lines.append(f"  [Effective Δ% Top {len(spike_sorted)} — 중복 제외]")
     if spike_sorted:
         lines.extend(fmt_row(i, r) for i, r in enumerate(spike_sorted, start=1))
     else:
@@ -273,11 +273,11 @@ def _item_lines(item):
         path += f"  [소속 블록: {card['depth1_block']}]"
     area, power = card["area"], card["power_mw"]
     a_damped = _dec_val(area.get("damped_pct"))
-    a_extra = f", Δ {_signed(_dec_val(area.get('delta')), '')}" + (f", 체급연동 {_signed(a_damped, '%')}" if a_damped is not None else "")
+    a_extra = f", Δ {_signed(_dec_val(area.get('delta')), '')}" + (f", Effective Δ% {_signed(a_damped, '%')}" if a_damped is not None else "")
     values = [f"Area {_number(_dec_val(area.get('baseline')))} → {_number(_dec_val(area.get('current')))} ({_signed(_dec_val(area.get('delta_pct')), '%')}{a_extra})"]
     if "excluded" not in power:
         p_damped = _dec_val(power.get("damped_pct"))
-        p_extra = f", Δ {_signed(_dec_val(power.get('delta')), ' mW')}" + (f", 체급연동 {_signed(p_damped, '%')}" if p_damped is not None else "")
+        p_extra = f", Δ {_signed(_dec_val(power.get('delta')), ' mW')}" + (f", Effective Δ% {_signed(p_damped, '%')}" if p_damped is not None else "")
         values.append(f"Power {_number(_dec_val(power.get('baseline')))} → {_number(_dec_val(power.get('current')))} mW ({_signed(_dec_val(power.get('delta_pct')), '%')}{p_extra})")
     lines = [f"- {path}", "    " + " · ".join(values),
              f"    원인: {CAUSES.get(item['cause'], item['cause'])} · {' '.join(str(item['explanation']).split())}"]

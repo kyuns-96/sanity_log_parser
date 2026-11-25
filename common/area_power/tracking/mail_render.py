@@ -114,13 +114,13 @@ def render_block_mail_text(snapshot: dict[str, Any], *, mail_id: str | None = No
                     sec = [f"  [{part_label} 절대 증가 Top {len(top_abs)}]"]
                     for d, _eff, rp, dp, it in top_abs:
                         d1 = f"[{it['depth1_block']}] " if it.get("depth1_block") else ""
-                        rate = f"단순 {_fmt_signed(rp, '%')}" + (f" · 체급연동 {_fmt_signed(dp, '%')}" if dp is not None else "")
+                        rate = f"단순 {_fmt_signed(rp, '%')}" + (f" · Effective Δ% {_fmt_signed(dp, '%')}" if dp is not None else "")
                         sec.append(f"    - [{it.get('verdict')}] {d1}{it.get('path')} · {_fmt_signed(d, unit)} ({rate}) · {it.get('explanation', '')}")
                     if top_spike:
-                        sec.append(f"  [{part_label} 체급 대비 급증 Top {len(top_spike)} — 중복 제외]")
+                        sec.append(f"  [{part_label} Effective Δ% Top {len(top_spike)} — 중복 제외]")
                         for d, _eff, rp, dp, it in top_spike:
                             d1 = f"[{it['depth1_block']}] " if it.get("depth1_block") else ""
-                            rate = f"단순 {_fmt_signed(rp, '%')}" + (f" · 체급연동 {_fmt_signed(dp, '%')}" if dp is not None else "")
+                            rate = f"단순 {_fmt_signed(rp, '%')}" + (f" · Effective Δ% {_fmt_signed(dp, '%')}" if dp is not None else "")
                             sec.append(f"    - [{it.get('verdict')}] {d1}{it.get('path')} · {_fmt_signed(d, unit)} ({rate}) · {it.get('explanation', '')}")
                     return sec
 

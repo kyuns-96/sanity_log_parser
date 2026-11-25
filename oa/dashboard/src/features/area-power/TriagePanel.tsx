@@ -3,6 +3,7 @@ import { AlertTriangle, Clock3, LoaderCircle, Mail, RefreshCw, Search, Server, S
 import { array, date, format, formatPercent, object, request, text, triagePreviewSchema, triageResultSchema, triageRunsSchema, triageStartedSchema, unknownSchema, type Auth, type TriageItem, type TriagePreview, type TriageResult, type TriageRun } from './api'
 import { AnalysisDelete } from './AnalysisDelete'
 import { Button, useAction } from './components/workspace'
+import { EffectiveFormulaHint } from './EffectiveFormulaHint'
 
 export const VERDICT_LABEL: Record<string, string> = { unexpected: '이상', needs_review: '확인 필요', expected: '설명됨', minor: '변화 미미' }
 const CAUSE_LABEL: Record<string, string> = { note: '메모', vth_shift: 'Vth 변화', drive_shift: 'Drive 변화', new_instance: '신규 instance', unknown: '원인 불명' }
@@ -59,18 +60,18 @@ function elapsedSeconds(fromIso: unknown, nowMs: number): number | null {
 
 const RANKING_LABEL: Record<string, string> = {
   power_abs_top: 'Power 절대량 Top',
-  power_damped_top: 'Power 체급급증 Top',
+  power_damped_top: 'Power Effective Δ% Top',
   area_abs_top: 'Area 절대량 Top',
-  area_damped_top: 'Area 체급급증 Top',
+  area_damped_top: 'Area Effective Δ% Top',
 }
 
 function summary(card: Record<string, unknown>) {
   const area = object(card.area), power = object(card.power_mw)
-  const areaPart = `Logic Area ${signed(area.delta_pct, '%')}${area.damped_pct != null ? ` (보정 ${signed(area.damped_pct, '%')})` : ''}`
+  const areaPart = `Logic Area ${signed(area.delta_pct, '%')}${area.damped_pct != null ? ` (Effective ${signed(area.damped_pct, '%')})` : ''}`
   const parts = [areaPart]
   if (!('excluded' in power)) {
     const pwrDelta = power.delta != null && text(power.delta) !== '' ? `${text(power.delta).startsWith('-') ? '' : '+'}${format(power.delta)} mW · ` : ''
-    const pwrDamped = power.damped_pct != null ? ` (보정 ${signed(power.damped_pct, '%')})` : ''
+    const pwrDamped = power.damped_pct != null ? ` (Effective ${signed(power.damped_pct, '%')})` : ''
     parts.unshift(`Total Power ${pwrDelta}${signed(power.delta_pct, '%')}${pwrDamped}`)
   }
   return parts.join(' · ')
@@ -345,7 +346,7 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
   return <section className="triage-panel" aria-label="AI 이상치 분석">
     <div className="triage-controls">
       <h3><Sparkles size={15} aria-hidden="true" />AI 분석</h3>
-      {([['area_increase_pct', 'Logic Area 증가 ≥', '%'], ['power_increase_pct', 'Total Power 증가 ≥', '%'], ['noise_share_pct', '기본 노이즈 비율', '%'], ['min_area', 'Logic Area 최소', '']] as const).map(([key, label, unit]) => <label key={key} className="browser-threshold" title={key === 'noise_share_pct' ? '루트 전체 대비 최소 유의미 노이즈 바닥 비율 (기본 0.1% → 분모 완충 쿠션 1.0%)' : undefined}>{label}<input type="text" inputMode="decimal" value={thresholds[key]} aria-invalid={!NUMBER.test(thresholds[key].trim())} onChange={event => { setThresholds({ ...thresholds, [key]: event.target.value }); setPreview(null) }} />{unit}</label>)}
+      {([['area_increase_pct', 'Logic Area 증가 ≥', '%'], ['power_increase_pct', 'Total Power 증가 ≥', '%'], ['noise_share_pct', '기본 노이즈 비율', '%'], ['min_area', 'Logic Area 최소', '']] as const).map(([key, label, unit]) => <label key={key} className="browser-threshold">{label}<input type="text" inputMode="decimal" value={thresholds[key]} aria-invalid={!NUMBER.test(thresholds[key].trim())} onChange={event => { setThresholds({ ...thresholds, [key]: event.target.value }); setPreview(null) }} />{unit}{key === 'noise_share_pct' && <EffectiveFormulaHint compact noiseSharePct={thresholds.noise_share_pct.trim() || '0.1'} thresholdPct={thresholds.power_increase_pct.trim() || '10'} />}</label>)}
       <Button variant="outline" size="sm" disabled={action.busy || !valid} onClick={() => action.run(loadPreview, '후보를 계산했습니다.')}><Search size={14} />미리보기</Button>
       <Button size="sm" disabled={action.busy || !valid || !canWrite || preview?.over_limit === true} onClick={() => action.run(start, 'AI 분석을 요청했습니다. 진행 상황을 자동으로 갱신합니다.')}><Sparkles size={14} />AI 분석 실행</Button>
       {runs.length > 0 && <label className="triage-runs">지난 분석<select value={runId} onChange={event => { setExcluded(new Set()); setRunId(event.target.value) }}>{runs.map(row => <option key={row.id} value={row.id}>{date(row.created_at)} · {row.state}</option>)}</select></label>}
@@ -358,7 +359,7 @@ export function TriagePanel({ auth, comparisonId, canWrite, labels, onItems, onL
     {loadError && <div className="notice error" role="alert">{loadError}</div>}
     {preview && counts && <div className="triage-preview" role="status">
       {preview.ai_model && <p>분석 모델: {preview.ai_model.model ? `${preview.ai_model.site === 'vwp' ? 'VWP' : 'OA'} · ${preview.ai_model.connection_label} · ${preview.ai_model.model}` : '미설정'}{!preview.ai_model.ready && ` · ${preview.ai_model.error === 'AI_TASK_MODEL_REQUIRED' ? '관리자 → AI 연결·모델 관리 → 프로젝트 비교 AI 분석에서 지정하세요.' : `연결 또는 본인 인증값 확인 필요 (${preview.ai_model.error || 'AI_CONNECTION_UNAVAILABLE'})`}`}</p>}
-      <p><strong>분석 대상 {counts.total?.toLocaleString() ?? 0}개</strong> · Area 증가 {counts.area_increase ?? 0} (절대Top {counts.area_abs_top ?? 0} · 급증Top {counts.area_damped_top ?? 0}) · Power 증가 {counts.power_increase ?? 0} (절대Top {counts.power_abs_top ?? 0} · 급증Top {counts.power_damped_top ?? 0}) · 신규 {counts.new_instance ?? 0} · 주요 {counts.watched ?? 0} · 상위로 묶임 {counts.rolled_up ?? 0} · 최초 예상 AI 호출 {preview.estimated_calls}회</p>
+      <p><strong>분석 대상 {counts.total?.toLocaleString() ?? 0}개</strong> · Area 증가 {counts.area_increase ?? 0} (절대Top {counts.area_abs_top ?? 0} · Effective Top {counts.area_damped_top ?? 0}) · Power 증가 {counts.power_increase ?? 0} (절대Top {counts.power_abs_top ?? 0} · Effective Top {counts.power_damped_top ?? 0}) · 신규 {counts.new_instance ?? 0} · 주요 {counts.watched ?? 0} · 상위로 묶임 {counts.rolled_up ?? 0} · 최초 예상 AI 호출 {preview.estimated_calls}회</p>
       {renderAttributionBox(preview.attribution)}
       <p>적용 메모 {preview.notes.length}건{preview.applicable_net_vers.length ? ` (${preview.applicable_net_vers.join(', ')})` : ''}{preview.same_rtl ? ' · 같은 NET_VER(RTL 동일)' : ''} · 주요 instance {preview.watched_paths.length}개 · library {{ same: '같음', unknown: '미확인(공정 미등록)', different: '다름' }[text(previewContext.library)] || text(previewContext.library)}</p>
       {preview.over_limit && <p className="notice warning">분석 대상이 {preview.max_items}개를 넘습니다. 기준을 올린 뒤 다시 미리보기 하세요. 일부만 분석하지 않습니다.</p>}

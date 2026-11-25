@@ -5,6 +5,7 @@ import { add, compare as compareFraction, divide, fraction, magnitude as absFrac
 import { gateCountRow, type GateBases } from './gateCount'
 import { format, formatPercent, text, type TrackingRecord } from './api'
 import { Button } from './components/workspace'
+import { EffectiveFormulaHint, type LiveEpsItem } from './EffectiveFormulaHint'
 import { AREA_THRESHOLD, DEFAULT_COLUMNS, DEFAULT_MIN_AREA, MAX_COLUMNS, METRIC_CATALOG, METRIC_GROUPS, atLeast, metricDef, type MetricDef } from './metricCatalog'
 
 export type HierarchyItem = { path: string; parent_path: string | null; depth: number; area: unknown; logic_area?: unknown; power_mw: unknown }
@@ -349,7 +350,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
   const sortMark = (key: string) => sort.key === key ? (sort.descending ? <ArrowDown size={11} aria-hidden="true" /> : <ArrowUp size={11} aria-hidden="true" />) : null
   const ariaSort = (key: string) => sort.key === key ? (sort.descending ? 'descending' : 'ascending') : 'none'
   // `short` is what the header shows when the zone header above already names the unit.
-  const sortHead = (key: string, label: string, extra = '', short = label) => <th key={key} className={`numeric${extra ? ` ${extra}` : ''}`} aria-sort={ariaSort(key)} title={label}><button type="button" aria-label={label} onClick={() => sortBy(key)}><span className="head-label">{short}</span>{sortMark(key)}</button></th>
+  const sortHead = (key: string, label: string, extra = '', short = label, addon?: ReactNode) => <th key={key} className={`numeric${extra ? ` ${extra}` : ''}`} aria-sort={ariaSort(key)} title={label}><span className="th-sort-wrap"><button type="button" aria-label={label} onClick={() => sortBy(key)}><span className="head-label">{short}</span>{sortMark(key)}</button>{addon}</span></th>
 
   const fracToApproxPct = (f: Fraction | null): string => {
     if (!f) return '—'
@@ -357,6 +358,54 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
     const scaled100 = (absFraction(f).n * 200n + f.d) / (2n * f.d)
     return `${signStr}${scaled100 / 100n}.${(scaled100 % 100n).toString().padStart(2, '0')}%`
   }
+
+  const formatEpsFraction = (f: Fraction, unit: string): string => {
+    const absF = absFraction(f)
+    if (absF.n === 0n) return '—'
+    // Format with 2 decimals for small values (<100), integer for large values (>=100).
+    const whole = absF.n / absF.d
+    if (whole >= 100n) {
+      const rounded = (absF.n * 2n + absF.d) / (2n * absF.d)
+      return `${format(rounded.toString())}${unit}`
+    }
+    const scaled100 = (absF.n * 200n + absF.d) / (2n * absF.d)
+    return `${format(`${scaled100 / 100n}.${(scaled100 % 100n).toString().padStart(2, '0')}`)}${unit}`
+  }
+
+  const liveEps = useMemo<LiveEpsItem[]>(() => {
+    const EPS_FACTOR = fraction(1n, 100n)
+    const items: LiveEpsItem[] = []
+    const seen = new Set<string>()
+    for (const metric of metrics) {
+      if (metric.ratio) continue
+      const groupKey = metric.id === 'logic_area' || metric.id === 'cts_area' || metric.id === 'others_area'
+        ? 'logicArea'
+        : metric.id.endsWith('_area')
+          ? 'totalArea'
+          : metric.id.startsWith('pwr_')
+            ? 'powerTotal'
+            : 'totalCells'
+      if (seen.has(groupKey)) continue
+      seen.add(groupKey)
+      const rootRef = rootRefs[groupKey]
+      if (rootRef.n <= 0n) continue
+      const epsVal = multiply(rootRef, EPS_FACTOR)
+      const labelMap: Record<string, string> = {
+        logicArea: gateBases ? 'Logic GE' : 'Logic Area',
+        totalArea: gateBases ? 'Total GE' : 'Total Area',
+        powerTotal: 'Total Power',
+        totalCells: 'Total Cells',
+      }
+      const unitMap: Record<string, string> = {
+        logicArea: gateBases ? ' GE' : '',
+        totalArea: gateBases ? ' GE' : '',
+        powerTotal: ' mW',
+        totalCells: '',
+      }
+      items.push({ label: labelMap[groupKey], value: formatEpsFraction(epsVal, unitMap[groupKey]) })
+    }
+    return items
+  }, [metrics, rootRefs, gateBases])
 
   const toggleColumn = (id: string) => onColumns(columns.includes(id) ? columns.filter(item => item !== id) : METRIC_CATALOG.map(metric => metric.id).filter(item => item === id || columns.includes(item)))
   const numberCell = (row: BrowserRow, metric: MetricDef, field: Field, extra = '') => {
@@ -383,7 +432,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
     if (scale && direction) {
       const rawDelta = amount(value(row, metric.id, 'delta'), metric)
       const u = unitOf(metric)
-      tooltip = `Δ ${direction > 0 ? '+' : ''}${rawDelta}${u} · 체급 연동 ${fracToApproxPct(scale.dampedPct)} · 루트 비중 ${fracToApproxPct(scale.rootSharePct).replace(/^\+/, '')}${isNoise ? ' (미소 변화 완충)' : ''}`
+      tooltip = `Δ ${direction > 0 ? '+' : ''}${rawDelta}${u} · Effective Δ% ${fracToApproxPct(scale.dampedPct)} · 루트 비중 ${fracToApproxPct(scale.rootSharePct).replace(/^\+/, '')}${isNoise ? ' (미소 변화 완충)' : ''}`
     }
     const toneClass = isNoise ? ' noise-muted' : direction > 0 ? ' up' : direction < 0 ? ' down' : ''
     // The size of a change is a bar along the cell proportional to share of root total.
@@ -417,7 +466,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
     <div className="browser-toolbar" role="toolbar" aria-label="Hierarchy 보기">
       {maximized && unitSwitch}
       <div className="view-switch" role="group" aria-label="보기 방식">{([['split', '좌우 비교'], ['single', '단일 표']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)}>{label}</button>)}</div>
-      {mode === 'split' && <div className="view-switch" role="group" aria-label="변화 표시">{([['pct', '변화 Δ%'], ['abs', '변화 Δ']] as const).map(([val, lbl]) => <button key={val} type="button" aria-pressed={changeMode === val} onClick={() => switchChangeMode(val)} title={val === 'pct' ? '상대 변화율 표시 (정렬 시 미소 노이즈를 완충한 체급 연동 순)' : '절대 변화량(Δ) 표시 및 크기순 정렬'}>{lbl}</button>)}</div>}
+      {mode === 'split' && <div className="view-switch" role="group" aria-label="변화 표시">{([['pct', '변화 Δ%'], ['abs', '변화 Δ']] as const).map(([val, lbl]) => <button key={val} type="button" aria-pressed={changeMode === val} onClick={() => switchChangeMode(val)} title={val === 'pct' ? '상대 변화율 표시 (정렬 시 미소 노이즈를 완충한 Effective Δ% 순)' : '절대 변화량(Δ) 표시 및 크기순 정렬'}>{lbl}</button>)}</div>}
       <Button variant="outline" size="xs" aria-expanded={choosing} onClick={() => setChoosing(value => !value)}><Columns3 size={13} />열 선택 · {metrics.length}</Button>
       <label className="browser-threshold" title="현재·기준 중 큰 total area가 이 값보다 작은 하위 instance를 숨깁니다. 비우면 모두 표시합니다. 루트는 항상 표시합니다.">{gateBases ? '원본 Area' : 'Area'} ≥<input type="text" inputMode="decimal" value={areaDraft} placeholder="전체" onChange={event => setAreaDraft(event.target.value)} onBlur={commitArea} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commitArea() } if (event.key === 'Escape') setAreaDraft(minArea) }} aria-invalid={areaDraft.trim() !== '' && !AREA_THRESHOLD.test(areaDraft.trim())} /></label>
       <Button variant="outline" size="xs" disabled={!differences} onClick={() => jump(-1)} title="이전 차이 (Alt+↑)"><StepBack size={13} />이전 차이</Button>
@@ -445,7 +494,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
           : <colgroup><col className="col-instance" />{singleWidths.map((width, index) => <col key={index} style={{ width }} />)}<col className="col-state" style={{ width: stateColumn }} /></colgroup>}
         <thead>
           {mode === 'split' ? <>
-            <tr><th colSpan={1 + metrics.length} className="pane-head" title={sideName('baseline')}><span className="zone-label">{sideName('baseline')}</span></th><th colSpan={metrics.length} className="group-head gutter-head" title="현재가 기준보다 얼마나 달라졌는지입니다. 막대 길이는 루트 전체 대비 절대 기여도이며, Δ% 정렬은 미소 노이즈를 완충한 체급 연동 순입니다."><span className="zone-label">변화 <small>{changeMode === 'abs' ? 'Δ · 비율은 Δ%p' : 'Δ% · 비율은 Δ%p'}</small></span></th><th colSpan={2 + metrics.length} className="pane-head current-pane" title={sideName('current')}><span className="zone-label">{sideName('current')}</span></th></tr>
+            <tr><th colSpan={1 + metrics.length} className="pane-head" title={sideName('baseline')}><span className="zone-label">{sideName('baseline')}</span></th><th colSpan={metrics.length} className="group-head gutter-head"><span className="zone-label">변화 {changeMode === 'abs' ? <small>Δ · 비율은 Δ%p</small> : <><EffectiveFormulaHint label="Effective Δ%" liveEps={liveEps} />{metrics.some(m => m.ratio) && <small>· 비율은 Δ%p</small>}</>}</span></th><th colSpan={2 + metrics.length} className="pane-head current-pane" title={sideName('current')}><span className="zone-label">{sideName('current')}</span></th></tr>
             <tr>
               <th className="instance-head" aria-sort={ariaSort('name')}><button type="button" onClick={() => sortBy('name')}>Instance {sortMark('name')}</button></th>
               {metrics.map(metric => sortHead(`${metric.id}.baseline`, `${metric.label}${unitOf(metric)}`))}
@@ -456,7 +505,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
             </tr>
           </> : <>
             <tr><th rowSpan={2} className="instance-head" aria-sort={ariaSort('name')}><button type="button" onClick={() => sortBy('name')}>Instance {sortMark('name')}</button></th>{metrics.map(metric => <th key={metric.id} colSpan={fieldsOf(metric).length} className="group-head">{metric.label}{unitOf(metric)}</th>)}<th rowSpan={2} className="state-head">상태</th></tr>
-            <tr>{metrics.flatMap(metric => fieldsOf(metric).map(([field, label]) => sortHead(`${metric.id}.${field}`, label, field === 'baseline' ? 'group-start' : '')))}</tr>
+            <tr>{metrics.flatMap(metric => fieldsOf(metric).map(([field, label]) => sortHead(`${metric.id}.${field}`, field === 'relative_change_pct' ? `${metric.label} Δ% (정렬: Effective Δ%)` : label, field === 'baseline' ? 'group-start' : '', label, field === 'relative_change_pct' && !metric.ratio ? <EffectiveFormulaHint compact liveEps={liveEps} /> : undefined)))}</tr>
           </>}
         </thead>
         <tbody ref={body} onKeyDown={onKey}>
@@ -520,7 +569,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
         const sc = !metric.ratio ? scaleMetrics(current.row, metric) : null
         return <div key={metric.id}><dt>{metric.label}{unitOf(metric)}</dt><dd>{metric.ratio
           ? <>{percent(value(current.row, metric.id, 'baseline'))} → {percent(value(current.row, metric.id, 'current'))} · Δ {formatPercent(value(current.row, metric.id, 'pct_point_change'))}%p</>
-          : <>{amount(value(current.row, metric.id, 'baseline'), metric)} → {amount(value(current.row, metric.id, 'current'), metric)} · Δ {amount(value(current.row, metric.id, 'delta'), metric)} · {percent(value(current.row, metric.id, 'relative_change_pct'))}{sc?.dampedPct ? ` (체급 연동 ${fracToApproxPct(sc.dampedPct)} · 비중 ${fracToApproxPct(sc.rootSharePct).replace(/^\+/, '')})` : ''}</>}</dd></div>
+          : <>{amount(value(current.row, metric.id, 'baseline'), metric)} → {amount(value(current.row, metric.id, 'current'), metric)} · Δ {amount(value(current.row, metric.id, 'delta'), metric)} · {percent(value(current.row, metric.id, 'relative_change_pct'))}{sc?.dampedPct ? ` (Effective Δ% ${fracToApproxPct(sc.dampedPct)} · 비중 ${fracToApproxPct(sc.rootSharePct).replace(/^\+/, '')})` : ''}</>}</dd></div>
       })}
       {reasonOf(current.row, hasResult) && <div><dt>사유</dt><dd>{reasonOf(current.row, hasResult)}</dd></div>}
     </dl>}
