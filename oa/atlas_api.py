@@ -18,6 +18,7 @@ from oa.atlas_catalog import (
     AreaAdapters,
     AreaPreparationError,
     fail,
+    sync_all_area_project_blocks,
     try_auto_prepare_area_scope,
 )
 from oa.sanity_access import require_mutation_request
@@ -83,6 +84,18 @@ class BindArea(Scope):
         if bool(self.block_id) != bool(self.area_block_id) or bool(self.version_id) != bool(self.area_version_id):
             raise ValueError("Both sides of each binding are required")
         return self
+
+
+class ProjectStatus(Input):
+    status: Literal["active", "completed"]
+
+
+class PorAssign(Input):
+    project_id: ID
+    version_id: ID
+    expected_revision: int = Field(ge=0, strict=True)
+    request_id: UUID
+    reason: str = Field(min_length=1, max_length=500)
 
 
 def create_atlas_router(authorized_dependency):
@@ -240,6 +253,33 @@ def create_atlas_router(authorized_dependency):
                 return JSONResponse({**result, "status": "PARTIAL", "code": "AREA_BINDING_NOT_RECORDED"}, 409)
             if isinstance(exc, ReviewError):
                 raise
+            return area_error(exc)
+
+    @router.post("/projects/{project_id}/status")
+    def project_status(project_id: ID, body: ProjectStatus, actor=Depends(mutation)):
+        with context(actor) as store:
+            return store.set_project_status(project_id, body.status)
+
+    @router.post("/blocks/{block_id}/por")
+    def block_por(block_id: ID, body: PorAssign, actor=Depends(mutation)):
+        with context(actor) as store:
+            return store.assign_por(
+                body.project_id, block_id, body.version_id,
+                body.expected_revision, body.request_id, body.reason,
+            )
+
+    @router.post("/area-scope/sync")
+    def sync_area_scopes(request: Request, actor=Depends(mutation)):
+        area_enabled(request)
+        with context(actor, readonly=True) as store:
+            if not store.can_manage:
+                fail("FORBIDDEN")
+        try:
+            result = sync_all_area_project_blocks(actor_id=actor.user_id)
+            return {"status": "SYNCED", **result}
+        except ReviewError:
+            raise
+        except Exception as exc:
             return area_error(exc)
 
     @router.post("/area-scope")

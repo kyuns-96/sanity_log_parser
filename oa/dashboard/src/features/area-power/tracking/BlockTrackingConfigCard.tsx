@@ -95,8 +95,11 @@ export function BlockTrackingConfigCard({
     const bBlk = sideProj?.blocks.find(b => b.area_id === resolvedBlkId)
     const savedVerId = text(cfg.baseline_version_id) || text(object(array(cfg.approved_baselines)[0]).version_id)
     const savedVer = bBlk?.versions.find(v => v.area_id === savedVerId)
-    setBaselineNetVer(savedVer?.net_ver || text(object(cfg.baseline_version_info).net_ver) || '')
-    setBaselineVersionId(savedVerId)
+    const porVer = !savedVerId && bBlk?.por?.version_id
+      ? bBlk.versions.find(v => v.id === bBlk.por?.version_id && Boolean(v.area_id))
+      : undefined
+    setBaselineNetVer(savedVer?.net_ver || text(object(cfg.baseline_version_info).net_ver) || porVer?.net_ver || '')
+    setBaselineVersionId(savedVerId || porVer?.area_id || '')
 
     setBlockRecipients(array(cfg.recipients).map(text).join(', '))
     setBlockCorners(array(cfg.required_corners).map(item => {
@@ -298,7 +301,17 @@ export function BlockTrackingConfigCard({
                 <select
                   value={baselineBlockId}
                   disabled={!project.can_write || !baselineProject}
-                  onChange={e => { setBaselineBlockId(e.target.value); setBaselineNetVer(''); setBaselineVersionId(''); setApprovedBaselines({}) }}
+                  onChange={e => {
+                    const nextBlkId = e.target.value
+                    setBaselineBlockId(nextBlkId)
+                    const nextBlk = baselineProject?.blocks.find(b => b.area_id === nextBlkId)
+                    const porVer = nextBlk?.por?.version_id
+                      ? nextBlk.versions.find(v => v.id === nextBlk.por?.version_id && Boolean(v.area_id))
+                      : undefined
+                    setBaselineNetVer(porVer?.net_ver || '')
+                    setBaselineVersionId(porVer?.area_id || '')
+                    setApprovedBaselines({})
+                  }}
                 >
                   <option value="">기준 블록 선택</option>
                   {(baselineProject?.blocks || []).filter(b => Boolean(b.area_id)).map(b => (
@@ -315,7 +328,8 @@ export function BlockTrackingConfigCard({
                   const nextNet = e.target.value
                   setBaselineNetVer(nextNet)
                   const matching = (selectedBaselineBlock?.versions || []).filter(v => Boolean(v.area_id) && v.net_ver === nextNet)
-                  setBaselineVersionId(matching.length === 1 ? matching[0].area_id! : '')
+                  const porInNet = matching.find(v => v.id === selectedBaselineBlock?.por?.version_id)
+                  setBaselineVersionId(porInNet?.area_id || (matching.length === 1 ? matching[0].area_id! : ''))
                   setApprovedBaselines({})
                 }}
               >
@@ -331,7 +345,7 @@ export function BlockTrackingConfigCard({
               >
                 <option value="">기준 REVISION 선택</option>
                 {baselineRevisionOptions.map(v => (
-                  <option key={v.area_id!} value={v.area_id!}>{v.revision} · {v.layout}</option>
+                  <option key={v.area_id!} value={v.area_id!}>{v.revision} · {v.layout}{v.id === selectedBaselineBlock?.por?.version_id ? ' (PoR)' : ''}</option>
                 ))}
               </select>
             </Field>

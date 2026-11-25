@@ -5,7 +5,7 @@ import type { ProcessDefinition } from '@/features/access/accessApi'
 import type { WorkspaceEvent, WorkspacePor, WorkspaceReport, WorkspaceUser, WorkspaceVersion } from '@/features/workspace/workspaceApi'
 
 export type DemoVersion = WorkspaceVersion & { source_namespace: string; previous_version_id: string | null; area_id: string | null; declared_ecos?: (string | null)[] }
-export type DemoProject = { id: string; name: string; description: string; process?: string; tops: WorkspaceUser[]; area_id: string | null }
+export type DemoProject = { id: string; name: string; description: string; process?: string; status?: 'active' | 'completed'; tops: WorkspaceUser[]; area_id: string | null }
 export type DemoBlock = { id: string; project_id: string; name: string; owner: WorkspaceUser; versions: DemoVersion[]; por: WorkspacePor; events: WorkspaceEvent[]; area_id: string | null }
 type Input = Record<string, unknown>
 type VersionIdentity = { project_id: string; block_id: string; source_namespace: string; net_ver: string; revision: string; layout: 'PRE' | 'POST' }
@@ -91,8 +91,12 @@ export function makeWorkspaceDemoCatalog(state: {
       notice: '합성 데이터 · 브라우저 메모리 데모입니다. 변경은 새로고침하면 초기화됩니다.', can_read_business: true, can_receive: false, is_admin: false }
     if (path === '/atlas/catalog' && body === undefined) return { product: 'Design Atlas', local_mode: false, can_manage_catalog: true,
       area_enabled: true, area_status: 'ready', data_origin: 'SYNTHETIC_MEMORY_DEMO', processes: [...processes.values()].sort((a, b) => a.name.localeCompare(b.name)), projects: projects.filter(project => canAccess(project.id)).map(project => ({
-        id: project.id, name: project.name, description: project.description, process: project.process, can_write: true, area_id: project.area_id,
-        blocks: blocks.filter(block => block.project_id === project.id).map(block => ({ id: block.id, name: block.name, area_id: block.area_id, versions: block.versions })),
+        id: project.id, name: project.name, description: project.description, process: project.process, status: project.status || 'active', can_write: true, area_id: project.area_id,
+        blocks: blocks.filter(block => block.project_id === project.id).map(block => ({
+          id: block.id, name: block.name, area_id: block.area_id,
+          por: { revision: block.por.revision, version_id: block.por.version?.id || null, assigned_by: block.por.assigned_by, assigned_at: block.por.assigned_at },
+          versions: block.versions,
+        })),
       })) }
     if (path === '/atlas/reports' && body === undefined) {
       const params = url.searchParams
@@ -209,6 +213,33 @@ export function makeWorkspaceDemoCatalog(state: {
         block!.versions.unshift(version)
         return { status: 'CREATED', project_id: fields.project_id, block_id: fields.block_id, version_id: versionId, ...(version.area_id ? { area_prepared: true, area_project_id: project.area_id, area_block_id: block!.area_id, area_version_id: version.area_id } : {}) }
       })
+    }
+    const statusMatch = /^\/atlas\/projects\/([^/]+)\/status$/.exec(path)
+    if (statusMatch) {
+      const pid = decodeURIComponent(statusMatch[1])
+      const bodyFields = input(body, ['status'])
+      const next = bodyFields.status === 'completed' ? 'completed' : bodyFields.status === 'active' ? 'active' : fail()
+      const { project } = scope(pid)
+      project.status = next
+      return { status: 'UPDATED', project_id: pid, project_status: next }
+    }
+    const porMatch = /^\/atlas\/blocks\/([^/]+)\/por$/.exec(path)
+    if (porMatch) {
+      const bid = decodeURIComponent(porMatch[1])
+      const bodyFields = input(body, ['project_id', 'version_id', 'expected_revision', 'request_id', 'reason'])
+      const pid = id(bodyFields.project_id), vid = id(bodyFields.version_id), reason = text(bodyFields.reason, 500)
+      const { block, version } = scope(pid, bid, vid)
+      if (bodyFields.expected_revision !== block!.por.revision) return fail('REVISION_CONFLICT')
+      if (block!.por.version?.id === vid) return fail('POR_UNCHANGED')
+      const at = new Date().toISOString()
+      block!.por = { revision: block!.por.revision + 1, version: version!, assigned_by: state.user(), assigned_at: at }
+      return { status: 'POR_ASSIGNED', revision: block!.por.revision, version: version!, assigned_by: state.user(), assigned_at: at }
+    }
+    if (path === '/atlas/area-scope/sync') {
+      let projectsCreated = 0, blocksCreated = 0
+      for (const project of projects) { if (!project.area_id) { project.area_id = crypto.randomUUID(); projectsCreated += 1 } }
+      for (const block of blocks) { if (!block.area_id) { block.area_id = crypto.randomUUID(); blocksCreated += 1 } }
+      return { status: 'SYNCED', projects_created: projectsCreated, blocks_created: blocksCreated, projects_total: projects.length, blocks_total: blocks.length }
     }
     if (path === '/atlas/area-scope') {
       const bodyFields = input(body, scopeFields), projectId = id(bodyFields.project_id), blockId = optionalId(bodyFields.block_id), versionId = optionalId(bodyFields.version_id)

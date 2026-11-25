@@ -37,7 +37,10 @@ async function hash(value: string) {
 export function makeWorkspaceDemo() {
   let user = users[3]
   const passExampleId = 'demo-atlas-cpu-net2-post-gca-004'
-  const projects: DemoProject[] = ['Atlas', 'Boreal', 'Cygnus'].map((name, index) => ({ id: `demo-${name.toLowerCase()}`, name, description: `${name} 합성 검사 프로젝트`, tops: [users[index]], area_id: crypto.randomUUID() }))
+  const projects: DemoProject[] = ['Atlas', 'Boreal', 'Cygnus'].map((name, index) => ({
+    id: `demo-${name.toLowerCase()}`, name, description: `${name} 합성 검사 프로젝트`,
+    status: name === 'Cygnus' ? 'completed' : 'active', tops: [users[index]], area_id: crypto.randomUUID(),
+  }))
   const owners = [[3, 4, 5], [6, 7, 8], [9, 3, 4]]
   const blocks: DemoBlock[] = projects.flatMap((project, projectIndex) => ['CPU', 'GPU', 'DDR'].map((name, index) => {
     const id = `${project.id}-${name.toLowerCase()}`
@@ -51,7 +54,10 @@ export function makeWorkspaceDemo() {
       previous_version_id: sequence === 2 ? `${id}-net1-${layout.toLowerCase()}` : null,
       area_id: crypto.randomUUID(),
     })))
-    return { id, project_id: project.id, name, owner: users[owners[projectIndex][index]], versions, por: emptyPor(), events: [], area_id: crypto.randomUUID() }
+    const por: WorkspacePor = project.status === 'completed'
+      ? { revision: 1, version: versions[0], assigned_by: users[owners[projectIndex][index]], assigned_at: '2026-11-20T09:00:00Z' }
+      : emptyPor()
+    return { id, project_id: project.id, name, owner: users[owners[projectIndex][index]], versions, por, events: [], area_id: crypto.randomUUID() }
   }))
   const seededVersionIds = new Set(blocks.flatMap(block => block.versions.map(version => version.id)))
   const reports = new Map<string, DemoReport>()

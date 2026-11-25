@@ -6,11 +6,12 @@ Atlas declarations and numerical ancestry live in a separate WS_CONFIG record.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import logging
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from common.sanity_common import ReviewError
-from common.sanity_db import lock_key
+from common.sanity_db import Database as SanityDatabase, json_value, lock_key
 from common.sanity_submission import source_version
 from oa.sanity_workspace import WorkspaceStore
 
@@ -195,6 +196,19 @@ class AtlasCatalog:
         process_by_project = {row["payload"]["project_id"]: row["payload"]["process"] for row in self.db.execute(
             "SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s",
             ("atlas.project-process.%",)).fetchall()}
+        status_by_project = {row["payload"]["project_id"]: row["payload"].get("status", "active") for row in self.db.execute(
+            "SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s",
+            ("atlas.project-status.%",)).fetchall()}
+        por_by_block = {}
+        for row in self.db.execute("SELECT workspace_key, version, state FROM {oa} WHERE record_type='WS_POR'").fetchall():
+            state = row["state"] or {}
+            por_by_block[row["workspace_key"]] = {
+                "revision": row["version"],
+                "version_id": state.get("version_id"),
+                "assigned_by": state.get("assigned_by"),
+                "assigned_at": state.get("assigned_at"),
+            }
+        empty_por = {"revision": 0, "version_id": None, "assigned_by": None, "assigned_at": None}
         result = []
         for project in self.ws.rows("WS_PROJECT"):
             pid = project["workspace_key"]
@@ -202,17 +216,116 @@ class AtlasCatalog:
                 continue
             value = project["payload"]
             item = {"id": pid, "name": value["name"], "description": value.get("description", ""),
-                    "process": process_by_project.get(pid), "can_write": writable is None or pid in writable, "blocks": []}
+                    "process": process_by_project.get(pid),
+                    "status": "completed" if status_by_project.get(pid) == "completed" else "active",
+                    "can_write": writable is None or pid in writable, "blocks": []}
             for block in blocks:
                 if block["workspace_project_ref"] != project["record_id"]:
                     continue
                 bid = block["workspace_key"]
-                child = {"id": bid, "name": block["payload"]["name"], "versions": []}
+                child = {"id": bid, "name": block["payload"]["name"], "por": por_by_block.get(bid, dict(empty_por)), "versions": []}
                 for version in versions:
                     if version["workspace_block_ref"] == block["record_id"]:
                         child["versions"].append({**self.ws.version_ecos(version), **self.metadata(version["workspace_key"])})
                 item["blocks"].append(child)
             result.append(item)
+        return result
+
+    def set_project_status(self, project_id: str, status: str):
+        if status not in ("active", "completed"):
+            fail("INVALID_REQUEST")
+        self.lock()
+        self.project(project_id, write=True, manage=self.can_manage)
+        key = "atlas.project-status." + project_id
+        payload = {
+            "project_id": project_id,
+            "status": status,
+            "updated_by": self.actor.user_id,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        existing = self.db.execute(
+            "SELECT record_id FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key=%s", (key,)
+        ).fetchone()
+        if existing:
+            self.db.execute(
+                "UPDATE {oa} SET payload=%s, updated_at=clock_timestamp() WHERE record_id=%s",
+                (json_value(payload), existing["record_id"]),
+            )
+        else:
+            self.ws.put("WS_CONFIG", key, payload)
+        return {"status": "UPDATED", "project_id": project_id, "project_status": status}
+
+    def assign_por(self, project_id: str, block_id: str, version_id: str, expected_revision: int, request_id, reason: str):
+        if (type(expected_revision) is not int or expected_revision < 0
+                or not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 500):
+            fail("INVALID_REQUEST")
+        try:
+            request_id = str(UUID(str(request_id)))
+        except (ValueError, TypeError, AttributeError):
+            fail("INVALID_REQUEST")
+        project, block, version = self.scope(project_id, block_id, version_id, write=True, manage=self.can_manage)
+        self.db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("production-por-" + block_id),))
+        self.db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("workspace-request-" + request_id),))
+        command = {
+            "user_id": self.actor.user_id,
+            "block_id": block_id,
+            "version_id": version_id,
+            "expected_revision": expected_revision,
+            "reason": reason.strip(),
+        }
+        previous = self.db.execute(
+            "SELECT payload FROM {oa} WHERE record_type='WS_POR_EVENT' AND workspace_key=%s", (request_id,)
+        ).fetchone()
+        if previous:
+            if previous["payload"]["command"] != command:
+                raise ReviewError("REQUEST_CONFLICT", "Request ID has different contents")
+            return previous["payload"]["result"]
+        exists = self.db.execute(
+            "SELECT 1 FROM {oa} WHERE record_type='WS_POR' AND workspace_key=%s", (block_id,)
+        ).fetchone()
+        if not exists:
+            if expected_revision != 0:
+                raise ReviewError("REVISION_CONFLICT", "PoR changed; reload the current version")
+            self.ws.put("WS_POR", block_id, {"block_id": block_id},
+                        project=project["workspace_key"], block=block["workspace_key"])
+        current = self.ws.get("WS_POR", block_id, lock=True)
+        if current["version"] != expected_revision:
+            raise ReviewError("REVISION_CONFLICT", "PoR changed; reload the current version")
+        if current["state"].get("version_id") == version_id:
+            raise ReviewError("POR_UNCHANGED", "This version is already the current PoR")
+        at = datetime.now(timezone.utc).isoformat()
+        revision = current["version"] + 1
+        actor_info = {"id": self.actor.user_id, "name": getattr(self.actor, "reviewer", None) or self.actor.user_id}
+        next_state = {
+            "version_id": version_id,
+            "version_record_id": str(version["record_id"]),
+            "assigned_by": actor_info,
+            "assigned_at": at,
+        }
+        self.db.execute(
+            "UPDATE {oa} SET state=%s, version=%s, updated_at=clock_timestamp() WHERE record_id=%s",
+            (json_value(next_state), revision, current["record_id"]),
+        )
+        result = {
+            "status": "POR_ASSIGNED",
+            "revision": revision,
+            "version": version["payload"],
+            "assigned_by": actor_info,
+            "assigned_at": at,
+        }
+        event = {
+            "id": request_id,
+            "command": command,
+            "previous_version_id": current["state"].get("version_id"),
+            "version_record_id": str(version["record_id"]),
+            "version": version["payload"],
+            "actor": actor_info,
+            "reason": reason.strip(),
+            "at": at,
+            "revision": revision,
+            "result": result,
+        }
+        self.ws.put("WS_POR_EVENT", request_id, event, project=project["workspace_key"], block=block_id)
         return result
 
 
@@ -515,3 +628,94 @@ def try_auto_prepare_area_scope(
         code = "AREA_POWER_UNAVAILABLE" if isinstance(exc, ConfigurationError) else exc.code.upper()
         logger.warning("Auto Area/Power scope binding failed (%s) for project=%s block=%s", code, project_id, block_id)
         return {**result, "area_prepared": False, "area_error": code}
+
+
+def sync_all_area_project_blocks(*, actor_id: str = "oa-startup") -> dict[str, int]:
+    """Idempotently bind every registered WS_PROJECT and WS_BLOCK to Area/Power.
+
+    Safe to call at OA server startup or from an explicit admin sync action.
+    Existing bindings are preserved untouched; missing project/block rows are created
+    under the shared design-atlas-area-bindings advisory lock.
+    """
+    from psycopg import sql
+    from common.area_power.db import Database as AreaDatabase
+
+    with SanityDatabase("oa") as oa_db, oa_db.transaction(readonly=True):
+        ws = WorkspaceStore(oa_db)
+        native_projects = ws.rows("WS_PROJECT")
+        native_blocks = ws.rows("WS_BLOCK")
+        process_by_project = {
+            row["payload"]["project_id"]: row["payload"]["process"]
+            for row in oa_db.execute(
+                "SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s",
+                ("atlas.project-process.%",),
+            ).fetchall()
+        }
+
+    project_ref_to_id = {row["record_id"]: row["workspace_key"] for row in native_projects}
+    area_db = AreaDatabase()
+    projects_created = 0
+    blocks_created = 0
+    with area_db.connect() as conn:
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("design-atlas-area-bindings"),))
+        rows = conn.execute(
+            sql.SQL("SELECT * FROM {} WHERE record_type IN ('project','block') ORDER BY id").format(
+                area_db.table("di_area_power_tracking_record")
+            )
+        ).fetchall()
+
+        project_by_native: dict[str, dict] = {}
+        block_by_native: dict[str, dict] = {}
+        for row in rows:
+            kind = row["record_type"]
+            native_id = row["payload"].get("sanity_" + kind + "_id")
+            if not native_id:
+                continue
+            target = project_by_native if kind == "project" else block_by_native
+            if native_id in target:
+                fail("AREA_BINDING_CONFLICT")
+            target[native_id] = row
+
+        for proj in native_projects:
+            pid = proj["workspace_key"]
+            if pid in project_by_native:
+                continue
+            area_pid = uuid4()
+            payload = {"name": proj["payload"]["name"], "sanity_project_id": pid}
+            if process := process_by_project.get(pid):
+                payload["process"] = process
+            created = area_db.insert_record(conn, "project", payload, actor_id, id=area_pid, entity_id=area_pid)
+            project_by_native[pid] = created
+            projects_created += 1
+
+        for blk in native_blocks:
+            bid = blk["workspace_key"]
+            pid = project_ref_to_id.get(blk["workspace_project_ref"])
+            if not pid or pid not in project_by_native:
+                continue
+            parent = project_by_native[pid]
+            if bid in block_by_native:
+                if block_by_native[bid]["project_id"] != parent["id"]:
+                    fail("AREA_BINDING_CONFLICT")
+                continue
+            area_bid = uuid4()
+            created = area_db.insert_record(
+                conn,
+                "block",
+                {"name": blk["payload"]["name"], "sanity_block_id": bid},
+                actor_id,
+                id=area_bid,
+                entity_id=area_bid,
+                project_id=parent["id"],
+                parent_id=parent["id"],
+                block_id=area_bid,
+            )
+            block_by_native[bid] = created
+            blocks_created += 1
+
+    return {
+        "projects_created": projects_created,
+        "blocks_created": blocks_created,
+        "projects_total": len(native_projects),
+        "blocks_total": len(native_blocks),
+    }

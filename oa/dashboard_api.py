@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 import sys
 import traceback
@@ -164,7 +165,24 @@ def create_app(*, auth_mode: AuthMode | None = None,
                user_directory: UserDirectory | None = None,
                auth_router: APIRouter | None = None,
                allowed_hosts: str | None = None):
-    app = FastAPI(title="Design Atlas", docs_url=None, redoc_url=None, openapi_url=None)
+    area_enabled = os.environ.get("AREA_POWER_ENABLED", "").strip().lower() == "true"
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        if area_enabled and access_mode(load_environment()) == "postgresql":
+            try:
+                from oa.atlas_catalog import sync_all_area_project_blocks
+                synced = sync_all_area_project_blocks(actor_id="oa-startup")
+                if synced["projects_created"] or synced["blocks_created"]:
+                    LOG.info(
+                        "Area/Power startup scope sync created %s project(s) and %s block(s)",
+                        synced["projects_created"], synced["blocks_created"],
+                    )
+            except Exception as exc:
+                LOG.warning("Area/Power startup scope sync skipped (%s)", type(exc).__name__)
+        yield
+
+    app = FastAPI(title="Design Atlas", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.authentication = AuthenticationService(mode=auth_mode, identity_provider=identity_provider,
                                                      user_directory=user_directory)
     app.add_middleware(RequestBoundary)
@@ -246,7 +264,6 @@ def create_app(*, auth_mode: AuthMode | None = None,
     # Area is opt-in and uses this host's identity, locked grants, safe errors,
     # request boundary and mutation-origin checks. Disabled hosts do not import
     # Area's optional runtime/dependencies or attempt its independent DB.
-    area_enabled = os.environ.get("AREA_POWER_ENABLED", "").strip().lower() == "true"
     app.state.area_power_enabled = area_enabled
     app.include_router(create_atlas_router(authorized_actor))
     if area_enabled:

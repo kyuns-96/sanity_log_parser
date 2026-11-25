@@ -1,10 +1,9 @@
 import { useState } from 'react'
-import { ArrowRight, Boxes, Check, ChevronRight, FolderPlus, Layers3, Plus, RefreshCw } from 'lucide-react'
+import { ArrowRight, Boxes, Check, CheckCircle2, ChevronRight, FolderPlus, Layers3, Link2, Plus, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useAtlas } from './atlasContext'
-import type { UnboundArea } from './atlasContext'
+import type { AtlasBlock, AtlasProject, AtlasVersion, UnboundArea } from './atlasContext'
 import { useDashboardAuth } from '@/features/auth/useDashboardAuth'
 import { useDashboardNavigation } from '@/lib/dashboardMode'
-import AtlasPrepare from './AtlasPrepare'
 import ProjectProcessField from './ProjectProcessField'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
@@ -13,6 +12,8 @@ export default function AtlasHome() {
   const auth = useDashboardAuth(true)
   const navigate = useDashboardNavigation()
   const [kind, setKind] = useState<'project' | 'block' | 'version' | null>(null)
+  const [porOpen, setPorOpen] = useState(false)
+  const [busyAction, setBusyAction] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const catalog = atlas.catalog
@@ -20,19 +21,64 @@ export default function AtlasHome() {
   const open = (path: string) => { void navigate(atlas.href(path), auth.session?.user_id).catch(cause => setError(String(cause))) }
   const logsPath = catalog?.local_mode ? '/?page=review' : '/?page=workbench'
   const select = (scope: { projectId: string; blockId: string; versionId: string }) => { setError(''); void atlas.selectScope(scope).catch(cause => setError(cause instanceof Error ? cause.message : String(cause))) }
-  return <main className="atlas-home"><section className="atlas-home-heading"><div><h1>프로젝트</h1></div><button className="atlas-button secondary" disabled={atlas.loading} onClick={() => void atlas.reload().catch(() => undefined)}><RefreshCw size={16} />새로고침</button></section>
+
+  const unboundAreaCount = catalog?.area_enabled && catalog.area_status === 'ready'
+    ? catalog.projects.reduce((sum, project) => sum + (project.area_id ? 0 : 1) + project.blocks.filter(block => !block.area_id).length, 0)
+    : 0
+  const selectedPorId = atlas.block?.por?.version_id || null
+  const isSelectedPor = Boolean(atlas.version && selectedPorId && atlas.version.id === selectedPorId)
+  const selectedProjectStatus = atlas.project?.status === 'completed' ? 'completed' : 'active'
+
+  async function syncAreaScopes() {
+    setBusyAction(true); setError(''); setNotice('')
+    try {
+      const result = await auth.request<{ projects_created: number; blocks_created: number }>('/api/atlas/area-scope/sync', {})
+      await atlas.reload()
+      setNotice(`기존 미연결 항목을 Area/Power에 일괄 연결했습니다. (프로젝트 ${result.projects_created}개 · 블록 ${result.blocks_created}개)`)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusyAction(false)
+    }
+  }
+
+  async function toggleProjectStatus() {
+    if (!atlas.project) return
+    const next = selectedProjectStatus === 'completed' ? 'active' : 'completed'
+    setBusyAction(true); setError(''); setNotice('')
+    try {
+      await auth.request(`/api/atlas/projects/${encodeURIComponent(atlas.project.id)}/status`, { status: next })
+      await atlas.reload()
+      setNotice(`프로젝트 상태를 ‘${next === 'completed' ? '완료(기준 프로젝트)' : '진행 중'}’으로 변경했습니다.`)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusyAction(false)
+    }
+  }
+
+  const blockPorLabel = (block: AtlasBlock) => {
+    const porId = block.por?.version_id
+    if (!porId) return null
+    const found = block.versions.find(v => v.id === porId)
+    return found ? `${found.net_ver} · ${found.revision} · ${found.layout}` : porId
+  }
+
+  return <main className="atlas-home"><section className="atlas-home-heading"><div><h1>프로젝트</h1></div><div className="atlas-actions">{catalog?.can_manage_catalog && unboundAreaCount > 0 && <button className="atlas-button secondary" disabled={busyAction || atlas.loading} onClick={() => void syncAreaScopes()}><Link2 size={15} />미연결 {unboundAreaCount}개 일괄 연결</button>}<button className="atlas-button secondary" disabled={atlas.loading} onClick={() => void atlas.reload().catch(() => undefined)}><RefreshCw size={16} />새로고침</button></div></section>
     {catalog?.local_mode && <div className="atlas-message">로컬 모드 · 변경사항은 DB에 저장됩니다. 로그 검토는 회사 SSO가 필요합니다.</div>}
     {error && <p className="atlas-message error" role="alert">{error}</p>}{notice && <p className="atlas-message" role="status">{notice}</p>}
     <section className="atlas-selection" aria-label="선택한 범위">
       <div className="atlas-selection-path"><span>선택한 범위</span>
         <ol>
-          <li className={atlas.project ? undefined : 'is-empty'}>{atlas.project?.name || '프로젝트 선택 전'}</li>
+          <li className={atlas.project ? undefined : 'is-empty'}>{atlas.project?.name || '프로젝트 선택 전'}{atlas.project && <span className={`atlas-status-badge ${selectedProjectStatus === 'completed' ? 'is-completed' : ''}`}>{selectedProjectStatus === 'completed' ? '완료' : '진행 중'}</span>}</li>
           <li className={atlas.block ? undefined : 'is-empty'}>{atlas.block?.name || '블록 선택 전'}</li>
-          <li className={atlas.version ? undefined : 'is-empty'}>{atlas.version ? `${atlas.version.net_ver} · ${atlas.version.revision} · ${atlas.version.layout}` : '버전 선택 전'}</li>
+          <li className={atlas.version ? undefined : 'is-empty'}>{atlas.version ? `${atlas.version.net_ver} · ${atlas.version.revision} · ${atlas.version.layout}` : '버전 선택 전'}{isSelectedPor && <span className="atlas-por-badge"><ShieldCheck size={12} aria-hidden="true" />PoR</span>}</li>
         </ol>
         {atlas.version && <small>수신 ECO {atlas.version.ecos.filter(Boolean).length}개</small>}
       </div>
       <div className="atlas-actions">
+        {atlas.project && canWrite && <button type="button" className="atlas-button secondary" disabled={busyAction} onClick={() => void toggleProjectStatus()}><CheckCircle2 size={15} />{selectedProjectStatus === 'completed' ? '진행 중으로 전환' : '완료로 전환'}</button>}
+        {atlas.block && atlas.version && canWrite && !isSelectedPor && <button type="button" className="atlas-button secondary" disabled={busyAction} onClick={() => setPorOpen(true)}><ShieldCheck size={15} />PoR 지정</button>}
         <button className="atlas-button" onClick={() => open(logsPath)}>{catalog?.local_mode ? '수신 로그 대장 열기' : '로그 검토 열기'}<ArrowRight size={16} /></button>
         {catalog && !catalog.area_enabled ? <span className="atlas-selection-note">수치 분석 서비스를 사용할 수 없습니다. {catalog.area_error || ''}</span> : <button className="atlas-button secondary" onClick={() => open('/?page=area-power')}>프로젝트 비교 열기<ArrowRight size={16} /></button>}
       </div>
@@ -41,25 +87,78 @@ export default function AtlasHome() {
       <div className="atlas-picker-column">
         <header><h2>프로젝트{catalog && <span>{catalog.projects.length}</span>}</h2>{catalog?.can_manage_catalog && <button className="atlas-button secondary" onClick={() => setKind('project')}><FolderPlus size={15} />프로젝트 등록</button>}</header>
         {atlas.loading && !catalog ? <p className="atlas-picker-empty" role="status">불러오는 중…</p> : !catalog ? <p className="atlas-picker-empty">프로젝트를 조회할 수 없습니다. 연결 상태를 확인하고 새로고침하세요.</p> : !catalog.projects.length ? <p className="atlas-picker-empty">등록된 프로젝트가 없습니다. {catalog.can_manage_catalog ? '프로젝트를 등록하세요.' : '관리자에게 프로젝트 등록을 요청하세요.'}</p> : <ul>{catalog.projects.map(project => <li key={project.id}><button type="button" className="atlas-picker-item" aria-pressed={atlas.scope.projectId === project.id} onClick={() => select({ projectId: project.id, blockId: '', versionId: '' })}>
-          <Boxes size={18} /><span className="atlas-picker-text"><strong>{project.name}</strong>{project.description && <small>{project.description}</small>}<small>{project.process && `공정 ${project.process} · `}블록 {project.blocks.length} · 버전 {project.blocks.reduce((count, block) => count + block.versions.length, 0)}</small></span><em>{project.can_write ? '읽기 · 쓰기' : '읽기'}</em><ChevronRight size={16} />
+          <Boxes size={18} /><span className="atlas-picker-text"><strong>{project.name}</strong>{project.description && <small>{project.description}</small>}<small>{project.process && `공정 ${project.process} · `}블록 {project.blocks.length} · 버전 {project.blocks.reduce((count, block) => count + block.versions.length, 0)}</small></span>{project.status === 'completed' && <em className="is-completed">완료</em>}<em>{project.can_write ? '읽기 · 쓰기' : '읽기'}</em><ChevronRight size={16} />
         </button></li>)}</ul>}
       </div>
       <div className="atlas-picker-column">
         <header><h2>블록{atlas.project && <span>{atlas.project.blocks.length}</span>}</h2>{catalog?.can_manage_catalog && atlas.project && <button className="atlas-button secondary" onClick={() => setKind('block')}><Plus size={15} />블록 등록</button>}</header>
-        {!atlas.project ? <p className="atlas-picker-empty">프로젝트를 선택하면 블록이 표시됩니다.</p> : !atlas.project.blocks.length ? <p className="atlas-picker-empty">등록된 블록이 없습니다.</p> : <ul>{atlas.project.blocks.map(block => <li key={block.id}><button type="button" className="atlas-picker-item" aria-pressed={atlas.block?.id === block.id} onClick={() => select({ projectId: atlas.project!.id, blockId: block.id, versionId: '' })}>
-          <span className="atlas-picker-text"><strong>{block.name}</strong><small>버전 {block.versions.length}</small></span><ChevronRight size={16} />
-        </button></li>)}</ul>}
+        {!atlas.project ? <p className="atlas-picker-empty">프로젝트를 선택하면 블록이 표시됩니다.</p> : !atlas.project.blocks.length ? <p className="atlas-picker-empty">등록된 블록이 없습니다.</p> : <ul>{atlas.project.blocks.map(block => { const porText = blockPorLabel(block); return <li key={block.id}><button type="button" className="atlas-picker-item" aria-pressed={atlas.block?.id === block.id} onClick={() => select({ projectId: atlas.project!.id, blockId: block.id, versionId: '' })}>
+          <span className="atlas-picker-text"><strong>{block.name}</strong><small>{porText ? `PoR: ${porText} · ` : 'PoR 미지정 · '}버전 {block.versions.length}</small></span><ChevronRight size={16} />
+        </button></li> })}</ul>}
       </div>
       <div className="atlas-picker-column">
         <header><h2>버전{atlas.block && <span>{atlas.block.versions.length}</span>}</h2>{canWrite && atlas.block && <button className="atlas-button secondary" onClick={() => setKind('version')}><Layers3 size={15} />버전 선언</button>}</header>
-        {!atlas.block ? <p className="atlas-picker-empty">블록을 선택하면 버전이 표시됩니다.</p> : !atlas.block.versions.length ? <p className="atlas-picker-empty">선언된 버전이 없습니다.</p> : <ul>{atlas.block.versions.map(version => <li key={version.id}><button type="button" className="atlas-picker-item" aria-pressed={atlas.version?.id === version.id} onClick={() => select({ projectId: atlas.project!.id, blockId: atlas.block!.id, versionId: version.id })}>
-          <span className="atlas-picker-text"><strong className="atlas-picker-version">{version.net_ver}<span>{version.revision}</span></strong><small>{version.layout === 'POST' ? `수신 ECO ${version.ecos.filter(Boolean).length}개` : 'ECO 없음'}</small></span><em>{version.layout}</em>{atlas.version?.id === version.id && <Check size={16} />}
-        </button></li>)}</ul>}
+        {!atlas.block ? <p className="atlas-picker-empty">블록을 선택하면 버전이 표시됩니다.</p> : !atlas.block.versions.length ? <p className="atlas-picker-empty">선언된 버전이 없습니다.</p> : <ul>{atlas.block.versions.map(version => { const isPor = version.id === selectedPorId; return <li key={version.id}><button type="button" className="atlas-picker-item" aria-pressed={atlas.version?.id === version.id} onClick={() => select({ projectId: atlas.project!.id, blockId: atlas.block!.id, versionId: version.id })}>
+          <span className="atlas-picker-text"><strong className="atlas-picker-version">{version.net_ver}<span>{version.revision}</span></strong><small>{version.layout === 'POST' ? `수신 ECO ${version.ecos.filter(Boolean).length}개` : 'ECO 없음'}</small></span>{isPor && <em className="is-por">PoR</em>}<em>{version.layout}</em>{atlas.version?.id === version.id && <Check size={16} />}
+        </button></li> })}</ul>}
       </div>
     </section>
     {catalog?.local_mode && catalog.unbound_area && <LocalBinding key={`${atlas.scope.projectId}:${atlas.scope.blockId}:${atlas.scope.versionId}`} />}
     {kind && <CatalogForm kind={kind} onClose={() => setKind(null)} onCreated={message => { setKind(null); setNotice(message) }} />}
+    {porOpen && atlas.project && atlas.block && atlas.version && <PorAssignDialog project={atlas.project} block={atlas.block} version={atlas.version} onClose={() => setPorOpen(false)} onAssigned={message => { setPorOpen(false); setNotice(message) }} />}
   </main>
+}
+
+function PorAssignDialog({ project, block, version, onClose, onAssigned }: {
+  project: AtlasProject
+  block: AtlasBlock
+  version: AtlasVersion
+  onClose: () => void
+  onAssigned: (message: string) => void
+}) {
+  const atlas = useAtlas()!
+  const auth = useDashboardAuth(true)
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [requestId] = useState(() => crypto.randomUUID())
+  const currentPor = block.versions.find(v => v.id === block.por?.version_id)
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!reason.trim()) return
+    setBusy(true); setError('')
+    try {
+      await auth.request(`/api/atlas/blocks/${encodeURIComponent(block.id)}/por`, {
+        project_id: project.id,
+        version_id: version.id,
+        expected_revision: block.por?.revision ?? 0,
+        request_id: requestId,
+        reason: reason.trim(),
+      })
+      await atlas.reload()
+      onAssigned(`${block.name}의 PoR을 ${version.net_ver} · ${version.revision} (${version.layout})로 지정했습니다.`)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return <Dialog open onOpenChange={open => { if (!open && !busy) onClose() }}>
+    <DialogContent className="atlas-modal" showCloseButton={!busy}>
+      <DialogHeader>
+        <DialogTitle>{block.name}의 PoR 지정</DialogTitle>
+        <DialogDescription>지정한 PoR은 로그 검토와 Area/Power 기준 프로젝트 참조에 공통 적용됩니다.</DialogDescription>
+      </DialogHeader>
+      <form onSubmit={submit}>
+        <p><strong>현재 PoR:</strong> {currentPor ? `${currentPor.net_ver} · ${currentPor.revision} (${currentPor.layout})` : '미지정'}</p>
+        <p><strong>변경할 PoR:</strong> {version.net_ver} · {version.revision} ({version.layout})</p>
+        {project.status === 'completed' && <p className="atlas-message">완료된 프로젝트입니다. PoR 변경 시 이 프로젝트를 기준으로 참조하는 신규 Area/Power 설정의 기본 기준 버전이 갱신됩니다.</p>}
+        <label>변경 사유<textarea autoFocus required maxLength={500} value={reason} onChange={event => setReason(event.target.value)} placeholder="예: 최종 ECO 확정 / 마일스톤 기준 버전 지정" disabled={busy} /></label>
+        {error && <p role="alert" className="atlas-message error">{error}</p>}
+        <div className="atlas-actions"><button className="atlas-button secondary" type="button" disabled={busy} onClick={onClose}>취소</button><button className="atlas-button" disabled={busy || !reason.trim()}>{busy ? '저장 중…' : 'PoR 지정 저장'}</button></div>
+      </form>
+    </DialogContent>
+  </Dialog>
 }
 
 function CatalogForm({ kind, onClose, onCreated }: { kind: 'project' | 'block' | 'version'; onClose: () => void; onCreated: (message: string) => void }) {

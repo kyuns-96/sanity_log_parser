@@ -121,7 +121,12 @@ export function AreaTrackingAdmin() {
     return () => ctrlRef.current?.abort()
   }, [reloadProjectTracking, refreshTick])
 
-  const baselineCandidates = projects.filter(row => row.id !== project?.id)
+  const baselineCandidates = useMemo(
+    () => projects
+      .filter(row => row.id !== project?.id)
+      .sort((a, b) => Number(b.status === 'completed') - Number(a.status === 'completed')),
+    [projects, project?.id],
+  )
   const baselineProject = useMemo(
     () => projects.find(row => (row.area_id || projectRecords.get(row.id)?.id) === baseline?.baseline_project_id),
     [projects, projectRecords, baseline?.baseline_project_id],
@@ -176,11 +181,12 @@ export function AreaTrackingAdmin() {
                 <span>대상 프로젝트</span>
                 <select value={projectId} onChange={e => { setProjectId(e.target.value); setBaselineEditing(false) }}>
                   <option value="">프로젝트 선택</option>
-                  {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  {projects.map(p => <option key={p.id} value={p.id}>{p.name}{p.status === 'completed' ? ' (완료)' : ''}</option>)}
                 </select>
               </label>
               {project && (
                 <>
+                  <span className="context-pill subtle">{project.status === 'completed' ? '완료' : '진행 중'}</span>
                   <span className="context-pill">{(baseline ? baseline.process : project.process) || '공정 미등록'}</span>
                   <span className="setup-arrow" aria-hidden="true">↔</span>
                   <span className="setup-baseline">
@@ -214,7 +220,7 @@ export function AreaTrackingAdmin() {
                 <Field label="기준 프로젝트">
                   <select value={baselineChoice} onChange={e => setBaselineChoice(e.target.value)}>
                     <option value="">기준 프로젝트 선택</option>
-                    {baselineCandidates.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}
+                    {baselineCandidates.map(row => <option key={row.id} value={row.id}>{row.status === 'completed' ? '[완료] ' : '[진행 중] '}{row.name}</option>)}
                   </select>
                 </Field>
                 {choiceProject && !choiceAreaId && (
