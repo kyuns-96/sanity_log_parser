@@ -1,6 +1,6 @@
 """Central VWP judgement of candidate paths. Output is advice, never a saved mapping."""
 
-from common.area_power.csv_input import read_hierarchy
+from common.area_power.layered_csv import load_base_upload, read_layered_hierarchy
 from common.area_power.mapping_suggestions import Tree, suggest
 from common.sanity_common import ReviewError
 from .ai_runtime import ACTOR, RetryableValidationError, runtime_for
@@ -56,7 +56,8 @@ def _choices(runtime, batch, limit):
 def _tree(db, upload_id):
     with db.connect() as conn:
         upload = db.upload(conn, upload_id, include_blob=True)
-    metadata, rows = read_hierarchy(upload, db.settings.max_uncompressed_bytes)
+        base_upload = load_base_upload(db, conn, upload)
+    metadata, rows = read_layered_hierarchy(upload, db.settings.max_uncompressed_bytes, base_upload=base_upload)
     return Tree(rows, metadata)
 
 

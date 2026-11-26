@@ -17,6 +17,7 @@ from common.area_power.config import Settings
 from common.area_power.db import Database
 from common.area_power.errors import ConfigurationError, DomainError
 from common.area_power.jsonutil import public
+from common.area_power.layered_csv import is_power_layer_upload, load_base_upload, reconstruct_full_csv_gzip
 from common.area_power.models import ComparisonRequest
 from oa.sanity_auth import AuthError
 from .access import AreaAccess
@@ -168,8 +169,9 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
         # the compressed original, parsing CSV or serializing the response.
         with raw.connect() as conn:
             upload = raw.upload(conn, identifier, include_blob=True)
+            base_upload = load_base_upload(raw, conn, upload)
         validate_frozen_upload(selected, upload)
-        response = json(Service(raw).upload_hierarchy(upload))
+        response = json(Service(raw).upload_hierarchy(upload, base_upload=base_upload))
 
         with authorized_service(request, actor, raw, reauth=True) as (context, _):
             with context.db.connect() as conn:
@@ -181,7 +183,12 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
     def download(identifier: UUID, context=Depends(service)):
         with context.db.connect() as conn:
             row = context.db.upload(conn, identifier, include_blob=True)
-            blob = bytes(row["csv_gzip"])
+            base_row = load_base_upload(context.db, conn, row) if is_power_layer_upload(row) else None
+        blob = (
+            reconstruct_full_csv_gzip(row, base_row, context.db.raw.settings.max_uncompressed_bytes)
+            if base_row is not None
+            else bytes(row["csv_gzip"])
+        )
         return Response(blob, media_type="application/gzip", headers={
             "Content-Disposition": f'attachment; filename="{identifier}.csv.gz"',
             "X-Content-Type-Options": "nosniff",

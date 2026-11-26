@@ -150,11 +150,13 @@ def dispatch(db, settings, job):
         if failed:
             raise AIError('ai_extraction_failed')
     elif kind == 'ingest':
+        from common.area_power.layered_csv import load_base_upload
         with db.connect() as conn:
             upload = db.upload(conn, job['upload_id'], include_blob=True)
+            base_upload = load_base_upload(db, conn, upload)
         # HTTP ingestion is synchronous. Legacy/manual jobs revalidate the actual ready original;
         # a pending/failed upload needs a new upload, not invented success.
-        parsed, metadata = parse_upload(upload, settings)
+        parsed, metadata = parse_upload(upload, settings, base_upload=base_upload)
         with db.connect() as conn:
             snapshot = db.record(conn, upload['snapshot_id'], kind='snapshot')
             stored = snapshot['payload'].get('structure_digest')

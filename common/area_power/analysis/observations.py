@@ -10,6 +10,7 @@ from typing import Any
 from common.area_power.csv_input import OBSERVED_EXTRA, ObservedCSV
 from common.area_power.errors import DomainError
 from common.area_power.jsonutil import digest
+from common.area_power.layered_csv import load_base_upload
 from common.area_power.models import (
     CALCULATION_CONTRACT,
     COMPARISON_FORMAT,
@@ -106,6 +107,8 @@ def load_inputs(db, settings, comparison, *, observations=False):
     with db.connect() as conn:
         cu = db.upload(conn, request.current_upload_id, include_blob=True)
         bu = db.upload(conn, request.baseline_upload_id, include_blob=True) if request.baseline_upload_id else None
+        cu_base = load_base_upload(db, conn, cu)
+        bu_base = load_base_upload(db, conn, bu) if bu else None
         chain = version_chain(db, conn, cu['version_id'])
         if bu and request.comparison_kind == 'previous_version' and (str(bu['project_id']) != str(cu['project_id']) or str(bu['version_id']) not in chain):
             raise DomainError('Previous-version baseline must be on the selected explicit project ancestry', code='invalid_baseline_interval')
@@ -122,8 +125,8 @@ def load_inputs(db, settings, comparison, *, observations=False):
         for name, selected in (('current_upload', cu), ('baseline_upload', bu)):
             if name in frozen:
                 validate_frozen_upload(frozen[name], selected)
-    current, cm = parse_upload(cu, settings, observations=observations)
-    baseline, bm = parse_upload(bu, settings, observations=observations) if bu else (None, None)
+    current, cm = parse_upload(cu, settings, observations=observations, base_upload=cu_base)
+    baseline, bm = parse_upload(bu, settings, observations=observations, base_upload=bu_base) if bu else (None, None)
     mapping_reason = None
     if mapping:
         payload = mapping['payload']
@@ -165,6 +168,8 @@ def _power_pairs(db, settings, comparison, request, cu, bu, current, baseline, c
         with db.connect() as conn:
             pc = db.upload(conn, spec['current_upload_id'], include_blob=True)
             pb = db.upload(conn, spec['baseline_upload_id'], include_blob=True) if spec.get('baseline_upload_id') else None
+            pc_base = load_base_upload(db, conn, pc)
+            pb_base = load_base_upload(db, conn, pb) if pb else None
         validate_frozen_upload(frozen[index].get('current_upload'), pc)
         validate_frozen_upload(frozen[index].get('baseline_upload'), pb)
         pair_id = (str(pc['id']), str(pb['id']) if pb else None)
@@ -173,8 +178,8 @@ def _power_pairs(db, settings, comparison, request, cu, bu, current, baseline, c
         pair_ids.add(pair_id)
         if str(pc['snapshot_id']) != str(cu['snapshot_id']) or (pb and (not bu or str(pb['snapshot_id']) != str(bu['snapshot_id']))):
             raise DomainError('Additional power runs must belong to selected snapshot sides', code='power_snapshot_mismatch')
-        cp, cmeta = parse_upload(pc, settings, observations=observations)
-        bp, bmeta = parse_upload(pb, settings, observations=observations) if pb else (None, None)
+        cp, cmeta = parse_upload(pc, settings, observations=observations, base_upload=pc_base)
+        bp, bmeta = parse_upload(pb, settings, observations=observations, base_upload=pb_base) if pb else (None, None)
         pairs.append((pc, pb, cp, bp, cmeta, bmeta, spec))
     return pairs
 

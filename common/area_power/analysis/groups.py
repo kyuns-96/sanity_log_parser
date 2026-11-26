@@ -16,7 +16,11 @@ from common.area_power.csv_input import (
     SUB1X_DRIVE_NAMES as SUB1X_DRIVES,
     VTH_NAMES as VT,
     parse_csv,
-    read_observations,
+)
+from common.area_power.layered_csv import (
+    is_power_layer_upload,
+    parse_power_only_against_base,
+    read_layered_observations,
 )
 from common.area_power.db import Database
 from common.area_power.errors import DomainError
@@ -54,13 +58,23 @@ def advisory_lock(conn, key: bytes) -> None:
     Database.advisory_lock(conn, key)
 
 
-def parse_upload(upload: dict, settings, *, observations=False):
+def parse_upload(upload: dict, settings, *, observations=False, base_upload: dict | None = None):
     if upload['state'] != 'ready':
         raise DomainError('Selected upload is not ready', code='upload_not_ready')
     metadata = UploadMetadata.model_validate(upload['input_contract']['metadata'])
     if observations:
-        return read_observations(upload, metadata, settings.max_uncompressed_bytes), metadata
-    parsed = parse_csv(bytes(upload['csv_gzip']), upload['original_filename'], metadata, settings.max_uncompressed_bytes)
+        return read_layered_observations(upload, metadata, settings.max_uncompressed_bytes, base_upload=base_upload), metadata
+    if is_power_layer_upload(upload):
+        if base_upload is None:
+            raise DomainError('Area base upload is required to read a power-layer upload.', code='stored_upload_mismatch')
+        base_meta = UploadMetadata.model_validate(base_upload['input_contract']['metadata'])
+        parsed = parse_power_only_against_base(
+            bytes(upload['csv_gzip']), upload['original_filename'], metadata,
+            base_upload, base_meta, settings.max_uncompressed_bytes,
+            raw_original_sha256=(upload.get('input_contract') or {}).get('raw_original_sha256'),
+        )
+    else:
+        parsed = parse_csv(bytes(upload['csv_gzip']), upload['original_filename'], metadata, settings.max_uncompressed_bytes)
     if (bytes(parsed.structure_digest) != bytes(upload['structure_digest'])
             or bytes(parsed.condition_key) != bytes(upload['condition_key'])
             or sha256(parsed.original_bytes).digest() != bytes(upload['original_sha256'])

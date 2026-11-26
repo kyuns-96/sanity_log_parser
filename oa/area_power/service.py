@@ -12,8 +12,8 @@ from common.area_power.analysis import (
     comparison_observations,
     validate_frozen_upload,
 )
-from common.area_power.csv_input import read_hierarchy
 from common.area_power.jsonutil import digest
+from common.area_power.layered_csv import is_power_layer_upload, load_base_upload, read_layered_hierarchy
 from common.area_power.models import (
     COMPARISON_FORMAT,
     ComparisonRequest,
@@ -167,8 +167,13 @@ class Service:
         return {"project_id": project["id"], "baseline_project_id": setting["baseline_project_id"],
                 "row_version": project["row_version"]}
 
-    def upload_hierarchy(self, upload):
-        metadata, items = read_hierarchy(upload, self.db.raw.settings.max_uncompressed_bytes)
+    def upload_hierarchy(self, upload, *, base_upload=None):
+        if base_upload is None and is_power_layer_upload(upload):
+            with self.db.connect() as conn:
+                base_upload = load_base_upload(self.db, conn, upload)
+        metadata, items = read_layered_hierarchy(
+            upload, self.db.raw.settings.max_uncompressed_bytes, base_upload=base_upload,
+        )
         return {"upload_id": upload["id"], "snapshot_id": upload["snapshot_id"],
                 "hierarchy_separator": metadata.hierarchy_separator, "items": items}
 

@@ -208,6 +208,9 @@ export function isAreaOnlyUpload(upload: Pick<Upload, 'process_label' | 'voltage
   if (contract.has_power === false) return true
   return !upload.process_label?.trim() && !upload.voltage_v?.trim() && !upload.temp_c?.trim() && !upload.pex?.trim()
 }
+export function isPowerLayerUpload(upload: Pick<Upload, 'id'> & { input_contract?: unknown }): boolean {
+  return object(upload.input_contract).storage_mode === 'power_layer'
+}
 export function formatCornerLabel(upload: Pick<Upload, 'process_label' | 'voltage_v' | 'temp_c' | 'pex'> & { input_contract?: unknown }): string {
   const voltage = formatCornerNumber(upload.voltage_v, 3)
   const temp = formatCornerNumber(upload.temp_c, 1)

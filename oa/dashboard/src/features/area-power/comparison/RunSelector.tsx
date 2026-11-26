@@ -49,17 +49,34 @@ export function RunSelector({ label, project, selection, onChange, uploads, busy
   )
 
   const needsLineage = version && !Object.hasOwn(version, 'previous_version_id')
-  const corners = new Map<string, string>()
-  for (const upload of uploads) if (!corners.has(cornerKey(upload))) corners.set(cornerKey(upload), formatCornerLabel(upload))
-  const areaOnlySingleCorner = corners.size === 1 && uploads.length > 0 && uploads.every(isAreaOnlyUpload)
-    ? [...corners.keys()][0]
-    : ''
-  useEffect(() => {
-    if (areaOnlySingleCorner && !selection.corner) {
-      onChange({ ...selection, corner: areaOnlySingleCorner, upload: '' })
+  const { corners, singleCorner, singleCornerLatestId } = useMemo(() => {
+    const entries = new Map<string, { label: string; areaOnly: boolean; runs: Upload[] }>()
+    for (const upload of uploads) {
+      const key = cornerKey(upload)
+      const existing = entries.get(key)
+      if (existing) {
+        existing.runs.push(upload)
+      } else {
+        entries.set(key, { label: formatCornerLabel(upload), areaOnly: isAreaOnlyUpload(upload), runs: [upload] })
+      }
     }
-  }, [areaOnlySingleCorner, selection.block, selection.net, selection.version, selection.corner])
-  const effectiveCorner = selection.corner || areaOnlySingleCorner
+    const ordered = [...entries.entries()].sort(([, a], [, b]) => {
+      if (a.areaOnly !== b.areaOnly) return a.areaOnly ? -1 : 1
+      return a.label.localeCompare(b.label)
+    })
+    const only = ordered.length === 1 ? ordered[0] : null
+    return {
+      corners: ordered,
+      singleCorner: only ? only[0] : '',
+      singleCornerLatestId: only ? (only[1].runs[0]?.id || '') : '',
+    }
+  }, [uploads])
+  useEffect(() => {
+    if (singleCorner && !selection.corner && !selection.upload) {
+      onChange({ ...selection, corner: singleCorner, upload: singleCornerLatestId })
+    }
+  }, [singleCorner, singleCornerLatestId, selection.block, selection.net, selection.version, selection.corner, selection.upload])
+  const effectiveCorner = selection.corner || singleCorner
   const runs = effectiveCorner ? uploads.filter(row => cornerKey(row) === effectiveCorner) : []
 
   return <fieldset className="run-selector"><legend>{label} · {project.name}</legend><div className="run-fields">
@@ -74,7 +91,11 @@ export function RunSelector({ label, project, selection, onChange, uploads, busy
       onChange({ ...selection, version: autoVer, corner: '', upload: '' })
     }}><option value="">REVISION 선택</option>{revisionGroups.map(group => <option key={group.key} value={group.key}>{group.label}</option>)}</select></Field>
     <Field label={`${label} ECO_NUM`}><select value={selection.version} disabled={!block || !selection.net || !activeRevKey} onChange={event => { onChange({ ...selection, version: event.target.value, corner: '', upload: '' }); setPrevious('') }}><option value="">ECO_NUM 선택</option>{ecoOptions.map(row => <option key={row.id} value={row.id}>{formatEcoOptionLabel(versionEcoNumbers(row), row.id === block?.por?.version_id)}</option>)}</select></Field>
-    <Field label={`${label} corner`}><select value={effectiveCorner} disabled={!version?.area_id} onChange={event => onChange({ ...selection, corner: event.target.value, upload: '' })}><option value="">corner 선택</option>{[...corners].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
+    <Field label={`${label} corner`}><select value={effectiveCorner} disabled={!version?.area_id} onChange={event => {
+      const nextCorner = event.target.value
+      const nextRuns = nextCorner ? uploads.filter(row => cornerKey(row) === nextCorner) : []
+      onChange({ ...selection, corner: nextCorner, upload: nextRuns[0]?.id || '' })
+    }}><option value="">corner 선택</option>{corners.map(([value, entry]) => <option key={value} value={value}>{entry.runs.length > 1 ? `${entry.label} (${entry.runs.length}건)` : entry.label}</option>)}</select></Field>
     <Field label={`${label} 실행 파일`} className="run-file"><select value={selection.upload} disabled={!effectiveCorner} onChange={event => onChange({ ...selection, corner: effectiveCorner, upload: event.target.value })}><option value="">실행 파일 선택</option>{runs.map(row => <option key={row.id} value={row.id}>{uploadName(row)}</option>)}</select></Field>
   </div>
     {block && (!block.area_id || version && !version.area_id) && <div className="scope-preparation"><small>선택한 정확한 범위의 수치 연결이 필요합니다. 다른 범위 파일로 대체하지 않습니다.</small>{needsLineage && <Field label={`${label} 명시적 이전 버전`}><select value={previous} onChange={event => setPrevious(event.target.value)}><option value="">계보를 선택하세요</option><option value="none">이 버전에서 계보 시작</option>{block.versions.filter(row => row.id !== version.id).map(row => <option key={row.id} value={row.id}>{formatVersionLabel(row)}</option>)}</select></Field>}<Button variant="outline" disabled={busy || !project.can_write || !!needsLineage && !previous} onClick={() => onPrepare(selection, needsLineage ? previous === 'none' ? null : previous : undefined)}>선택 범위 연결</Button></div>}

@@ -16,8 +16,8 @@ from common.area_power.atlas_bindings import (
     collect_applicable_triage_inputs,
     resolve_area_version_info,
 )
-from common.area_power.csv_input import read_hierarchy
 from common.area_power.errors import DomainError
+from common.area_power.layered_csv import load_base_upload, read_layered_hierarchy
 from common.area_power.mapping_suggestions import (
     Tree,
     build_index,
@@ -75,8 +75,10 @@ def check_mapping_for_uploads(
     with db.connect() as conn:
         cu_blob = db.upload(conn, current_upload["id"], include_blob=True)
         bu_blob = db.upload(conn, baseline_upload["id"], include_blob=True)
-    cm, c_items = read_hierarchy(cu_blob, settings.max_uncompressed_bytes)
-    bm, b_items = read_hierarchy(bu_blob, settings.max_uncompressed_bytes)
+        cu_base = load_base_upload(db, conn, cu_blob)
+        bu_base = load_base_upload(db, conn, bu_blob)
+    cm, c_items = read_layered_hierarchy(cu_blob, settings.max_uncompressed_bytes, base_upload=cu_base)
+    bm, b_items = read_layered_hierarchy(bu_blob, settings.max_uncompressed_bytes, base_upload=bu_base)
     current_tree = Tree(c_items, cm)
     before_tree = Tree(b_items, bm)
 
