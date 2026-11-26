@@ -551,6 +551,11 @@
 .area-power .report-structured { border: 1px solid var(--line-soft); border-radius: 8px; }
 .area-power .report-body-wrap h3 { margin: 0 0 8px; font-size: var(--text-data); color: var(--text-secondary); }
 .area-power .report-mail-body { margin: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); color: var(--ink); font-family: var(--font-mono); font-size: var(--text-data); line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.area-power .mail-preview-frame { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.area-power .mail-preview-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.area-power .mail-preview-bar .view-switch button { display: inline-flex; align-items: center; gap: 4px; }
+.area-power .mail-preview-actions { display: inline-flex; align-items: center; gap: 6px; }
+.area-power .mail-preview-iframe { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: #f1f5f9; display: block; }
 
 /* Effective Δ% inline trigger & portal formula popover */
 .area-power .th-sort-wrap { display: inline-flex; align-items: center; justify-content: flex-end; gap: 3px; width: 100%; }

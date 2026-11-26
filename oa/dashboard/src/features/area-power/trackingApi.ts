@@ -108,12 +108,13 @@ export type TrackingOverviewData = z.infer<typeof trackingOverviewSchema>
 
 export const trackingPreviewSchema = z.object({
   round: z.object({ id: z.string(), net_ver: z.string() }).nullable(),
-  top_mail_preview: z.object({ subject: z.string(), body: z.string() }).nullable(),
+  top_mail_preview: z.object({ subject: z.string(), body: z.string(), html_body: optionalText }).nullable(),
   block_mail_previews: z.array(z.object({
     block_id: z.string(),
     block_name: z.string(),
     subject: z.string(),
     body: z.string(),
+    html_body: optionalText,
   })),
 })
 export type TrackingPreviewData = z.infer<typeof trackingPreviewSchema>
@@ -128,6 +129,7 @@ export const trackingMailSnapshotSchema = z.object({
   delivery: mailDeliverySchema,
   subject: optionalText,
   body: optionalText,
+  html_body: optionalText,
   snapshot: loose,
   has_newer_results: z.boolean(),
 }).passthrough()
@@ -150,6 +152,7 @@ export const sentReportSchema = z.object({
   has_newer_results: z.boolean(),
   subject: z.string(),
   body: z.string(),
+  html_body: optionalText,
   snapshot: loose,
 }).passthrough()
 export type SentReport = z.infer<typeof sentReportSchema>
@@ -160,7 +163,7 @@ export const liveRoundReportsSchema = z.object({
   deadline_date: optionalText,
   deadline_time: optionalText,
   top_mail_sent: z.boolean(),
-  top_report: z.object({ subject: z.string(), body: z.string(), snapshot: loose }),
+  top_report: z.object({ subject: z.string(), body: z.string(), html_body: optionalText, snapshot: loose }),
   block_reports: z.array(z.object({
     block_id: z.string(),
     block_name: z.string(),
@@ -169,6 +172,7 @@ export const liveRoundReportsSchema = z.object({
     mail_sent: z.boolean(),
     subject: z.string(),
     body: z.string(),
+    html_body: optionalText,
     snapshot: loose,
   })),
 }).passthrough()

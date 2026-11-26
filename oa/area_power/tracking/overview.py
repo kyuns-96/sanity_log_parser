@@ -13,8 +13,8 @@ from common.area_power.tracking import (
     aggregate_block_tracking_row,
     build_live_round_mail_snapshots,
     compute_next_tracking_action,
-    render_block_mail_text,
-    render_top_mail_text,
+    render_block_mail,
+    render_top_mail,
     summarize_block_counts,
 )
 from common.area_power.triage import Thresholds
@@ -225,20 +225,22 @@ def preview_tracking(service, project_id: UUID, body: PreviewInput) -> dict[str,
     if chosen is None:
         return {"round": None, "top_mail_preview": None, "block_mail_previews": []}
     top_snapshot, block_snapshots = build_live_round_mail_snapshots(data["project_name"], chosen)
-    top_subject, top_body = render_top_mail_text(top_snapshot)
+    dashboard_url = getattr(getattr(getattr(service, "db", None), "settings", None), "dashboard_url", None)
+    top_subject, top_body, top_html = render_top_mail(top_snapshot, dashboard_url=dashboard_url)
 
     block_previews = []
     for bsnap in block_snapshots:
-        b_subj, b_body = render_block_mail_text(bsnap)
+        b_subj, b_body, b_html = render_block_mail(bsnap, dashboard_url=dashboard_url)
         block_previews.append({
             "block_id": bsnap["block_id"],
             "block_name": bsnap["block_name"],
             "subject": b_subj,
             "body": b_body,
+            "html_body": b_html,
         })
 
     return {
         "round": {"id": chosen["id"], "net_ver": chosen["net_ver"]},
-        "top_mail_preview": {"subject": top_subject, "body": top_body},
+        "top_mail_preview": {"subject": top_subject, "body": top_body, "html_body": top_html},
         "block_mail_previews": block_previews,
     }

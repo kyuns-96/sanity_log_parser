@@ -10,6 +10,7 @@ import {
   type TrackingPreviewData,
 } from '../trackingApi'
 import { CornerChipListEditor } from './CornerChipListEditor'
+import { MailPreviewFrame } from './MailPreviewFrame'
 import { parseCornerSpec, parseCornerSpecList } from './trackingUtils'
 
 interface ProjectTrackingConfigCardProps {
@@ -267,12 +268,24 @@ export function ProjectTrackingConfigCard({
             <div className="tracking-preview-grid">
               <div>
                 <strong>TOP 요약 메일 · {preview.top_mail_preview.subject}</strong>
-                <pre>{preview.top_mail_preview.body}</pre>
+                <MailPreviewFrame
+                  title={preview.top_mail_preview.subject}
+                  subject={preview.top_mail_preview.subject}
+                  textBody={preview.top_mail_preview.body}
+                  htmlBody={preview.top_mail_preview.html_body}
+                  defaultHeight={520}
+                />
               </div>
               {preview.block_mail_previews.map(bp => (
                 <div key={bp.block_id}>
                   <strong>블록 메일 ({bp.block_name}) · {bp.subject}</strong>
-                  <pre>{bp.body}</pre>
+                  <MailPreviewFrame
+                    title={bp.subject}
+                    subject={bp.subject}
+                    textBody={bp.body}
+                    htmlBody={bp.html_body}
+                    defaultHeight={520}
+                  />
                 </div>
               ))}
             </div>

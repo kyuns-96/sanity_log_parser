@@ -17,7 +17,7 @@ from common.area_power.config import Settings
 from common.area_power.db import Database
 from common.area_power.errors import DomainError
 from common.area_power.mail import MailMessage, MailNotConfigured, MailReceipt, MailRejected, MailSender
-from common.area_power.tracking import render_block_mail_text, render_top_mail_text
+from common.area_power.tracking import render_block_mail, render_block_mail_text, render_top_mail, render_top_mail_text
 from common.area_power.triage_mail_render import (
     CAUSES,
     DRIVE_SHARE_LABELS,
@@ -93,7 +93,8 @@ def message_for(settings, job, alert, event, comparison, metric, baseline, curre
     if not recipients:
         reject("No mail recipients are configured or requested.", "mail_recipients_missing")
     return render_alert_mail_message(
-        recipients, job, alert, event, comparison, metric, baseline, current, attempt_id=attempt_id
+        recipients, job, alert, event, comparison, metric, baseline, current,
+        attempt_id=attempt_id, dashboard_url=settings.dashboard_url,
     )
 
 
@@ -115,7 +116,8 @@ def digest_message(settings, job, request, run, comparison, judgements, baseline
     if not recipients:
         reject("No mail recipients are configured or requested.", "mail_recipients_missing")
     return render_triage_digest_message(
-        recipients, job, request, run, comparison, judgements, baseline, current, attempt_id=attempt_id
+        recipients, job, request, run, comparison, judgements, baseline, current,
+        attempt_id=attempt_id, dashboard_url=settings.dashboard_url,
     )
 
 
@@ -133,15 +135,20 @@ def tracking_mail_message(settings, job, mail_record, kind, *, attempt_id):
         reject("No mail recipients are configured or requested.", "mail_recipients_missing")
     snapshot = payload.get("snapshot") or {}
     if kind == "tracking_block_mail":
-        subject, text_body = render_block_mail_text(snapshot, mail_id=str(mail_record["id"]))
+        subject, text_body, html_body = render_block_mail(
+            snapshot, mail_id=str(mail_record["id"]), dashboard_url=settings.dashboard_url
+        )
     else:
-        subject, text_body = render_top_mail_text(snapshot, mail_id=str(mail_record["id"]))
+        subject, text_body, html_body = render_top_mail(
+            snapshot, mail_id=str(mail_record["id"]), dashboard_url=settings.dashboard_url
+        )
     return MailMessage(
         job_id=str(job["id"]),
         attempt_id=attempt_id,
         recipients=tuple(recipients),
         subject=subject,
         text_body=text_body,
+        html_body=html_body,
     )
 
 

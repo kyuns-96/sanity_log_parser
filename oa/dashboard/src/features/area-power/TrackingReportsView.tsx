@@ -3,6 +3,7 @@ import { Copy, FileText, LoaderCircle, Mail } from 'lucide-react'
 import { date, request, type Auth } from './api'
 import { Badge, Button, Empty } from './components/workspace'
 import { MAIL_STATE_LABEL, trackingReportsSchema, type TrackingReportsData } from './trackingApi'
+import { MailPreviewFrame } from './tracking/MailPreviewFrame'
 import { MailSnapshotBody } from './tracking/MailSnapshotBody'
 
 type UnifiedReportItem = {
@@ -17,6 +18,7 @@ type UnifiedReportItem = {
   hasNewer: boolean
   subject: string
   body: string
+  htmlBody?: string | null
   snapshot: Record<string, unknown>
 }
 
@@ -65,6 +67,7 @@ export function ReportsView({ auth, areaProjectId, refreshVersion, onOpenCompari
         hasNewer: r.has_newer_results,
         subject: r.subject,
         body: r.body,
+        htmlBody: r.html_body,
         snapshot: r.snapshot,
       })
     }
@@ -81,6 +84,7 @@ export function ReportsView({ auth, areaProjectId, refreshVersion, onOpenCompari
         hasNewer: false,
         subject: round.top_report.subject,
         body: round.top_report.body,
+        htmlBody: round.top_report.html_body,
         snapshot: round.top_report.snapshot,
       })
       for (const blk of round.block_reports) {
@@ -96,6 +100,7 @@ export function ReportsView({ auth, areaProjectId, refreshVersion, onOpenCompari
           hasNewer: false,
           subject: blk.subject,
           body: blk.body,
+          htmlBody: blk.html_body,
           snapshot: blk.snapshot,
         })
       }
@@ -212,7 +217,14 @@ export function ReportsView({ auth, areaProjectId, refreshVersion, onOpenCompari
 
               <div className="report-body-wrap">
                 <h3>메일 본문</h3>
-                <pre className="report-mail-body">{selected.body}</pre>
+                <MailPreviewFrame
+                  key={selected.key}
+                  title={selected.subject}
+                  subject={selected.subject}
+                  textBody={selected.body}
+                  htmlBody={selected.htmlBody}
+                  defaultHeight={620}
+                />
               </div>
             </section>
           )}

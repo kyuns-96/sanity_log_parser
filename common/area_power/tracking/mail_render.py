@@ -215,3 +215,31 @@ def render_top_mail_text(snapshot: dict[str, Any], *, mail_id: str | None = None
         "이 요약은 발송 요청 시점의 결과를 고정한 것입니다. 이후 도착한 수정본은 현황에서 '발송 후 수정'으로 확인할 수 있습니다.",
     ]
     return subject, "\n".join(lines)
+
+
+def render_block_mail(
+    snapshot: dict[str, Any],
+    *,
+    mail_id: str | None = None,
+    dashboard_url: str | None = None,
+) -> tuple[str, str, str]:
+    """Build subject, plain-text body, and HTML body for a NET_VER block result mail."""
+    from .mail_html_render import render_block_mail_html
+
+    subject, text_body = render_block_mail_text(snapshot, mail_id=mail_id)
+    html_body = render_block_mail_html(snapshot, mail_id=mail_id, dashboard_url=dashboard_url)
+    return subject, text_body, html_body
+
+
+def render_top_mail(
+    snapshot: dict[str, Any],
+    *,
+    mail_id: str | None = None,
+    dashboard_url: str | None = None,
+) -> tuple[str, str, str]:
+    """Build subject, plain-text body, and HTML body for a NET_VER TOP summary mail."""
+    from .mail_html_render import render_top_mail_html
+
+    subject, text_body = render_top_mail_text(snapshot, mail_id=mail_id)
+    html_body = render_top_mail_html(snapshot, mail_id=mail_id, dashboard_url=dashboard_url)
+    return subject, text_body, html_body

@@ -7,6 +7,7 @@ from .jsonutil import dumps, public
 from .mail import MailMessage
 from .tracking.mail_render import _fmt_num as _number, _fmt_signed as _signed
 from .tracking.models import upload_corner_label
+from .triage_mail_html import render_alert_mail_html, render_triage_digest_html
 
 CAUSES = {
     "note": "메모",
@@ -191,7 +192,19 @@ def _item_lines(item) -> list[str]:
     return lines
 
 
-def render_alert_mail_message(recipients: list[str], job, alert, event, comparison, metric, baseline, current, *, attempt_id: str) -> MailMessage:
+def render_alert_mail_message(
+    recipients: list[str],
+    job,
+    alert,
+    event,
+    comparison,
+    metric,
+    baseline,
+    current,
+    *,
+    attempt_id: str,
+    dashboard_url: str | None = None,
+) -> MailMessage:
     payload = alert["payload"]
     metric_payload = metric["payload"] if metric else payload
     summary = str(payload.get("summary") or payload.get("kind") or "Design Atlas observation")
@@ -218,13 +231,36 @@ def render_alert_mail_message(recipients: list[str], job, alert, event, comparis
         "",
         "This notification records a tracking observation, not a measurement of recipient acknowledgement.",
     ]
+    html_body = render_alert_mail_html(
+        summary=summary,
+        alert=alert,
+        event=event,
+        comparison=comparison,
+        metric=metric,
+        baseline=baseline,
+        current=current,
+        execution_fn=_execution,
+        dashboard_url=dashboard_url,
+    )
     return MailMessage(
         job_id=str(job["id"]), attempt_id=attempt_id, recipients=tuple(recipients),
-        subject=subject, text_body="\n".join(body),
+        subject=subject, text_body="\n".join(body), html_body=html_body,
     )
 
 
-def render_triage_digest_message(recipients: list[str], job, request, run, comparison, judgements, baseline, current, *, attempt_id: str) -> MailMessage:
+def render_triage_digest_message(
+    recipients: list[str],
+    job,
+    request,
+    run,
+    comparison,
+    judgements,
+    baseline,
+    current,
+    *,
+    attempt_id: str,
+    dashboard_url: str | None = None,
+) -> MailMessage:
     payload = run["payload"]
     excluded = set(request["payload"].get("excluded_ids") or [])
     items = [row["payload"] for row in judgements]
@@ -282,7 +318,24 @@ def render_triage_digest_message(recipients: list[str], job, request, run, compa
         "",
         "이 메일은 검토 대상을 알리는 것이며 정상·이상의 최종 판정이 아닙니다.",
     ]
+    html_body = render_triage_digest_html(
+        request=request,
+        run=run,
+        comparison=comparison,
+        items=items,
+        shown=shown,
+        excluded=excluded,
+        baseline=baseline,
+        current=current,
+        execution_fn=_execution,
+        causes=CAUSES,
+        flags_map=FLAGS,
+        exclusions_map=EXCLUSIONS,
+        share_label_fn=_share_label,
+        distributed_line_fn=_distributed_line,
+        dashboard_url=dashboard_url,
+    )
     return MailMessage(
         job_id=str(job["id"]), attempt_id=attempt_id, recipients=tuple(recipients),
-        subject=subject, text_body="\n".join(body),
+        subject=subject, text_body="\n".join(body), html_body=html_body,
     )

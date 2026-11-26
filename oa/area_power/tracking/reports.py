@@ -6,23 +6,28 @@ from uuid import UUID
 
 from common.area_power.tracking import (
     build_live_round_mail_snapshots,
-    render_block_mail_text,
-    render_top_mail_text,
+    render_block_mail,
+    render_top_mail,
 )
 from ..schemas import reject
 from .overview import is_tracking_admin, mail_delivery_info, overview
 
 
-def _render_report_text(kind: str, snapshot: dict[str, Any]) -> tuple[str, str]:
+def _dashboard_url(service) -> str | None:
+    return getattr(getattr(service, "db", None), "settings", None) and getattr(service.db.settings, "dashboard_url", None)
+
+
+def _render_report_mail(kind: str, snapshot: dict[str, Any], *, mail_id: str | None = None, dashboard_url: str | None = None) -> tuple[str, str, str]:
     if kind == "tracking_top_mail":
-        return render_top_mail_text(snapshot)
-    return render_block_mail_text(snapshot)
+        return render_top_mail(snapshot, mail_id=mail_id, dashboard_url=dashboard_url)
+    return render_block_mail(snapshot, mail_id=mail_id, dashboard_url=dashboard_url)
 
 
 def project_reports(service, project_id: UUID) -> dict[str, Any]:
     """Read-only web view of sent TOP/block reports and live round summaries."""
     data = overview(service, project_id)
     is_admin = is_tracking_admin(service)
+    dashboard_url = _dashboard_url(service)
     with service.db.connect() as conn:
         top_rows = service.all_records(conn, "tracking_top_mail", project_id=project_id)
         block_rows = service.all_records(conn, "tracking_block_mail", project_id=project_id)
@@ -36,7 +41,9 @@ def project_reports(service, project_id: UUID) -> dict[str, Any]:
         for row in all_rows:
             snap = row.get("payload", {}).get("snapshot") or {}
             delivery = mail_delivery_info(service, conn, row, include_recipients=is_admin)
-            subject, body = _render_report_text(row["record_type"], snap)
+            subject, body, html_body = _render_report_mail(
+                row["record_type"], snap, mail_id=str(row["id"]), dashboard_url=dashboard_url
+            )
             rid = str(row.get("parent_id") or "")
             round_info = rounds_by_id.get(rid)
             has_newer = False
@@ -63,16 +70,17 @@ def project_reports(service, project_id: UUID) -> dict[str, Any]:
                 "has_newer_results": has_newer,
                 "subject": subject,
                 "body": body,
+                "html_body": html_body,
                 "snapshot": snap,
             })
 
     live_reports = []
     for chosen in data["rounds"]:
         top_snapshot, block_snapshots = build_live_round_mail_snapshots(data["project_name"], chosen)
-        top_subject, top_body = render_top_mail_text(top_snapshot)
+        top_subject, top_body, top_html = render_top_mail(top_snapshot, dashboard_url=dashboard_url)
         block_items = []
         for block, bsnap in zip(chosen["blocks"], block_snapshots):
-            b_subj, b_body = render_block_mail_text(bsnap)
+            b_subj, b_body, b_html = render_block_mail(bsnap, dashboard_url=dashboard_url)
             block_items.append({
                 "block_id": block["block_id"],
                 "block_name": block["block_name"],
@@ -82,6 +90,7 @@ def project_reports(service, project_id: UUID) -> dict[str, Any]:
                 "mail_sent": bool((block.get("block_mail") or {}).get("mail_id")),
                 "subject": b_subj,
                 "body": b_body,
+                "html_body": b_html,
                 "snapshot": bsnap,
             })
         live_reports.append({
@@ -90,7 +99,7 @@ def project_reports(service, project_id: UUID) -> dict[str, Any]:
             "deadline_date": chosen.get("deadline_date"),
             "deadline_time": chosen.get("deadline_time"),
             "top_mail_sent": bool((chosen.get("top_mail") or {}).get("mail_id")),
-            "top_report": {"subject": top_subject, "body": top_body, "snapshot": top_snapshot},
+            "top_report": {"subject": top_subject, "body": top_body, "html_body": top_html, "snapshot": top_snapshot},
             "block_reports": block_items,
         })
 
@@ -118,7 +127,9 @@ def mail_snapshot(service, mail_id: UUID) -> dict[str, Any]:
             if row["record_type"] == "tracking_top_mail" or str(s["block_id"]) == str(row.get("block_id"))
         )
         snap = row["payload"].get("snapshot") or {}
-        subject, body = _render_report_text(row["record_type"], snap)
+        subject, body, html_body = _render_report_mail(
+            row["record_type"], snap, mail_id=str(row["id"]), dashboard_url=_dashboard_url(service)
+        )
         return {
             "id": row["id"],
             "kind": row["record_type"],
@@ -129,6 +140,7 @@ def mail_snapshot(service, mail_id: UUID) -> dict[str, Any]:
             "delivery": delivery,
             "subject": subject,
             "body": body,
+            "html_body": html_body,
             "snapshot": snap,
             "has_newer_results": has_newer,
         }

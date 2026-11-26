@@ -10,6 +10,7 @@ class MailMessage:
     recipients: tuple[str, ...]
     subject: str
     text_body: str
+    html_body: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

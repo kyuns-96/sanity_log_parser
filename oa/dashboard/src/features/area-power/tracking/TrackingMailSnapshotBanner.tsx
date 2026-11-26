@@ -2,6 +2,7 @@ import { Mail } from 'lucide-react'
 import { date, text } from '../api'
 import { Button } from '../components/workspace'
 import { MAIL_STATE_LABEL, type TrackingMailSnapshot } from '../trackingApi'
+import { MailPreviewFrame } from './MailPreviewFrame'
 import { MailSnapshotBody } from './MailSnapshotBody'
 
 interface TrackingMailSnapshotBannerProps {
@@ -39,9 +40,16 @@ export function TrackingMailSnapshotBanner({
       />
       {mailSnapshot.body && (
         <details className="settings-advanced">
-          <summary><span>메일 원문 보기</span>{mailSnapshot.subject && <small>{mailSnapshot.subject}</small>}</summary>
+          <summary><span>메일 본문 보기</span>{mailSnapshot.subject && <small>{mailSnapshot.subject}</small>}</summary>
           <div className="settings-advanced-body">
-            <pre className="report-mail-body">{mailSnapshot.body}</pre>
+            <MailPreviewFrame
+              key={mailSnapshot.id}
+              title={mailSnapshot.subject || '메일 본문'}
+              subject={mailSnapshot.subject}
+              textBody={mailSnapshot.body}
+              htmlBody={mailSnapshot.html_body}
+              defaultHeight={560}
+            />
           </div>
         </details>
       )}

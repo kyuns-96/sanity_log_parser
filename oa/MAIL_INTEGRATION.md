@@ -22,7 +22,8 @@
 | `attempt_id: str` | 외부 호출 전에 DB에 기록한 발송 시도 UUID. 회사 요청 추적에 사용하며 서비스의 멱등성 보장은 아님 |
 | `recipients: tuple[str, ...]` | 중복 제거·검증된 이메일 주소. 사용자 요청 수신자를 우선하며 없으면 OA 기본 수신자 사용 |
 | `subject: str` | 개행을 정리한 Design Atlas 알림 제목 |
-| `text_body: str` | 알림·비교·지표·고정 입력·실행 조건의 텍스트 근거 |
+| `text_body: str` | 알림·비교·지표·고정 입력·실행 조건의 텍스트 근거 (항상 채워짐) |
+| `html_body: str \| None = None` | 인라인 CSS·테이블 기반 HTML 메일 본문(선택). 값이 있으면 사내 메일 어댑터는 HTML 본문(가능하면 `multipart/alternative` 또는 HTML 콘텐츠 타입)으로 전송하고, `None`이면 `text_body`를 전송한다 |
 
 발신 계정·인증값·SDK client·프로토콜별 헤더/인코딩은 회사 어댑터가 관리한다. 요청을 임의 절단하거나 수신자를 바꾼 뒤 전체 처리로 보고하지 않는다. SDK의 자동 재전송도 결과 불명 요청을 중복 발송하지 않도록 비활성화한다.
 
@@ -46,7 +47,7 @@ SDK 원문 응답·오류 메시지·토큰·DSN을 receipt나 로그에 넣지 
 
 ## 설정·실행
 
-OA의 실행 환경에 `AREA_POWER_DB_DSN`, `AREA_POWER_DB_SCHEMA`와 선택적인 `AREA_POWER_MAIL_RECIPIENTS`를 export한다. 기본 수신자는 쉼표로 구분한다. 사내 연결 비밀은 승인된 비공개 설정에서 어댑터에 주입한다. `AREA_POWER_SMTP_*`는 더 이상 사용하지 않으며 대체 읽기/호환 alias도 없다.
+OA의 실행 환경에 `AREA_POWER_DB_DSN`, `AREA_POWER_DB_SCHEMA`와 선택적인 `AREA_POWER_MAIL_RECIPIENTS`, `AREA_POWER_DASHBOARD_URL`을 export한다. 기본 수신자는 쉼표로 구분한다. `AREA_POWER_DASHBOARD_URL`(예: `https://atlas.corp.example`)이 지정되면 HTML 메일 본문의 결과 보기 CTA 버튼이 절대 링크로 렌더링되며, 미지정 시에는 상대 경로만 안전하게 표시된다. 사내 연결 비밀은 승인된 비공개 설정에서 어댑터에 주입한다. `AREA_POWER_SMTP_*`는 더 이상 사용하지 않으며 대체 읽기/호환 alias도 없다.
 
 ```bash
 # 연결 전에도 도움말 확인 가능
