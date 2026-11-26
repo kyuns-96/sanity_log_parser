@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .jsonutil import dumps, public
+from .mail import MAIL_MAX_HTML_BODY_BYTES, truncate_utf8_bytes, utf8_len
 from .mail_html import (
     FONT_MONO,
     FONT_SANS,
@@ -361,45 +362,82 @@ def render_triage_digest_html(
     if context.get("area", {}).get("analyzed", True):
         parts.append(_dual_ranking_html(actionable, "area", "Logic Area", ""))
 
+    footer_meta = meta_table([
+        ("분석 실행 ID", f'<span style="font-family:{FONT_MONO};font-size:11.5px;color:#475569;">{esc(run["id"])}</span>'),
+        ("비교 ID", f'<span style="font-family:{FONT_MONO};font-size:11.5px;color:#475569;">{esc(comparison["id"])}</span>'),
+        ("요청자", esc(request["payload"].get("requested_by") or "—")),
+    ])
+    cta = cta_block(
+        label="Design Atlas에서 Area/Power 비교 화면 열기 →",
+        url=safe_dashboard_url(dashboard_url, "/?page=area-power"),
+        fallback_path=None,
+        note="비교 이력 또는 직접 비교 화면에서 전체 Hierarchy와 AI 판정 상세를 확인할 수 있습니다.",
+    )
+    preheader = f"AI 분석 · {current_title} — 이상 {len(unexpected)}건 · 확인 필요 {len(review)}건 · 설명됨 {len(expected_items)}건"
+    footer_notes = ("이 메일은 검토 대상을 알리는 것이며 정상·이상의 최종 판정이 아닙니다.",)
+
+    base_overhead = utf8_len(
+        render_email_shell(
+            preheader=preheader,
+            category="AI ANOMALY TRIAGE",
+            title=f"AI 이상치 분석 · {current_title}",
+            subtitle="수치는 코드가 계산했으며, AI는 등록된 메모와 대조해 판정만 수행했습니다.",
+            header_badges=header_badges,
+            body_html="".join(parts) + footer_meta + cta,
+            footer_notes=footer_notes,
+        )
+    )
+    cards_budget = max(0, MAIL_MAX_HTML_BODY_BYTES - base_overhead - 2_500)
+    used_cards = 0
+    omitted_total = 0
+
     for title, group, badge_tone in (
         ("이상 (Unexpected)", unexpected, "danger"),
         ("확인 필요 (Needs Review)", review, "warning"),
         ("주요 instance (설명됨 · 변화 미미)", watched, "info"),
     ):
-        parts.append(section_heading(title, badge_html=pill(f"{len(group)}건", badge_tone if group else "neutral")))
+        head_html = section_heading(title, badge_html=pill(f"{len(group)}건", badge_tone if group else "neutral"))
+        head_bytes = utf8_len(head_html)
+        if used_cards + head_bytes > cards_budget:
+            omitted_total += len(group)
+            continue
+        parts.append(head_html)
+        used_cards += head_bytes
         if group:
-            for item in group:
-                parts.append(
-                    _item_card_html(
-                        item,
-                        causes=causes,
-                        flags_map=flags_map,
-                        share_label_fn=share_label_fn,
-                        distributed_line_fn=distributed_line_fn,
-                    )
+            for idx, item in enumerate(group):
+                card_html = _item_card_html(
+                    item,
+                    causes=causes,
+                    flags_map=flags_map,
+                    share_label_fn=share_label_fn,
+                    distributed_line_fn=distributed_line_fn,
                 )
+                card_bytes = utf8_len(card_html)
+                if used_cards + card_bytes > cards_budget:
+                    omitted_total += len(group) - idx
+                    break
+                parts.append(card_html)
+                used_cards += card_bytes
         else:
-            parts.append(callout(f"{title} 없음", ["해당 분류에 포함된 항목이 없습니다."], tone="neutral"))
+            empty_html = callout(f"{title} 없음", ["해당 분류에 포함된 항목이 없습니다."], tone="neutral")
+            empty_bytes = utf8_len(empty_html)
+            if used_cards + empty_bytes <= cards_budget:
+                parts.append(empty_html)
+                used_cards += empty_bytes
 
-    parts.append(
-        meta_table([
-            ("분석 실행 ID", f'<span style="font-family:{FONT_MONO};font-size:11.5px;color:#475569;">{esc(run["id"])}</span>'),
-            ("비교 ID", f'<span style="font-family:{FONT_MONO};font-size:11.5px;color:#475569;">{esc(comparison["id"])}</span>'),
-            ("요청자", esc(request["payload"].get("requested_by") or "—")),
-        ])
-    )
+    if omitted_total:
+        parts.append(
+            callout(
+                f"메일 본문 크기 한도(1MB)로 나머지 {omitted_total}건의 상세 카드가 생략되었습니다.",
+                ["상단 요약·1단계 기여·Top-10 랭킹은 유지되며, 전체 상세 목록은 Design Atlas에서 확인할 수 있습니다."],
+                tone="info",
+            )
+        )
 
-    rel_path = "/?page=area-power"
-    cta = cta_block(
-        label="Design Atlas에서 Area/Power 비교 화면 열기 →",
-        url=safe_dashboard_url(dashboard_url, rel_path),
-        fallback_path=None,
-        note="비교 이력 또는 직접 비교 화면에서 전체 Hierarchy와 AI 판정 상세를 확인할 수 있습니다.",
-    )
+    parts.append(footer_meta)
     if cta:
         parts.append(cta)
 
-    preheader = f"AI 분석 · {current_title} — 이상 {len(unexpected)}건 · 확인 필요 {len(review)}건 · 설명됨 {len(expected_items)}건"
     return render_email_shell(
         preheader=preheader,
         category="AI ANOMALY TRIAGE",
@@ -407,9 +445,7 @@ def render_triage_digest_html(
         subtitle="수치는 코드가 계산했으며, AI는 등록된 메모와 대조해 판정만 수행했습니다.",
         header_badges=header_badges,
         body_html="".join(parts),
-        footer_notes=(
-            "이 메일은 검토 대상을 알리는 것이며 정상·이상의 최종 판정이 아닙니다.",
-        ),
+        footer_notes=footer_notes,
     )
 
 
@@ -465,32 +501,53 @@ def render_alert_mail_html(
     ]
     if event is not None:
         evidence_blocks.append(("Alert Event", dumps(public(event), canonical=True)))
-    parts.append(section_heading("고정 입력 및 상세 근거 (JSON)"))
-    for label, raw_json in evidence_blocks:
-        parts.append(
-            f'<div style="margin:8px 0 4px 0;font-family:{FONT_SANS};font-size:11.5px;font-weight:700;color:#475569;">{esc(label)}</div>'
-            f'<pre style="margin:0 0 10px 0;padding:10px 12px;background-color:#f8fafc;border:1px solid #e2e8f0;'
-            f'border-radius:6px;font-family:{FONT_MONO};font-size:11px;color:#334155;line-height:1.5;'
-            f'white-space:pre-wrap;word-break:break-all;overflow-wrap:anywhere;">{esc(raw_json)}</pre>'
-        )
-
     cta = cta_block(
         label="Design Atlas에서 Area/Power 화면 열기 →",
         url=safe_dashboard_url(dashboard_url, "/?page=area-power"),
         fallback_path=None,
     )
+    preheader = f"{summary} ({hier} · {metric_name})"
+    footer_notes = (
+        "This notification records a tracking observation, not a measurement of recipient acknowledgement.",
+        "이 메일은 검토 대상을 알리는 것이며 정상·이상의 최종 판정이 아닙니다.",
+    )
+    base_overhead = utf8_len(
+        render_email_shell(
+            preheader=preheader,
+            category="AREA / POWER ALERT",
+            title=summary,
+            subtitle=f"{hier} · {metric_name}",
+            header_badges=(pill(kind, "dark_warning", mono=True),),
+            body_html="".join(parts) + cta,
+            footer_notes=footer_notes,
+        )
+    )
+    json_budget = max(4_000, MAIL_MAX_HTML_BODY_BYTES - base_overhead - 2_000)
+    per_block_budget = max(1_000, json_budget // max(1, len(evidence_blocks)) - 512)
+    parts.append(section_heading("고정 입력 및 상세 근거 (JSON)"))
+    for label, raw_json in evidence_blocks:
+        # Leave margin for HTML entity expansion (&quot; etc.) inside <pre>.
+        safe_raw = truncate_utf8_bytes(
+            raw_json,
+            per_block_budget // 2,
+            suffix=" ... (메일 본문 1MB 한도로 일부 생략)",
+        )
+        parts.append(
+            f'<div style="margin:8px 0 4px 0;font-family:{FONT_SANS};font-size:11.5px;font-weight:700;color:#475569;">{esc(label)}</div>'
+            f'<pre style="margin:0 0 10px 0;padding:10px 12px;background-color:#f8fafc;border:1px solid #e2e8f0;'
+            f'border-radius:6px;font-family:{FONT_MONO};font-size:11px;color:#334155;line-height:1.5;'
+            f'white-space:pre-wrap;word-break:break-all;overflow-wrap:anywhere;">{esc(safe_raw)}</pre>'
+        )
+
     if cta:
         parts.append(cta)
 
     return render_email_shell(
-        preheader=f"{summary} ({hier} · {metric_name})",
+        preheader=preheader,
         category="AREA / POWER ALERT",
         title=summary,
         subtitle=f"{hier} · {metric_name}",
         header_badges=(pill(kind, "dark_warning", mono=True),),
         body_html="".join(parts),
-        footer_notes=(
-            "This notification records a tracking observation, not a measurement of recipient acknowledgement.",
-            "이 메일은 검토 대상을 알리는 것이며 정상·이상의 최종 판정이 아닙니다.",
-        ),
+        footer_notes=footer_notes,
     )

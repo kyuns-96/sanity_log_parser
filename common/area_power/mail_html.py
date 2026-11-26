@@ -219,6 +219,24 @@ def meta_table(rows: Sequence[tuple[str, str]]) -> str:
     )
 
 
+def render_data_table_row(
+    row: Sequence[str],
+    aligns: Sequence[str],
+    *,
+    bg: str = "#ffffff",
+) -> str:
+    """Render one <tr> for ``data_table`` (also reusable for exact byte budgeting)."""
+    tds = []
+    for c_idx, cell in enumerate(row):
+        align = aligns[c_idx] if c_idx < len(aligns) else "left"
+        tds.append(
+            f'<td align="{align}" valign="top" style="padding:8px 10px;background-color:{bg};'
+            f'border-top:1px solid #e2e8f0;font-family:{FONT_SANS};font-size:12px;'
+            f'color:#0f172a;text-align:{align};line-height:1.5;word-break:break-word;">{cell}</td>'
+        )
+    return f'<tr>{"".join(tds)}</tr>'
+
+
 def data_table(
     headers: Sequence[str],
     rows: Sequence[Sequence[str]],
@@ -246,15 +264,7 @@ def data_table(
         trs = []
         for r_idx, row in enumerate(rows):
             bg = (row_bgs[r_idx] if row_bgs and r_idx < len(row_bgs) and row_bgs[r_idx] else ("#ffffff" if r_idx % 2 == 0 else "#f8fafc"))
-            tds = []
-            for c_idx, cell in enumerate(row):
-                align = col_aligns[c_idx] if c_idx < len(col_aligns) else "left"
-                tds.append(
-                    f'<td align="{align}" valign="top" style="padding:8px 10px;background-color:{bg};'
-                    f'border-top:1px solid #e2e8f0;font-family:{FONT_SANS};font-size:12px;'
-                    f'color:#0f172a;text-align:{align};line-height:1.5;word-break:break-word;">{cell}</td>'
-                )
-            trs.append(f'<tr>{"".join(tds)}</tr>')
+            trs.append(render_data_table_row(row, col_aligns, bg=bg))
         body_html = "".join(trs)
     return (
         f'<table width="100%" cellpadding="0" cellspacing="0" border="0" '

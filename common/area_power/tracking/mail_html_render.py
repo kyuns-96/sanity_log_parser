@@ -4,6 +4,7 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from ..mail import MAIL_MAX_HTML_BODY_BYTES, truncate_utf8_bytes, utf8_len
 from ..mail_html import (
     FONT_MONO,
     FONT_SANS,
@@ -15,6 +16,7 @@ from ..mail_html import (
     kpi_strip,
     meta_table,
     pill,
+    render_data_table_row,
     render_email_shell,
     safe_dashboard_url,
     section_heading,
@@ -172,7 +174,7 @@ def _render_ranking_table(
             f'{d1_html}<span style="font-family:{FONT_MONO};font-weight:600;color:#0f172a;word-break:break-all;">'
             f'{esc(it.get("path") or "—")}</span>'
         )
-        expl = " ".join(str(it.get("explanation") or "").split())
+        expl = truncate_utf8_bytes(" ".join(str(it.get("explanation") or "").split()), 420)
         if expl:
             path_html += f'<div style="margin-top:3px;font-family:{FONT_SANS};font-size:11.5px;color:#475569;line-height:1.45;">{esc(expl)}</div>'
         eff_html = delta_html(_fmt_signed(dp, "%"), raw_value=dp) if dp is not None else '<span style="color:#94a3b8;">—</span>'
@@ -292,12 +294,42 @@ def render_block_mail_html(
             )
         )
 
-        for c in corners:
+        # Fit per-corner detail sections cleanly inside the corporate 1 MB body budget without breaking HTML.
+        cta_html = ""
+        if mail_id:
+            rel_path = f"/?page=area-power&tracking_mail={mail_id}"
+            cta_html = cta_block(
+                label="Design Atlas에서 발송 당시 고정 결과 열기 →",
+                url=safe_dashboard_url(dashboard_url, rel_path),
+                fallback_path=rel_path,
+                note="최신 현황에서 후속 수정본 도착 여부와 전체 Hierarchy 표를 바로 확인할 수 있습니다.",
+            )
+        preheader = f"{project} · {block} ({net_ver}) — 이상 {unexp}건 · 확인 필요 {review}건 · 설명됨 {expected}건"
+        footer_notes = (
+            "최신 현황에서 후속 수정본 여부를 함께 확인할 수 있습니다.",
+            "이 메일은 검토 대상을 알리는 것이며 정상·이상의 최종 판정이 아닙니다.",
+        )
+        base_overhead = utf8_len(
+            render_email_shell(
+                preheader=preheader,
+                category="NET_VER BLOCK RESULT",
+                title=f"{project} · {block}",
+                subtitle=subtitle,
+                header_badges=header_badges,
+                body_html="".join(parts) + cta_html,
+                footer_notes=footer_notes,
+            )
+        )
+        detail_budget = max(0, MAIL_MAX_HTML_BODY_BYTES - base_overhead - 2_000)
+        used_detail = 0
+        omitted_corners = 0
+
+        for idx, c in enumerate(corners):
             c_label = str(c.get("corner_label") or c.get("corner_id") or "Corner")
-            parts.append(section_heading(f"Corner 상세 · {c_label}", badge_html=pill(c_label, "neutral", mono=True)))
+            c_parts = [section_heading(f"Corner 상세 · {c_label}", badge_html=pill(c_label, "neutral", mono=True))]
             attr_html = _render_attribution_table(c.get("attribution") or {})
             if attr_html:
-                parts.append(attr_html)
+                c_parts.append(attr_html)
 
             highlights = c.get("highlights") or []
             if highlights:
@@ -314,12 +346,12 @@ def render_block_mail_html(
                     ranked_html += _render_ranking_table(f"Logic Area 절대 증가 Top {len(a_abs)}", a_abs, "")
                     ranked_html += _render_ranking_table(f"Logic Area Effective Δ% Top {len(a_spike)} (중복 제외)", a_spike, "")
                 if ranked_html:
-                    parts.append(ranked_html)
+                    c_parts.append(ranked_html)
                 else:
                     fallback_rows = []
                     for item in highlights[:25]:
                         path_txt = f'<span style="font-family:{FONT_MONO};font-weight:600;">{esc(item.get("path") or "—")}</span>'
-                        expl = " ".join(str(item.get("explanation") or "").split())
+                        expl = truncate_utf8_bytes(" ".join(str(item.get("explanation") or "").split()), 420)
                         if expl:
                             path_txt += f'<div style="margin-top:3px;font-size:11.5px;color:#475569;">{esc(expl)}</div>'
                         fallback_rows.append([
@@ -328,7 +360,7 @@ def render_block_mail_html(
                             delta_html(_fmt_signed(item.get("logic_area_delta_pct"), "%"), raw_value=item.get("logic_area_delta_pct")),
                             delta_html(_fmt_signed(item.get("power_delta_pct"), "%"), raw_value=item.get("power_delta_pct")),
                         ])
-                    parts.append(
+                    c_parts.append(
                         data_table(
                             ["판정", "Instance / 설명", "Logic Area Δ%", "Power Δ%"],
                             fallback_rows,
@@ -336,7 +368,35 @@ def render_block_mail_html(
                         )
                     )
             else:
-                parts.append(callout("검토가 필요한 이상 항목 없음", ["이 Corner에서는 기준을 초과한 이상·확인 필요 항목이 검출되지 않았습니다."], tone="success"))
+                c_parts.append(callout("검토가 필요한 이상 항목 없음", ["이 Corner에서는 기준을 초과한 이상·확인 필요 항목이 검출되지 않았습니다."], tone="success"))
+
+            section_html = "".join(c_parts)
+            section_bytes = utf8_len(section_html)
+            if used_detail + section_bytes > detail_budget:
+                omitted_corners = len(corners) - idx
+                break
+            parts.append(section_html)
+            used_detail += section_bytes
+
+        if omitted_corners:
+            parts.append(
+                callout(
+                    f"메일 본문 크기 한도(1MB)로 나머지 {omitted_corners}개 Corner 상세가 생략되었습니다.",
+                    ["상단 Corner 요약표에는 전체 Corner가 포함되어 있으며, 생략된 상세 랭킹은 Design Atlas에서 확인할 수 있습니다."],
+                    tone="info",
+                )
+            )
+        if cta_html:
+            parts.append(cta_html)
+        return render_email_shell(
+            preheader=preheader,
+            category="NET_VER BLOCK RESULT",
+            title=f"{project} · {block}",
+            subtitle=subtitle,
+            header_badges=header_badges,
+            body_html="".join(parts),
+            footer_notes=footer_notes,
+        )
 
     if mail_id:
         rel_path = f"/?page=area-power&tracking_mail={mail_id}"
@@ -447,9 +507,39 @@ def render_top_mail_html(
         )
     )
 
+    cta_html = ""
+    if mail_id:
+        rel_path = f"/?page=area-power&tracking_mail={mail_id}"
+        cta_html = cta_block(
+            label="Design Atlas에서 발송 당시 TOP 고정 요약 열기 →",
+            url=safe_dashboard_url(dashboard_url, rel_path),
+            fallback_path=rel_path,
+            note="이후 도착한 수정본은 현황 화면에서 '발송 후 수정' 배지로 확인할 수 있습니다.",
+        )
+
+    preheader = f"{project} · {net_ver} TOP 요약 ({trigger}) — 하위 블록 완료 {sub_counts.get('completed', 0)}/{sub_counts.get('total', 0)}"
+    footer_notes = (
+        "이 요약은 발송 요청 시점의 결과를 고정한 것입니다. 이후 도착한 수정본은 현황에서 '발송 후 수정'으로 확인할 수 있습니다.",
+        "이 메일은 검토 대상을 알리는 것이며 정상·이상의 최종 판정이 아닙니다.",
+    )
+    base_overhead = utf8_len(
+        render_email_shell(
+            preheader=preheader,
+            category="NET_VER TOP SUMMARY",
+            title=f"{project} · {net_ver} TOP 요약",
+            subtitle=f"{trigger} · netlist 도착 {arrived_txt} · 마감 {deadline_txt}",
+            header_badges=header_badges,
+            body_html="".join(parts) + cta_html,
+            footer_notes=footer_notes,
+        )
+    )
+    row_budget = max(0, MAIL_MAX_HTML_BODY_BYTES - base_overhead - 4_000)
+    used_rows = 0
     table_rows: list[list[str]] = []
     row_bgs: list[str | None] = []
-    for row in rows:
+    omitted_blocks = 0
+
+    for idx, row in enumerate(rows):
         is_fc = bool(row.get("is_full_chip"))
         needs_attn = bool(row.get("needs_attention"))
         name = f"{project} · Full-chip" if is_fc else str(row.get("block_name") or row.get("block_id") or "—")
@@ -468,13 +558,20 @@ def render_top_mail_html(
         arr_tone = "success" if req > 0 and arr >= req else ("warning" if arr > 0 else "danger")
         comp_tone = "success" if req > 0 and comp >= req else ("info" if comp > 0 else "neutral")
 
-        table_rows.append([
+        built_row = [
             name_html,
             pill(f"{arr}/{req}", arr_tone, mono=True),
             pill(f"{comp}/{req}", comp_tone, mono=True),
             f'<span style="color:{"#92400e" if needs_attn else "#334155"};font-weight:{"600" if needs_attn else "400"};">{esc(row.get("status_summary") or "대기")}</span>',
-        ])
+        ]
+        bg = "#fffdf5" if needs_attn else ("#ffffff" if len(table_rows) % 2 == 0 else "#f8fafc")
+        exact_bytes = utf8_len(render_data_table_row(built_row, ("left", "center", "center", "left"), bg=bg))
+        if table_rows and used_rows + exact_bytes > row_budget:
+            omitted_blocks = len(rows) - idx
+            break
+        table_rows.append(built_row)
         row_bgs.append("#fffdf5" if needs_attn else None)
+        used_rows += exact_bytes
 
     parts.append(
         data_table(
@@ -485,19 +582,17 @@ def render_top_mail_html(
             empty_text="등록된 대상 블록이 없습니다.",
         )
     )
-
-    if mail_id:
-        rel_path = f"/?page=area-power&tracking_mail={mail_id}"
+    if omitted_blocks:
         parts.append(
-            cta_block(
-                label="Design Atlas에서 발송 당시 TOP 고정 요약 열기 →",
-                url=safe_dashboard_url(dashboard_url, rel_path),
-                fallback_path=rel_path,
-                note="이후 도착한 수정본은 현황 화면에서 '발송 후 수정' 배지로 확인할 수 있습니다.",
+            callout(
+                f"메일 본문 크기 한도(1MB)로 나머지 {omitted_blocks}개 블록 행이 생략되었습니다.",
+                ["주의 필요 블록이 우선 표시되었으며, 전체 블록 목록은 Design Atlas 화면에서 확인할 수 있습니다."],
+                tone="info",
             )
         )
+    if cta_html:
+        parts.append(cta_html)
 
-    preheader = f"{project} · {net_ver} TOP 요약 ({trigger}) — 하위 블록 완료 {sub_counts.get('completed', 0)}/{sub_counts.get('total', 0)}"
     return render_email_shell(
         preheader=preheader,
         category="NET_VER TOP SUMMARY",
@@ -505,8 +600,5 @@ def render_top_mail_html(
         subtitle=f"{trigger} · netlist 도착 {arrived_txt} · 마감 {deadline_txt}",
         header_badges=header_badges,
         body_html="".join(parts),
-        footer_notes=(
-            "이 요약은 발송 요청 시점의 결과를 고정한 것입니다. 이후 도착한 수정본은 현황에서 '발송 후 수정'으로 확인할 수 있습니다.",
-            "이 메일은 검토 대상을 알리는 것이며 정상·이상의 최종 판정이 아닙니다.",
-        ),
+        footer_notes=footer_notes,
     )

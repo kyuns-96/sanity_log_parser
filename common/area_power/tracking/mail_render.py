@@ -4,6 +4,8 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
+from ..mail import cap_text_body, format_mail_subject
+
 D = Decimal
 
 
@@ -33,9 +35,11 @@ def render_block_mail_text(snapshot: dict[str, Any], *, mail_id: str | None = No
     post_top = bool(snapshot.get("post_top_mail_revised"))
     tag = " (TOP 발송 후 수정본)" if post_top else (" (수정본)" if revised else "")
     totals = snapshot.get("totals") or {}
-    subject = " ".join(
-        f"[Design Atlas] {project} · {block} · {net_ver}{tag} · 이상 {totals.get('unexpected', 0)}건 · 확인 필요 {totals.get('needs_review', 0)}건".split()
-    )[:200]
+    subject = format_mail_subject(
+        "[Design Atlas]",
+        f"{project} · {block} · {net_ver}{tag}",
+        f"· 이상 {totals.get('unexpected', 0)}건 · 확인 필요 {totals.get('needs_review', 0)}건",
+    )
 
     lines = [
         f"Design Atlas NET_VER 자동 추적 블록 결과입니다.{tag}",
@@ -149,7 +153,7 @@ def render_block_mail_text(snapshot: dict[str, Any], *, mail_id: str | None = No
         "최신 현황에서 후속 수정본 여부를 함께 확인할 수 있습니다.",
         "이 메일은 검토 대상을 알리는 것이며 정상·이상의 최종 판정이 아닙니다.",
     ]
-    return subject, "\n".join(lines)
+    return subject, cap_text_body("\n".join(lines))
 
 
 def render_top_mail_text(snapshot: dict[str, Any], *, mail_id: str | None = None) -> tuple[str, str]:
@@ -161,9 +165,11 @@ def render_top_mail_text(snapshot: dict[str, Any], *, mail_id: str | None = None
     sub_counts = snapshot.get("sub_block_counts") or {}
     fc_counts = snapshot.get("full_chip_counts") or {}
 
-    subject = " ".join(
-        f"[Design Atlas] TOP 요약 · {project} · {net_ver} · {trigger} · 하위 블록 완료 {sub_counts.get('completed', 0)}/{sub_counts.get('total', 0)}".split()
-    )[:200]
+    subject = format_mail_subject(
+        "[Design Atlas] TOP 요약 ·",
+        f"{project} · {net_ver}",
+        f"· {trigger} · 하위 블록 완료 {sub_counts.get('completed', 0)}/{sub_counts.get('total', 0)}",
+    )
 
     lines = [
         f"Design Atlas NET_VER 자동 추적 TOP 요약입니다. ({trigger})",
@@ -214,7 +220,7 @@ def render_top_mail_text(snapshot: dict[str, Any], *, mail_id: str | None = None
     lines += [
         "이 요약은 발송 요청 시점의 결과를 고정한 것입니다. 이후 도착한 수정본은 현황에서 '발송 후 수정'으로 확인할 수 있습니다.",
     ]
-    return subject, "\n".join(lines)
+    return subject, cap_text_body("\n".join(lines))
 
 
 def render_block_mail(

@@ -21,9 +21,9 @@
 | `job_id: str` | DB 메일 job UUID |
 | `attempt_id: str` | 외부 호출 전에 DB에 기록한 발송 시도 UUID. 회사 요청 추적에 사용하며 서비스의 멱등성 보장은 아님 |
 | `recipients: tuple[str, ...]` | 중복 제거·검증된 이메일 주소. 사용자 요청 수신자를 우선하며 없으면 OA 기본 수신자 사용 |
-| `subject: str` | 개행을 정리한 Design Atlas 알림 제목 |
-| `text_body: str` | 알림·비교·지표·고정 입력·실행 조건의 텍스트 근거 (항상 채워짐) |
-| `html_body: str \| None = None` | 인라인 CSS·테이블 기반 HTML 메일 본문(선택). 값이 있으면 사내 메일 어댑터는 HTML 본문(가능하면 `multipart/alternative` 또는 HTML 콘텐츠 타입)으로 전송하고, `None`이면 `text_body`를 전송한다 |
+| `subject: str` | 개행을 정리하고 UTF-8 **300바이트 이내**(`MAIL_MAX_SUBJECT_BYTES=300`)로 맞춘 Design Atlas 알림 제목 |
+| `text_body: str` | 알림·비교·지표·고정 입력·실행 조건의 텍스트 근거 (항상 채워짐, UTF-8 150KB 이내) |
+| `html_body: str \| None = None` | 인라인 CSS·테이블 기반 HTML 메일 본문(선택, UTF-8 700KB 이내 — `text_body`와 합쳐도 사내 1MB 한도 미만 유지). 값이 있으면 사내 메일 어댑터는 HTML 본문(가능하면 `multipart/alternative` 또는 HTML 콘텐츠 타입)으로 전송하고, `None`이면 `text_body`를 전송한다 |
 
 발신 계정·인증값·SDK client·프로토콜별 헤더/인코딩은 회사 어댑터가 관리한다. 요청을 임의 절단하거나 수신자를 바꾼 뒤 전체 처리로 보고하지 않는다. SDK의 자동 재전송도 결과 불명 요청을 중복 발송하지 않도록 비활성화한다.
 

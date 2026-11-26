@@ -4,7 +4,7 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 
 from .jsonutil import dumps, public
-from .mail import MailMessage
+from .mail import MailMessage, cap_text_body, format_mail_subject
 from .tracking.mail_render import _fmt_num as _number, _fmt_signed as _signed
 from .tracking.models import upload_corner_label
 from .triage_mail_html import render_alert_mail_html, render_triage_digest_html
@@ -209,7 +209,7 @@ def render_alert_mail_message(
     metric_payload = metric["payload"] if metric else payload
     summary = str(payload.get("summary") or payload.get("kind") or "Design Atlas observation")
     summary = " ".join(summary.splitlines())[:180]
-    subject = f"[Design Atlas] {summary}"
+    subject = format_mail_subject("[Design Atlas]", summary)
     body = [
         summary,
         f"Alert: {alert['id']}",
@@ -244,7 +244,7 @@ def render_alert_mail_message(
     )
     return MailMessage(
         job_id=str(job["id"]), attempt_id=attempt_id, recipients=tuple(recipients),
-        subject=subject, text_body="\n".join(body), html_body=html_body,
+        subject=subject, text_body=cap_text_body("\n".join(body)), html_body=html_body,
     )
 
 
@@ -273,9 +273,11 @@ def render_triage_digest_message(
     thresholds = payload.get("thresholds") or {}
     context = payload.get("side_context") or {}
     kind = "같은 프로젝트의 이전 버전" if payload.get("comparison_kind") == "previous_version" else "기준 프로젝트"
-    subject = " ".join(
-        f"[Design Atlas] AI 분석 · {labels.get('current') or (current.get('execution_name') if current else '')} · 이상 {len(unexpected)}건 · 확인 필요 {len(review)}건".split()
-    )[:200]
+    subject = format_mail_subject(
+        "[Design Atlas] AI 분석 ·",
+        str(labels.get("current") or (current.get("execution_name") if current else "")),
+        f"· 이상 {len(unexpected)}건 · 확인 필요 {len(review)}건",
+    )
     body = [
         "Design Atlas AI 이상치 분석 결과입니다. 수치는 코드가 계산했고, AI는 메모와 대조해 판정만 했습니다.",
         "",
@@ -337,5 +339,5 @@ def render_triage_digest_message(
     )
     return MailMessage(
         job_id=str(job["id"]), attempt_id=attempt_id, recipients=tuple(recipients),
-        subject=subject, text_body="\n".join(body), html_body=html_body,
+        subject=subject, text_body=cap_text_body("\n".join(body)), html_body=html_body,
     )
