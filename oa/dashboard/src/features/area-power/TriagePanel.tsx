@@ -9,7 +9,7 @@ import { deriveTriageRunMetrics, TriageLiveProgress } from './TriageLiveProgress
 export const VERDICT_LABEL: Record<string, string> = { unexpected: '이상', needs_review: '확인 필요', expected: '설명됨', minor: '변화 미미' }
 const CAUSE_LABEL: Record<string, string> = { note: '메모', vth_shift: 'Vth 변화', drive_shift: 'Drive 변화', new_instance: '신규 instance', unknown: '원인 불명' }
 const FLAG_LABEL: Record<string, string> = { area_conditions_unconfirmed: 'Area 조건 미확인', power_conditions_unconfirmed: 'Power 조건 미확인', library_unknown: 'library 미확인', library_different: 'library 다름 · Vth/Drive는 참고용', removed_in_current: '현재 실행에 없음' }
-const EXCLUSION_LABEL: Record<string, string> = { corner_different: '양쪽 corner가 다름', analysis_conditions_different: '분석 조건이 다름', area_unit_different: 'area 단위가 다름', baseline_missing: '기준 실행 없음' }
+const EXCLUSION_LABEL: Record<string, string> = { area_only_no_power: 'Area 전용 자료(Power 미포함)', corner_different: '양쪽 corner가 다름', analysis_conditions_different: '분석 조건이 다름', area_unit_different: 'area 단위가 다름', baseline_missing: '기준 실행 없음' }
 const NUMBER = /^(?:\d+(?:\.\d*)?|\.\d+)$/
 const running = (state: string) => ['queued', 'pending', 'running'].includes(state)
 const signed = (value: unknown, unit: string) => value == null || value === '' ? '—' : `${text(value).startsWith('-') ? '' : '+'}${formatPercent(value)}${unit}`

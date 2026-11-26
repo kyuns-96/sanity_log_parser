@@ -16,6 +16,15 @@ from common.area_power.triage import Thresholds
 DEFAULT_DEADLINE_DAYS = 7
 DEFAULT_DEADLINE_TIME = "18:00"
 DEFAULT_DEADLINE_TIMEZONE = "Asia/Seoul"
+AREA_ONLY_CORNER_PROCESS = "AREA_ONLY"
+
+
+def is_area_only_upload(upload: dict[str, Any]) -> bool:
+    """True when an upload carries Area/Vth/Drive without Power (or has no corner fields)."""
+    contract = upload.get("input_contract")
+    if isinstance(contract, dict) and contract.get("has_power") is False:
+        return True
+    return all(v is None for v in upload_corner_tuple(upload))
 
 
 def _norm_decimal(value: Any) -> str | None:
@@ -78,6 +87,10 @@ class CornerSpec(ContractModel):
         return "|".join(parts)
 
     def matches_upload(self, upload: dict[str, Any]) -> bool:
+        if self.process_label.strip().upper() == AREA_ONLY_CORNER_PROCESS:
+            return is_area_only_upload(upload)
+        if is_area_only_upload(upload):
+            return False
         if (upload.get("process_label") or "").strip() != self.process_label.strip():
             return False
         if self.voltage_v is not None and _norm_decimal(upload.get("voltage_v")) != _norm_decimal(self.voltage_v):
@@ -100,6 +113,8 @@ def upload_corner_tuple(upload: dict[str, Any]) -> tuple[str | None, str | None,
 
 def upload_corner_label(upload: dict[str, Any]) -> str:
     proc, volt, temp, pex = upload_corner_tuple(upload)
+    if proc is None and volt is None and temp is None and pex is None:
+        return "Area 전용"
     parts = [proc or "?"]
     if volt is not None:
         parts.append(f"{volt} V")

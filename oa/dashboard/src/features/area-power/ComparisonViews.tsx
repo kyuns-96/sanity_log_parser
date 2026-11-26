@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { GitCompareArrows, LoaderCircle, RefreshCw } from 'lucide-react'
 import type { z } from 'zod'
-import { comparisonCreatedSchema, cornerKey, format, object, request, text, uploadName, type AreaAccess, type Auth, type TrackingRecord, type TriageItem, type Upload } from './api'
+import { comparisonCreatedSchema, cornerKey, format, isAreaOnlyUpload, object, request, text, uploadName, type AreaAccess, type Auth, type TrackingRecord, type TriageItem, type Upload } from './api'
 import { Badge, Button, Empty, Field, useAction } from './components/workspace'
 import { Uploads } from './UploadViews'
 import { useAtlas, type AtlasProject } from '@/features/atlas/atlasContext'
@@ -456,7 +456,9 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
         {mode === 'version' ? <RunSelector label="기준" project={project} selection={before} onChange={chooseBefore} uploads={beforeUploads} busy={action.busy} lockedBlock hint="기준 버전은 현재 버전의 명시적 이전 버전(계보)이어야 합니다. NET_VER가 다르면 RTL 변경 비교입니다." onPrepare={(selection, previous) => action.run(() => prepare(project, selection, previous))} />
           : savedProject && baseline?.status === 'available' ? <RunSelector label="기준" project={savedProject} selection={before} onChange={chooseBefore} uploads={beforeUploads} busy={action.busy} onPrepare={(selection, previous) => action.run(() => prepare(savedProject, selection, previous))} /> : <Empty title={baseline?.status === 'unavailable' ? '기준 프로젝트 조회 불가' : '비교 기준을 저장하세요'}>현재 실행의 관측값은 기준이 없어도 볼 수 있습니다. 기준·대응이 없는 Δ/%는 unavailable입니다.</Empty>}
       </div> : !comparisonId && <p className="setup-summary">현재 {selectedCurrent ? uploadName(selectedCurrent) : '실행 미선택'} <span aria-hidden="true">↔</span> 기준 {selectedBefore ? uploadName(selectedBefore) : '기준 실행 없음'}</p>}
-      {selectedCurrent && selectedBefore && cornerKey(selectedCurrent) !== cornerKey(selectedBefore) && <div className="notice warning">양쪽 corner가 다릅니다. Power의 비교 가능성과 조건 차이 사유를 확인하세요. 같은 이름으로 조건을 추정하지 않습니다.</div>}
+      {selectedCurrent && selectedBefore && (isAreaOnlyUpload(selectedCurrent) || isAreaOnlyUpload(selectedBefore))
+        ? <div className="notice">Area 전용 실행이 포함되어 있어 Area·Vth·Drive 지표만 비교하며 Power는 제외됩니다.</div>
+        : selectedCurrent && selectedBefore && cornerKey(selectedCurrent) !== cornerKey(selectedBefore) && <div className="notice warning">양쪽 corner가 다릅니다. Power의 비교 가능성과 조건 차이 사유를 확인하세요. 같은 이름으로 조건을 추정하지 않습니다.</div>}
       <div className="comparison-actions" ref={resultTop}><div><h2 title="부모 값에는 자식이 포함됩니다. 행을 다시 합산하지 않습니다.">Instance {props.gateCount ? 'Gate Count' : 'Area'} · Power</h2></div>{props.unitSwitch}{(comparisonId || selectedCurrent) && <Button variant="ghost" size="sm" aria-expanded={setupOpen} onClick={() => setSetupOpen(value => !value)}>{setupOpen ? '실행 선택 접기' : '실행 선택 펼치기'}</Button>}{comparisonId ? <><Badge value={referenceComparison && detail?.comparison.state === 'completed' ? '조회 준비 완료' : detail?.comparison.state || 'loading'} /><Button variant="outline" onClick={() => { closeComparison(); setSetupOpen(true); setTriageItems([]) }}>현재 선택으로 돌아가기</Button><Button variant="outline" disabled={detailLoading} onClick={() => setDetailRefresh(value => value + 1)}><RefreshCw size={15} />결과 갱신</Button></> : <Button disabled={action.busy || !canCompare} onClick={() => action.run(compare)}><GitCompareArrows size={16} />비교 실행</Button>}</div>
       {!comparisonId && selectedCurrent && !selectedBefore && baseline?.status === 'available' && <p className="notice">기준 실행을 선택하지 않으면 현재 관측만 보존하고 비교 값은 unavailable로 남깁니다.</p>}
       {!comparisonId && mappingDraft.length > 0 && <p className="notice">작성 중인 대응 {mappingDraft.length.toLocaleString()}개를 저장한 뒤 비교를 실행하세요.</p>}

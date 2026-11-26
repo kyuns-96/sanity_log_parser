@@ -203,7 +203,12 @@ function formatCornerNumber(value: string | null | undefined, maxDecimals: numbe
   const trimmedFrac = rem.toString().padStart(maxDecimals, '0').replace(/0+$/, '')
   return `${sign}${whole}.${trimmedFrac}`
 }
-export function formatCornerLabel(upload: Pick<Upload, 'process_label' | 'voltage_v' | 'temp_c' | 'pex'>): string {
+export function isAreaOnlyUpload(upload: Pick<Upload, 'process_label' | 'voltage_v' | 'temp_c' | 'pex'> & { input_contract?: unknown }): boolean {
+  const contract = object(upload.input_contract)
+  if (contract.has_power === false) return true
+  return !upload.process_label?.trim() && !upload.voltage_v?.trim() && !upload.temp_c?.trim() && !upload.pex?.trim()
+}
+export function formatCornerLabel(upload: Pick<Upload, 'process_label' | 'voltage_v' | 'temp_c' | 'pex'> & { input_contract?: unknown }): string {
   const voltage = formatCornerNumber(upload.voltage_v, 3)
   const temp = formatCornerNumber(upload.temp_c, 1)
   const parts = [
@@ -212,7 +217,8 @@ export function formatCornerLabel(upload: Pick<Upload, 'process_label' | 'voltag
     temp ? `${temp}°C` : '',
     upload.pex?.trim() || '',
   ].filter(Boolean)
-  return parts.length ? parts.join(' / ') : '코너 미기재'
+  if (parts.length) return parts.join(' / ')
+  return 'Area 전용'
 }
 export const uploadName = (upload: Upload) => `${upload.execution_name || upload.original_filename || upload.filename || upload.id} · ${formatCornerLabel(upload)} · ${upload.id.slice(0, 8)}`
 // Match the backend's Decimal identity without converting PVT values to Number.

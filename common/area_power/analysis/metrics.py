@@ -78,6 +78,8 @@ def comparability(metric, group, cm, bm, current, baseline, cu, bu):
     if baseline is None or bu is None:
         return 'unavailable', 'baseline_missing'
     if metric in POWER:
+        if not getattr(current, 'has_power', True) or not getattr(baseline, 'has_power', True):
+            return 'unavailable', 'area_only_no_power'
         if not current.conditions_complete or not baseline.conditions_complete:
             return 'contextual', 'power_conditions_incomplete'
         if bytes(current.condition_key) != bytes(baseline.condition_key):
@@ -172,5 +174,5 @@ def evaluate_metric(metric, group, current, baseline, cm, bm, cu, bu, policy, pa
     candidate = state != 'comparable' or tiny or evidence['data_quality'] or evidence['new_nonzero_value'] or any(evidence[k] for k in ('threshold_exceeded', 'operating_limit_exceeded'))
     if metric in DISTRIBUTIONS and state == 'comparable':
         candidate = False
-    unit = 'mW' if metric in POWER else ('%' if metric.endswith('_pct') else (cm.area_unit if metric.endswith('_area') else ('ratio' if metric in DISTRIBUTIONS else 'cells')))
+    unit = 'mW' if metric in POWER else ('%' if metric.endswith('_pct') else ((cm.area_unit or 'um2') if metric.endswith('_area') else ('ratio' if metric in DISTRIBUTIONS else 'cells')))
     return {'group_id': group.id, 'target_id': group.target_id, 'baseline_paths': group.baseline_paths, 'current_paths': group.current_paths, 'hier_name': ' + '.join(group.current_paths or group.baseline_paths) or 'Unresolved target', 'metric': metric, 'unit': unit, 'baseline': b, 'current': c, 'delta': delta, 'relative_change_pct': relative, 'pct_point_change': pp, 'baseline_numerator': bn, 'baseline_denominator': bd, 'current_numerator': cn, 'current_denominator': cd, 'comparability': state, 'reason': reason, 'is_candidate': bool(candidate), 'evidence': evidence, 'power_pair': pair}

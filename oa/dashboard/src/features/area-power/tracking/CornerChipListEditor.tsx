@@ -47,6 +47,15 @@ export function CornerChipListEditor({
     setPex('')
   }
 
+  const hasAreaOnly = corners.some(c => c.process_label.trim().toUpperCase() === 'AREA_ONLY')
+  function addAreaOnly() {
+    if (hasAreaOnly) return
+    onChange([
+      ...corners,
+      { label: 'Area 전용', process_label: 'AREA_ONLY', voltage_v: null, temp_c: null, pex: null },
+    ])
+  }
+
   return (
     <>
       <div className="tracking-chip-list">
@@ -82,6 +91,11 @@ export function CornerChipListEditor({
           <Button variant="outline" size="sm" onClick={addCorner}>
             <Plus size={14} />추가
           </Button>
+          {!hasAreaOnly && (
+            <Button variant="outline" size="sm" onClick={addAreaOnly} title="코너·Power 없이 Area/Vth/Drive만 추적합니다.">
+              <Plus size={14} />Area 전용
+            </Button>
+          )}
           {allowPvtDetail && (
             <button type="button" className="tracking-link-inline" onClick={() => setShowDetail(v => !v)}>
               {showDetail ? '세부 조건 숨기기' : '전압·온도 지정'}

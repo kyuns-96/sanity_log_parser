@@ -24,6 +24,7 @@ FLAGS = {
     "removed_in_current": "현재 실행에 없음",
 }
 EXCLUSIONS = {
+    "area_only_no_power": "Area 전용 자료(Power 미포함)",
     "corner_different": "양쪽 corner가 다름",
     "analysis_conditions_different": "분석 조건이 다름",
     "area_unit_different": "area 단위가 다름",

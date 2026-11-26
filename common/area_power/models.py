@@ -1,5 +1,7 @@
 from decimal import Decimal, InvalidOperation
+import re
 from typing import Literal
+import unicodedata
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -10,6 +12,33 @@ CALCULATION_CONTRACT = 'logic-area-v1'
 # Unmapped rows of different projects correspond by path relative to each
 # design root. Absent on comparisons frozen before this policy existed.
 CORRESPONDENCE_POLICY = 'design-root-relative-v1'
+FIXED_AREA_UNIT = 'um2'
+_UNKNOWN_AREA_UNITS = frozenset({'', 'unknown', 'unavailable', 'unspecified', 'unconfirmed', 'none', 'null', 'na', 'n/a', '-'})
+_UM2_ALIASES = frozenset({
+    'um2', 'squm', 'squareum', 'um*um', 'micron2', 'microns2',
+    'squaremicron', 'squaremicrons', 'squaremicrometer', 'squaremicrometers',
+    'squaremicrometre', 'squaremicrometres',
+})
+
+
+def normalize_area_unit(value: str | None) -> str:
+    """Normalize Area unit; Design Atlas fixes standard Area exports to um2 (µm²)."""
+    if value is None:
+        return FIXED_AREA_UNIT
+    stripped = value.strip()
+    if stripped.lower() in _UNKNOWN_AREA_UNITS:
+        return FIXED_AREA_UNIT
+    compact = (
+        unicodedata.normalize('NFKC', stripped)
+        .lower()
+        .replace('μ', 'u')
+        .replace('µ', 'u')
+        .replace('²', '2')
+    )
+    compact = re.sub(r'[\s^_-]+', '', compact)
+    if compact in _UM2_ALIASES:
+        return FIXED_AREA_UNIT
+    return stripped
 
 
 class ContractModel(BaseModel):
@@ -35,7 +64,7 @@ class UploadMetadata(ContractModel):
     execution_name: str = Field(min_length=1, max_length=500)
     design_stage: str = Field(min_length=1, max_length=500)
     hierarchy_separator: str = Field(min_length=1, max_length=8)
-    area_unit: str | None = None
+    area_unit: str | None = FIXED_AREA_UNIT
     area_basis: str | None = None
     library: str | None = None
     classification: str | None = None
@@ -43,6 +72,13 @@ class UploadMetadata(ContractModel):
     analysis_conditions: dict = Field(default_factory=dict)
     pct_tolerance: Decimal | None = None
     power_tolerance_mw: Decimal | None = None
+
+    @field_validator("area_unit")
+    @classmethod
+    def fixed_area_unit(cls, value):
+        if value is not None and any(char in value for char in ("\x00", "\n", "\r")):
+            raise ValueError("A nonblank single-line value is required")
+        return normalize_area_unit(value)
 
     @field_validator("eco_num")
     @classmethod

@@ -96,9 +96,12 @@ def side_context(view, current_process=None, baseline_process=None) -> dict:
         return {'same_project': False, 'same_corner': False, 'area': dict(missing), 'power': dict(missing), 'library': 'unknown'}
     same_project = str(cu['project_id']) == str(bu['project_id'])
     same_corner = _corner(cu) == _corner(bu)
+    area_only_pair = not (getattr(view.current, 'has_power', True) and getattr(view.baseline, 'has_power', True))
     complete = bool(view.current.conditions_complete and view.baseline.conditions_complete)
     same_key = bytes(view.current.condition_key) == bytes(view.baseline.condition_key)
-    if not same_corner:
+    if area_only_pair:
+        power = {'analyzed': False, 'unconfirmed': False, 'reason': 'area_only_no_power'}
+    elif not same_corner:
         power = {'analyzed': False, 'unconfirmed': False, 'reason': 'corner_different'}
     elif complete and not same_key:
         power = {'analyzed': False, 'unconfirmed': False, 'reason': 'analysis_conditions_different'}
@@ -112,7 +115,7 @@ def side_context(view, current_process=None, baseline_process=None) -> dict:
                           or getattr(cm, key) != getattr(bm, key) for key in checks)
         area = {'analyzed': True, 'unconfirmed': unconfirmed, 'reason': None}
     left, right = (current_process or '').strip(), (baseline_process or '').strip()
-    if not same_corner:
+    if not area_only_pair and not same_corner:
         library = 'different'
     elif same_project:
         library = 'same'

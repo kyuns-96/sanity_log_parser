@@ -95,16 +95,23 @@ function shown(row: BrowserRow, metric: MetricDef, field: Field) {
   return metric.ratio ? formatPercent(raw) : amount(raw, metric)
 }
 
+function isAreaOnlyPowerRow(row: BrowserRow) {
+  return text(row.result?.metrics.pwr_all_total_mw?.reason) === 'area_only_no_power'
+}
+
 function reasonOf(row: BrowserRow, hasResult: boolean) {
-  const notes = ['total_area', 'pwr_all_total_mw'].map(metric => {
+  const keys = isAreaOnlyPowerRow(row) ? ['total_area'] : ['total_area', 'pwr_all_total_mw']
+  const notes = keys.map(metric => {
     const reason = text(row.result?.metrics[metric]?.reason).replace(/^policy_unconfigured( · 정상 판정 아님)?$/, '')
     return reason || (!row.result ? hasResult ? '결과 없음' : row.baselinePaths.length && row.currentPaths.length ? '비교 실행 전' : '대응 미지정' : '')
   })
+  if (notes.length === 1) return notes[0]
   return notes[0] === notes[1] ? notes[0] : notes.map((note, index) => note && `${index ? 'Power' : 'Area'} ${note}`).filter(Boolean).join(' · ')
 }
 
 function overall(row: BrowserRow) {
-  const states = ['total_area', 'pwr_all_total_mw'].map(metric => text(row.result?.metrics[metric]?.comparability) || 'unavailable')
+  const keys = isAreaOnlyPowerRow(row) ? ['total_area'] : ['total_area', 'pwr_all_total_mw']
+  const states = keys.map(metric => text(row.result?.metrics[metric]?.comparability) || 'unavailable')
   return states.includes('unavailable') ? 'unavailable' : states.includes('contextual') ? 'contextual' : 'comparable'
 }
 
@@ -125,7 +132,8 @@ function diffOf(row: BrowserRow, fallback?: string): Diff {
 }
 
 function unchanged(row: BrowserRow) {
-  return !!row.result && overall(row) === 'comparable' && ['total_area', 'pwr_all_total_mw'].every(metric => sign(value(row, metric, 'delta')) === 0)
+  const keys = isAreaOnlyPowerRow(row) ? ['total_area'] : ['total_area', 'pwr_all_total_mw']
+  return !!row.result && overall(row) === 'comparable' && keys.every(metric => sign(value(row, metric, 'delta')) === 0)
 }
 
 export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, hasResult, separator, columns, onColumns, minArea, onMinArea, labels, gateBases, unitSwitch, marks, locate }: {

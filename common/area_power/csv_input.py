@@ -41,12 +41,12 @@ POWER_IDENTITIES = tuple(
 )
 STRUCTURE_FIELDS = ("hier_name", "level") + COUNT_FIELDS + AREA_FIELDS + PCT_FIELDS[1:]
 LEGACY_STRUCTURE_FIELDS = ("hier_name", "level") + LEGACY_COUNT_FIELDS + AREA_FIELDS + LEGACY_PCT_FIELDS[1:]
-HEADERS = ("hier_name", "level", "process_label", "voltage_v", "temp_c", "pex") + tuple(
-    field for g in CELL_GROUPS for field in (f"{g}_cells", f"{g}_area")
-) + PCT_FIELDS + tuple(f"{g}_cnt" for g in VTH_NAMES + DRIVE_NAMES) + POWER_FIELDS
-LEGACY_HEADERS = ("hier_name", "level", "process_label", "voltage_v", "temp_c", "pex") + tuple(
-    field for g in CELL_GROUPS for field in (f"{g}_cells", f"{g}_area")
-) + LEGACY_PCT_FIELDS + tuple(f"{g}_cnt" for g in VTH_NAMES + LEGACY_DRIVE_NAMES) + POWER_FIELDS
+CORNER_FIELDS = ("process_label", "voltage_v", "temp_c", "pex")
+_AREA_COLUMNS = tuple(field for g in CELL_GROUPS for field in (f"{g}_cells", f"{g}_area"))
+AREA_ONLY_HEADERS = ("hier_name", "level") + _AREA_COLUMNS + PCT_FIELDS + tuple(f"{g}_cnt" for g in VTH_NAMES + DRIVE_NAMES)
+LEGACY_AREA_ONLY_HEADERS = ("hier_name", "level") + _AREA_COLUMNS + LEGACY_PCT_FIELDS + tuple(f"{g}_cnt" for g in VTH_NAMES + LEGACY_DRIVE_NAMES)
+HEADERS = ("hier_name", "level") + CORNER_FIELDS + _AREA_COLUMNS + PCT_FIELDS + tuple(f"{g}_cnt" for g in VTH_NAMES + DRIVE_NAMES) + POWER_FIELDS
+LEGACY_HEADERS = ("hier_name", "level") + CORNER_FIELDS + _AREA_COLUMNS + LEGACY_PCT_FIELDS + tuple(f"{g}_cnt" for g in VTH_NAMES + LEGACY_DRIVE_NAMES) + POWER_FIELDS
 _NUMERIC = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?\Z")
 
 
@@ -65,6 +65,7 @@ class ParsedCSV:
     input_contract: dict[str, Any]
     validation_report: dict[str, Any]
     row_count: int
+    has_power: bool = True
 
 
 # Values a comparison view may show besides area and power. They are kept as
@@ -94,6 +95,9 @@ class ObservedRow(dict):
         for key, raw in values.items():
             if key in PCT_FIELDS:
                 continue
+            if not raw and key in POWER_FIELDS:
+                self[key] = None
+                continue
             self[key] = int(Decimal(raw)) if key.endswith("_cells") else Decimal(raw)
         for key in PCT_FIELDS[1:]:
             self[key] = Decimal(values[key]) if values[key] and self["logic_area"] else None
@@ -119,6 +123,7 @@ class ObservedCSV:
     numeric_highest: int
     numeric_lowest: int
     root_path: str
+    has_power: bool = True
 
 
 def _invalid(message: str) -> None:
@@ -226,9 +231,13 @@ def _unpack(data: bytes, maximum: int) -> tuple[bytes, bytes]:
 
 
 def _schema_fields(header: list[str]):
-    if len(header) == len(HEADERS):
-        return DRIVE_NAMES, COUNT_FIELDS, PCT_FIELDS, STRUCTURE_FIELDS
-    return LEGACY_DRIVE_NAMES, LEGACY_COUNT_FIELDS, LEGACY_PCT_FIELDS, LEGACY_STRUCTURE_FIELDS
+    header_set = set(header)
+    is_full_drive = "drv_D0P5_cnt" in header_set
+    has_corner_cols = "process_label" in header_set
+    has_power_cols = "pwr_all_total_mw" in header_set
+    if is_full_drive:
+        return DRIVE_NAMES, COUNT_FIELDS, PCT_FIELDS, STRUCTURE_FIELDS, has_corner_cols, has_power_cols
+    return LEGACY_DRIVE_NAMES, LEGACY_COUNT_FIELDS, LEGACY_PCT_FIELDS, LEGACY_STRUCTURE_FIELDS, has_corner_cols, has_power_cols
 
 
 def _csv_reader(original: bytes):
@@ -244,14 +253,12 @@ def _csv_reader(original: bytes):
     if len(header) != len(set(header)):
         _invalid("CSV contains duplicate column names.")
     header_set = set(header)
-    if not (
-        (len(header) == len(HEADERS) and header_set == set(HEADERS))
-        or (len(header) == len(LEGACY_HEADERS) and header_set == set(LEGACY_HEADERS))
-    ):
+    valid_schemas = (HEADERS, LEGACY_HEADERS, AREA_ONLY_HEADERS, LEGACY_AREA_ONLY_HEADERS)
+    if not any(len(header) == len(schema) and header_set == set(schema) for schema in valid_schemas):
         _invalid(
-            f"CSV must contain exactly the {len(HEADERS)} documented column names "
-            f"(or legacy {len(LEGACY_HEADERS)}-column format without drv_D0P5/drv_D0P7), "
-            "without missing or unknown columns."
+            f"CSV must contain the {len(HEADERS)} documented Area/Power columns, "
+            f"the {len(AREA_ONLY_HEADERS)}-column Area-only format (without corner/power columns), "
+            f"or the corresponding legacy format without drv_D0P5/drv_D0P7."
         )
     return reader, header
 
@@ -275,9 +282,10 @@ def parse_hierarchy(
     if len(original) != original_byte_length or sha256(original).digest() != bytes(original_sha256):
         raise DomainError("Stored upload no longer matches validated snapshot", code="stored_upload_mismatch")
     reader, header = _csv_reader(original)
-    path_column, depth_column, area_column, logic_area_column, power_column = (
-        header.index(key) for key in ("hier_name", "level", "total_area", "logic_area", "pwr_all_total_mw")
+    path_column, depth_column, area_column, logic_area_column = (
+        header.index(key) for key in ("hier_name", "level", "total_area", "logic_area")
     )
+    power_column = header.index("pwr_all_total_mw") if "pwr_all_total_mw" in header else None
     separator = metadata.hierarchy_separator
     paths: set[str] = set()
     root_paths: list[str] = []
@@ -307,7 +315,7 @@ def parse_hierarchy(
             items.append({
                 "path": path, "parent_path": path.rsplit(separator, 1)[0] if depth else None,
                 "depth": depth, "area": area, "logic_area": _number(fields[logic_area_column], "logic_area", line),
-                "power_mw": _number(fields[power_column], "pwr_all_total_mw", line),
+                "power_mw": _number(fields[power_column], "pwr_all_total_mw", line, optional=True) if power_column is not None else None,
             })
             paths.add(path)
     except csv.Error as exc:
@@ -341,7 +349,7 @@ def read_observations(upload, metadata: UploadMetadata, maximum: int) -> Observe
     if len(original) != upload['original_byte_length'] or sha256(original).digest() != bytes(upload['original_sha256']):
         raise DomainError('Stored upload no longer matches validated snapshot', code='stored_upload_mismatch')
     reader, header = _csv_reader(original)
-    _, active_count_fields, active_pct_fields, _ = _schema_fields(header)
+    _, active_count_fields, active_pct_fields, _, has_corner_cols, has_power_cols = _schema_fields(header)
     rows, roots = {}, []
     numeric_highest, numeric_lowest = 0, 0
     # Integers have exponent 0 and adjusted() = digits - 1, so only the largest
@@ -349,13 +357,21 @@ def read_observations(upload, metadata: UploadMetadata, maximum: int) -> Observe
     largest_integer = 0
     separator = metadata.hierarchy_separator
     corner = None
+    has_power = False
     try:
         for fields in reader:
             if len(fields) != len(header):
                 _invalid(f'Row {reader.line_num}: column count does not match the header.')
             raw = dict(zip(header, fields))
             path = raw['hier_name']
-            values = {key: Decimal(raw[key].strip()) for key in active_count_fields + AREA_FIELDS + POWER_FIELDS + ('level',)}
+            values: dict[str, Any] = {key: Decimal(raw[key].strip()) for key in active_count_fields + AREA_FIELDS + ('level',)}
+            for key in POWER_FIELDS:
+                cell = raw.get(key, '').strip() if has_power_cols else ''
+                if cell:
+                    values[key] = Decimal(cell)
+                    has_power = True
+                else:
+                    values[key] = None
             for key in active_count_fields + ('level',):
                 values[key] = int(values[key])
             if (not path or not path.strip() or any(not part for part in path.split(separator))
@@ -364,12 +380,15 @@ def read_observations(upload, metadata: UploadMetadata, maximum: int) -> Observe
             if values['level'] == 0:
                 roots.append(path)
             reported = {key: Decimal(raw[key].strip()) if raw[key].strip() else None for key in active_pct_fields}
-            this_corner = {
-                'process_label': raw['process_label'] if raw['process_label'].strip() else None,
-                'voltage_v': Decimal(raw['voltage_v'].strip()) if raw['voltage_v'].strip() else None,
-                'temp_c': Decimal(raw['temp_c'].strip()) if raw['temp_c'].strip() else None,
-                'pex': raw['pex'] if raw['pex'].strip() else None,
-            }
+            if has_corner_cols:
+                this_corner = {
+                    'process_label': raw['process_label'] if raw['process_label'].strip() else None,
+                    'voltage_v': Decimal(raw['voltage_v'].strip()) if raw['voltage_v'].strip() else None,
+                    'temp_c': Decimal(raw['temp_c'].strip()) if raw['temp_c'].strip() else None,
+                    'pex': raw['pex'] if raw['pex'].strip() else None,
+                }
+            else:
+                this_corner = {'process_label': None, 'voltage_v': None, 'temp_c': None, 'pex': None}
             if corner is None:
                 corner = this_corner
             row = {'hier_name': path, **values, **this_corner}
@@ -407,17 +426,18 @@ def read_observations(upload, metadata: UploadMetadata, maximum: int) -> Observe
     key = digest(conditions)
     if key != bytes(upload['condition_key']):
         raise DomainError('Stored conditions no longer match validated snapshot', code='stored_upload_mismatch')
-    return ObservedCSV(rows, conditions, key, not missing, numeric_highest, numeric_lowest, roots[0])
+    return ObservedCSV(rows, conditions, key, has_power and not missing, numeric_highest, numeric_lowest, roots[0], has_power=has_power)
 
 
 def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompressed_bytes: int) -> ParsedCSV:
     """Validate a complete export. Compression is detected by magic, not filename."""
     original, compressed = _unpack(data, max_uncompressed_bytes)
     reader, header = _csv_reader(original)
-    active_drive_names, active_count_fields, active_pct_fields, active_structure_fields = _schema_fields(header)
+    active_drive_names, active_count_fields, active_pct_fields, active_structure_fields, has_corner_cols, has_power_cols = _schema_fields(header)
     rows: dict[str, dict[str, Any]] = {}
     root_paths: list[str] = []
     corner: dict[str, Any] | None = None
+    has_power: bool | None = None
     quality_totals = {"vth_undercoverage_rows": 0, "drive_undercoverage_rows": 0, "unavailable_ratio_count": 0}
     separator = metadata.hierarchy_separator
     try:
@@ -431,7 +451,22 @@ def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompre
                 _invalid(f"Row {line}: hierarchy path is empty or has an empty segment.")
             if path in rows:
                 _invalid(f"Row {line}: duplicate hierarchy path.")
-            values = {key: _number(raw[key], key, line) for key in active_count_fields + AREA_FIELDS + POWER_FIELDS + ("level",)}
+            values: dict[str, Any] = {key: _number(raw[key], key, line) for key in active_count_fields + AREA_FIELDS + ("level",)}
+            if has_power_cols:
+                power_vals = {key: _number(raw[key], key, line, optional=True) for key in POWER_FIELDS}
+                present_count = sum(v is not None for v in power_vals.values())
+                if 0 < present_count < len(POWER_FIELDS):
+                    _invalid(f"Row {line}: power columns must be either all populated or all blank for an Area-only upload.")
+                row_has_power = present_count == len(POWER_FIELDS)
+                values.update(power_vals)
+            else:
+                row_has_power = False
+                for key in POWER_FIELDS:
+                    values[key] = None
+            if has_power is None:
+                has_power = row_has_power
+            elif row_has_power != has_power:
+                _invalid(f"Row {line}: cannot mix Area-only rows and Power rows in the same CSV.")
             reported = {key: _number(raw[key], key, line, optional=True) for key in active_pct_fields}
             for key in active_count_fields + ("level",):
                 value = values[key]
@@ -441,12 +476,15 @@ def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompre
             for key in AREA_FIELDS:
                 if values[key] < 0:
                     _invalid(f"Row {line}: {key} must be nonnegative.")
-            this_corner = {
-                "process_label": raw["process_label"] if raw["process_label"].strip() else None,
-                "voltage_v": _number(raw["voltage_v"], "voltage_v", line, optional=True),
-                "temp_c": _number(raw["temp_c"], "temp_c", line, optional=True),
-                "pex": raw["pex"] if raw["pex"].strip() else None,
-            }
+            if has_corner_cols:
+                this_corner = {
+                    "process_label": raw["process_label"] if raw["process_label"].strip() else None,
+                    "voltage_v": _number(raw["voltage_v"], "voltage_v", line, optional=True),
+                    "temp_c": _number(raw["temp_c"], "temp_c", line, optional=True),
+                    "pex": raw["pex"] if raw["pex"].strip() else None,
+                }
+            else:
+                this_corner = {"process_label": None, "voltage_v": None, "temp_c": None, "pex": None}
             if corner is None:
                 corner = this_corner
             elif this_corner != corner:
@@ -494,15 +532,16 @@ def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompre
                     tolerance = sum((metadata.pct_tolerance if metadata.pct_tolerance is not None else _half_unit(pct) for pct in percentages if pct is not None), Decimal(0))
                     if sum((pct for pct in percentages if pct is not None), Decimal(0)) > Decimal(100) + tolerance:
                         _invalid(f"Row {line}: classified area percentages exceed 100 beyond report precision.")
-                power_half_units = {
-                    key: _half_unit(values[key]) for key in POWER_FIELDS
-                } if metadata.power_tolerance_mw is None else None
-                for lhs, rhs in POWER_IDENTITIES:
-                    tolerance = metadata.power_tolerance_mw
-                    if tolerance is None:
-                        tolerance = sum((power_half_units[key] for key in (lhs, *rhs)), Decimal(0))
-                    if abs(values[lhs] - sum((values[key] for key in rhs), Decimal(0))) > tolerance:
-                        _invalid(f"Row {line}: power identity for {lhs} exceeds report-rounding tolerance.")
+                if row_has_power:
+                    power_half_units = {
+                        key: _half_unit(values[key]) for key in POWER_FIELDS
+                    } if metadata.power_tolerance_mw is None else None
+                    for lhs, rhs in POWER_IDENTITIES:
+                        tolerance = metadata.power_tolerance_mw
+                        if tolerance is None:
+                            tolerance = sum((power_half_units[key] for key in (lhs, *rhs)), Decimal(0))
+                        if abs(values[lhs] - sum((values[key] for key in rhs), Decimal(0))) > tolerance:
+                            _invalid(f"Row {line}: power identity for {lhs} exceeds report-rounding tolerance.")
                 row["quality"] = {"vth_unclassified_cnt": logic - vt_sum, "drive_unclassified_cnt": logic - drive_sum, "unavailable_ratios": unavailable}
                 row["reported_pct"] = reported
                 quality_totals["vth_undercoverage_rows"] += int(vt_sum < logic)
@@ -516,6 +555,7 @@ def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompre
     root_path = root_paths[0]
     if any(path != root_path and not path.startswith(root_path + separator) for path in rows):
         _invalid("Every hierarchy path must belong to the single design root.")
+    has_power = bool(has_power)
     conditions, missing = _conditions(corner, metadata)
     root = rows[root_path]
     root_summary = {"hier_name": root_path, "level": 0, "metrics": {key: root[key] for key in active_count_fields + AREA_FIELDS + active_pct_fields + POWER_FIELDS}, "quality": root["quality"]}
@@ -523,10 +563,16 @@ def parse_csv(data: bytes, filename: str, metadata: UploadMetadata, max_uncompre
     contract = {
         "version": 1, "metadata": metadata.model_dump(mode="python"),
         "encoding": "utf-8-sig", "headers": header,
+        "has_power": has_power, "data_mode": "area_power" if has_power else "area_only",
         "percentage_basis": "logic_area", "percentage_scale": 100, "percentage_rounding": "explicit_tolerance" if metadata.pct_tolerance is not None else "half_last_reported_digit",
         "power_rounding": "explicit_identity_tolerance_mw" if metadata.power_tolerance_mw is not None else "sum_of_half_last_reported_digits",
         "structural_metadata": structural_metadata(metadata),
         "required_analysis_conditions": ["mode", "clocks", "activity", "rc", "tool", "voltage_domains"],
     }
-    report = {"valid": True, "row_count": len(rows), **quality_totals, "missing_conditions": missing, "quality": {path: row["quality"] for path, row in rows.items() if row["quality"]["vth_unclassified_cnt"] or row["quality"]["drive_unclassified_cnt"] or row["quality"]["unavailable_ratios"]}}
-    return ParsedCSV(rows, root_path, root_summary, compressed, original, digest(structure), corner, conditions, digest(conditions), not missing, contract, report, len(rows))
+    report = {
+        "valid": True, "row_count": len(rows), "has_power": has_power,
+        "data_mode": "area_power" if has_power else "area_only",
+        **quality_totals, "missing_conditions": missing if has_power else [],
+        "quality": {path: row["quality"] for path, row in rows.items() if row["quality"]["vth_unclassified_cnt"] or row["quality"]["drive_unclassified_cnt"] or row["quality"]["unavailable_ratios"]},
+    }
+    return ParsedCSV(rows, root_path, root_summary, compressed, original, digest(structure), corner, conditions, digest(conditions), has_power and not missing, contract, report, len(rows), has_power=has_power)

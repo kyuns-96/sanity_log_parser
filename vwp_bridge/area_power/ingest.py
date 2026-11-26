@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 from common.area_power.errors import DomainError
 from common.area_power.jsonutil import digest
-from common.area_power.models import UploadMetadata
+from common.area_power.models import FIXED_AREA_UNIT, UploadMetadata
 from common.area_power.csv_input import parse_csv, structural_metadata, structural_rows
 from .tracking.slots import on_upload_failed, on_upload_ready
 
@@ -80,7 +80,11 @@ def ingest_upload(db: Any, settings: Any, data: bytes, filename: str, metadata: 
         expected_metadata = structural_metadata(metadata)
         if structural_metadata(original_metadata) != expected_metadata:
             raise DomainError("Snapshot reuse requires identical structural metadata.", code="snapshot_conflict", status_code=409)
-        if any(observed_snapshot["payload"].get(key) != value for key, value in expected_metadata.items()):
+        if any(
+            observed_snapshot["payload"].get(key) != value
+            and not (key == "area_unit" and observed_snapshot["payload"].get(key) is None and value == FIXED_AREA_UNIT)
+            for key, value in expected_metadata.items()
+        ):
             raise DomainError("Snapshot structural metadata is inconsistent with its source.", code="snapshot_conflict", status_code=409)
         # Digest is an accelerator/integrity check, never the sole equality test.
         if existing.structure_digest != parsed.structure_digest or structural_rows(existing) != structural_rows(parsed):

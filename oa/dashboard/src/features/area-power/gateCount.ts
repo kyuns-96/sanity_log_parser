@@ -42,9 +42,9 @@ export function gateBasis(upload: Upload | undefined, process: string | null | u
   const notes = [procName || '프로젝트 공정 미지정']
   if (definition && unitArea && unitArea.n > 0n) notes.push(`NAND2_D1 ${definition.unit_area} µm²`)
   else if (procName) notes.push('Unit area 미등록')
-  if (!reported) notes.push('Area 단위 미입력 → µm² 적용')
+  if (!reported || unit === 'um2') notes.push('Area 단위 µm²')
   else if (!scale) notes.push(`Area 단위 ${reported} 환산 불가`)
-  else if (unit !== 'um2') notes.push(`원본 Area 단위 ${reported}`)
+  else notes.push(`원본 Area 단위 ${reported}`)
   const factor = scale && unitArea && unitArea.n > 0n ? divide(scale, unitArea) : null
   return { factor, note: notes.join(' · ') }
 }
