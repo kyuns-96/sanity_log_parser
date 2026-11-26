@@ -1,22 +1,19 @@
 """Bounded OpenAI-compatible HTTP on VWP, using only local profile credentials."""
-import logging
-import ssl
-import time
-from urllib.parse import urlsplit
-
-import httpx
-
+from common.sanity_ai_cache import validate_wire_cache
+from common.sanity_ai_http import (
+    build_auth_headers,
+    build_tls_context,
+    stream_openai_post,
+    unknown_outcome_error,
+)
+from common.sanity_ai_reasoning import validate_wire_reasoning
 from common.sanity_common import ReviewError
 from common.sanity_privacy import SecretGuard
 from common.sanity_vwp_ai import require, strict_json
-from common.sanity_ai_reasoning import validate_wire_reasoning
-from common.sanity_ai_cache import validate_wire_cache
 
 
 def _unknown(reason):
-    error = ReviewError("AI_OUTCOME_UNKNOWN", "VWP model completion is unknown")
-    error.unknown_reason = reason
-    return error
+    return unknown_outcome_error(reason, "VWP model completion is unknown")
 
 
 def validate_body(raw, profile):
@@ -68,77 +65,41 @@ def invoke(raw, profile, *, timeout, max_output_bytes, transport=None,observer=N
         raise
 
 
-def _invoke(raw, profile, *, timeout, max_output_bytes, transport,observer,attempt):
+def _invoke(raw, profile, *, timeout, max_output_bytes, transport, observer, attempt):
     validate_body(raw, profile)
-    headers = {"Content-Type":"application/json", "Accept":"application/json", "Accept-Encoding":"identity"}
-    if profile["auth_mode"] == "x_client_api_key":
-        headers["x-client-api-key"] = profile["token"]
-    else:
-        headers["Authorization"] = "Bearer " + profile["token"]
-        if profile["auth_mode"] == "bearer_x_client":
-            headers["x-client-api-key"] = profile["client_api_key"]
-    try:
-        uses_tls = any(urlsplit(endpoint).scheme == "https" for endpoint in
-                       (profile["endpoint"], profile["fallback_endpoint"]) if endpoint)
-        tls = ssl.create_default_context(cafile=profile["ca_path"] or None) if uses_tls else True
-    except (ValueError, OSError, ssl.SSLError):
-        raise ReviewError("AI_VWP_PROFILE_CONFIG", "Cannot load VWP model TLS trust") from None
-    for name in ("httpx", "httpcore", *list(logging.Logger.manager.loggerDict)):
-        if name in ("httpx", "httpcore") or name.startswith(("httpx.", "httpcore.")):
-            logging.getLogger(name).setLevel(logging.CRITICAL + 1)
+    headers = build_auth_headers(
+        profile["auth_mode"],
+        profile["token"],
+        profile["client_api_key"] if profile["auth_mode"] == "bearer_x_client" else "",
+    )
+    tls = build_tls_context(
+        (profile["endpoint"], profile["fallback_endpoint"]),
+        profile["ca_path"],
+        error_code="AI_VWP_PROFILE_CONFIG",
+        message="Cannot load VWP model TLS trust",
+    )
     limit = min(profile["max_output_bytes"], max_output_bytes)
     timeout = min(profile["timeout"], timeout)
-    started = time.monotonic()
-    endpoints = [("primary", profile["endpoint"])]
-    if profile["fallback_endpoint"]:
-        endpoints.append(("fallback", profile["fallback_endpoint"]))
-    attempted = []
-    for role, endpoint in endpoints:
-        remaining = timeout - (time.monotonic() - started)
-        require(remaining > 0, "AI_CONNECT_FAILED")
-        attempted.append(role)
-        response_started = False
-        try:
-            budget = httpx.Timeout(remaining, connect=remaining / 2) if len(endpoints) == 2 and role == "primary" else remaining
-            with httpx.Client(timeout=budget, trust_env=False, follow_redirects=False, verify=tls, transport=transport) as client:
-                if observer:observer("SENDING")
-                attempt["model_called"]=None
-                with client.stream("POST", endpoint, headers=headers, content=raw) as response:
-                    response_started = True
-                    attempt["model_called"]=True
-                    attempt["http_status"]=response.status_code
-                    retry_after=response.headers.get("Retry-After","")
-                    if len(retry_after)<=10 and retry_after.isascii() and retry_after.isdecimal():
-                        attempt["retry_after_seconds"]=min(300,int(retry_after))
-                    if observer:observer("SERVER_RESPONDED")
-                    require(response.status_code == 200, "AI_AUTH_FAILED" if response.status_code == 401 else "AI_CALL_FAILED")
-                    require(response.headers.get("content-encoding", "identity").lower() == "identity", "INVALID_AI_RESPONSE")
-                    body = bytearray()
-                    for chunk in response.iter_bytes():
-                        require(len(body) + len(chunk) <= limit, "AI_OUTPUT_LIMIT")
-                        if time.monotonic() - started > timeout:raise _unknown("RESPONSE_DEADLINE")
-                        body.extend(chunk)
-                    if time.monotonic() - started > timeout:raise _unknown("RESPONSE_DEADLINE")
-                    attempt["response_complete"]=True
-        except (httpx.ConnectError, httpx.ConnectTimeout):
-            if response_started:
-                raise _unknown("TRANSPORT_ERROR") from None
-            attempt["model_called"]=False
-            if role == endpoints[-1][0]:
-                raise ReviewError("AI_CONNECT_FAILED", "Cannot connect to the configured VWP model") from None
-            continue
-        except httpx.ReadTimeout:
-            attempt["model_called"]=None
-            raise _unknown("READ_TIMEOUT") from None
-        except httpx.WriteTimeout:
-            attempt["model_called"]=None
-            raise _unknown("WRITE_TIMEOUT") from None
-        except (httpx.HTTPError, ValueError, OSError):
-            attempt["model_called"]=None
-            raise _unknown("TRANSPORT_ERROR") from None
-        break
-    if observer:observer("RESPONSE_RECEIVED")
-    SecretGuard({"VWP_MODEL_SECRET":profile["token"], "VWP_CLIENT_SECRET":profile["client_api_key"],
-                 "VWP_ENDPOINT_SECRET":profile["endpoint"], "VWP_BACKUP_SECRET":profile["fallback_endpoint"]}).ensure_public(
-                     strict_json(bytes(body), limit))
-    return bytes(body), {"endpoint":role, "attempted_endpoints":attempted}
+    body, routing = stream_openai_post(
+        raw,
+        headers,
+        endpoint=profile["endpoint"],
+        fallback_endpoint=profile["fallback_endpoint"],
+        timeout=timeout,
+        max_output_bytes=limit,
+        tls=tls,
+        transport=transport,
+        observer=observer,
+        attempt=attempt,
+        auth_401=True,
+        sending_model_called=None,
+        unknown_model_called=None,
+        label="VWP model",
+    )
+    SecretGuard({
+        "VWP_MODEL_SECRET": profile["token"],
+        "VWP_CLIENT_SECRET": profile["client_api_key"],
+        "VWP_ENDPOINT_SECRET": profile["endpoint"],
+        "VWP_BACKUP_SECRET": profile["fallback_endpoint"],
+    }).ensure_public(strict_json(body, limit))
+    return body, routing

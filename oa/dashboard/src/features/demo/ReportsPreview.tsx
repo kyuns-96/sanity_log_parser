@@ -1,8 +1,9 @@
 import { appUrl } from '@/lib/appUrl'
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDownToLine, ArrowUpRight, Check, ChevronLeft, ChevronRight, Database, FileSearch, Layers3, LoaderCircle, Search, ShieldCheck, Users, X } from 'lucide-react'
+import { ArrowDownToLine, ArrowUpRight, Check, ChevronRight, Database, FileSearch, Layers3, LoaderCircle, Search, ShieldCheck, Users, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { PaginationBar } from '@/components/ui/pagination-bar'
 import { WorkspaceBrand } from '@/components/layout/WorkspaceBrand'
 import { ColorModeControl } from '@/components/layout/ColorModeControl'
 import { Input } from '@/components/ui/input'
@@ -100,7 +101,7 @@ export default function ReportsPreview() {
         })}</div>
         <section className="rp-ledger" aria-label="초기 파서 검사 대장"><div className="rp-ledger-heading"><div><h2>검사 대장 <span>{number(filtered.length)}</span></h2><p>선택한 범위의 전체 항목을 검색합니다. 누락·미해석 항목도 대장에 남습니다.</p></div><div className="rp-filters"><div className="rp-search"><Search size={15} /><Input aria-label="검사 검색" placeholder="검사 ID, 규칙, 도구 검색" value={search} onChange={e => { setSearch(e.target.value); setPage(0) }} /></div><select className="studio-native-select" aria-label="도구 필터" value={family} onChange={e => { setFamily(e.target.value); setPage(0) }}><option value="all">모든 도구</option>{families.map(tool => <option key={tool} value={tool}>{label[tool]}</option>)}</select><select className="studio-native-select" aria-label="결과 필터" value={status} onChange={e => { setStatus(e.target.value); setPage(0) }}><option value="all">모든 결과</option>{['PASS', 'FAIL', 'UNKNOWN', 'MISSING'].map(value => <option key={value} value={value}>{label[value]}</option>)}</select></div></div>
           <div className="rp-table-wrap"><table><thead><tr><th>검사 항목</th><th>도구</th><th>블록</th><th>규칙</th><th>판정</th><th>파싱</th><th>근거</th><th /></tr></thead><tbody>{rows.map(item => <tr key={item.id}><td><strong>{item.id}</strong><small>NET_001 · chip_finish</small></td><td><span className={`rp-family rp-family-${item.family.toLowerCase()}`}>{label[item.family]}</span></td><td>{data.blocks.find(block => block.id === item.block_id)?.name}</td><td><code>{item.rule}</code></td><td><Result value={item.check_status} /></td><td><Result value={item.parse_status} /></td><td>{item.record_count}건</td><td><Button size="sm" variant="outline" aria-label={`${item.id} 보고서 보기`} onClick={() => setSelected(item)}><FileSearch size={14} />보고서</Button></td></tr>)}</tbody></table>{!rows.length && <div className="rp-empty">이 범위에서 조건에 맞는 검사 항목이 없습니다.</div>}</div>
-          <div className="pagination"><span>{filtered.length ? `${number(page * pageSize + 1)}–${number(Math.min((page + 1) * pageSize, filtered.length))}` : '0'} / {number(filtered.length)}</span><Button aria-label="이전 검사 페이지" size="icon" variant="outline" disabled={!page} onClick={() => setPage(page - 1)}><ChevronLeft /></Button><Button aria-label="다음 검사 페이지" size="icon" variant="outline" disabled={(page + 1) * pageSize >= filtered.length} onClick={() => setPage(page + 1)}><ChevronRight /></Button></div>
+          <PaginationBar offset={page * pageSize} limit={pageSize} total={filtered.length} label="검사" onChange={nextOffset => setPage(Math.floor(nextOffset / pageSize))} />
         </section>
         <section className="rp-sources"><div><h2>형식 참고 자료</h2><p>아래 공급자 문서를 공개 열람본으로 확인했습니다. 보고서 문구·객체·계정은 직접 만든 합성 데이터입니다.</p></div>{families.map(tool => <a key={tool} href={data.sources[tool].url} target="_blank" rel="noreferrer"><strong>{label[tool]}</strong><span>{data.sources[tool].title}</span><ArrowUpRight size={15} /></a>)}</section>
         <footer className="rp-footer"><span>읽기 전용 데이터 스냅샷 · 운영 SSO·프로젝트 권한·PoR 저장은 사내 후속 작업</span><span>DATASET {data.dataset_sha256.slice(0, 12)}</span></footer>

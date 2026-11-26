@@ -160,11 +160,14 @@ def structural_metadata(metadata: UploadMetadata) -> dict[str, Any]:
     )}
 
 
+UNKNOWN_METADATA_TOKENS = frozenset({"unknown", "unavailable", "unspecified", "n/a"})
+
+
 def _known(value: Any) -> bool:
     if value is None:
         return False
     if isinstance(value, str):
-        return bool(value.strip()) and value.strip().lower() not in {"unknown", "unavailable", "unspecified", "n/a"}
+        return bool(value.strip()) and value.strip().lower() not in UNKNOWN_METADATA_TOKENS
     if isinstance(value, dict):
         return bool(value) and all(_known(v) for v in value.values())
     if isinstance(value, (list, tuple)):

@@ -1,10 +1,11 @@
 import { appUrl } from '@/lib/appUrl'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Activity, ArrowDownToLine, ArrowUpRight, Box, Check, CheckCheck, ChevronLeft, ChevronRight, CircleHelp, ClipboardCheck, Clock3, FileCheck2, FileSearch, Files, Fingerprint, Inbox, Layers3, LoaderCircle, LockKeyhole, LogOut, Menu, MessageSquareMore, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, ShieldCheck, Sparkles, X } from 'lucide-react'
+import { Activity, ArrowDownToLine, ArrowUpRight, Box, Check, CheckCheck, ChevronRight, CircleHelp, ClipboardCheck, Clock3, FileCheck2, FileSearch, Files, Fingerprint, Inbox, Layers3, LoaderCircle, LockKeyhole, LogOut, Menu, MessageSquareMore, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, ShieldCheck, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
+import { PaginationBar } from '@/components/ui/pagination-bar'
 import { Textarea } from '@/components/ui/textarea'
 import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
@@ -42,12 +43,12 @@ const short = (value: string) => value.length > 28 ? value.slice(0, 25) + '…' 
 const textStatus: Record<string, string> = { PASS: 'PASS', FAIL: 'FAIL', UNKNOWN: '판정 보류', NOT_APPLICABLE: '해당 없음', COMPLETE: '완료', COMPLETED: '완료', INCOMPLETE: '미완료', MISSING: '누락', PARTIAL: '일부 해석', UNSUPPORTED: '미지원', NOT_RUN: '미실행', PENDING: '응답 대기', REQUESTED: '응답 대기', RECEIVED: '수신 완료', EXPIRED: '만료', NOT_CONFIGURED: '미설정' }
 function Status({ value }: { value: string }) { return <Badge variant="outline" className={`status status-${value.toLowerCase()}`}>{value === 'PASS' && <Check size={11} />}{textStatus[value] || value}</Badge> }
 function Empty({ children }: { children: React.ReactNode }) { return <div className="empty"><Files size={26} /><p>{children}</p></div> }
-function Pagination({ offset, total, limit, change }: { offset: number; total: number; limit: number; change: (offset: number) => void }) { return <div className="pagination"><span>{total ? `${number(offset + 1)}–${number(Math.min(offset + limit, total))}` : '0'} / {number(total)}</span><Button aria-label="이전 페이지" size="icon" variant="outline" disabled={offset === 0} onClick={() => change(Math.max(0, offset - limit))}><ChevronLeft /></Button><Button aria-label="다음 페이지" size="icon" variant="outline" disabled={offset + limit >= total} onClick={() => change(offset + limit)}><ChevronRight /></Button></div> }
+function Pagination({ offset, total, limit, change }: { offset: number; total: number; limit: number; change: (offset: number) => void }) { return <PaginationBar offset={offset} total={total} limit={limit} onChange={change} /> }
 
-export default function App({ routePage, initialAuth }: { routePage?: AccessPage; initialAuth?: DashboardAuthSnapshot } = {}) {
+export default function App({ routePage, initialAuth, initialLegacy = false, onExitLegacy }: { routePage?: AccessPage; initialAuth?: DashboardAuthSnapshot; initialLegacy?: boolean; onExitLegacy?: () => void } = {}) {
   const navigateDashboard = useDashboardNavigation()
   const atlas = useAtlas()
-  const [legacyReview, setLegacyReview] = useState(false)
+  const [legacyReview, setLegacyReview] = useState(initialLegacy)
   const [demo, setDemo] = useState(() => !atlas && new URLSearchParams(location.search).get('demo') === '1')
   const [demoDataset] = useState(() => new URLSearchParams(location.search).get('dataset'))
   const gcaDemo = demo && demoDataset === 'gca'
@@ -265,7 +266,7 @@ export default function App({ routePage, initialAuth }: { routePage?: AccessPage
     <div className="main-shell" style={atlas ? { marginLeft: 0, width: '100%' } : undefined} inert={!atlas && isMobile && mobile} aria-hidden={!atlas && isMobile && mobile}>{!atlas && <header className="topbar"><div className="breadcrumb"><button ref={triggerRef} className="mobile-menu" aria-label="메뉴 열기" aria-expanded={mobile} aria-controls="workspace-menu" onClick={() => setMobile(true)}><Menu /></button><span>Design Atlas</span><ChevronRight size={13} /><strong>로그 검토</strong></div><div className="topbar-right"><ColorModeControl />{!demo && readySSO && <PersonalAiToken key={session.user_id} />}<span className="connection"><span className="online-dot" />{demo ? '데모 환경' : '연결됨'}</span><Separator orientation="vertical" /><span className="avatar avatar-small">{session.reviewer.slice(0, 1)}</span></div></header>}
     <main className="workspace" id="workspace-main" tabIndex={-1}>
       {demo && <div className="demo-banner"><Sparkles size={15} /><span><strong>데모 모드</strong> · 예시 검사 결과를 보여줍니다. 변경은 현재 세션에만 적용됩니다.</span><nav className="demo-navigation" aria-label="데모 화면"><a className="demo-switch" href={appUrl(gcaDemo ? '/?demo=1' : '/?demo=1&dataset=gca')}>{gcaDemo ? "기본 예시" : "GCA 예시 보기"}</a><a className="demo-switch" href={appUrl('/?demo=1&flow=access')}>프로젝트·담당자 데모</a><a className="demo-switch" href={appUrl('/?demo=1&flow=versions')}>버전·ECO·PoR 데모</a></nav><button onClick={logout}>데모 종료 <ArrowUpRight size={13} /></button></div>}
-      {atlas && <div className="notice-banner" role="status"><FileSearch size={16} /><span>기존 접수 실행 대장은 프로젝트·블록·버전 필터를 지원하지 않습니다. 현재 계정에 허용된 실행을 표시합니다.</span><Button variant="outline" size="sm" onClick={() => setLegacyReview(false)}>선택 범위의 버전 로그로 돌아가기</Button></div>}
+      {atlas && <div className="notice-banner" role="status"><FileSearch size={16} /><span>기존 접수 실행 대장은 프로젝트·블록·버전 필터를 지원하지 않습니다. 현재 계정에 허용된 실행을 표시합니다.</span><Button variant="outline" size="sm" onClick={() => { if (onExitLegacy) onExitLegacy(); else setLegacyReview(false) }}>선택 범위의 버전 로그로 돌아가기</Button></div>}
       {(!session.writable || readySSO && detail && !canReview) && <div className="notice-banner" role="status"><LockKeyhole size={16} />{readySSO ? '현재 결과는 조회만 가능합니다. 검토하려면 해당 프로젝트의 멤버 권한이 필요합니다.' : '읽기 전용 세션입니다. 검토와 수신 작업은 비활성화됩니다.'}</div>}
       {session.notice && <p className="session-notice"><ShieldCheck size={13} />{session.notice}</p>}
       {error && <div role="alert" className="error-banner"><span>{error}</span><button aria-label="오류 닫기" onClick={() => setError('')}><X size={16} /></button></div>}

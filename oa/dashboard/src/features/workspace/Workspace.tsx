@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Download, FileSearch, FolderKanban, History, Layers3, LogOut, Menu, RefreshCw, Search, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, FileSearch, FolderKanban, History, Layers3, LogOut, Menu, RefreshCw, Search, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { PaginationBar } from '@/components/ui/pagination-bar'
 import { WorkspaceBrand } from '@/components/layout/WorkspaceBrand'
 import { ModuleNavigation } from '@/components/layout/ModuleNavigation'
 import { appUrl } from '@/lib/appUrl'
+import { formatVersionLabel } from '@/lib/versionUtils'
 import { ColorModeControl } from '@/components/layout/ColorModeControl'
 import { SidebarModeSwitch } from '@/components/layout/SidebarModeSwitch'
 import { SidebarResizer, useSidebarLayout } from '@/components/layout/SidebarResizer'
@@ -17,12 +18,11 @@ import { useAtlas } from '@/features/atlas/atlasContext'
 import { productionWorkbench, reportDisplayName, WorkspaceError, toolResultStatus, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
 import type { ReviewCase, WorkspaceEvent, WorkspaceOverview, WorkspacePor, WorkspaceReport, WorkspaceReports, WorkspaceSession, WorkspaceVersions } from './workspaceApi'
 import AIJobsDashboard from '@/features/ai/AIJobsDashboard'
-import WorkspaceReview from './WorkspaceReview'
 import WorkspaceWorkbench from './WorkspaceWorkbench'
 import WorkspaceDemoBanner from './WorkspaceDemoBanner'
+import { WorkspaceReportDialog } from './WorkspaceReportDialog'
 import PersonalAiToken from '@/features/ai/PersonalAiToken'
 import SubmissionIntake from './SubmissionIntake'
-import PreservedSources from './PreservedSources'
 import WorkspaceRemoval from './WorkspaceRemoval'
 import './workspace.css'
 
@@ -316,11 +316,6 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
       else setSaveError(e instanceof Error ? e.message : '저장 결과를 확인하지 못했습니다.')
     } finally { setSaving(false) }
   }
-  function downloadReport() {
-    if (!selectedReport?.raw_report) return
-    const url = URL.createObjectURL(new Blob([selectedReport.raw_report], { type: 'text/plain;charset=utf-8' }))
-    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${selectedReport.id}.rpt`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
-  }
   function reviewSaved(event: ReviewCase) {
     const summary = { conclusion: event.conclusion, actor: event.actor, at: event.at, revision: event.revision, reusable: event.reusable }
     setSelectedReport(previous => previous?.id === event.report_id ? { ...previous, human_review: summary } : previous)
@@ -365,7 +360,7 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
             <div className="atlas-scope-fields">
               <label>프로젝트<select aria-label="조회 프로젝트" value={projectId} onChange={e => chooseProject(e.target.value)}><option value="">프로젝트 선택</option>{overview.projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
               <label>블록<select aria-label="조회 블록" disabled={!project} value={blockId} onChange={e => chooseBlock(e.target.value)}><option value="">블록 선택</option>{project?.blocks.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-              <label>버전<select aria-label="조회 버전" disabled={!block || !versions?.items.length} value={versionId} onChange={e => chooseVersion(e.target.value)}><option value="">{block && versions && !versions.items.length ? '수신된 버전 없음' : '버전 선택'}</option>{versions?.items.map(item => <option key={item.id} value={item.id}>{[item.net_ver, item.revision, item.layout, item.eco_num].filter(Boolean).join(' · ')}</option>)}</select></label>
+              <label>버전<select aria-label="조회 버전" disabled={!block || !versions?.items.length} value={versionId} onChange={e => chooseVersion(e.target.value)}><option value="">{block && versions && !versions.items.length ? '수신된 버전 없음' : '버전 선택'}</option>{versions?.items.map(item => <option key={item.id} value={item.id}>{formatVersionLabel(item)}</option>)}</select></label>
               {version?.layout === 'POST' && <label>ECO<select aria-label="조회 ECO" value={eco} onChange={e => { resetSelection(); setEco(e.target.value); setReports(null) }}>{version.ecos.map(value => <option key={value || '__none'} value={value || ''}>{value || 'ECO 없음'}</option>)}</select></label>}
             </div>
           </section>
@@ -414,7 +409,7 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
                     </header>
                     {reportsLoading ? <Loading lines={4} /> : reports.total ? <div className="ws-table-scroll"><table className="ws-report-table"><thead><tr><th>보고서</th><th>도구의 검사 결과</th><th>검토 진행</th><th>로그 수</th>{showReportDetails && <><th>검사 규칙</th><th>보고서 전체 판정</th><th>분석 상태</th></>}<th>검토</th></tr></thead><tbody>{reports.items.map(item => <tr key={item.id} data-item-id={item.item_id || ''}><td><strong title={item.id}>{reportDisplayName(item)}</strong><small>{labels[item.family] || item.family}{item.source_storage === 'PARTS_V2' && <> · {item.is_current === false ? '이전 제출' : '최신 제출'}</>}</small></td><td><Status value={toolResultStatus(item)} /></td><td>{item.group_review_summary ? <><span>{item.group_review_summary.confirmed ? `${item.group_review_summary.reviewed} / ${item.group_review_summary.total} 확정` : '그룹 확인 중'}</span>{item.group_review_summary.stale > 0 && <small>재검토 {item.group_review_summary.stale}개 그룹</small>}</> : <span className="ws-muted">아직 시작 전</span>}</td><td>{n(item.record_count)}건</td>{showReportDetails && <><td><code>{item.rule}</code></td><td>{item.human_review ? <Status value={item.human_review.conclusion} /> : <span className="ws-muted">미검토</span>}</td><td><Status value={item.parse_status} /></td></>}<td><div className="ws-report-row-actions"><Button size="sm" variant="outline" className="ws-row-primary" aria-label={`${item.id} 검토 시작`} onClick={() => setWorkbenchId(item.id)}>검토 시작<ArrowRight size={14} /></Button><Button size="sm" variant="ghost" aria-label={`${item.id} 보고서 보기`} onClick={() => item.record_count > 1000 ? setWorkbenchId(item.id) : openReport(item.id)}>보고서 보기</Button>{production && versions.can_assign_por && <WorkspaceRemoval base={`/blocks/${blockId}/versions/${version.id}/reports/${item.id}`} title={reportDisplayName(item)} kind="보고서" onRemoved={() => { setSelectedReport(null); setReports(null); setNotice('보고서와 연관 원본·판정 이력을 삭제했습니다.'); setRefresh(v => v + 1) }} onAccessDenied={() => { setReports(null); setRefresh(v => v + 1) }} />}</div></td></tr>)}</tbody></table></div>
                       : <div className="ws-empty"><FileSearch /><h3>{selectedItem && (search || family || status) ? '조건에 맞는 검사 항목이 없습니다.' : '이 버전의 검사 결과가 아직 수신되지 않았습니다.'}</h3><p>{selectedItem && (search || family || status) ? '검색어나 필터를 바꿔서 확인해 주세요.' : '결과가 도착하면 현재 버전·ECO의 검사 대장에 표시됩니다.'}</p></div>}
-                    <div className="ws-pagination"><span>{reportsLoading ? '조회 중…' : `${reports.total ? `${offset + 1}–${Math.min(offset + 25, reports.total)}` : 0} / ${n(reports.total)}`}</span><Button size="icon" variant="outline" aria-label="이전 검사 페이지" disabled={reportsLoading || !offset} onClick={() => setOffset(offset - 25)}><ChevronLeft /></Button><Button size="icon" variant="outline" aria-label="다음 검사 페이지" disabled={reportsLoading || offset + 25 >= reports.total} onClick={() => setOffset(offset + 25)}><ChevronRight /></Button></div>
+                    <PaginationBar className="ws-pagination" offset={offset} limit={25} total={reports.total} label="검사" disabled={reportsLoading} statusText={reportsLoading ? '조회 중…' : undefined} onChange={setOffset} />
                   </section>
                   </>}
                 </>}
@@ -426,29 +421,20 @@ function WorkspacePage({ session, routeSearch, onExpired, onLogout, onDemoAccoun
       </main>
     </div>
     <Dialog open={confirm} onOpenChange={open => { if (!saving) setConfirm(open) }}><DialogContent className="ws-confirm" showCloseButton={false}><DialogHeader><DialogTitle>{block?.name}의 PoR을 변경할까요?</DialogTitle><DialogDescription>{production ? '이 블록의 기준 버전이 바뀌며 프로젝트 멤버가 같은 결과를 확인합니다.' : '이 블록의 기준 버전이 바뀌며 TOP과 담당자가 같은 결과를 확인합니다.'}</DialogDescription></DialogHeader><div className="ws-change-preview"><div><span>현재 PoR</span><strong>{por?.version?.net_ver || '미지정'}</strong><code>{por?.version?.revision || '—'}</code></div><ArrowRight size={19} /><div><span>변경할 버전</span><strong>{version?.net_ver} · {version?.layout}</strong><code>{version?.revision}</code></div></div><label className="ws-reason-label" htmlFor="ws-por-reason">변경 사유<textarea id="ws-por-reason" value={reason} maxLength={500} placeholder="기준 버전을 변경하는 이유를 남겨 주세요." onChange={e => { setReason(e.target.value); requestId.current = null }} disabled={saving} /></label><p className="ws-muted ws-confirm-note">지정자와 시각이 이력에 저장됩니다. 기존 검사 결과와 다른 블록의 PoR은 유지됩니다.</p>{saveError && <p className="ws-error" role="alert">{saveError}</p>}<div className="ws-dialog-actions"><Button variant="outline" onClick={() => setConfirm(false)} disabled={saving}>취소</Button><Button onClick={savePor} disabled={saving || !reason.trim()}>{saving ? '저장 중…' : 'PoR 지정 저장'}</Button></div></DialogContent></Dialog>
-    <Dialog open={!!selectedReport || reportLoading} onOpenChange={open => { if (!open) { detailRequest.current++; setSelectedReport(null); setReportLoading(false) } }}>
-      <DialogContent className="ws-report-dialog" showCloseButton={false}>
-        <DialogHeader><DialogTitle>{selectedReport ? reportDisplayName(selectedReport) : '검사 근거'} · 보고서</DialogTitle><DialogDescription>{project?.name} / {block?.name} · {version?.net_ver} · {version?.layout}{eco && ` / ${eco}`}</DialogDescription></DialogHeader>
-        {reportLoading ? <Loading /> : selectedReport && <>
-          <div className="ws-report-meta"><span>규칙 판정</span><Status value={toolResultStatus(selectedReport)} /><Status value={selectedReport.parse_status} /><span>{labels[selectedReport.family]} · {selectedReport.rule}</span></div>
-          <Tabs defaultValue="source" key={selectedReport.id} className="ws-report-tabs">
-            <TabsList className="ws-studio-dialog-tabs"><TabsTrigger value="source">보고서·근거</TabsTrigger><TabsTrigger value="pipeline">Clustering·그룹 판정</TabsTrigger>{!production && <TabsTrigger value="review">사용자 판정·AI review</TabsTrigger>}</TabsList>
-            <TabsContent value="source"><div className="ws-report-dialog-scroll">{selectedReport.blockers.length > 0 && <div className="ws-report-blockers"><strong>파싱 완료를 막는 사유</strong><ul>{selectedReport.blockers.map(code => <li key={code}>{code}</li>)}</ul></div>}
-              <PreservedSources files={selectedReport.preserved_sources} base={production ? `/blocks/${selectedReport.block_id}/versions/${selectedReport.version_id}/reports/${selectedReport.id}` : undefined} />
-              {selectedReport.source_storage === 'PARTS_V2' ? <>
-                <h3>수신한 검사 근거 {n(selectedReport.record_count)}건</h3>
-                <p className="ws-muted">로그를 페이지로 나누어 저장했습니다. 검토 화면에서 전체 로그를 확인하고 그룹 분류를 시작할 수 있습니다. 원본 report 파일은 VWP에 보관됩니다.</p>
-                {!!selectedReport.delivery_blockers?.length && <p className="ws-error">검토 대기: {selectedReport.delivery_blockers.join(', ')}</p>}
-                <Button onClick={() => { const id = selectedReport.id; detailRequest.current++; setSelectedReport(null); setWorkbenchId(id) }}>전체 로그·검토 열기<ArrowRight size={14} /></Button>
-              </> : <><h3>추출된 검사 근거</h3>{selectedReport.records?.length ? selectedReport.records.map(record => <article className="ws-evidence" key={record.id}><header><Status value={toolResultStatus(record)} /><span>원문 {record.line_start}–{record.line_end}행</span></header><dl>{Object.entries(record.fields).filter(([key]) => key !== 'message').map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === 'string' ? value : JSON.stringify(value)}</dd></div>)}</dl><pre>{record.raw}</pre></article>) : <p className="ws-muted">보고서가 미수신되어 추출 근거가 없습니다.</p>}<h3>보고서 전체 원문</h3><pre>{selectedReport.raw_report || '예상 검사 목록에는 포함되지만 원본 보고서가 아직 수신되지 않았습니다.'}</pre>{!production && <p className="ws-muted">공개 형식을 참고해 작성한 예시 보고서입니다. 실제 사내 report는 포함하지 않습니다.</p>}</>}
-            </div></TabsContent>
-            <TabsContent value="pipeline" forceMount className="data-[state=inactive]:hidden"><div className="ws-report-dialog-scroll"><p className="ws-muted">전체 로그 분류와 그룹별 근거 확인을 순서대로 진행합니다.</p><Button onClick={() => { const id = selectedReport.id; detailRequest.current++; setSelectedReport(null); setWorkbenchId(id) }}>그룹별 근거·순차 검토 열기<ArrowRight size={14} /></Button></div></TabsContent>
-            {!production && <TabsContent value="review" forceMount className="data-[state=inactive]:hidden"><div className="ws-report-dialog-scroll"><WorkspaceReview report={selectedReport} session={session} onSaved={reviewSaved} onExpired={onExpired} /></div></TabsContent>}
-          </Tabs>
-          <div className="ws-dialog-actions"><Button variant="outline" disabled={!selectedReport.raw_report} onClick={downloadReport}><Download size={15} />보고서 다운로드</Button><Button onClick={() => { detailRequest.current++; setSelectedReport(null) }}>닫기</Button></div>
-        </>}
-      </DialogContent>
-    </Dialog>
+    <WorkspaceReportDialog
+      report={selectedReport}
+      loading={reportLoading}
+      production={production}
+      session={session}
+      projectName={project?.name}
+      blockName={block?.name}
+      version={version}
+      eco={eco}
+      onClose={() => { detailRequest.current++; setSelectedReport(null); setReportLoading(false) }}
+      onOpenWorkbench={id => { detailRequest.current++; setSelectedReport(null); setWorkbenchId(id) }}
+      onReviewSaved={reviewSaved}
+      onExpired={onExpired}
+    />
   </div>
 }
 

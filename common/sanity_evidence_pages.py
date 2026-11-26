@@ -11,6 +11,7 @@ import re
 import uuid
 
 from common.sanity_common import ReviewError, canonical_json, pack_json, unpack_json
+from common.sanity_db import bytea_column_storage, validated_table_constraints
 
 KIND = 'SOURCE_EVIDENCE_PAGE'
 CODEC = 'gzip-source-evidence-v1'
@@ -104,21 +105,17 @@ class EvidencePageStorage:
     """Detect the complete, explicit 012 schema; partial installs fail closed."""
     def __init__(self, db):
         check(db.side == 'vwp')
-        row = db.conn.execute(
-            "SELECT a.atttypid='bytea'::regtype AS bytes_type,a.attstorage "
-            "FROM pg_attribute a JOIN pg_class t ON t.oid=a.attrelid "
-            "JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=%s "
-            "AND t.relname='sanity_vwp_data' AND a.attname='page_bytes' AND a.attnum>0 AND NOT a.attisdropped",
-            (db.schema,)).fetchone()
-        names = db.conn.execute(
-            "SELECT c.conname FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid "
-            "JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=%s "
-            "AND t.relname='sanity_vwp_data' AND c.contype='c' AND c.convalidated AND NOT c.connoinherit "
-            "AND c.conname IN ('sanity_vwp_kind_v5','sanity_vwp_status_v5',"
-            "'sanity_vwp_source_page_v1','sanity_vwp_payload_storage_v1')", (db.schema,)).fetchall()
-        actual = {r['conname'] for r in names}
+        row = bytea_column_storage(db.conn, db.schema, 'sanity_vwp_data', 'page_bytes')
         required = {'sanity_vwp_kind_v5', 'sanity_vwp_status_v5',
                     'sanity_vwp_source_page_v1', 'sanity_vwp_payload_storage_v1'}
+        present = validated_table_constraints(
+            db.conn,
+            db.schema,
+            sorted(required),
+            table_name='sanity_vwp_data',
+            check_only=True,
+        )
+        actual = {name for _, name in present}
         self.enabled = row is not None
         if row is None and not (actual - {'sanity_vwp_payload_storage_v1'}):
             return

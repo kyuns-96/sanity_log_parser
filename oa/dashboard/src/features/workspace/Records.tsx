@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, Code2, Copy, GripVertical, LoaderCircle, Search } from 'lucide-react'
+import { Check, Code2, Copy, GripVertical, LoaderCircle, Search } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { PaginationBar } from '@/components/ui/pagination-bar'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { LogMove, useLogDrag } from './useLogDrag'
 import { toolResultStatus, workspaceLabels as labels, workspaceRequest as request } from './workspaceApi'
@@ -101,7 +102,16 @@ export default function Records({ base, revision, groupId, eventId, selected, se
         {loadFailed && <div className="ws-record-load-error" role="alert"><p>로그와 원문을 가져오지 못했습니다.</p><Button variant="outline" size="sm" onClick={() => { setLoading(true); setRetry(value => value + 1) }}>로그 다시 조회</Button></div>}
       </div>
       {data && !loading && !data.total && <p className="ws-muted">검색 조건에 맞는 로그가 없습니다.</p>}
-      <div className="ws-pagination"><span>{data ? `${data.total ? `${n(data.offset + 1)}–${n(Math.min(data.offset + data.limit, data.total))}` : '0'} / ${n(data.total)}` : '— / —'}</span><Button variant="outline" size="icon-sm" aria-label={`이전 ${label} 페이지`} disabled={loading || !data || !offset} onClick={() => { if (data) { setLoading(true); setOffset(Math.max(0, offset - data.limit)) } }}><ChevronLeft /></Button><Button variant="outline" size="icon-sm" aria-label={`다음 ${label} 페이지`} disabled={loading || !data || offset + data.limit >= data.total} onClick={() => { if (data) { setLoading(true); setOffset(offset + data.limit) } }}><ChevronRight /></Button></div>
+      <PaginationBar
+        className="ws-pagination"
+        size="icon-sm"
+        label={label}
+        offset={data?.offset ?? offset}
+        limit={data?.limit ?? 50}
+        total={data ? data.total : null}
+        disabled={loading || !data}
+        onChange={nextOffset => { if (data) { setLoading(true); setOffset(nextOffset) } }}
+      />
       <section className="ws-record-original" aria-label="선택 로그 원문" data-loading={loading}>
         <header className="ws-record-original-toolbar"><div><Code2 size={15} /><h3>원문 보기</h3>{loading ? <span className="ws-record-original-loading" aria-hidden="true"><LoaderCircle size={13} className="spin" />가져오는 중</span> : record && <span>{record.line_start === record.line_end ? `${n(record.line_start)}행` : `${n(record.line_start)}–${n(record.line_end)}행`}</span>}</div><Button variant="ghost" size="icon-sm" aria-label="선택 로그 원문 복사" disabled={!record || loading} onClick={copyOriginal}>{copyNotice.startsWith('표시된') ? <Check size={15} /> : <Copy size={15} />}</Button></header>
         {record ? <><code className="ws-record-original-id">{record.id}</code><pre tabIndex={loading ? -1 : 0}>{record.raw}</pre>{record.raw_display_truncated && <p className="ws-record-truncation" role="note">화면 표시 한도를 초과했습니다. 생략된 부분은 원본 보고서에서 확인하세요. AI의 전체 입력 처리 범위와 별개입니다.</p>}<details className="ws-record-original-meta"><summary>파싱된 필드와 도구 근거</summary><dl>{Object.entries(record.fields).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{fieldText(value)}</dd></div>)}</dl>{record.reasons?.map((reason, index) => <p key={index}>{reason}</p>)}</details></> : <p className="ws-muted">{loading ? '로그 목록과 함께 원문을 불러오고 있습니다.' : loadFailed ? '로그 조회를 다시 시도하세요.' : '목록에서 로그를 선택하면 해당 원문을 확인할 수 있습니다.'}</p>}

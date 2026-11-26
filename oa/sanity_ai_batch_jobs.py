@@ -14,14 +14,14 @@ from common.sanity_submission import check
 from common.sanity_validation_diagnostics import sanitize_validation_failure
 from oa.sanity_ai_ledger import (
     Ledger, MAX_BYTES, NAMESPACE, attempts, bind_preserved, build_batch_model,
-    finish_round, record_plan,
+    finish_round, prepare_batch_run, record_plan,
 )
 from oa.sanity_ai_live import observer as live_observer
 from oa.sanity_ai_parallel_jobs import public as parallel_public
 from oa.sanity_ai_parallel_ledger import ParallelLedger
 from oa.sanity_ai_progress import display_metrics, group_count_after
 from oa.sanity_ai_scheduler import release, reserve
-from oa.sanity_ai_store import error_code, parse_timestamp, public_event, worker_load
+from oa.sanity_ai_store import STALE_AI_ERRORS, error_code, parse_timestamp, public_event, worker_load
 from oa.sanity_ai_unknown_recovery import recovery_info
 
 
@@ -73,38 +73,7 @@ def public(service, event):
 
 def _prepare(service, event, now):
     """Inside a short authorization transaction. Never performs HTTP."""
-    _, context, cases, criteria = service._inputs(event)
-    advisor = service._job_advisor(event)
-    revision = None
-    if service._personal_tokens(event):
-        token, revision = service._user_token(event['data']['command']['user_id'], event['data']['command'].get('connection_id'))
-        advisor = advisor.with_user_token(token)
-    model = build_batch_model(advisor, event, context, cases, criteria)
-    ledger = Ledger(service, event)
-    if event['status'] == 'PENDING':
-        # Catch a fundamentally oversized record/criterion before paying for
-        # text analysis. The final record plan also includes its actual summary.
-        if getattr(model, 'segments', []): model.leaf_plan()
-        text_plan = model.text_plan() if hasattr(model, 'text_plan') else []
-        # Every text fragment is preflighted before the first HTTP call. Record
-        # leaves are preflighted together after the actual text analysis fits.
-        ranges = text_plan or record_plan(model)
-        plan = ledger.plans(0, ranges, len(text_plan) or len(model.records))
-        started = now or _ai_store.db_now(service.db)
-        batch = {**event['data']['batch'], 'total_records': len(model.records), 'leaf_count': len(ranges),
-               'plan': plan, 'credential_revision': revision}
-        event = service._append(event, 'RUNNING', {**event['data'], 'batch': batch, 'call_token': str(uuid4()),
-            'model_attempted': False, 'model_called': False, 'started_at': started.isoformat(),
-            'deadline': (started + timedelta(seconds=model.settings.deadline_seconds)).isoformat()}, now=started)
-        ledger = Ledger(service, event)
-        state = {'round': 0, 'index': 0, 'records': 0, 'calls': 0, 'nodes': 0, 'stable': 0, 'actual_model': None,
-               'round_total': len(ranges), 'round_seconds': 0, 'round_samples': 0, 'seconds': 0, 'record_seconds': 0}
-        state['current_groups'] = 1 if getattr(model, 'review', False) else None if text_plan else 0
-        if event['data']['batch']['version'] == 2:
-            state.update(phase='TEXT' if text_plan else 'REVIEW' if model.review else 'CLASSIFY', stage_round=0)
-        ledger.step(None, None, 'READY', state)
-    bind_preserved(model, ledger, ledger.last()[0]['state'])
-    return event, ledger, model, revision
+    return prepare_batch_run(service, event, now, ledger_cls=Ledger, parallel=False)
 
 
 def load_result(service, event, context, cases, criteria=None):
@@ -176,7 +145,7 @@ def run_step(open_service, job_id, *, now=None):
             model.advisor = model.advisor.with_observer(live_observer(open_service, event, reserved['call_token']))
             dispatch = (event, reserved, reserved_ref, model, descriptor, nodes, revision, prepared_call)
         except ReviewError as error:
-            stale = error.code in ('AI_INPUT_STALE', 'AI_CASES_STALE', 'AI_CRITERIA_STALE', 'REVISION_CONFLICT', 'AI_CONFIG_CHANGED', 'AI_CONNECTION_UNAVAILABLE', 'AI_CREDENTIAL_CHANGED', 'UNAUTHORIZED', 'FORBIDDEN')
+            stale = error.code in STALE_AI_ERRORS
             return public(service, service._failed(event, error, status='STALE' if stale else 'FAILED'))
     # No database connection or authorization lock survives model dispatch.
     event, reserved, reserved_ref, model, descriptor, nodes, revision, prepared_call = dispatch
@@ -217,7 +186,7 @@ def run_step(open_service, job_id, *, now=None):
                     return public(service, service._failed(current, ReviewError('AI_BATCH_LIMIT', 'Call attempt budget exhausted'),
                                   status='FAILED', called=proof['model_called']))
             unknown = not isinstance(failure, ReviewError) or error_code(failure) == 'AI_OUTCOME_UNKNOWN'
-            stale = error_code(failure) in ('AI_CONFIG_CHANGED', 'AI_CONNECTION_UNAVAILABLE', 'AI_CREDENTIAL_CHANGED', 'FORBIDDEN', 'UNAUTHORIZED')
+            stale = error_code(failure) in STALE_AI_ERRORS
             return public(service, service._failed(current, failure, status='UNKNOWN' if unknown else 'STALE' if stale else 'FAILED', called=getattr(failure, 'model_called', None)))
         try:
             service._inputs(current)

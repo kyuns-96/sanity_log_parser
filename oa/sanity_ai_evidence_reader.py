@@ -3,7 +3,7 @@ import re
 
 from common.sanity_clustering import check
 from common.sanity_common import digest
-from oa.sanity_workspace_core import record_id
+from oa.sanity_ws_config import verify_ws_config_row
 
 NAMESPACE = 'ai-evidence-choice-v1'
 PREFIX = 'ai.evidence.'
@@ -61,23 +61,24 @@ def choices_for_reports(db, stage, report_ids):
         tuple(stem + '%' for stem in stems.values())).fetchall()
     result = {report_id: [] for report_id in stems}
     for row in rows:
-        value = row['payload']
+        value = row.get('payload')
         check(isinstance(value, dict) and isinstance(value.get('report_id'), str)
               and value['report_id'] in stems, 'AI_EVIDENCE_CORRUPT')
         report_id = value['report_id']; stem = stems[report_id]
         keys = {'namespace', 'stage', 'report_id', 'group_id', 'event_id', 'binding_sha256', 'enabled',
                 'revision', 'actor_id', 'at', 'sha256'}
-        check(isinstance(value, dict) and set(value) == keys and value['namespace'] == NAMESPACE
+        check(set(value) == keys and value['namespace'] == NAMESPACE
             and value['stage'] == stage and value['report_id'] == report_id
             and (value['group_id'] is None or isinstance(value['group_id'], str))
             and isinstance(value['event_id'], str) and isinstance(value['actor_id'], str)
             and isinstance(value['at'], str) and type(value['enabled']) is bool
             and isinstance(value['binding_sha256'], str) and re.fullmatch('[0-9a-f]{64}', value['binding_sha256'])
             and type(value['revision']) is int and 1 <= value['revision'] <= 9999999999
-            and row['workspace_key'] == stem + digest(value['group_id'])[:32] + f".{value['revision']:010d}"
-            and row['record_id'] == record_id('WS_CONFIG', row['workspace_key'])
-            and row['state'] == {} and row['version'] == 0 and row['status'] == 'RECORDED'
-            and row['created_at'] == row['updated_at']
             and value['sha256'] == digest({k: v for k, v in value.items() if k != 'sha256'}), 'AI_EVIDENCE_CORRUPT')
+        verify_ws_config_row(
+            row,
+            stem + digest(value['group_id'])[:32] + f".{value['revision']:010d}",
+            error_code='AI_EVIDENCE_CORRUPT',
+        )
         result[report_id].append(value)
     return result

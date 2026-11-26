@@ -10,7 +10,13 @@ from typing import Any
 from common.area_power.csv_input import OBSERVED_EXTRA, ObservedCSV
 from common.area_power.errors import DomainError
 from common.area_power.jsonutil import digest
-from common.area_power.models import CALCULATION_CONTRACT, COMPARISON_FORMAT, ComparisonRequest, MappingPayload
+from common.area_power.models import (
+    CALCULATION_CONTRACT,
+    COMPARISON_FORMAT,
+    CORRESPONDENCE_POLICY,
+    ComparisonRequest,
+    MappingPayload,
+)
 from .groups import (
     D,
     DRIVE_GROUP_METRICS,
@@ -24,6 +30,56 @@ from .groups import (
     version_chain,
 )
 from .metrics import evaluate_metric
+
+
+def frozen_upload_reference(upload: dict | None) -> dict[str, Any] | None:
+    if upload is None:
+        return None
+    fields = ('id', 'project_id', 'block_id', 'version_id', 'snapshot_id', 'condition_key', 'structure_digest', 'original_sha256')
+    return {**{field: upload[field] for field in fields}, 'input_contract_sha256': digest(upload['input_contract']).hex()}
+
+
+def build_comparison_dedupe_and_payload(
+    request: dict[str, Any],
+    current: dict[str, Any],
+    baseline: dict[str, Any] | None,
+    *,
+    targets: list[dict[str, Any]] | None = None,
+    power_uploads: list[dict[str, Any]] | None = None,
+    designation: dict[str, Any] | None = None,
+    policy_unconfigured: bool = True,
+) -> tuple[bytes, dict[str, Any]]:
+    targets = targets or []
+    power_uploads = power_uploads or []
+    numeric = {key: value for key, value in request.items() if key not in ('change_ids', 'recipients')}
+    numeric['result_format'] = COMPARISON_FORMAT
+    numeric['calculation_contract'] = CALCULATION_CONTRACT
+    numeric['target_revisions'] = sorted(str(target['id']) for target in targets)
+    if designation is not None:
+        numeric['baseline_project_id'] = designation['baseline_project_id']
+    correspondence = CORRESPONDENCE_POLICY if baseline and baseline['project_id'] != current['project_id'] else None
+    if correspondence:
+        numeric['correspondence'] = correspondence
+    key = digest(numeric)
+    frozen: dict[str, Any] = {
+        'current_upload': frozen_upload_reference(current),
+        'baseline_upload': frozen_upload_reference(baseline),
+        'scope_target_ids': [target['id'] for target in targets],
+        'power_uploads': [{side: frozen_upload_reference(upload) for side, upload in pair.items()} for pair in power_uploads],
+    }
+    if designation is not None:
+        frozen['baseline_designation'] = designation
+    payload: dict[str, Any] = {
+        'request': request,
+        'result_format': COMPARISON_FORMAT,
+        'calculation_contract': CALCULATION_CONTRACT,
+        'frozen': frozen,
+        'coverage': {},
+        **({'correspondence': correspondence} if correspondence else {}),
+        'policy_unconfigured': policy_unconfigured,
+        'ai_state': 'not_requested',
+    }
+    return key, payload
 
 
 def validate_frozen_upload(snapshot, selected):

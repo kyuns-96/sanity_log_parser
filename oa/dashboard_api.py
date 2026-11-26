@@ -36,6 +36,7 @@ from oa.sanity_auth import (
     require_business_access,
 )
 from oa.sanity_hosts import allowed_hosts as validate_hosts
+from oa.workspace_schemas import workbench_body_ceiling
 
 LOG = logging.getLogger('oa.dashboard')
 
@@ -56,9 +57,7 @@ class RequestBoundary:
             # APIs retain their original small request limit.
             ceiling = 65536
             if scope["path"].startswith("/api/workbench/"):
-                ceiling = (16777216 if scope["path"].endswith("/clustering/operations") else
-                           4194304 if "/clustering" in scope["path"] else
-                           262144 if scope["path"].endswith("/rationale") else 65536)
+                ceiling = workbench_body_ceiling(scope["path"], default_ceiling=65536)
             chunks, size = [], 0
             while True:
                 message = await receive()
@@ -171,7 +170,7 @@ def create_app(*, auth_mode: AuthMode | None = None,
     async def lifespan(_app: FastAPI):
         if area_enabled and access_mode(load_environment()) == "postgresql":
             try:
-                from oa.atlas_catalog import sync_all_area_project_blocks
+                from oa.atlas_area_sync import sync_all_area_project_blocks
                 synced = sync_all_area_project_blocks(actor_id="oa-startup")
                 if synced["projects_created"] or synced["blocks_created"]:
                     LOG.info(

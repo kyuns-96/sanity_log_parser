@@ -12,17 +12,20 @@ from uuid import UUID
 from psycopg import sql
 from pydantic import Field, field_validator
 
-from common.sanity_common import ReviewError
-from oa.sanity_ai_task_defaults import DEFAULT_AREA_RETRY_LIMIT, TaskDefaults
 from common.area_power.analysis import observation_view
+from common.area_power.atlas_bindings import (
+    BINDING_PREFIX,
+    collect_applicable_triage_inputs,
+    resolve_area_version_info,
+)
 from common.area_power.errors import DomainError
 from common.area_power.models import COMPARISON_FORMAT
 from common.area_power.triage import BATCH_SIZE, ENGINE, MAX_ITEMS, Thresholds, select_items, side_context
+from common.sanity_common import ReviewError
+from .ai_context import describe_area_triage_model, pin_area_triage_task
 from .analysis_deletion import request_owner
-from .ai_context import capture_context
 from .schemas import Input, addresses, reject
 
-BINDING_PREFIX = 'design-atlas-v1.binding.'
 FINISHED = ('completed', 'failed')
 WORKER_ONLINE_TTL_SECONDS = 60
 
@@ -50,30 +53,23 @@ def _host_db(service):
 
 
 def net_vers(service, versions, block_id) -> dict[str, str | None]:
-    """NET_VER of each Area version through the shared catalog; None when it is not linked.
-
-    Names, order and timestamps are never used to guess a NET_VER.
-    """
-    result = {str(version['id']): None for version in versions}
+    """NET_VER of each Area version through explicit version payload or shared catalog; None when unlinked."""
     host = _host_db(service)
-    if host is None:
-        return result
-    bindings = [row['payload'] for row in host.execute(
-        "SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s", (BINDING_PREFIX + '%',)).fetchall()]
-    for version in versions:
-        natives = {binding.get('version_id') for binding in bindings
-                   if binding.get('area_version_id') == str(version['id']) and binding.get('area_block_id') == str(block_id)}
-        direct = version['payload'].get('sanity_version_id')
-        if not natives and isinstance(direct, str):
-            natives = {direct}
-        labels = set()
-        for native in natives:
-            row = host.execute("SELECT payload FROM {oa} WHERE record_type='WS_VERSION' AND workspace_key=%s", (native,)).fetchone()
-            if row and row['payload'].get('net_ver'):
-                labels.add(row['payload']['net_ver'])
-        if len(labels) == 1:
-            result[str(version['id'])] = labels.pop()
-    return result
+    bindings = None
+    if host is not None:
+        bindings = [
+            row['payload']
+            for row in host.execute(
+                "SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s",
+                (BINDING_PREFIX + '%',),
+            ).fetchall()
+        ]
+    return {
+        str(version['id']): resolve_area_version_info(
+            service.db, None, version, block_id, host_db=host, cached_bindings=bindings
+        ).get('net_ver')
+        for version in versions
+    }
 
 
 def triage_context(service, conn, comparison) -> dict:
@@ -87,76 +83,24 @@ def triage_context(service, conn, comparison) -> dict:
     kind = comparison['payload']['request'].get('comparison_kind')
     current = service.db.upload(conn, comparison['upload_id'])
     baseline = service.db.upload(conn, comparison['baseline_upload_id'])
-    chain = service.lineage(conn, current['version_id'])
-    interval = chain
-    if kind == 'previous_version':
-        interval = chain[:chain.index(baseline['version_id'])] if baseline['version_id'] in chain else chain
-    wanted = list(dict.fromkeys([*interval, *([baseline['version_id']] if kind == 'previous_version' else [])]))
-    labels = net_vers(service, [service.db.record(conn, identifier, kind='version') for identifier in wanted], current['block_id'])
-    baseline_net = labels.get(str(baseline['version_id'])) if kind == 'previous_version' else None
-    applicable = [label for label in dict.fromkeys(labels[str(identifier)] for identifier in reversed(interval))
-                  if label is not None and label != baseline_net]
-    warnings = []
-    unresolved = sum(labels[str(identifier)] is None for identifier in interval)
-    if unresolved:
-        warnings.append({'code': 'net_ver_unresolved', 'count': unresolved})
-    if kind == 'previous_version' and baseline_net is None:
-        warnings.append({'code': 'baseline_net_ver_unresolved', 'count': 1})
-    current_net = labels.get(str(current['version_id']))
-    same_rtl = kind == 'previous_version' and current_net is not None and current_net == baseline_net
-    notes = []
-    for row in service.db.records(conn, 'change', project_id=current['project_id'], block_id=current['block_id'], latest=True, limit=500):
-        payload = row['payload']
-        if payload.get('archived'):
-            continue
-        if payload.get('note_kind') == 'net_ver':
-            applies = payload.get('net_ver') in applicable
-        elif payload.get('note_kind') == 'project_change':
-            applies = kind == 'previous_project' and str(payload.get('baseline_project_id')) == str(baseline['project_id'])
-        else:
-            applies = False
-        if applies:
-            notes.append({'id': str(row['id']), 'entity_id': str(row['entity_id']), 'revision': row['revision'],
-                          'kind': payload['note_kind'], 'net_ver': payload.get('net_ver'), 'text': payload['text'],
-                          'updated_by': row.get('updated_by'), 'created_at': row.get('created_at')})
-    order = {label: position for position, label in enumerate(applicable)}
-    notes.sort(key=lambda note: (note['kind'] != 'project_change', order.get(note['net_ver'], -1), note['id']))
-    watched = []
-    for row in service.db.records(conn, 'target', project_id=current['project_id'], block_id=current['block_id'], latest=True, limit=500):
-        if row['payload'].get('watch'):
-            watched.extend(row['payload'].get('paths', []))
-    expectations = []
-    for row in service.db.records(conn, 'tracking_expectation', project_id=current['project_id'], block_id=current['block_id'], latest=True, limit=500):
-        p = row['payload']
-        if p.get('archived') or row.get('state') == 'archived':
-            continue
-        eff = p.get('effective_net_ver')
-        if eff is None or eff in applicable or eff == current_net:
-            expectations.append({'id': str(row['id']), **p})
-    raw = service.db.raw if service.access is not None else service.db
-    process = {'current': raw.record(conn, current['project_id'], kind='project')['payload'].get('process'),
-               'baseline': raw.record(conn, baseline['project_id'], kind='project')['payload'].get('process')}
-    return {'comparison_kind': kind, 'notes': notes, 'note_warnings': warnings, 'same_rtl': same_rtl,
-            'applicable_net_vers': applicable, 'watched_paths': list(dict.fromkeys(watched)),
-            'approved_expectations': expectations, 'process': process}
+    return collect_applicable_triage_inputs(
+        service.db,
+        conn,
+        current,
+        baseline,
+        kind,
+        raw_db=service.db.raw,
+        host_db=_host_db(service),
+        lineage_fn=service.lineage,
+    )
 
 
 def prepare(service, identifier) -> dict:
     with service.db.connect() as conn:
         comparison = service.db.record(conn, identifier, kind='comparison')
         prepared = {'comparison': comparison, **triage_context(service, conn, comparison)}
-    host = _host_db(service)
-    model = {'ready': False, 'error': 'AI_AUTHENTICATED_REQUEST_REQUIRED'}
-    if host is not None:
-        from oa.sanity_ai_connections import ConnectionStore
-        from oa.sanity_ai_task_defaults import task_selection
-        _, selected, default = task_selection(ConnectionStore(host), service.access.actor.user_id, 'AREA_TRIAGE')
-        error = (default.get('reason') if default and not default.get('applied') else
-                 selected.get('credential_error') if selected and not selected.get('credential_ready') else None)
-        model = {'ready': bool(selected and error is None), 'error': error,
-                 'connection_label': selected.get('label') if selected else None,
-                 'model': selected.get('model') if selected else None,
-                 'site': selected.get('execution_site', 'oa') if selected else None}
+    actor = getattr(service.access, 'actor', None)
+    model = describe_area_triage_model(_host_db(service), getattr(actor, 'user_id', None))
     return {**prepared, 'ai_model': model}
 
 
@@ -187,16 +131,13 @@ def request_run(service, prepared, selection, body: TriageInput, actor) -> dict:
         comparison = service.db.record(conn, prepared['comparison']['id'], kind='comparison', lock=True)
         service.authorize(conn, comparison, write=True)
         service.validate_comparison(conn, prepared['comparison'], write=True)
-        host = _host_db(service)
-        settings = TaskDefaults(host).current() if host is not None else None
-        ai_context = capture_context(service.access, tasks=('AREA_TRIAGE',), defaults=settings['defaults'] if settings else None)
+        ai_context, retry_limit = pin_area_triage_task(service.access, _host_db(service))
         if selection.items and ai_context['AREA_TRIAGE'].get('error'):
             reject('The project comparison AI selection is unavailable.', ai_context['AREA_TRIAGE']['error'], 409)
         expected_batches = -(-len(selection.items) // BATCH_SIZE)
         now_iso = datetime.now(timezone.utc).isoformat()
         model_meta = prepared.get('ai_model') or {}
         ai_model = {key: model_meta.get(key) for key in ('connection_label', 'model', 'site')}
-        retry_limit = settings['area_retry_limit'] if settings else DEFAULT_AREA_RETRY_LIMIT
         payload = {'engine': ENGINE, 'retry_limit': retry_limit, 'thresholds': body.thresholds.model_dump(mode='python'),
                    'attribution': selection.attribution, 'counts': selection.counts,
                    'notes': prepared['notes'], 'note_warnings': prepared['note_warnings'], 'same_rtl': prepared['same_rtl'],
@@ -282,7 +223,7 @@ def _job_summary(job):
 
 def _vwp_observability(service, conn, run, job, server_time):
     """Aggregate VWP worker liveness and queue depth without exposing other projects."""
-    raw = service.db.raw if service.access is not None else service.db
+    raw = service.db.raw
     table = raw.table('di_area_power_tracking_record')
     heartbeat = raw.worker_heartbeat(conn, 'vwp_server') if hasattr(raw, 'worker_heartbeat') else None
     activity = conn.execute(sql.SQL(

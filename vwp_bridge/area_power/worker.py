@@ -22,11 +22,16 @@ from .tracking.expectations import run_expectation_proposal
 from .tracking.slots import advance_slot, reconcile_round
 from .triage import run_triage
 from common.area_power.analysis import all_records, compute_comparison, parse_upload
-from vwp_bridge.area_power.ai import (AIError, ensure_run, extract_one, failure_detail,
-                           prepare_extractions, publish_numeric_alerts, run_judgement, new_attempt, mirror_attempt)
+from .ai_runtime import ACTOR, AIError, failure_detail, mirror_attempt, new_attempt
+from vwp_bridge.area_power.ai import (
+    ensure_run,
+    extract_one,
+    prepare_extractions,
+    publish_numeric_alerts,
+    run_judgement,
+)
 
-LOG = logging.getLogger('area_power.vwp.worker')
-ACTOR = 'vwp-worker'
+LOG = logging.getLogger('vwp_bridge.area_power.worker')
 
 
 def compare(db, settings, comparison_id, requested_run=None, attempt_key=None):

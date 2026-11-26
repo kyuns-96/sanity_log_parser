@@ -28,12 +28,6 @@ export const uploadSchema = z.object({
 }).passthrough()
 export type TrackingRecord = z.infer<typeof recordSchema>
 export type Upload = z.infer<typeof uploadSchema>
-export const dashboardSchema = z.object({
-  uploads: z.array(uploadSchema), records: z.array(recordSchema), jobs: z.array(recordSchema),
-  alerts: z.array(recordSchema), comparisons: z.array(recordSchema), counts: z.record(z.string(), z.unknown()),
-  root_metrics: z.record(z.string(), z.unknown()).nullable(),
-})
-export type Dashboard = z.infer<typeof dashboardSchema>
 export const detailSchema = z.object({
   comparison: recordSchema, results: z.array(recordSchema), judgements: z.array(recordSchema), ai_runs: z.array(recordSchema),
   observations: z.array(z.record(z.string(), z.unknown())).optional(),
@@ -222,7 +216,7 @@ export function formatCornerLabel(upload: Pick<Upload, 'process_label' | 'voltag
 }
 export const uploadName = (upload: Upload) => `${upload.execution_name || upload.original_filename || upload.filename || upload.id} · ${formatCornerLabel(upload)} · ${upload.id.slice(0, 8)}`
 // Match the backend's Decimal identity without converting PVT values to Number.
-function cornerDecimal(value: string | null | undefined) {
+export function cornerDecimal(value: string | null | undefined) {
   if (value == null) return null
   const match = /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(value)
   if (!match) return value

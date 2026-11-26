@@ -1,6 +1,7 @@
 """Metric aggregation, comparability evaluation, and policy threshold checking."""
 from __future__ import annotations
 
+from common.area_power.csv_input import UNKNOWN_METADATA_TOKENS
 from .groups import (
     D,
     DISTRIBUTIONS,
@@ -65,7 +66,7 @@ def known_metadata(value):
     if value is None or value == '' or value == {}:
         return False
     if isinstance(value, str):
-        return value.strip().lower() not in ('unknown', 'unavailable', 'unspecified', 'n/a')
+        return value.strip().lower() not in UNKNOWN_METADATA_TOKENS
     return True
 
 

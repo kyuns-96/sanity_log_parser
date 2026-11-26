@@ -3,14 +3,13 @@ import type { FormEvent } from 'react'
 import { Check, FolderKanban, GitCompareArrows, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { AccessLayout } from './AccessWelcome'
 import AIConnectionsAdmin from '@/features/ai/AIConnectionsAdmin'
 import { AreaTrackingAdmin } from '@/features/area-power/TrackingSettings'
 import UserGrants from './UserGrants'
-import ProjectProcessField from '@/features/atlas/ProjectProcessField'
+import { BlockCreateFields, ProjectCreateFields, formatCatalogAreaNotice } from '@/features/atlas/CatalogCreateFields'
 import type { AccessScreenProps } from './AccessWelcome'
 import { accessError, requestStatus, roleLabel, scopeName } from './accessApi'
 import type { AccessCatalog, AccessGrant, AccessRequest, AdminAccess } from './accessApi'
@@ -62,7 +61,7 @@ export default function AccessAdmin(props: AccessScreenProps) {
     void command(async () => {
       const result = await api<{ project_id: string; area_prepared?: boolean }>('/api/admin/projects', { request_id: projectRequest, name: projectName.trim(), description: description.trim(), process: process || null })
       await refresh(); setBlockProject(result.project_id); setProjectName(''); setDescription(''); setProcess(''); setProjectRequest(crypto.randomUUID())
-      setNotice(result.area_prepared === false ? '프로젝트를 등록했습니다. (Area/Power 자동 연결은 대기 중입니다.) 이어서 블록을 추가해 주세요.' : '프로젝트를 등록했습니다. 이어서 블록을 추가해 주세요.')
+      setNotice(`프로젝트를 등록했습니다.${formatCatalogAreaNotice(result.area_prepared, 'admin')} 이어서 블록을 추가해 주세요.`)
     })
   }
   function createBlock(event: FormEvent) {
@@ -70,7 +69,7 @@ export default function AccessAdmin(props: AccessScreenProps) {
     void command(async () => {
       const result = await api<{ block_id: string; area_prepared?: boolean }>(`/api/admin/projects/${encodeURIComponent(blockProject)}/blocks`, { request_id: blockRequest, name: blockName.trim() })
       await refresh(); setBlockName(''); setBlockRequest(crypto.randomUUID())
-      setNotice(result.area_prepared === false ? '블록을 등록했습니다. (Area/Power 자동 연결은 대기 중입니다.)' : '블록을 등록했습니다.')
+      setNotice(`블록을 등록했습니다.${formatCatalogAreaNotice(result.area_prepared, 'admin')}`)
     })
   }
   function openDecision(value: Decision) { setDecision(value); setReason(''); setCommandId(crypto.randomUUID()); setError('') }
@@ -108,13 +107,30 @@ export default function AccessAdmin(props: AccessScreenProps) {
       <section className="am-panel" aria-label="승인 대기 요청">{pending.length ? <ul className="am-list am-admin-requests">{pending.map(request => <li key={request.request_id}><div><strong>{userName(request.user_id)}{request.user_id === props.session.user_id && <Badge variant="secondary" className="am-self">내 요청</Badge>}</strong><span>{scopeName(catalog, request)} · {roleLabel(request.role)}</span><p>{request.reason}</p></div><div className="am-row-actions"><Button variant="outline" size="sm" disabled={busy} onClick={() => openDecision({ kind: 'request', value: request, decision: 'REJECT' })}><X size={14} />거절</Button><Button size="sm" disabled={busy} onClick={() => openDecision({ kind: 'request', value: request, decision: 'APPROVE' })}><Check size={14} />승인</Button></div></li>)}</ul> : <div className="am-empty am-empty-small"><Check size={25} /><p>승인을 기다리는 요청이 없습니다.</p></div>}</section>
       {access && <UserGrants access={access} catalog={catalog} busy={busy} onRevoke={value => openDecision({ kind: 'revoke', value })} />}
       <div className="am-columns am-admin-columns"><section className="am-panel"><div className="am-panel-heading"><div><h2>프로젝트 등록</h2><p className="studio-section-description">프로젝트를 만든 뒤 담당 블록을 추가하세요.</p></div><FolderKanban size={18} /></div><form className="am-form" onSubmit={createProject}>
-        <label>프로젝트 이름<Input aria-label="프로젝트 이름" value={projectName} required maxLength={100} disabled={busy} onChange={event => { setProjectName(event.target.value); setProjectRequest(crypto.randomUUID()) }} /><small>같은 이름은 기존 프로젝트를 사용합니다. 앞뒤 공백만 제거하고 대소문자와 내부 공백은 구분합니다.</small></label>
-        <ProjectProcessField processes={catalog.processes || []} value={process} onChange={name => { setProcess(name); setProjectRequest(crypto.randomUUID()) }} api={api} reload={refresh} disabled={busy} />
-        <label>설명<Textarea aria-label="설명" value={description} maxLength={1000} disabled={busy} rows={2} onChange={event => { setDescription(event.target.value); setProjectRequest(crypto.randomUUID()) }} /></label><Button type="submit" disabled={busy || !projectName.trim()}><Plus size={15} />프로젝트 등록</Button>
+        <ProjectCreateFields
+          name={projectName}
+          process={process}
+          description={description}
+          processes={catalog.processes || []}
+          disabled={busy}
+          api={api}
+          reload={refresh}
+          onNameChange={value => { setProjectName(value); setProjectRequest(crypto.randomUUID()) }}
+          onProcessChange={name => { setProcess(name); setProjectRequest(crypto.randomUUID()) }}
+          onDescriptionChange={value => { setDescription(value); setProjectRequest(crypto.randomUUID()) }}
+        />
+        <Button type="submit" disabled={busy || !projectName.trim()}><Plus size={15} />프로젝트 등록</Button>
       </form></section>
       <section className="am-panel"><div className="am-panel-heading"><div><h2>블록 등록</h2><p className="studio-section-description">선택한 프로젝트에 검토 단위를 등록하세요.</p></div><Plus size={18} /></div><form className="am-form" onSubmit={createBlock}>
-        <label>프로젝트<select className="studio-native-select" aria-label="프로젝트" required value={blockProject} disabled={busy || !catalog.projects.length} onChange={event => { setBlockProject(event.target.value); setBlockRequest(crypto.randomUUID()) }}><option value="">프로젝트를 선택하세요</option>{catalog.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
-        <label>블록 이름<Input aria-label="블록 이름" value={blockName} required maxLength={100} disabled={busy} onChange={event => { setBlockName(event.target.value); setBlockRequest(crypto.randomUUID()) }} /><small>선택한 프로젝트에 같은 이름의 블록이 있으면 해당 블록을 사용합니다.</small></label><Button type="submit" disabled={busy || !blockProject || !blockName.trim()}><Plus size={15} />블록 등록</Button>
+        <BlockCreateFields
+          name={blockName}
+          projects={catalog.projects}
+          selectedProjectId={blockProject}
+          disabled={busy}
+          onProjectChange={value => { setBlockProject(value); setBlockRequest(crypto.randomUUID()) }}
+          onNameChange={value => { setBlockName(value); setBlockRequest(crypto.randomUUID()) }}
+        />
+        <Button type="submit" disabled={busy || !blockProject || !blockName.trim()}><Plus size={15} />블록 등록</Button>
       </form></section></div>
       <section className="am-panel"><div className="am-panel-heading"><h2>등록된 프로젝트·블록</h2><span>{catalog.projects.length}개 프로젝트</span></div>{catalog.projects.length ? <ul className="am-list">{catalog.projects.map(project => <li key={project.id}><div><strong>{project.name}</strong>{project.description && <p>{project.description}</p>}<div className="am-block-tags">{catalog.blocks.filter(block => block.project_id === project.id).map(block => <span key={block.id}>{block.name}</span>)}{!catalog.blocks.some(block => block.project_id === project.id) && <span>아직 등록된 블록이 없습니다.</span>}</div></div></li>)}</ul> : <div className="am-empty am-empty-small"><p>등록된 프로젝트가 없습니다.</p></div>}</section>
       {completed.length > 0 && <section className="am-panel"><div className="am-panel-heading"><h2>처리한 요청</h2><span>{completed.length}건</span></div><ul className="am-list">{completed.map(request => <li key={request.request_id}><div><strong>{userName(request.user_id)}</strong><span>{scopeName(catalog, request)} · {roleLabel(request.role)}</span>{request.decision_reason && <p>{request.decision_reason}</p>}</div><Badge variant="outline" className={`am-status am-status-${request.status.toLowerCase()}`}>{requestStatus[request.status]}</Badge></li>)}</ul></section>}

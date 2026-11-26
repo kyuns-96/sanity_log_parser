@@ -4,24 +4,19 @@ import { array, object, request, text, unknownSchema, type Auth } from '../api'
 import { Button, Field } from '../components/workspace'
 import type { AtlasProject } from '@/features/atlas/atlasContext'
 import {
-  cornerSpecId,
   trackingPreviewSchema,
   type CornerSpec,
   type TrackingOverviewData,
   type TrackingPreviewData,
 } from '../trackingApi'
+import { CornerChipListEditor } from './CornerChipListEditor'
+import { parseCornerSpec, parseCornerSpecList } from './trackingUtils'
 
 interface ProjectTrackingConfigCardProps {
   auth: Auth
   project: AtlasProject
   areaProjectId: string
   data: TrackingOverviewData | null
-  defaultCorners: CornerSpec[]
-  setDefaultCorners: React.Dispatch<React.SetStateAction<CornerSpec[]>>
-  deadlineDays: string
-  setDeadlineDays: (value: string) => void
-  deadlineTime: string
-  setDeadlineTime: (value: string) => void
   busy: boolean
   runAction: (fn: () => Promise<void>, success?: string) => Promise<void>
   onReload: () => Promise<void>
@@ -32,29 +27,21 @@ export function ProjectTrackingConfigCard({
   project,
   areaProjectId,
   data,
-  defaultCorners,
-  setDefaultCorners,
-  deadlineDays,
-  setDeadlineDays,
-  deadlineTime,
-  setDeadlineTime,
   busy,
   runAction,
   onReload,
 }: ProjectTrackingConfigCardProps) {
   const projCfg = object(data?.project_config)
   const [enabled, setEnabled] = useState(false)
+  const [defaultCorners, setDefaultCorners] = useState<CornerSpec[]>([])
+  const [deadlineDays, setDeadlineDays] = useState('7')
+  const [deadlineTime, setDeadlineTime] = useState('18:00')
   const [deadlineTz, setDeadlineTz] = useState('Asia/Seoul')
   const [topRecipients, setTopRecipients] = useState('')
   const [areaPct, setAreaPct] = useState('10')
   const [powerPct, setPowerPct] = useState('10')
   const [noiseSharePct, setNoiseSharePct] = useState('0.1')
   const [minArea, setMinArea] = useState('50')
-  const [newCornerName, setNewCornerName] = useState('')
-  const [showCornerDetail, setShowCornerDetail] = useState(false)
-  const [newCornerVolt, setNewCornerVolt] = useState('')
-  const [newCornerTemp, setNewCornerTemp] = useState('')
-  const [newCornerPex, setNewCornerPex] = useState('')
   const [powerTargets, setPowerTargets] = useState<Array<{ effective_net_ver: string; target_mw: string; label: string }>>([])
   const [targetNet, setTargetNet] = useState('')
   const [targetMw, setTargetMw] = useState('')
@@ -75,49 +62,20 @@ export function ProjectTrackingConfigCard({
     setPowerPct(text(th.power_increase_pct ?? 10))
     setNoiseSharePct(text(th.noise_share_pct ?? '0.1'))
     setMinArea(text(th.min_area ?? 50))
-    setDefaultCorners(array(projCfg.default_required_corners).map(item => {
-      const o = object(item)
-      return {
-        label: text(o.label) || text(o.process_label),
-        process_label: text(o.process_label) || text(o.label),
-        voltage_v: text(o.voltage_v) || null,
-        temp_c: text(o.temp_c) || null,
-        pex: text(o.pex) || null,
-      }
-    }))
+    setDefaultCorners(parseCornerSpecList(projCfg.default_required_corners))
     setPowerTargets(array(projCfg.power_targets).map(item => {
       const o = object(item)
       return { effective_net_ver: text(o.effective_net_ver), target_mw: text(o.target_mw), label: text(o.label) }
     }))
     setTypicalSpecs(array(projCfg.typical_specs).map(item => {
       const o = object(item)
-      const c = object(o.corner)
       return {
         effective_net_ver: text(o.effective_net_ver),
         label: text(o.label),
-        corner: {
-          label: text(c.label) || text(c.process_label),
-          process_label: text(c.process_label),
-          voltage_v: text(c.voltage_v) || null,
-          temp_c: text(c.temp_c) || null,
-          pex: text(c.pex) || null,
-        },
+        corner: parseCornerSpec(o.corner),
       }
     }))
   }, [data?.project_config?.id, data?.project_config?.row_version])
-
-  function addDefaultCorner() {
-    const name = newCornerName.trim()
-    if (!name) return
-    setDefaultCorners(rows => [...rows, {
-      label: name,
-      process_label: name,
-      voltage_v: newCornerVolt.trim() || null,
-      temp_c: newCornerTemp.trim() || null,
-      pex: newCornerPex.trim() || null,
-    }])
-    setNewCornerName(''); setNewCornerVolt(''); setNewCornerTemp(''); setNewCornerPex('')
-  }
 
   async function saveProjectSettings() {
     const days = Number(deadlineDays)
@@ -189,47 +147,15 @@ export function ProjectTrackingConfigCard({
 
           <div className="field">
             <span className="field-label">기본 필수 코너</span>
-            <div className="tracking-chip-list">
-              {defaultCorners.map((c, idx) => (
-                <span key={cornerSpecId(c)} className="tracking-chip">
-                  {c.label}
-                  {(c.voltage_v || c.temp_c || c.pex) && (
-                    <small>
-                      ({[c.voltage_v && `${c.voltage_v}V`, c.temp_c && `${c.temp_c}°C`, c.pex].filter(Boolean).join(' / ')})
-                    </small>
-                  )}
-                  {project.can_write && (
-                    <button type="button" aria-label={`${c.label} 삭제`} onClick={() => setDefaultCorners(rows => rows.filter((_, i) => i !== idx))}>
-                      <Trash2 size={12} />
-                    </button>
-                  )}
-                </span>
-              ))}
-              {!defaultCorners.length && <small className="text-muted">등록된 코너 없음</small>}
-            </div>
-            {project.can_write && (
-              <div className="settings-corner-add">
-                <input
-                  placeholder="코너명 (예: TT, SS)"
-                  value={newCornerName}
-                  onChange={e => setNewCornerName(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addDefaultCorner() } }}
-                />
-                <Button variant="outline" size="sm" onClick={addDefaultCorner}>
-                  <Plus size={14} />추가
-                </Button>
-                <button type="button" className="tracking-link-inline" onClick={() => setShowCornerDetail(v => !v)}>
-                  {showCornerDetail ? '세부 조건 숨기기' : '전압·온도 지정'}
-                </button>
-              </div>
-            )}
-            {project.can_write && showCornerDetail && (
-              <div className="tracking-inline-add">
-                <input placeholder="전압 V (예: 0.70)" value={newCornerVolt} onChange={e => setNewCornerVolt(e.target.value)} />
-                <input placeholder="온도 °C (예: 25)" value={newCornerTemp} onChange={e => setNewCornerTemp(e.target.value)} />
-                <input placeholder="PEX (선택)" value={newCornerPex} onChange={e => setNewCornerPex(e.target.value)} />
-              </div>
-            )}
+            <CornerChipListEditor
+              corners={defaultCorners}
+              onChange={setDefaultCorners}
+              canWrite={project.can_write}
+              emptyText="등록된 코너 없음"
+              placeholder="코너명 (예: TT, SS)"
+              allowPvtDetail
+              removeLabel
+            />
           </div>
         </div>
 

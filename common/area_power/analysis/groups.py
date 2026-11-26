@@ -8,19 +8,22 @@ from hashlib import sha256
 import json
 from typing import Any
 
-from psycopg import sql
-
-from common.area_power.csv_input import parse_csv, read_observations
+from common.area_power.csv_input import (
+    CELL_GROUPS as CATEGORIES,
+    DRIVE_NAMES as DRIVE,
+    LEGACY_DRIVE_NAMES as LEGACY_DRIVE,
+    POWER_FIELDS as POWER,
+    SUB1X_DRIVE_NAMES as SUB1X_DRIVES,
+    VTH_NAMES as VT,
+    parse_csv,
+    read_observations,
+)
+from common.area_power.db import Database
 from common.area_power.errors import DomainError
 from common.area_power.jsonutil import digest
 from common.area_power.models import CORRESPONDENCE_POLICY, UploadMetadata
 
 D = Decimal
-CATEGORIES = ('total', 'logic', 'cts', 'sram', 'io', 'others')
-VT = tuple(f'vt_{v}{suffix}' for v in ('slvt', 'lvt', 'rvt', 'hvt') for suffix in ('', '_llp'))
-SUB1X_DRIVES = ('drv_D0P5', 'drv_D0P7')
-LEGACY_DRIVE = tuple(f'drv_{v}' for v in ('D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D10', 'D12', 'D14', 'D16', 'other'))
-DRIVE = SUB1X_DRIVES + LEGACY_DRIVE
 DRIVE_GROUP_NAMES = ('drv_sub1x', 'drv_d1_d3', 'drv_d4_plus')
 DRIVE_GROUP_MEMBERS = {
     'drv_sub1x_pct': ('drv_D0P5_pct', 'drv_D0P7_pct'),
@@ -28,7 +31,6 @@ DRIVE_GROUP_MEMBERS = {
     'drv_d4_plus_pct': ('drv_D4_pct', 'drv_D5_pct', 'drv_D6_pct', 'drv_D7_pct', 'drv_D8_pct', 'drv_D10_pct', 'drv_D12_pct', 'drv_D14_pct', 'drv_D16_pct'),
 }
 DRIVE_GROUP_METRICS = tuple(f'{name}_pct' for name in DRIVE_GROUP_NAMES)
-POWER = tuple(f'pwr_{c}_{p}_mw' for c in ('all', 'logic', 'sram', 'io', 'others') for p in ('internal', 'switching', 'leakage', 'total'))
 STRUCTURAL = tuple(f'{c}_{s}' for c in CATEGORIES for s in ('cells', 'area')) + ('cts_area_pct',) + tuple(f'{c}_{s}' for c in VT + DRIVE for s in ('cnt', 'pct'))
 QUALITY = ('vth_unclassified_cnt', 'drive_unclassified_cnt')
 DISTRIBUTIONS = ('vth_distribution_change', 'drive_distribution_change')
@@ -41,21 +43,15 @@ def scope_fields(upload: dict) -> dict:
 
 
 def all_records(db, conn, record_type: str, **filters) -> list[dict]:
-    rows, offset = [], 0
-    while True:
-        page = db.records(conn, record_type, limit=1000, offset=offset, **filters)
-        rows.extend(page)
-        if len(page) < 1000:
-            return rows
-        offset += len(page)
+    return db.all_records(conn, record_type, **filters)
 
 
 def existing_dedupe(db, conn, kind: str, key: bytes, *, lock=False):
-    return conn.execute(sql.SQL('SELECT * FROM {} WHERE record_type=%s AND dedupe_key=%s' + (' FOR UPDATE' if lock else '')).format(db.table('di_area_power_tracking_record')), (kind, key)).fetchone()
+    return db.raw.existing_dedupe(conn, kind, key, lock=lock)
 
 
 def advisory_lock(conn, key: bytes) -> None:
-    conn.execute('SELECT pg_advisory_xact_lock(%s)', (int.from_bytes(key[:8], 'big', signed=True),))
+    Database.advisory_lock(conn, key)
 
 
 def parse_upload(upload: dict, settings, *, observations=False):

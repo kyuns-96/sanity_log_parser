@@ -4,8 +4,8 @@ from __future__ import annotations
 import os
 import stat
 from pathlib import Path
-from urllib.parse import urlsplit
 
+from common.sanity_ai_http import validate_http_endpoint
 from common.sanity_common import ReviewError, digest
 from common.sanity_config import load_environment
 from common.sanity_privacy import SecretGuard
@@ -15,14 +15,7 @@ PRIVATE_KEYS = frozenset(("endpoint", "fallback_endpoint", "token", "client_api_
 
 
 def _endpoint(value):
-    if not isinstance(value, str) or not 1 <= len(value) <= 2048 or any(c.isspace() or ord(c) < 33 for c in value):
-        return False
-    try:
-        url = urlsplit(value)
-        return url.scheme in ("http", "https") and bool(url.hostname) and url.port != 0 and not any(
-            (url.username, url.password, url.query, url.fragment))
-    except ValueError:
-        return False
+    return validate_http_endpoint(value, require_path=False)
 
 
 def validate_private_profile(value):

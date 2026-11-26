@@ -18,7 +18,6 @@ export type AtlasContextValue = {
   project?: AtlasProject; block?: AtlasBlock; version?: AtlasVersion; netVer: string; areaScope: AreaScope | null;
   reload: () => Promise<void>; selectScope: (scope: AtlasScope) => Promise<void>; selectNetVer: (netVer: string) => Promise<void>; href: (path: string) => string;
   replaceRoute: (href: string) => void;
-  prepare: (previousVersionId?: string | null) => Promise<void>; preparing: boolean;
 }
 const AtlasContext = createContext<AtlasContextValue | null>(null)
 export const useAtlas = () => useContext(AtlasContext)
@@ -29,7 +28,6 @@ export function AtlasProvider({ routeSearch, replaceRoute, children, demo = fals
   const [catalog, setCatalog] = useState<AtlasCatalog | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [preparing, setPreparing] = useState(false)
   const [netSelection, setNetSelection] = useState({ projectId: '', blockId: '', netVer: '' })
   const catalogRequest = useRef<AbortController | null>(null)
   const sessionKey = auth.session && (auth.session.auth_method === 'local_token' || auth.session.authorization_ready === true)
@@ -86,13 +84,5 @@ export function AtlasProvider({ routeSearch, replaceRoute, children, demo = fals
     setNetSelection({ projectId: scope.projectId, blockId: scope.blockId, netVer: next })
     await selectScope({ projectId: scope.projectId, blockId: scope.blockId, versionId: '' })
   }, [selectScope, scope.projectId, scope.blockId])
-  const prepare = async (previousVersionId?: string | null) => {
-    if (!project || scope.blockId && !block || scope.versionId && !version) throw new Error('공통 프로젝트·블록·버전을 먼저 선택하세요.')
-    setPreparing(true)
-    try {
-      await auth.request<AreaScope>('/api/atlas/area-scope', { project_id: project.id, ...(block ? { block_id: block.id } : {}), ...(version ? { version_id: version.id } : {}), ...(previousVersionId !== undefined ? { previous_version_id: previousVersionId } : {}) })
-      await reload()
-    } finally { setPreparing(false) }
-  }
-  return <AtlasContext value={{ demo, catalog, scope, routeSearch, project, block, version, netVer, areaScope, loading, error, reload, selectScope, selectNetVer, href, replaceRoute, prepare, preparing }}>{children}</AtlasContext>
+  return <AtlasContext value={{ demo, catalog, scope, routeSearch, project, block, version, netVer, areaScope, loading, error, reload, selectScope, selectNetVer, href, replaceRoute }}>{children}</AtlasContext>
 }

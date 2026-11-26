@@ -1,10 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, ChevronRight, Plus, Sparkles, Trash2 } from 'lucide-react'
-import { array, format, object, request, text, unknownSchema, uploadName, type Auth, type Upload } from '../api'
+import { CheckCircle2, ChevronRight } from 'lucide-react'
+import { array, object, request, text, unknownSchema, uploadName, type Auth, type Upload } from '../api'
 import { Badge, Button, Field } from '../components/workspace'
 import type { AtlasBlock, AtlasProject } from '@/features/atlas/atlasContext'
+import {
+  formatEcoOptionLabel,
+  groupVersionsByRevision,
+  pickPreferredVersion,
+  revisionGroupKey,
+} from '@/lib/versionUtils'
 import { cornerSpecId, type CornerSpec, type TrackingOverviewData } from '../trackingApi'
-import { formatBlockBaselineVersion, uploadMatchesCorner, versionEcoNumbers } from './trackingUtils'
+import { BlockExpectationsSection } from './BlockExpectationsSection'
+import { CornerChipListEditor } from './CornerChipListEditor'
+import { formatBlockBaselineVersion, parseCornerSpecList, uploadMatchesCorner, versionEcoNumbers } from './trackingUtils'
 
 interface BlockTrackingConfigCardProps {
   auth: Auth
@@ -62,7 +70,6 @@ export function BlockTrackingConfigCard({
   const [baselineVersionId, setBaselineVersionId] = useState('')
   const [blockRecipients, setBlockRecipients] = useState('')
   const [blockCorners, setBlockCorners] = useState<CornerSpec[]>([])
-  const [blockCornerName, setBlockCornerName] = useState('')
   const [approvedBaselines, setApprovedBaselines] = useState<Record<string, string>>({})
 
   const baselineSideProject = blockKind === 'previous_version' ? project : baselineProject
@@ -75,22 +82,16 @@ export function BlockTrackingConfigCard({
     () => [...new Set((selectedBaselineBlock?.versions || []).filter(v => Boolean(v.area_id)).map(v => v.net_ver))],
     [selectedBaselineBlock],
   )
-  const baselineRevisionGroups = useMemo(() => {
-    const map = new Map<string, { key: string; label: string; versions: typeof selectedBaselineBlock extends undefined ? never : NonNullable<typeof selectedBaselineBlock>['versions'] }>()
-    for (const v of (selectedBaselineBlock?.versions || []).filter(ver => Boolean(ver.area_id) && ver.net_ver === baselineNetVer)) {
-      const key = `${v.revision}\0${v.layout}`
-      const existing = map.get(key)
-      if (existing) existing.versions.push(v)
-      else map.set(key, { key, label: `${v.revision} · ${v.layout}`, versions: [v] })
-    }
-    return [...map.values()]
-  }, [selectedBaselineBlock, baselineNetVer])
+  const baselineRevisionGroups = useMemo(
+    () => groupVersionsByRevision((selectedBaselineBlock?.versions || []).filter(ver => Boolean(ver.area_id) && ver.net_ver === baselineNetVer)),
+    [selectedBaselineBlock, baselineNetVer],
+  )
   const selectedBaselineVersion = useMemo(
     () => (selectedBaselineBlock?.versions || []).find(v => v.area_id === baselineVersionId),
     [selectedBaselineBlock, baselineVersionId],
   )
   const activeBaselineRevKey = selectedBaselineVersion
-    ? `${selectedBaselineVersion.revision}\0${selectedBaselineVersion.layout}`
+    ? revisionGroupKey(selectedBaselineVersion)
     : (baselineRevisionGroups.some(g => g.key === baselineRevKey) ? baselineRevKey : '')
   const baselineEcoOptions = useMemo(
     () => baselineRevisionGroups.find(g => g.key === activeBaselineRevKey)?.versions || [],
@@ -118,20 +119,11 @@ export function BlockTrackingConfigCard({
       : undefined
     const targetVer = savedVer || porVer
     setBaselineNetVer(targetVer?.net_ver || text(object(cfg.baseline_version_info).net_ver) || '')
-    setBaselineRevKey(targetVer ? `${targetVer.revision}\0${targetVer.layout}` : '')
+    setBaselineRevKey(targetVer ? revisionGroupKey(targetVer) : '')
     setBaselineVersionId(savedVerId || porVer?.area_id || '')
 
     setBlockRecipients(array(cfg.recipients).map(text).join(', '))
-    setBlockCorners(array(cfg.required_corners).map(item => {
-      const o = object(item)
-      return {
-        label: text(o.label) || text(o.process_label),
-        process_label: text(o.process_label) || text(o.label),
-        voltage_v: text(o.voltage_v) || null,
-        temp_c: text(o.temp_c) || null,
-        pex: text(o.pex) || null,
-      }
-    }))
+    setBlockCorners(parseCornerSpecList(cfg.required_corners))
     const baseMap: Record<string, string> = {}
     for (const item of array(cfg.approved_baselines).map(object)) {
       if (text(item.corner_id) && text(item.upload_id)) baseMap[text(item.corner_id)] = text(item.upload_id)
@@ -150,28 +142,6 @@ export function BlockTrackingConfigCard({
       && (!baselineVersionId || u.version_id === baselineVersionId),
     )
   }, [uploads, blockKind, areaProjectId, baselineAreaProjectId, selectedBlockId, baselineBlockId, baselineVersionId])
-
-  const [expText, setExpText] = useState('')
-  const [expNet, setExpNet] = useState('')
-  const [expPath, setExpPath] = useState('')
-  const [expMetric, setExpMetric] = useState<'logic_area' | 'pwr_all_total_mw'>('logic_area')
-  const [expCond, setExpCond] = useState<'any' | 'typical' | 'same_condition'>('any')
-  const [expDir, setExpDir] = useState<'increase' | 'decrease'>('increase')
-  const [expMin, setExpMin] = useState('')
-  const [expMax, setExpMax] = useState('')
-  const [expQuote, setExpQuote] = useState('')
-
-  const blockExpectations = useMemo(
-    () => (data?.expectations || []).filter(item => text(item.block_id) === selectedBlockId),
-    [data?.expectations, selectedBlockId],
-  )
-
-  function addBlockCorner() {
-    const name = blockCornerName.trim()
-    if (!name) return
-    setBlockCorners(rows => [...rows, { label: name, process_label: name, voltage_v: null, temp_c: null, pex: null }])
-    setBlockCornerName('')
-  }
 
   async function saveBlockSettings() {
     if (!selectedBlockId) throw new Error('설정할 블록을 선택하세요.')
@@ -202,35 +172,6 @@ export function BlockTrackingConfigCard({
       approved_mapping_id: text(existingCfg.approved_mapping_id) || null,
       no_change_net_vers: array(existingCfg.no_change_net_vers).map(text).filter(Boolean),
       ...(blockCfg?.row_version ? { expected_row_version: Number(blockCfg.row_version) } : {}),
-    })
-    await onReload()
-  }
-
-  async function saveExpectation() {
-    if (!selectedBlockId) throw new Error('블록을 먼저 선택하세요.')
-    if (!expPath.trim()) throw new Error('대상 instance 경로를 입력하세요.')
-    await request(auth, `/tracking/projects/${encodeURIComponent(areaProjectId)}/blocks/${encodeURIComponent(selectedBlockId)}/expectations`, unknownSchema, {
-      effective_net_ver: expNet.trim() || null,
-      target_paths: [expPath.trim()],
-      scope: 'subtree',
-      metric: expMetric,
-      comparison_condition: expCond,
-      direction: expDir,
-      min_pct: expMin.trim() ? expMin.trim() : null,
-      max_pct: expMax.trim() ? expMax.trim() : null,
-      quote: expQuote.trim(),
-    })
-    setExpPath(''); setExpMin(''); setExpMax(''); setExpQuote('')
-    await onReload()
-  }
-
-  async function proposeExpectation() {
-    if (!selectedBlockId) throw new Error('블록을 먼저 선택하세요.')
-    if (!expText.trim()) throw new Error('설계 변경 원문을 입력하세요.')
-    await request(auth, `/tracking/projects/${encodeURIComponent(areaProjectId)}/blocks/${encodeURIComponent(selectedBlockId)}/expectations/propose`, unknownSchema, {
-      request_id: crypto.randomUUID(),
-      effective_net_ver: expNet.trim() || null,
-      source_text: expText.trim(),
     })
     await onReload()
   }
@@ -329,7 +270,7 @@ export function BlockTrackingConfigCard({
                       ? nextBlk.versions.find(v => v.id === nextBlk.por?.version_id && Boolean(v.area_id))
                       : undefined
                     setBaselineNetVer(porVer?.net_ver || '')
-                    setBaselineRevKey(porVer ? `${porVer.revision}\0${porVer.layout}` : '')
+                    setBaselineRevKey(porVer ? revisionGroupKey(porVer) : '')
                     setBaselineVersionId(porVer?.area_id || '')
                     setApprovedBaselines({})
                   }}
@@ -349,9 +290,8 @@ export function BlockTrackingConfigCard({
                   const nextNet = e.target.value
                   setBaselineNetVer(nextNet)
                   const matching = (selectedBaselineBlock?.versions || []).filter(v => Boolean(v.area_id) && v.net_ver === nextNet)
-                  const porInNet = matching.find(v => v.id === selectedBaselineBlock?.por?.version_id)
-                  const autoVer = porInNet || (matching.length === 1 ? matching[0] : undefined)
-                  setBaselineRevKey(autoVer ? `${autoVer.revision}\0${autoVer.layout}` : '')
+                  const autoVer = pickPreferredVersion(matching, selectedBaselineBlock?.por?.version_id)
+                  setBaselineRevKey(autoVer ? revisionGroupKey(autoVer) : '')
                   setBaselineVersionId(autoVer?.area_id || '')
                   setApprovedBaselines({})
                 }}
@@ -368,8 +308,7 @@ export function BlockTrackingConfigCard({
                   const nextKey = e.target.value
                   setBaselineRevKey(nextKey)
                   const group = baselineRevisionGroups.find(g => g.key === nextKey)
-                  const porInGroup = group?.versions.find(v => v.id === selectedBaselineBlock?.por?.version_id)
-                  const autoVer = porInGroup || (group && group.versions.length === 1 ? group.versions[0] : undefined)
+                  const autoVer = pickPreferredVersion(group?.versions || [], selectedBaselineBlock?.por?.version_id)
                   setBaselineVersionId(autoVer?.area_id || '')
                   setApprovedBaselines({})
                 }}
@@ -387,13 +326,11 @@ export function BlockTrackingConfigCard({
                 onChange={e => { setBaselineVersionId(e.target.value); setApprovedBaselines({}) }}
               >
                 <option value="">기준 ECO_NUM 선택</option>
-                {baselineEcoOptions.map(v => {
-                  const ecos = versionEcoNumbers(v)
-                  const ecoText = ecos.length ? ecos.join(', ') : 'ECO 미기록'
-                  return (
-                    <option key={v.area_id!} value={v.area_id!}>{ecoText}{v.id === selectedBaselineBlock?.por?.version_id ? ' (PoR)' : ''}</option>
-                  )
-                })}
+                {baselineEcoOptions.map(v => (
+                  <option key={v.area_id!} value={v.area_id!}>
+                    {formatEcoOptionLabel(versionEcoNumbers(v), v.id === selectedBaselineBlock?.por?.version_id)}
+                  </option>
+                ))}
               </select>
             </Field>
             <Field label="블록 담당자 메일 (쉼표 구분)">
@@ -458,92 +395,26 @@ export function BlockTrackingConfigCard({
               <small>{blockCorners.length ? `전용 코너 ${blockCorners.length}개` : `프로젝트 기본 코너 상속 (${defaultCorners.map(c => c.label).join(', ') || '없음'})`}</small>
             </summary>
             <div className="settings-advanced-body">
-              <div className="tracking-chip-list">
-                {blockCorners.map((c, idx) => (
-                  <span key={cornerSpecId(c)} className="tracking-chip">
-                    {c.label}
-                    {project.can_write && (
-                      <button type="button" onClick={() => setBlockCorners(rows => rows.filter((_, i) => i !== idx))}>
-                        <Trash2 size={12} />
-                      </button>
-                    )}
-                  </span>
-                ))}
-                {!blockCorners.length && <small className="text-muted">비워 두면 프로젝트 기본 필수 코너를 그대로 사용합니다.</small>}
-              </div>
-              {project.can_write && (
-                <div className="settings-corner-add">
-                  <input
-                    placeholder="블록 전용 코너명 (예: SS)"
-                    value={blockCornerName}
-                    onChange={e => setBlockCornerName(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addBlockCorner() } }}
-                  />
-                  <Button variant="outline" size="sm" onClick={addBlockCorner}>
-                    <Plus size={14} />추가
-                  </Button>
-                </div>
-              )}
+              <CornerChipListEditor
+                corners={blockCorners}
+                onChange={setBlockCorners}
+                canWrite={project.can_write}
+                emptyText="비워 두면 프로젝트 기본 필수 코너를 그대로 사용합니다."
+                placeholder="블록 전용 코너명 (예: SS)"
+              />
             </div>
           </details>
 
-          <details className="settings-advanced">
-            <summary>
-              <ChevronRight size={15} className="chevron" aria-hidden="true" />
-              <span>설계 변경 메모 · 예상 증감</span>
-              <small>{blockExpectations.length}건 등록됨</small>
-            </summary>
-            <div className="settings-advanced-body">
-              <p className="muted">미리 등록해 둔 예상 증감 범위 안의 변화는 분석 시 자동으로 ‘설명됨’으로 분류합니다.</p>
-              <ul className="tracking-mini-list">
-                {blockExpectations.map(exp => (
-                  <li key={text(exp.id)}>
-                    <span>
-                      <strong>{array(exp.target_paths).map(text).join(', ')}</strong> · {exp.metric === 'logic_area' ? 'Logic Area' : 'Total Power'} · {exp.direction === 'increase' ? '증가' : '감소'}{' '}
-                      {exp.min_pct != null || exp.max_pct != null ? `${format(exp.min_pct ?? 0)}~${format(exp.max_pct ?? '?')}%` : '(방향만)'}
-                      {text(exp.effective_net_ver) ? ` · ${text(exp.effective_net_ver)}부터` : ''}
-                      {text(exp.quote) ? ` · "${text(exp.quote)}"` : ''}
-                    </span>
-                  </li>
-                ))}
-                {!blockExpectations.length && <li className="muted">등록된 예상 변화가 없습니다.</li>}
-              </ul>
-
-              {project.can_write && (
-                <div className="tracking-expectation-editor">
-                  <div className="tracking-inline-add">
-                    <input placeholder="적용 시작 버전 (선택)" value={expNet} onChange={e => setExpNet(e.target.value)} />
-                    <input placeholder="instance 경로 (예: GPU/u_cache)" value={expPath} onChange={e => setExpPath(e.target.value)} />
-                    <select value={expMetric} onChange={e => setExpMetric(e.target.value as 'logic_area' | 'pwr_all_total_mw')}>
-                      <option value="logic_area">Logic Area</option>
-                      <option value="pwr_all_total_mw">Total Power</option>
-                    </select>
-                    <select value={expCond} onChange={e => setExpCond(e.target.value as 'any' | 'typical' | 'same_condition')}>
-                      <option value="any">모든 조건</option>
-                      <option value="typical">대표 조건</option>
-                      <option value="same_condition">동일 조건</option>
-                    </select>
-                    <select value={expDir} onChange={e => setExpDir(e.target.value as 'increase' | 'decrease')}>
-                      <option value="increase">증가</option>
-                      <option value="decrease">감소</option>
-                    </select>
-                    <input placeholder="최소 %" value={expMin} onChange={e => setExpMin(e.target.value)} />
-                    <input placeholder="최대 %" value={expMax} onChange={e => setExpMax(e.target.value)} />
-                    <input placeholder="사유 메모" value={expQuote} onChange={e => setExpQuote(e.target.value)} />
-                    <Button variant="outline" size="sm" disabled={busy} onClick={() => runAction(saveExpectation, '예상 변화를 등록했습니다.')}>
-                      <Plus size={14} />등록
-                    </Button>
-                  </div>
-                  <div className="tracking-ai-propose">
-                    <textarea rows={2} value={expText} onChange={e => setExpText(e.target.value)} placeholder="Design info 변경 메모를 붙여넣으면 중앙 VWP AI가 예상 증감 범위를 추출해 제안합니다." />
-                    <Button variant="outline" size="sm" disabled={busy || !expText.trim()} onClick={() => runAction(proposeExpectation, 'AI 예상 범위 제안을 요청했습니다.')}>
-                      <Sparkles size={14} />AI 추출 요청
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </details>
+          <BlockExpectationsSection
+            auth={auth}
+            areaProjectId={areaProjectId}
+            selectedBlockId={selectedBlockId}
+            canWrite={project.can_write}
+            expectations={data?.expectations || []}
+            busy={busy}
+            runAction={runAction}
+            onReload={onReload}
+          />
 
           <div className="form-actions">
             <Button size="sm" disabled={busy || !project.can_write} onClick={() => runAction(saveBlockSettings, '블록 기준 설정을 저장했습니다.')}>

@@ -1,55 +1,19 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { AuthConfig, Session } from '@/lib/types'
 import { appUrl } from '@/lib/appUrl'
+import { formatDashboardErrorMessage } from '@/lib/apiErrors'
+import { fetchJson, parseApiResponse } from '@/lib/fetchJson'
 
 export class DashboardRequestError extends Error {
   constructor(public code: string, public status: number) {
-    const messages: Record<string, string> = {
-      UNAUTHORIZED: '인증이 만료되었거나 올바르지 않습니다. 다시 로그인해 주세요.',
-      ACCOUNT_NOT_LINKED: 'SSO 인증은 확인됐지만 내부 계정이 연결되지 않았습니다. 운영 담당자에게 문의해 주세요.',
-      ACCOUNT_DISABLED: '사용이 중지된 계정입니다. 운영 담당자에게 문의해 주세요.',
-      AUTH_SSO_NOT_CONFIGURED: 'SSO 연결 설정이 아직 준비되지 않았습니다.',
-      AUTH_DIRECTORY_NOT_CONFIGURED: '내부 계정 연결 설정이 아직 준비되지 않았습니다.',
-      AUTH_PROVIDER_UNAVAILABLE: 'SSO 인증 서비스에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.',
-      AUTH_DIRECTORY_UNAVAILABLE: '내부 계정 조회 서비스에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.',
-      AUTH_CONFIG: '인증 설정을 확인할 수 없습니다. 운영 담당자에게 문의해 주세요.',
-      AUTH_INVALID_RESULT: '서버의 인증 응답을 확인할 수 없습니다. 운영 담당자에게 문의해 주세요.',
-      REVISION_CONFLICT: '다른 검토자가 내용을 변경했습니다. 새로고침 후 검토 창을 다시 열어 주세요.',
-      FORBIDDEN: '이 작업에 필요한 권한이 없습니다. 현재 담당 범위를 확인해 주세요.',
-      ACCESS_DENIED: '이 작업에 필요한 권한이 없습니다. 현재 담당 범위를 확인해 주세요.',
-      AUTHORIZATION_FORBIDDEN: '이 작업에 필요한 권한이 없습니다. 현재 담당 범위를 확인해 주세요.',
-      RESOURCE_NOT_FOUND: '현재 권한으로 이 검사 결과를 열 수 없습니다. 담당 범위를 확인해 주세요.',
-      PROCESS_NOT_FOUND: '목록에서 등록된 공정을 선택해 주세요.',
-      PROCESS_AREA_CONFLICT: '같은 이름의 공정에 다른 Unit area가 이미 등록되어 있습니다.',
-      REQUEST_CONFLICT: '이미 처리되었거나 같은 요청 번호의 내용이 다릅니다. 최신 상태를 확인해 주세요.',
-      AREA_POWER_UNAVAILABLE: '구성·전력 분석 서비스가 설정되지 않았거나 현재 사용할 수 없습니다. 운영 담당자에게 문의해 주세요.',
-      INTERNAL_ERROR: '서버 내부 오류가 발생했습니다. 운영 담당자에게 오류가 발생한 작업과 시각을 전달해 주세요.',
-      ANALYSIS_DELETE_NOT_CONFIGURED: '분석 DB 계정에 실행 기록을 삭제할 권한이 없습니다. 운영 담당자에게 확인해 주세요.',
-      AI_VWP_CONNECTION_REQUIRED: 'AI 매핑 제안에는 VWP 연결이 필요합니다. 관리자 설정에서 프로젝트 비교 AI 분석의 연결을 확인하세요.',
-      AI_TASK_MODEL_REQUIRED: '관리자 설정 → AI 연결·모델 관리에서 프로젝트 비교 AI 분석의 연결과 모델을 지정해 주세요.',
-      AI_CONNECTION_UNAVAILABLE: '선택한 AI 연결을 사용할 수 없습니다. 관리자 설정의 연결과 모델을 확인해 주세요.',
-      AI_USER_TOKEN_REQUIRED: '선택한 AI 연결에 본인의 인증값을 등록해 주세요.',
-      AI_USER_TOKEN_EXPIRED: '선택한 AI 연결의 본인 인증값이 만료됐습니다. 갱신해 주세요.',
-      STORED_UPLOAD_MISMATCH: '저장된 원본과 검증 정보가 일치하지 않습니다. 서비스 버전과 업로드 상태를 확인해 주세요.',
-      AREA_BINDING_NOT_RECORDED: '부분 저장: 수치 DB에는 저장되었지만 공통 카탈로그 연결 기록은 완료되지 않았습니다. 범위를 새로고침해 상태를 확인한 후 필요한 경우 직접 다시 연결하세요.',
-      AREA_BINDING_CONFLICT: '명시적 연결이 충돌하거나 여러 기존 ID가 모호하게 연결되어 있습니다. 로컬 운영자 또는 관리자에게 실제 연결 ID를 확인하세요.',
-      AREA_PREVIOUS_NOT_PREPARED: '명시적으로 선택한 이전 수치 버전을 먼저 준비하세요. 이전 범위 선택 → 수치 분석 준비 후 이 범위로 돌아오세요.',
-      AREA_LINEAGE_REQUIRED: '이 버전의 수치 계보를 명시적으로 선언하세요. 계보 시작 또는 실제 이전 버전을 선택해야 합니다.',
-    }
-    super(`${messages[code] || '요청을 처리하지 못했습니다.'} (${code})`)
+    super(formatDashboardErrorMessage(code))
   }
 }
 
+const createDashboardError = (code: string, status: number) => new DashboardRequestError(code, status)
+
 async function result<T>(response: Response, plain: boolean | 'blob' = false): Promise<T> {
-  if (!response.ok) {
-    let code = `HTTP_${response.status}`
-    try {
-      const body = await response.json()
-      if (typeof body.code === 'string') code = body.code.slice(0, 100)
-    } catch { /* A proxy's non-JSON response is still an explicit failure. */ }
-    throw new DashboardRequestError(code, response.status)
-  }
-  return plain === 'blob' ? await response.blob() as T : plain ? await response.text() as T : await response.json() as T
+  return parseApiResponse<T, DashboardRequestError>(response, { plain, createError: createDashboardError })
 }
 
 export function validAuthConfig(value: AuthConfig): boolean {
@@ -111,12 +75,18 @@ function useDashboardAuthState(enabled: boolean, initial?: DashboardAuthSnapshot
     const version = generation.current
     pending.current.add(controller)
     try {
-      const response = await fetch(appUrl(path), {
-        method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error',
-        headers: { ...(config.mode === 'local_token' ? { Authorization: `Bearer ${token}` } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json', 'X-Sanity-Request': '1' }) },
-        ...(body !== undefined ? { body: typeof body === 'string' ? body : JSON.stringify(body) } : {}), signal: controller.signal,
+      const value = await fetchJson<T, DashboardRequestError>(appUrl(path), {
+        body,
+        rawBody: typeof body === 'string',
+        redirect: 'error',
+        plain,
+        signal: controller.signal,
+        headers: {
+          ...(config.mode === 'local_token' ? { Authorization: `Bearer ${token}` } : {}),
+          ...(body === undefined ? {} : { 'X-Sanity-Request': '1' }),
+        },
+        createError: createDashboardError,
       })
-      const value = await result<T>(response, plain)
       if (version !== generation.current || controller.signal.aborted) throw new DOMException('Request cancelled', 'AbortError')
       return value
     } catch (error) {

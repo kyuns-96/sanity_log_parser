@@ -12,6 +12,7 @@ from common.sanity_submission import check
 from oa.sanity_ai_store import parse_timestamp
 from oa.sanity_ai_task_defaults import TaskDefaults
 from oa.sanity_workspace_core import WorkspaceCoreStore, record_id
+from oa.sanity_ws_config import read_latest_revisioned_ws_config, write_revisioned_ws_config
 
 CONFIG = 'ai.scheduler.config.'
 RUNTIME = 'ai.scheduler.runtime'
@@ -32,15 +33,9 @@ class Settings:
     def __init__(self, db): self.db = db
 
     def current(self):
-        row = self.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s "
-            "ORDER BY workspace_key DESC LIMIT 1", (CONFIG + '%',)).fetchone()
-        if row is None:
+        _, value = read_latest_revisioned_ws_config(self.db, CONFIG, error_code='AI_SCHEDULER_CORRUPT')
+        if value is None:
             return {'revision': 0, 'limits': dict(DEFAULTS)}
-        value = row['payload']
-        check(isinstance(value, dict) and type(value.get('revision')) is int
-              and 1 <= value['revision'] <= 9999999999
-              and row['workspace_key'] == CONFIG + f"{value['revision']:010d}"
-              and row['record_id'] == record_id('WS_CONFIG', row['workspace_key']), 'AI_SCHEDULER_CORRUPT')
         return {'revision': value['revision'], 'limits': limits(value.get('limits'), 'AI_SCHEDULER_CORRUPT')}
 
     def read(self, actor):
@@ -54,7 +49,7 @@ class Settings:
         self.db.execute('SELECT pg_advisory_xact_lock(%s)', (lock_key(CONFIG),))
         current = self.current(); check(current['revision'] == expected_revision, 'REVISION_CONFLICT')
         body = {'revision': expected_revision + 1, 'actor_id': actor.user_id, 'limits': value}
-        WorkspaceCoreStore(self.db).put('WS_CONFIG', CONFIG + f"{body['revision']:010d}", body)
+        write_revisioned_ws_config(self.db, CONFIG, body['revision'], body)
         return {'revision': body['revision'], 'limits': value}
 
 

@@ -8,15 +8,14 @@ from uuid import UUID
 from common.area_power.analysis import advisory_lock, all_records, existing_dedupe
 from common.area_power.jsonutil import digest
 from common.area_power.tracking import (
-    CornerSpec,
+    aggregate_block_tracking_row,
     block_mail_dedupe_key,
-    effective_corners,
     evaluate_typical_and_same_condition,
-    is_full_chip_block,
     resolve_versioned_spec,
+    summarize_block_counts,
     top_mail_dedupe_key,
 )
-from ..ai_models import ACTOR, AI_CONTEXT_ERRORS
+from ..ai_runtime import ACTOR, AI_CONTEXT_ERRORS
 from .context import iso_now, latest_one, now, parse_dt
 
 D = Decimal
@@ -96,139 +95,24 @@ def block_snapshot(db, conn, round_row: dict, project_row: dict, block_id: UUID,
     block_row = db.record(conn, block_id, kind="block")
     block_cfg_row = latest_one(db, conn, "tracking_block_config", project_id=round_row["project_id"], block_id=block_id)
     block_cfg = block_cfg_row["payload"] if block_cfg_row else {}
-    full_chip = is_full_chip_block(project_row["payload"].get("name"), block_row["payload"].get("name"))
-    req_corners = effective_corners(proj_cfg, block_cfg)
     slots = {
         s["payload"]["corner_id"]: s
         for s in all_records(db, conn, "tracking_slot", parent_id=round_row["id"], block_id=block_id)
     }
-
-    corner_rows = []
-    missing_labels = []
-    arrived = 0
-    completed = 0
-    totals = {"unexpected": 0, "needs_review": 0, "expected": 0, "minor": 0, "code_explained": 0}
-    revisions = set()
-    post_top_revised = False
-    issues = []
-    typical_power_eval = None
-
-    net_ver = round_row["payload"]["net_ver"]
-    typical_spec = resolve_versioned_spec(proj_cfg.get("typical_specs") or [], net_ver)
-    typical_cid = CornerSpec.model_validate(typical_spec["corner"]).corner_id() if typical_spec and typical_spec.get("corner") else None
-
-    for corner in req_corners:
-        cid = corner.corner_id()
-        slot = slots.get(cid)
-        if not slot or not slot["payload"].get("latest_upload_id"):
-            missing_labels.append(corner.label)
-            corner_rows.append({
-                "corner_id": cid, "corner_label": corner.label, "status": "waiting_upload",
-                "upload_id": None, "comparison_id": None, "ai_run_id": None,
-            })
-            continue
-        sp = slot["payload"]
-        arrived += 1
-        if sp.get("revision_label"):
-            revisions.add(sp["revision_label"])
-        post_top_revised |= bool(sp.get("post_top_mail_revised"))
-        status = sp.get("status") or "queued"
-        summary = sp.get("summary") or {}
-        c_counts = summary.get("counts") or {}
-        if status == "completed":
-            completed += 1
-            for k in totals:
-                totals[k] += int(c_counts.get(k) or 0)
-        elif status == "mapping_review":
-            issues.append(f"{corner.label} 매핑 확인 필요")
-        elif status == "waiting_baseline":
-            issues.append(f"{corner.label} 기준 실행 미승인")
-        elif status == "auth_error":
-            issues.append(f"{corner.label} 인증 만료/오류")
-        elif status == "failed":
-            issues.append(f"{corner.label} 분석 실패")
-        else:
-            issues.append(f"{corner.label} 분석 중")
-        if sp.get("last_failed_upload"):
-            issues.append(f"{corner.label} 수정본 검증 실패(직전 정상본 유지)")
-
-        if summary.get("power_evaluation") and (typical_power_eval is None or cid == typical_cid):
-            typical_power_eval = summary["power_evaluation"]
-
-        corner_rows.append({
-            "corner_id": cid,
-            "corner_label": corner.label,
-            "status": status,
-            "status_reason": sp.get("status_reason"),
-            "upload_id": sp.get("latest_upload_id"),
-            "baseline_upload_id": sp.get("baseline_upload_id"),
-            "comparison_id": sp.get("comparison_id"),
-            "ai_run_id": sp.get("ai_run_id"),
-            "logic_area_baseline": summary.get("logic_area_baseline"),
-            "logic_area_current": summary.get("logic_area_current"),
-            "logic_area_delta_pct": summary.get("logic_area_delta_pct"),
-            "power_baseline_mw": summary.get("power_baseline_mw"),
-            "power_current_mw": summary.get("power_current_mw"),
-            "power_delta_pct": summary.get("power_delta_pct"),
-            "expected_count": c_counts.get("expected", 0),
-            "unexpected_count": c_counts.get("unexpected", 0),
-            "needs_review_count": c_counts.get("needs_review", 0),
-            "code_explained_count": c_counts.get("code_explained", 0),
-            "attribution": summary.get("attribution"),
-            "highlights": summary.get("highlights") or [],
-            "last_failed_upload": sp.get("last_failed_upload"),
-            "post_top_mail_revised": bool(sp.get("post_top_mail_revised")),
-        })
-
-    target_status = ((typical_power_eval or {}).get("typical") or {}).get("target") or {}
-    parts = []
-    if full_chip and typical_power_eval:
-        typ = typical_power_eval.get("typical") or {}
-        if typ.get("current_mw") is not None:
-            parts.append(f"대표 전력 {typ['current_mw']} mW")
-        if target_status.get("status") == "exceeded":
-            parts.append(f"목표 {target_status['exceeded_mw']} mW 초과")
-        elif target_status.get("status") == "met":
-            parts.append("목표 달성")
-    if missing_labels:
-        parts.append(", ".join(f"{lbl} 미도착" for lbl in missing_labels))
-    if issues:
-        parts.extend(issues)
-    if not parts and completed == len(req_corners) and req_corners:
-        if totals["unexpected"] or totals["needs_review"]:
-            parts.append(f"이상 {totals['unexpected']}건 · 확인 필요 {totals['needs_review']}건")
-        else:
-            parts.append(f"완료 · 설명됨 {totals['expected']}건")
-    if post_top_revised:
-        parts.append("발송 후 수정")
-
-    needs_attention = bool(
-        missing_labels
-        or issues
-        or totals["unexpected"] > 0
-        or totals["needs_review"] > 0
-        or target_status.get("status") == "exceeded"
+    aggregated = aggregate_block_tracking_row(
+        project_id=str(round_row["project_id"]),
+        project_name=project_row["payload"].get("name") or "",
+        block_id=str(block_id),
+        block_name=block_row["payload"].get("name") or "",
+        net_ver=round_row["payload"]["net_ver"],
+        proj_cfg=proj_cfg,
+        block_cfg=block_cfg,
+        slots_by_corner=slots,
+        auth_error_label="인증 만료/오류",
     )
     return {
-        "project_id": str(round_row["project_id"]),
-        "project_name": project_row["payload"].get("name") or "",
-        "block_id": str(block_id),
-        "block_name": block_row["payload"].get("name") or "",
-        "is_full_chip": full_chip,
-        "net_ver": net_ver,
-        "revision_label": ", ".join(sorted(revisions)),
-        "required_corners": len(req_corners),
-        "arrived_corners": arrived,
-        "completed_corners": completed,
-        "missing_corners": missing_labels,
-        "all_completed": len(req_corners) > 0 and completed == len(req_corners),
-        "totals": totals,
-        "power_evaluation": typical_power_eval,
-        "corners": corner_rows,
+        **aggregated,
         "recipients": block_cfg.get("recipients") or [],
-        "post_top_mail_revised": post_top_revised,
-        "needs_attention": needs_attention,
-        "status_summary": " · ".join(parts) or "대기",
     }
 
 
@@ -304,18 +188,7 @@ def maybe_dispatch_top_mail(db, round_id: UUID, *, trigger: str = "all_completed
         if trigger == "all_completed" and not all(b["all_completed"] for b in blocks):
             return None
 
-        full_chips = [b for b in blocks if b["is_full_chip"]]
-        subs = [b for b in blocks if not b["is_full_chip"]]
-        fc_counts = {
-            "total": len(full_chips),
-            "arrived": sum(b["arrived_corners"] > 0 for b in full_chips),
-            "completed": sum(b["all_completed"] for b in full_chips),
-        }
-        sub_counts = {
-            "total": len(subs),
-            "arrived": sum(b["arrived_corners"] > 0 for b in subs),
-            "completed": sum(b["all_completed"] for b in subs),
-        }
+        full_chips, fc_counts, sub_counts = summarize_block_counts(blocks)
         recipients = rp.get("applied_config_snapshot", {}).get("top_recipients") or proj_cfg.get("top_recipients") or []
         snapshot = {
             "round_id": str(round_id),

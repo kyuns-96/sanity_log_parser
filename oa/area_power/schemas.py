@@ -1,13 +1,13 @@
 """Pydantic input schemas and shared request helpers for OA Area/Power APIs."""
 from __future__ import annotations
 
-from email.headerregistry import Address
 from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from common.area_power.errors import DomainError
+from common.area_power.models import email_address
 
 CONFIG_TYPES = {"project", "version", "block", "target", "mapping", "change"}
 SCOPE_FIELDS = ("project_id", "version_id", "block_id", "snapshot_id")
@@ -21,10 +21,7 @@ def addresses(values: list[str] | tuple[str, ...]) -> list[str]:
     result = []
     for value in values:
         try:
-            if not isinstance(value, str) or any(c in value for c in "\r\n"):
-                raise ValueError
-            address = Address(addr_spec=value)
-            if not address.username or not address.domain or address.addr_spec != value:
+            if not isinstance(value, str) or email_address(value) != value:
                 raise ValueError
         except (ValueError, TypeError, IndexError):
             reject("Recipients must be plain email addresses.", "invalid_recipient")

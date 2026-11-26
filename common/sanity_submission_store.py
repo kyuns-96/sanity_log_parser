@@ -1,6 +1,6 @@
 """Private VWP submission controls and immutable source/outbox records."""
 from common.sanity_common import canonical_json, digest
-from common.sanity_db import json_value, stable_uuid
+from common.sanity_db import json_value, stable_uuid, validated_table_constraints
 from common.sanity_submission import check
 from common.sanity_payload_storage import PrivatePayloadStorage, encode_payload
 from common.sanity_shared_sources import SharedSourcePackets
@@ -16,10 +16,7 @@ def require_schema(db):
     # Migration 009 replaces the OA scope constraint with v7 to include strict
     # SSO identities; its submission constraints remain in force. Match each
     # validated constraint to its own table, not an aggregate name count.
-    rows = db.conn.execute("SELECT t.relname,c.conname FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid "
-        "JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=%s AND c.convalidated "
-        "AND c.conname=ANY(%s)", (db.schema, sorted(set().union(*expected.values())))).fetchall()
-    present = {(row['relname'], row['conname']) if isinstance(row, dict) else tuple(row) for row in rows}
+    present = validated_table_constraints(db.conn, db.schema, sorted(set().union(*expected.values())))
     check(all(any((table, name) in present for name in names) for table, names in expected.items()),
           "SUBMISSION_SCHEMA_REQUIRED", "DBA migration 008 or compatible 009 is required")
 

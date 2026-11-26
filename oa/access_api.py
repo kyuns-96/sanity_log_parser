@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from common.sanity_config import load_environment
 from common.sanity_common import ReviewError
 from common.sanity_db import Database
-from oa.atlas_catalog import try_auto_prepare_area_scope
+from oa.atlas_area_sync import resolve_project_sync_metadata, try_auto_prepare_area_scope
 from oa.sanity_auth import Actor
 from oa.sanity_workspace import WorkspaceStore
 from oa.sanity_access import AccessStore, access_lock, administrator_id, require_mutation_request
@@ -104,9 +104,7 @@ def create_access_router(authenticated_dependency):
         require_mutation_request(request)
         with _access(actor, write=True) as store:
             result = store.create_project(actor, **body.model_dump())
-            process = body.process
-            if process is None:
-                process = WorkspaceStore(store.db).initial_process(result["project_id"])
+            _, process = resolve_project_sync_metadata(WorkspaceStore(store.db), result["project_id"], explicit_process=body.process)
         return try_auto_prepare_area_scope(
             request,
             result,
@@ -121,10 +119,7 @@ def create_access_router(authenticated_dependency):
         require_mutation_request(request)
         with _access(actor, write=True) as store:
             result = store.create_block(actor, project_id=project_id, **body.model_dump())
-            ws = WorkspaceStore(store.db)
-            project_row = ws.get("WS_PROJECT", project_id)
-            project_name = project_row["payload"]["name"]
-            process = ws.initial_process(project_id)
+            project_name, process = resolve_project_sync_metadata(WorkspaceStore(store.db), project_id)
         return try_auto_prepare_area_scope(
             request,
             result,

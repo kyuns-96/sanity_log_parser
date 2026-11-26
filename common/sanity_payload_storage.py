@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 from common.sanity_common import ReviewError, canonical_json, pack_json, unpack_json
+from common.sanity_db import bytea_column_storage, validated_table_constraints
 
 MARKER = '__vwp_payload__'
 CODEC = 'gzip-json-v1'
@@ -120,18 +121,19 @@ class PrivatePayloadStorage:
     """Detect the explicit, validated 011 contract once per store/analysis."""
     def __init__(self, db):
         _check(db.side == 'vwp')
-        row = db.conn.execute(
-            "SELECT a.atttypid='bytea'::regtype AS bytes_type,a.attstorage,"
-            "EXISTS(SELECT 1 FROM pg_constraint c WHERE c.conrelid=t.oid "
-            "AND c.conname='sanity_vwp_payload_storage_v1' AND c.contype='c' "
-            "AND c.convalidated AND NOT c.connoinherit) AS validated "
-            "FROM pg_attribute a JOIN pg_class t ON t.oid=a.attrelid "
-            "JOIN pg_namespace n ON n.oid=t.relnamespace "
-            "WHERE n.nspname=%s AND t.relname='sanity_vwp_data' "
-            "AND a.attname='payload_bytes' AND a.attnum>0 AND NOT a.attisdropped", (db.schema,)).fetchone()
+        row = bytea_column_storage(db.conn, db.schema, 'sanity_vwp_data', 'payload_bytes')
         self.enabled = row is not None
-        if row is not None and not (row['bytes_type'] and row['attstorage'] == 'e' and row['validated']):
-            raise ReviewError('PAYLOAD_STORAGE_SCHEMA_REQUIRED', 'DBA migration 011 must be complete')
+        if row is not None:
+            present = validated_table_constraints(
+                db.conn,
+                db.schema,
+                ('sanity_vwp_payload_storage_v1',),
+                table_name='sanity_vwp_data',
+                check_only=True,
+            )
+            if not (row['bytes_type'] and row['attstorage'] == 'e'
+                    and ('sanity_vwp_data', 'sanity_vwp_payload_storage_v1') in present):
+                raise ReviewError('PAYLOAD_STORAGE_SCHEMA_REQUIRED', 'DBA migration 011 must be complete')
 
     @property
     def selection(self):

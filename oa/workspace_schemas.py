@@ -1,11 +1,13 @@
-"""Request payload models for the synthetic local workspace API."""
+"""Shared stateless request payload models and HTTP helpers for workspace & workbench APIs."""
 from __future__ import annotations
 
 from typing import Annotated, Literal
 from uuid import UUID
 
+from fastapi import Response
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StringConstraints
 
+from common.sanity_clustering import check
 from oa.sanity_workspace_clustering import MAX_GROUPS, MAX_RECORDS
 
 ID = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")]
@@ -136,3 +138,34 @@ class CodexProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_revision: Annotated[StrictInt, Field(ge=0)]
     request_id: UUID
+
+
+def workbench_body_ceiling(path: str, *, default_ceiling: int) -> int:
+    if path.endswith("/clustering/operations"):
+        return 16777216
+    if "/clustering" in path:
+        return 4194304
+    if path.endswith("/rationale"):
+        return 262144
+    return default_ceiling
+
+
+def build_rationale_operation(group_id: str, body: RationaleChange) -> dict:
+    operation: dict = {"kind": body.action, "group_id": group_id}
+    if body.action == "SAVE":
+        operation.update(
+            content=body.content.model_dump(mode="json", exclude_none=True) if body.content else None,
+            reviewed=body.reviewed,
+        )
+    else:
+        check(body.content is None and not body.reviewed, "INVALID_REQUEST")
+    return operation
+
+
+def raw_report_source_response(report: dict, report_id: str) -> Response:
+    check(report.get("source_storage") != "PARTS_V2", "SOURCE_FILE_ON_VWP", "Original report bytes are retained on VWP")
+    return Response(
+        report.get("raw_report") or "",
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{report_id}.rpt"'},
+    )

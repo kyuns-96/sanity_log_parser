@@ -19,8 +19,10 @@ from oa.sanity_workspace_clustering import WorkspaceClusteringStore
 from oa.sanity_workspace_group_review import WorkspaceGroupReviewStore
 from oa.sanity_workspace_pipeline import WorkspacePipelineStore, compact_review, event_brief
 from oa.sanity_workspace import submissions
-from oa.workspace_api import (ID, ClusterChange, ClusterEdit, CodexProposal,
-                              GroupReviewChange, PorChange, RationaleChange)
+from oa.workspace_schemas import (
+    ClusterChange, ClusterEdit, CodexProposal, GroupReviewChange, ID,
+    PorChange, RationaleChange, build_rationale_operation, raw_report_source_response,
+)
 
 
 class AIProposal(CodexProposal):
@@ -210,10 +212,7 @@ def create_workbench_router(authorized_actor):
     @router.get(report_path + "/source")
     def source(block_id: ID, version_id: ID, report_id: ID, scope=Depends(workspace)):
         value = scope.ws.report(scope.user_id, block_id, version_id, report_id, hydrate_source=False)
-        check(value.get("source_storage") != "PARTS_V2", "SOURCE_FILE_ON_VWP",
-              "Original report bytes are retained on VWP")
-        return Response(value.get("raw_report") or "", media_type="text/plain",
-                        headers={"Content-Disposition": f'attachment; filename="{report_id}.rpt"'})
+        return raw_report_source_response(value, report_id)
 
     @router.get(report_path + "/preserved/{source_id}")
     def preserved_text(block_id: ID, version_id: ID, report_id: ID, source_id: ID,
@@ -319,11 +318,7 @@ def create_workbench_router(authorized_actor):
     @router.post(report_path + "/groups/{group_id}/rationale")
     def group_rationale_save(block_id: ID, version_id: ID, report_id: ID, group_id: ID,
                             body: RationaleChange, scope=Depends(workspace)):
-        operation = {"kind": body.action, "group_id": group_id}
-        if body.action == "SAVE":
-            operation.update(content=body.content.model_dump(mode="json", exclude_none=True) if body.content else None, reviewed=body.reviewed)
-        else:
-            check(body.content is None and not body.reviewed, "INVALID_REQUEST")
+        operation = build_rationale_operation(group_id, body)
         return event_brief(WorkspaceClusteringStore(scope.db, ws=scope.ws).change(
             scope.user_id, block_id, version_id, report_id, action="EDIT", expected_revision=body.expected_revision,
             request_id=body.request_id, reason=body.reason, rationale_operation=operation))

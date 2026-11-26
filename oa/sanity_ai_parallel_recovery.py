@@ -1,26 +1,24 @@
-from oa import sanity_ai_store as _ai_store
 """Explicit recovery of durable parallel-batch checkpoints.
 
 Only a drained wave can be resumed. In particular, UNKNOWN children require
 one explicit acknowledgment covering the exact immutable set of reservations.
 No source records or model requests are hydrated by the display preflight.
 """
-from datetime import timedelta
 import re
 
 from common.sanity_ai_retry import MAX_RESUMES, resumable, valid_receipt
-from common.sanity_common import ReviewError
-from common.sanity_db import lock_key, uuid_value
+from common.sanity_db import uuid_value
 from common.sanity_submission import check
 from oa.sanity_ai_ledger import attempts
 from oa.sanity_ai_parallel_ledger import ParallelLedger
-from oa.sanity_ai_store import (
-    AVAILABILITY_ERRORS, INTENT_ACTIVE, INTENT_PREFIX, JOB_ACTIVE,
-    RESUME_NAMESPACE, RESUME_PREFIX, UNKNOWN_NAMESPACE, UNKNOWN_PREFIX,
-    job_lock, parse_timestamp, report_header as header,
-    resume_marker, unknown_marker,
+from oa.sanity_ai_recovery import (
+    append_recovered_job_event,
+    begin_job_recovery,
+    evaluate_unknown_availability,
+    validate_common_recovery_fields,
+    verify_submission_snapshot,
 )
-from oa.sanity_ai_submissions import Submissions
+from oa.sanity_ai_store import RESUME_NAMESPACE, RESUME_PREFIX, UNKNOWN_NAMESPACE, UNKNOWN_PREFIX
 
 
 def _wave(event, state):
@@ -103,29 +101,15 @@ def _budget(service, event, state, count):
 
 
 def unknown_availability(service, event, user_id, meta, job):
-    if event['status'] != 'UNKNOWN':
-        return False, None
-    if event['data']['command']['user_id'] != user_id or not meta['can_review']:
-        return False, 'FORBIDDEN'
-    try:
-        current = header(service, {**event['data']['command'], 'user_id': user_id})
-        check(current['can_review'], 'FORBIDDEN')
-        check(current['ready'] and current['group_ready'], 'AI_INPUT_STALE')
+    def _verify_budget(_current):
         ledger = ParallelLedger(service, event)
         step, ref = ledger.last()
         info = _info(event, step, ref)
         check(info is not None and info[0] == job.get('unknown_recovery')
               and info[1] == job.get('unknown_recoveries'), 'AI_RESUME_UNAVAILABLE')
-        intent = Submissions(service).load(event['job_id'], required=False)
-        if intent:
-            check(intent['data']['snapshot'] == current['snapshot'], 'AI_INPUT_STALE')
-        service._check_credential_pin(event)
         _budget(service, event, step['state'], sum(slot['status'] != 'DONE' for slot in _wave(event, step['state'])))
-        return True, None
-    except ReviewError as error:
-        if error.code not in AVAILABILITY_ERRORS:
-            raise
-        return False, error.code
+
+    return evaluate_unknown_availability(service, event, user_id, meta, _verify_budget)
 
 
 def _reset(event, state, statuses):
@@ -142,15 +126,11 @@ def _reset(event, state, statuses):
 
 
 def _common_transition(previous, status, data):
-    check(status == 'RUNNING' and type(data.get('resume_count')) is int
-          and data['resume_count'] == previous['data'].get('resume_count', 0) + 1
-          and data['resume_count'] <= MAX_RESUMES
-          and data.get('resumed_by') == previous['data']['command']['user_id']
-          and isinstance(data.get('resume_request_id'), str)
-          and str(uuid_value(data['resume_request_id'])) == data['resume_request_id']
-          and data.get('retry_count', 0) == 0
-          and all(k not in data for k in ('error', 'finished_at', 'cancelled_by', 'retry_after', 'retry_failure', 'unknown_reason')),
-          'AI_JOB_CORRUPT')
+    validate_common_recovery_fields(
+        previous, status, data,
+        expected_status='RUNNING',
+        forbidden_keys=('error', 'finished_at', 'cancelled_by', 'retry_after', 'retry_failure', 'unknown_reason'),
+    )
 
 
 def _before_after(service, previous, data):
@@ -218,87 +198,69 @@ def validate_recovery(service, previous, status, data):
           and after.get('state') == _reset(previous, before['state'], {'UNKNOWN', 'FAILED', 'RETRY'}), 'AI_JOB_CORRUPT')
 
 
-def _start(service, user_id, job_id, request_id, *, unknown=False, expected_event=None, expected_step=None):
-    job_id, request_id = str(uuid_value(job_id, 'job_id')), str(uuid_value(request_id, 'request_id'))
-    service.db.execute('SELECT pg_advisory_xact_lock(%s)', (lock_key(RESUME_PREFIX + request_id),))
-    job_lock(service, job_id)
-    event = service._load(job_id)
-    command = event['data']['command']
-    check(command['user_id'] == user_id, 'FORBIDDEN')
-    meta = header(service, {**command, 'user_id': user_id}, write=True)
-    old = unknown_marker(service, request_id) if unknown else resume_marker(service, request_id)
-    if old:
-        check(old['job_id'] == job_id and old['actor_id'] == user_id
-              and (not unknown or old['event_sha256'] == expected_event and old['step_sha256'] == expected_step),
-              'REQUEST_CONFLICT')
-        return event, meta, True
-    check((resume_marker(service, request_id) if unknown else unknown_marker(service, request_id)) is None, 'REQUEST_CONFLICT')
-    check(meta['ready'] and meta['can_review'] and meta['group_ready'], 'AI_INPUT_STALE')
-    target = event['data']['target']
-    service.db.execute('SELECT pg_advisory_xact_lock(%s)', (lock_key(INTENT_PREFIX + target),))
-    latest, intent = service._latest(target=target), Submissions(service).latest(target=target)
-    check(not latest or latest['job_id'] == job_id or latest['status'] not in JOB_ACTIVE, 'AI_JOB_ACTIVE')
-    check(not intent or intent['id'] == job_id or intent['status'] not in INTENT_ACTIVE, 'AI_JOB_ACTIVE')
-    return event, meta, False
-
-
-def _append(service, event, user_id, request_id, checkpoint):
-    data = {k: v for k, v in event['data'].items() if k not in
-            ('finished_at', 'cancelled_by', 'error', 'retry_after', 'retry_failure', 'resume_checkpoint', 'unknown_reason', 'validation_failure')}
-    data.update(resume_count=event['data'].get('resume_count', 0) + 1, resume_request_id=request_id,
-                resumed_by=user_id, retry_count=0, resume_checkpoint=checkpoint)
-    now = _ai_store.db_now(service.db)
-    duration = parse_timestamp(event['data']['deadline']) - parse_timestamp(event['data']['started_at'])
-    check(timedelta(seconds=60) <= duration <= timedelta(seconds=604800), 'AI_JOB_CORRUPT')
-    data.update(started_at=now.isoformat(), deadline=(now + duration).isoformat())
-    return service._append(event, 'RUNNING', data, now=now)
-
-
-def resume(service, user_id, job_id, request_id):
-    job_id, request_id = str(uuid_value(job_id, 'job_id')), str(uuid_value(request_id, 'request_id'))
-    event, meta, old = _start(service, user_id, job_id, request_id)
-    if old:
-        return service.public(event)
+def resume(service, user_id, job_id, request_id, *, _started=None):
+    if _started is None:
+        job_id, request_id, event, meta, old = begin_job_recovery(service, user_id, job_id, request_id)
+        if old:
+            return service.public(event)
+    else:
+        job_id, request_id = str(uuid_value(job_id, 'job_id')), str(uuid_value(request_id, 'request_id'))
+        event, meta = _started
     ledger = ParallelLedger(service, event)
     step, ref = ledger.last()
     check(step is not None and step.get('status') == 'READY' and can_resume(event, step['state']), 'AI_RESUME_UNAVAILABLE')
     ledger.audit(allow_unresolved=True)
-    intent = Submissions(service).load(job_id, required=False)
-    if intent:
-        check(intent['data']['snapshot'] == meta['snapshot'], 'AI_INPUT_STALE')
+    verify_submission_snapshot(service, job_id, meta['snapshot'])
     service._check_credential_pin(event)
     _budget(service, event, step['state'], sum(slot['status'] != 'DONE' for slot in _wave(event, step['state'])))
     _, checkpoint = ledger.step(step, ref, 'READY', _reset(event, step['state'], {'FAILED', 'RETRY'}),
                                 resume={'request_id': request_id, 'actor_id': user_id})
-    result = _append(service, event, user_id, request_id, checkpoint)
-    value = {'namespace': RESUME_NAMESPACE, 'id': request_id, 'job_id': job_id, 'actor_id': user_id}
-    service.ws.put('WS_CONFIG', RESUME_PREFIX + request_id, value)
-    return service.public(result)
+    return append_recovered_job_event(
+        service,
+        event,
+        user_id=user_id,
+        request_id=request_id,
+        batch=True,
+        checkpoint=checkpoint,
+        marker_key=RESUME_PREFIX + request_id,
+        marker_payload={'namespace': RESUME_NAMESPACE, 'id': request_id, 'job_id': job_id, 'actor_id': user_id},
+    )
 
 
-def retry_unknown(service, user_id, job_id, request_id, expected_event_sha256, expected_step_sha256, acknowledge_duplicate):
+def retry_unknown(service, user_id, job_id, request_id, expected_event_sha256, expected_step_sha256, acknowledge_duplicate, *, _started=None):
     check(acknowledge_duplicate is True and all(isinstance(v, str) and re.fullmatch(r'[0-9a-f]{64}', v)
           for v in (expected_event_sha256, expected_step_sha256)), 'INVALID_REQUEST')
-    job_id, request_id = str(uuid_value(job_id, 'job_id')), str(uuid_value(request_id, 'request_id'))
-    event, meta, old = _start(service, user_id, job_id, request_id, unknown=True,
-                              expected_event=expected_event_sha256, expected_step=expected_step_sha256)
-    if old:
-        return service.public(event)
+    if _started is None:
+        job_id, request_id, event, meta, old = begin_job_recovery(
+            service, user_id, job_id, request_id,
+            unknown=True, expected_event=expected_event_sha256, expected_step=expected_step_sha256,
+        )
+        if old:
+            return service.public(event)
+    else:
+        job_id, request_id = str(uuid_value(job_id, 'job_id')), str(uuid_value(request_id, 'request_id'))
+        event, meta = _started
     ledger = ParallelLedger(service, event)
     step, ref = ledger.last()
     info = _info(event, step, ref)
     check(info is not None, 'AI_RESUME_UNAVAILABLE')
     check(event['sha256'] == expected_event_sha256 and ref['sha256'] == expected_step_sha256, 'REVISION_CONFLICT')
     ledger.audit(allow_unresolved=True)
-    intent = Submissions(service).load(job_id, required=False)
-    if intent:
-        check(intent['data']['snapshot'] == meta['snapshot'], 'AI_INPUT_STALE')
+    verify_submission_snapshot(service, job_id, meta['snapshot'])
     service._check_credential_pin(event)
     _budget(service, event, step['state'], sum(slot['status'] != 'DONE' for slot in _wave(event, step['state'])))
     resolution = _resolution(event, ref, step['state'], user_id, request_id)
     _, checkpoint = ledger.step(step, ref, 'READY', _reset(event, step['state'], {'UNKNOWN', 'FAILED', 'RETRY'}), unknown_resolution=resolution)
-    result = _append(service, event, user_id, request_id, checkpoint)
-    value = {'namespace': UNKNOWN_NAMESPACE, 'id': request_id, 'job_id': job_id, 'actor_id': user_id,
-             'event_sha256': expected_event_sha256, 'step_sha256': expected_step_sha256}
-    service.ws.put('WS_CONFIG', UNKNOWN_PREFIX + request_id, value)
-    return service.public(result)
+    return append_recovered_job_event(
+        service,
+        event,
+        user_id=user_id,
+        request_id=request_id,
+        batch=True,
+        checkpoint=checkpoint,
+        marker_key=UNKNOWN_PREFIX + request_id,
+        marker_payload={
+            'namespace': UNKNOWN_NAMESPACE, 'id': request_id, 'job_id': job_id, 'actor_id': user_id,
+            'event_sha256': expected_event_sha256, 'step_sha256': expected_step_sha256,
+        },
+    )

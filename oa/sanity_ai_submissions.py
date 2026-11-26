@@ -10,10 +10,10 @@ from common.sanity_vwp_ai import require
 from oa.sanity_ai_live import record as live_record
 from oa.sanity_ai_store import (
     INTENT_ACTIVE as ACTIVE, INTENT_NAMESPACE as NAMESPACE, INTENT_PREFIX as PREFIX,
-    INTENT_TERMINAL as TERMINAL, JOB_ACTIVE, NULL_COLUMNS, ensure_not_deleted,
+    INTENT_TERMINAL as TERMINAL, JOB_ACTIVE, ensure_not_deleted,
     error_code, job_lock, parse_timestamp, report_header as header, worker_load,
 )
-from oa.sanity_workspace_core import record_id
+from oa.sanity_ws_config import verify_ws_config_row
 
 
 class Submissions:
@@ -31,15 +31,12 @@ class Submissions:
         transitions = {None: {"QUEUED"}, "QUEUED": {"PREPARING", "CANCELLED"},
             "PREPARING": {"PREPARING", "PREPARED", "FAILED", "STALE", "CANCELLED"}}
         for row in rows:
-            event = row["payload"]
-            require(isinstance(event, dict) and {"namespace", "id", "sequence", "at", "status", "data"} <= set(event)
+            event = verify_ws_config_row(row, error_code="AI_SUBMISSION_CORRUPT")
+            require({"namespace", "id", "sequence", "at", "status", "data"} <= set(event)
                     and event["namespace"] == NAMESPACE and event["id"] == identity
                     and event["status"] in transitions.get(previous["status"] if previous else None, set())
                     and type(event["sequence"]) is int and event["sequence"] == (previous["sequence"] + 1 if previous else 1)
-                    and row["workspace_key"] == PREFIX + identity + "." + f"{event['sequence']:06d}"
-                    and row["record_id"] == record_id("WS_CONFIG", row["workspace_key"])
-                    and row["state"] == {} and row["version"] == 0 and row["created_at"] == row["updated_at"]
-                    and row["status"] == "RECORDED" and all(row.get(k) is None for k in NULL_COLUMNS),
+                    and row["workspace_key"] == PREFIX + identity + "." + f"{event['sequence']:06d}",
                     "AI_SUBMISSION_CORRUPT")
             data = event["data"]
             required_keys = {"command", "target", "snapshot", "model", "config_sha256", "created_at", "worker_site", "attempts"}

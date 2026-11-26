@@ -41,9 +41,10 @@ from oa.sanity_ai_resume import resume as resume_job, validate_resume
 from oa.sanity_ai_rolling_jobs import run_step as rolling_run_step
 from oa.sanity_ai_scheduler import Settings as SchedulerSettings, release, reserve
 from oa.sanity_ai_store import (
-    INTENT_ACTIVE as PREPARING, INTENT_PREFIX, JOB_ACTIVE as ACTIVE, JOB_NAMESPACE as NAMESPACE,
-    JOB_PREFIX as PREFIX, JOB_TERMINAL as TERMINAL, NULL_COLUMNS, ensure_not_deleted,
-    error_code, job_lock, parse_timestamp, public_event, report_header as header, worker_load,
+    APPLY_STALE_ERRORS, INTENT_ACTIVE as PREPARING, INTENT_PREFIX, JOB_ACTIVE as ACTIVE,
+    JOB_NAMESPACE as NAMESPACE, JOB_PREFIX as PREFIX, JOB_TERMINAL as TERMINAL,
+    STALE_AI_ERRORS, ensure_not_deleted, error_code, job_lock, parse_timestamp,
+    public_event, report_header as header, worker_load,
 )
 from oa.sanity_ai_submissions import Submissions, prepare_one
 from oa.sanity_ai_task_defaults import task_selection
@@ -57,8 +58,8 @@ from oa.sanity_ai_validation import (
 )
 from oa.sanity_preserved_text import enrich
 from oa.sanity_workspace_clustering import WorkspaceClusteringStore
-from oa.sanity_workspace_core import record_id
 from oa.sanity_workspace_group_review import WorkspaceGroupReviewStore
+from oa.sanity_ws_config import verify_ws_config_row
 
 PARALLEL_EXECUTION = 'parallel-v2'
 TRANSITIONS = {
@@ -173,13 +174,10 @@ class AIJobService:
                                "ORDER BY workspace_key", (PREFIX + job_id + ".%",)).fetchall()
         previous = None
         for index, row in enumerate(rows, 1):
-            event = row["payload"]
             key = PREFIX + job_id + "." + str(index).zfill(4)
-            check(isinstance(event, dict) and set(event) == {"namespace", "schema_version", "job_id", "sequence",
+            event = verify_ws_config_row(row, key, error_code="AI_JOB_CORRUPT")
+            check(set(event) == {"namespace", "schema_version", "job_id", "sequence",
                 "previous_sha256", "created_at", "status", "data", "sha256"}, "AI_JOB_CORRUPT")
-            check(row["workspace_key"] == key and row["record_id"] == record_id("WS_CONFIG", key)
-                  and row["state"] == {} and row["version"] == 0 and row["status"] == "RECORDED"
-                  and row["updated_at"] == row["created_at"] and all(row.get(k) is None for k in NULL_COLUMNS), "AI_JOB_CORRUPT")
             check(event["namespace"] == NAMESPACE and type(event["schema_version"]) is int and event["schema_version"] == 1
                   and event["job_id"] == job_id and type(event["sequence"]) is int and event["sequence"] == index
                   and event["previous_sha256"] == (previous["sha256"] if previous else None)
@@ -468,7 +466,7 @@ class AIJobService:
             with self.db.transaction():
                 applied = store.apply_ai(command["user_id"], command["block_id"], command["version_id"], command["report_id"], **kwargs)
         except ReviewError as error:
-            stale = error.code in {"REVISION_CONFLICT", "PROPOSAL_STALE", "CLUSTER_NOT_CONFIRMED", "AI_CASES_STALE", "AI_CRITERIA_STALE"}
+            stale = error.code in APPLY_STALE_ERRORS
             return self._failed(event, error, status="STALE" if stale else "FAILED")
         event_id = applied.get("id") or applied.get("event", {}).get("id")
         check(event_id == command["request_id"], "AI_JOB_CORRUPT")
@@ -624,7 +622,7 @@ def run_once(db_factory, workspace_factory, advisor, criteria_provider=None, *, 
                 else: data.pop('validation_failure', None)
                 return public_event(service._append(current, "PENDING", data))
             if proof is not None: current = {**current, "data": {**current["data"], "retry_failure": proof}}
-            return public_event(service._failed(current, failure, status="UNKNOWN" if unknown else "STALE" if code in {"AI_CONFIG_CHANGED", "AI_CONNECTION_UNAVAILABLE", "AI_CREDENTIAL_CHANGED", "FORBIDDEN", "UNAUTHORIZED"} else "FAILED", called=called))
+            return public_event(service._failed(current, failure, status="UNKNOWN" if unknown else "STALE" if code in STALE_AI_ERRORS else "FAILED", called=called))
         try:
             service._inputs(current)
             if dispatch["credential_revision"] is not None:

@@ -17,7 +17,7 @@ from common.sanity_clustering import check
 from common.sanity_common import ReviewError, decode_json, canonical_json
 from common.sanity_config import load_environment
 from common.sanity_db import lock_key, uuid_value
-from oa.sanity_workspace_core import WorkspaceCoreStore as WorkspaceStore, record_id
+from oa.sanity_ws_config import read_latest_revisioned_ws_config, write_revisioned_ws_config
 
 NAMESPACE = "oa-ai-user-token-v1"
 PREFIX = "ait1.user."
@@ -69,23 +69,16 @@ class UserTokenStore:
 
     def _latest(self, user_id):
         prefix = self._prefix(user_id)
-        row = self.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s "
-                              "ORDER BY workspace_key DESC LIMIT 1", (prefix + "%",)).fetchone()
+        row, value = read_latest_revisioned_ws_config(self.db, prefix, error_code="AI_TOKEN_UNAVAILABLE")
         if row is None:
             return None
-        value = row["payload"]
         fields = {"namespace", "schema_version", "user_id", "revision", "ciphertext"}
-        if self.connection_id:fields.update(("connection_id", "credential_scope"))
-        check(isinstance(value, dict) and set(value) == fields
+        if self.connection_id:
+            fields.update(("connection_id", "credential_scope"))
+        check(set(value) == fields
               and value["namespace"] == self.namespace and value.get("connection_id") == self.connection_id
               and type(value["schema_version"]) is int and value["schema_version"] == 1
-              and value["user_id"] == user_id and type(value["revision"]) is int
-              and 1 <= value["revision"] <= 9999999999, "AI_TOKEN_UNAVAILABLE")
-        key = prefix + f"{value['revision']:010d}"
-        check(row["workspace_key"] == key and row["record_id"] == record_id("WS_CONFIG", key)
-              and row["state"] == {} and row["version"] == 0 and row["status"] == "RECORDED" and row["created_at"] == row["updated_at"]
-              and row["project"] is None and row["workspace_project_ref"] is None and row["workspace_block_ref"] is None,
-              "AI_TOKEN_UNAVAILABLE")
+              and value["user_id"] == user_id, "AI_TOKEN_UNAVAILABLE")
         encrypted = value["ciphertext"]
         if self.connection_id:
             check(isinstance(value["credential_scope"], str) and re.fullmatch(r"[0-9a-f]{64}", value["credential_scope"]), "AI_TOKEN_UNAVAILABLE")
@@ -153,7 +146,11 @@ class UserTokenStore:
         binding = {"connection_id": self.connection_id, "credential_scope":self.credential_scope} if self.connection_id else {}
         encrypted = None if token is None else self.cipher.encrypt(canonical_json(
             {"user_id": user_id, "revision": revision, "token": token, **binding})).decode("ascii")
-        WorkspaceStore(self.db).put("WS_CONFIG", prefix + f"{revision:010d}",
+        write_revisioned_ws_config(
+            self.db,
+            prefix,
+            revision,
             {"namespace": self.namespace, "schema_version": 1, "user_id": user_id,
-             "revision": revision, "ciphertext": encrypted, **binding})
+             "revision": revision, "ciphertext": encrypted, **binding},
+        )
         return self.status(user_id)

@@ -81,9 +81,6 @@
 .ws-studio-workbench .ws-workbench-group-list .ws-workbench-selected { background: var(--accent-soft); border: 1px solid var(--accent-line); padding-left: 8px; }
 .ws-studio-workbench .ws-workbench-group-list .ws-workbench-selected strong { color: var(--ink); }
 .ws-studio-workbench .ws-workbench-group-list .ws-group-rationale { background: transparent; border: 0; padding: 0; border-radius: 0; }
-.ws-studio-workbench .ws-workbench-group-list .ws-group-status-pass { color: var(--success); }
-.ws-studio-workbench .ws-workbench-group-list .ws-group-status-fail { color: var(--danger); }
-.ws-studio-workbench .ws-workbench-group-list .ws-group-status-defer { color: var(--warning); }
 .ws-studio-workbench .ws-log-new-group { margin-top: 11px; min-height: 35px; font-size: var(--text-data); border-radius: 6px; border-color: var(--line); color: var(--text-secondary); }
 .ws-studio-workbench .ws-workbench-groups .ws-pagination { padding: 11px 0 0; gap: 5px; margin-top: 11px; }
 .ws-studio-workbench .ws-workbench-groups .ws-pagination > span { font-size: var(--text-data); }
@@ -207,7 +204,6 @@
 .ws-studio-workbench .ws-review-proposal.ws-studio-ai-result { padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--line); }
 .ws-studio-workbench .ws-studio-ai-verdict { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
 .ws-studio-workbench .ws-studio-ai-verdict > span:last-child { color: var(--text-muted); font-size: var(--text-data); line-height: 1.7; }
-.ws-studio-workbench .ws-studio-proposal-reason { color: var(--text-secondary); margin: 12px 0 10px; font-size: var(--text-body); line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ws-studio-ai-references details { border-top: 1px solid var(--line); }
 .ws-studio-workbench .ws-studio-ai-references summary { min-height: 31px; padding-block: 7px; font-size: var(--text-data); }
 .ws-studio-ai-references ul { padding-left: 17px; font-size: var(--text-data); color: var(--text-secondary); }
@@ -244,8 +240,6 @@
 .ws-studio-workbench .ws-review-field .ws-studio-field-required { display: inline; color: var(--danger); margin: 0; }
 .ws-studio-workbench .ws-human-review textarea, .ws-studio-workbench .ws-review-field textarea { font: var(--text-body)/1.85 var(--font-sans); min-height: 105px; padding: 10px 11px; border-radius: 7px; border-color: var(--line); }
 .ws-studio-memory-note { margin: 10px 0 12px !important; color: var(--text-muted) !important; font-size: var(--text-data) !important; line-height: 1.8; }
-.ws-studio-workbench .ws-review-criteria-settings { border-top: 1px solid var(--line-soft); margin-top: 11px; }
-.ws-studio-workbench .ws-review-criteria-settings summary { padding: 10px 0; min-height: 33px; font-size: var(--text-data); }
 .ws-studio-workbench .ws-review-checkbox { font-size: var(--text-data); line-height: 1.8; align-items: flex-start; }
 .ws-studio-workbench .ws-review-checkbox input { flex-shrink: 0; margin-top: 3px; }
 .ws-studio-workbench .ws-review-checkbox span { min-width: 0; }
@@ -480,16 +474,13 @@
 @media (prefers-reduced-motion: reduce) { .ws-studio-workbench *, .ws-studio-workbench *::before, .ws-studio-workbench *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 
 /* Human-confirmed exceptions are scoped evidence, never executable reuse rules. */
-.ws-studio-workbench .ws-review-exception-settings,
-.ws-studio-workbench .ws-review-reference-scope { border-top: 1px solid var(--line-soft); padding-top: 11px; margin-top: 11px; }
-.ws-studio-workbench .ws-review-exception-settings > .ws-review-checkbox,
-.ws-studio-workbench .ws-review-reference-scope > .ws-review-checkbox { display: flex; gap: 8px; color: var(--ink); font-weight: 600; }
+.ws-studio-workbench .ws-review-exception-settings { border-top: 1px solid var(--line-soft); padding-top: 11px; margin-top: 11px; }
+.ws-studio-workbench .ws-review-exception-settings > .ws-review-checkbox { display: flex; gap: 8px; color: var(--ink); font-weight: 600; }
 .ws-studio-workbench .ws-review-exception-fields { display: grid; gap: 10px; padding: 10px 0 2px; }
 .ws-studio-workbench .ws-review-exception-fields .ws-review-field { margin: 0; min-width: 0; }
 .ws-studio-workbench .ws-review-exception-fields :is(input, textarea) { width: 100%; min-width: 0; font-size: var(--text-data); }
 .ws-studio-workbench .ws-review-exception-fields textarea { min-height: 74px; }
-.ws-studio-workbench .ws-review-exception-fields > small,
-.ws-studio-workbench .ws-review-reference-scope > p { margin: 6px 0 0; font-size: var(--text-data); line-height: 1.75; color: var(--text-muted); }
+.ws-studio-workbench .ws-review-exception-fields > small { margin: 6px 0 0; font-size: var(--text-data); line-height: 1.75; color: var(--text-muted); }
 .ws-studio-workbench .ws-review-legacy-note { font-size: var(--text-data); line-height: 1.75; }
 .ws-studio-workbench .ws-review-exception-evidence { padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-soft); margin: 9px 0; min-width: 0; }
 .ws-studio-workbench .ws-review-exception-evidence > dl { display: grid; gap: 7px; margin: 8px 0 0; }

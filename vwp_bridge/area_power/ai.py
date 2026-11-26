@@ -23,7 +23,6 @@ from common.area_power.analysis import (
 from common.area_power.errors import ConfigurationError, DomainError
 from common.area_power.jsonutil import digest
 from common.area_power.models import COMPARISON_FORMAT
-from common.area_power.triage import RUN_KEYS as TRIAGE_RUN_KEYS
 from common.sanity_common import ReviewError
 from .ai_models import (
     ACTOR,
@@ -40,7 +39,7 @@ from .ai_models import (
     judgement_provider,
     provider,
 )
-from .ai_runtime import runtime_for
+from .ai_runtime import mirror_attempt, new_attempt, runtime_for
 
 
 def ensure_run(db, comparison: dict, *, run_id=None, change_ids=None, recipients=None):
@@ -60,29 +59,6 @@ def ensure_run(db, comparison: dict, *, run_id=None, change_ids=None, recipients
         advisory_lock(conn, key)
         old = existing_dedupe(db, conn, 'ai_run', key)
         return old or db.insert_record(conn, 'ai_run', {'change_ids': ids, 'changes': changes, 'recipients': recipients if recipients is not None else request.get('recipients', []), 'ai_context': comparison['payload'].get('ai_context', {}), 'prompt_version': PROMPT_VERSION, 'coverage': {}}, ACTOR, parent_id=comparison['id'], upload_id=comparison['upload_id'], baseline_upload_id=comparison.get('baseline_upload_id'), state='queued', dedupe_key=key, **{k: comparison[k] for k in ('project_id', 'version_id', 'block_id', 'snapshot_id', 'condition_key') if comparison.get(k) is not None})
-
-
-def new_attempt(db, comparison, original, job_id):
-    key = digest({'explicit_job_attempt': job_id, 'previous_ai_run': original['id']})
-    payload = {key: original['payload'][key] for key in ('change_ids', 'changes', 'recipients', 'targets', 'ai_context', *TRIAGE_RUN_KEYS) if key in original['payload']}
-    payload.update({'coverage': {}, 'prompt_version': PROMPT_VERSION, 'explicit_attempt_job_id': job_id})
-    with db.connect() as conn:
-        advisory_lock(conn, key)
-        old = existing_dedupe(db, conn, 'ai_run', key)
-        return old or db.insert_record(conn, 'ai_run', payload, ACTOR, parent_id=comparison['id'], previous_id=original['id'],
-                                       upload_id=comparison['upload_id'], baseline_upload_id=comparison.get('baseline_upload_id'), state='queued', dedupe_key=key,
-                                       **{k: comparison[k] for k in ('project_id', 'version_id', 'block_id', 'snapshot_id', 'condition_key') if comparison.get(k) is not None})
-
-
-def mirror_attempt(db, original_id, attempt_id, error=None):
-    with db.connect() as conn:
-        original = db.record(conn, original_id, lock=True, kind='ai_run')
-        attempt = db.record(conn, attempt_id, lock=True, kind='ai_run')
-        if error and attempt['state'] not in ('completed', 'failed'):
-            attempt = db.update_record(conn, attempt_id, ACTOR, state='failed', error_detail=error)
-        payload = dict(original['payload'])
-        payload.update({'rerun_ai_run_id': attempt_id, 'coverage': attempt['payload'].get('coverage', {})})
-        db.update_record(conn, original_id, ACTOR, state=attempt['state'], error_detail=attempt.get('error_detail'), payload=payload)
 
 
 def extract_one(db, settings, change: dict, comparison: dict | None = None, run_id=None, *, attempt_id=None) -> dict:

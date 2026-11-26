@@ -1,50 +1,29 @@
 """Run nginx:8080 and the unchanged loopback SSO app as one container service."""
 from __future__ import annotations
 
-import ipaddress
 import os
 from pathlib import Path
-import re
 import signal
 import subprocess
 import sys
 import threading
 import time
 
-
 ROOT = Path(__file__).resolve().parent
+if str(ROOT.parents[1]) not in sys.path:
+    sys.path.insert(0, str(ROOT.parents[1]))
+
+from oa.sanity_hosts import DEFAULT_HOSTS, HOST_LABEL, allowed_hosts
+
 RUNTIME = Path("/tmp/sanity-nginx")
-DEFAULT_HOSTS = "127.0.0.1,localhost,[::1]"
-HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\Z")
 
 
 def server_names(value: str) -> str:
     """Accept exact DNS names/IPs, never nginx patterns or config fragments."""
-    if not value or len(value) > 4096:
+    if not isinstance(value, str) or not value:
         raise ValueError("CONTAINER_HOST_CONFIG")
-    names = []
-    for raw in value.split(","):
-        host = raw.strip()
-        if not host or len(host) > 253:
-            raise ValueError("CONTAINER_HOST_CONFIG")
-        try:
-            address = ipaddress.ip_address(host)
-        except ValueError:
-            if host.startswith("[") and host.endswith("]"):
-                try:
-                    address = ipaddress.IPv6Address(host[1:-1])
-                except ValueError:
-                    raise ValueError("CONTAINER_HOST_CONFIG") from None
-            elif all(HOST_LABEL.fullmatch(label) for label in host.split(".")):
-                names.append(host.lower())
-                continue
-            else:
-                raise ValueError("CONTAINER_HOST_CONFIG") from None
-        if address.version == 6 and address.scope_id is not None:
-            raise ValueError("CONTAINER_HOST_CONFIG")
-        names.append(f"[{address}]" if address.version == 6 else str(address))
     # Health checks must work even when only a company hostname is configured.
-    return " ".join(dict.fromkeys([*names, "127.0.0.1"]))
+    return " ".join(allowed_hosts(value))
 
 
 def render_config(hosts: str, *, runtime: Path = RUNTIME) -> None:

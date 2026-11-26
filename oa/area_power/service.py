@@ -7,13 +7,15 @@ from uuid import UUID, uuid4
 
 from psycopg import sql
 
-from common.area_power.analysis import comparison_observations, validate_frozen_upload
+from common.area_power.analysis import (
+    build_comparison_dedupe_and_payload,
+    comparison_observations,
+    validate_frozen_upload,
+)
 from common.area_power.csv_input import read_hierarchy
 from common.area_power.jsonutil import digest
 from common.area_power.models import (
-    CALCULATION_CONTRACT,
     COMPARISON_FORMAT,
-    CORRESPONDENCE_POLICY,
     ComparisonRequest,
     MappingPayload,
 )
@@ -131,7 +133,8 @@ class Service:
                 self.db.record(conn, body.baseline_project_id, kind="project")
             payload = {**project["payload"], "baseline_project_id": body.baseline_project_id}
             # Only the current project is modified; the baseline is a read reference.
-            raw = self.db.raw if self.access is not None else self.db
+            raw = self.db.raw
+            self.db.invalidate_cache()
             updated = raw.update_record(conn, project["id"], actor,
                 expected_row_version=body.expected_row_version, payload=payload)
             return self.baseline_setting(conn, self.authorize(conn, updated))
@@ -139,7 +142,7 @@ class Service:
     def project_process(self, identifier, body, actor):
         """The project's process name; same process and corner mean the same library."""
         with self.db.connect() as conn:
-            raw = self.db.raw if self.access is not None else self.db
+            raw = self.db.raw
             project = raw.record(conn, identifier, kind="project", lock=True)
             self.authorize(conn, project, write=True)
             if project["row_version"] != body.expected_row_version:
@@ -148,6 +151,7 @@ class Service:
                 store = getattr(getattr(self.access, "actor", None), "access", None)
                 with (nullcontext(store.db) if store else Database("oa")) as host:
                     WorkspaceStore(host).require_process(body.process)
+            self.db.invalidate_cache()
             updated = raw.update_record(conn, project["id"], actor, expected_row_version=body.expected_row_version,
                                         payload={**project["payload"], "process": body.process})
             return self.baseline_setting(conn, self.authorize(conn, updated))
@@ -164,8 +168,7 @@ class Service:
                 "row_version": project["row_version"]}
 
     def upload_hierarchy(self, upload):
-        raw = self.db.raw if self.access is not None else self.db
-        metadata, items = read_hierarchy(upload, raw.settings.max_uncompressed_bytes)
+        metadata, items = read_hierarchy(upload, self.db.raw.settings.max_uncompressed_bytes)
         return {"upload_id": upload["id"], "snapshot_id": upload["snapshot_id"],
                 "hierarchy_separator": metadata.hierarchy_separator, "items": items}
 
@@ -396,39 +399,25 @@ class Service:
                 power_uploads.append({"current_upload": pair_current, "baseline_upload": pair_baseline})
             request = body.model_dump(mode="python")
             request["recipients"] = recipients
-            numeric = {key: value for key, value in request.items() if key not in ("change_ids", "recipients")}
-            numeric["result_format"] = COMPARISON_FORMAT
-            numeric["calculation_contract"] = CALCULATION_CONTRACT
-            numeric["target_revisions"] = sorted(str(target["id"]) for target in targets)
-            if designation is not None:
-                numeric["baseline_project_id"] = designation["baseline_project_id"]
-            correspondence = CORRESPONDENCE_POLICY if baseline and baseline["project_id"] != current["project_id"] else None
-            if correspondence:
-                numeric["correspondence"] = correspondence
-            key = digest(numeric)
+            key, payload = build_comparison_dedupe_and_payload(
+                request,
+                current,
+                baseline,
+                targets=targets,
+                power_uploads=power_uploads,
+                designation=designation,
+                policy_unconfigured=not bool(body.policy.metrics or body.policy.operating_limits),
+            )
             self.lock(conn, ["comparison", key])
-            old = conn.execute(sql.SQL("SELECT * FROM {} WHERE record_type='comparison' AND dedupe_key=%s FOR UPDATE").format(self.db.table("di_area_power_tracking_record")), (key,)).fetchone()
+            old = self.db.raw.existing_dedupe(conn, "comparison", key, lock=True)
             if old:
                 comparison = self.authorize(conn, old)
             else:
-                def reference(upload):
-                    if upload is None:
-                        return None
-                    fields = ('id', 'project_id', 'block_id', 'version_id', 'snapshot_id', 'condition_key', 'structure_digest', 'original_sha256')
-                    return {**{field: upload[field] for field in fields}, 'input_contract_sha256': digest(upload['input_contract']).hex()}
-                payload = {"request": request, "result_format": COMPARISON_FORMAT, "calculation_contract": CALCULATION_CONTRACT,
-                           "frozen": {"current_upload": reference(current), "baseline_upload": reference(baseline),
-                                      "scope_target_ids": [target['id'] for target in targets],
-                                      "power_uploads": [{side: reference(upload) for side, upload in pair.items()} for pair in power_uploads]},
-                           "coverage": {}, **({"correspondence": correspondence} if correspondence else {}), "policy_unconfigured": not bool(body.policy.metrics or body.policy.operating_limits), "ai_state": "not_requested"}
-                if designation is not None:
-                    payload["frozen"]["baseline_designation"] = designation
                 comparison = self.db.insert_record(conn, "comparison", payload, actor, state="queued", upload_id=current["id"], baseline_upload_id=baseline["id"] if baseline else None, dedupe_key=key, **self.scope(current))
         return {"comparison": comparison, "job": None, "reused": old is not None}, designation
 
     def validate_comparison(self, conn, selected, *, write=False, baseline_designation=None):
-        raw = self.db.raw if self.access is not None else self.db
-        row = raw.record(conn, selected['id'], kind='comparison', lock=write)
+        row = self.db.raw.record(conn, selected['id'], kind='comparison', lock=write)
         self.authorize(conn, row, write=write)
         keys = ('request', 'frozen', 'result_format', 'calculation_contract', 'correspondence')
         if any(digest(row['payload'].get(key)) != digest(selected['payload'].get(key)) for key in keys):
@@ -539,16 +528,7 @@ class Service:
             return self.db.enqueue(conn, job["job_kind"], actor=actor, parent_id=job.get("parent_id"), upload_id=job.get("upload_id"), payload=payload, dedupe_key=digest(["explicit_rerun", uuid4()]), previous_id=identifier, **self.scope(job))
 
     def all_records(self, conn, kind, **filters):
-        if self.access is not None:
-            return self.db.all_records(conn, kind, **filters)
-        rows = []
-        offset = 0
-        while True:
-            page = self.db.records(conn, kind, limit=500, offset=offset, **filters)
-            rows.extend(page)
-            if len(page) < 500:
-                return rows
-            offset += len(page)
+        return self.db.all_records(conn, kind, **filters)
 
     def comparison_detail(self, identifier, *, view="full", offset=0, limit=200, search="", parent=None, metrics=None, min_area=None):
         with self.db.connect() as conn:
@@ -560,7 +540,7 @@ class Service:
                 judgements = [result for run in runs for result in self.all_records(conn, 'judgement', parent_id=run['id'])]
                 if comparison['state'] != 'completed':
                     return {'comparison': comparison, 'results': [], 'judgements': judgements, 'ai_runs': runs}
-                raw = self.db.raw if self.access is not None else self.db
+                raw = self.db.raw
             elif view == "hierarchy":
                 metrics = ("total_area", "pwr_all_total_mw")
                 results = self.all_records(conn, "metric_result", parent_id=identifier, metrics=metrics)

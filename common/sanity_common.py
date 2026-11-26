@@ -9,7 +9,7 @@ import io
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import tempfile
 import zlib
@@ -19,6 +19,11 @@ class ReviewError(Exception):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
+
+
+def ensure(condition, code: str = "INVALID_SCHEMA", message: str = "Invalid protocol contract") -> None:
+    if not condition:
+        raise ReviewError(code, message)
 
 
 def canonical_json(value) -> bytes:
@@ -188,22 +193,88 @@ def _exclusion_valid(unit):
         _text(exclusion.get(key)) for key in ("reason", "approved_by", "reference"))
 
 
+def validate_schema1_run_and_inventory(
+    container: dict,
+    *,
+    code: str,
+    require_inventory_sha256: bool = False,
+    id_before_text: bool = False,
+) -> tuple[dict, dict]:
+    """Validate Schema-1 ``run`` and ``inventory`` headers across plan, manifest, and bundle."""
+    run = container.get("run")
+    ensure(isinstance(run, dict), code, "Missing run")
+    if id_before_text:
+        require_id(run.get("run_id"), "run_id")
+        ensure(
+            all(_text(run.get(key)) for key in ("project", "design", "stage", "tool", "tool_version")),
+            code,
+            "Incomplete run metadata",
+        )
+    else:
+        for key in ("run_id", "project", "design", "stage", "tool", "tool_version"):
+            ensure(_text(run.get(key)), code, f"missing run.{key}")
+        require_id(run["run_id"], "run_id")
+    run_scope(run, code=code)
+    inventory = container.get("inventory")
+    ensure(isinstance(inventory, dict), code, "Missing inventory")
+    ensure(type(inventory.get("confirmed")) is bool, code, "Invalid inventory confirmation")
+    provenance_keys = ("source", "version", "sha256") if require_inventory_sha256 else ("source", "version")
+    ensure(all(_text(inventory.get(key)) for key in provenance_keys), code, "Incomplete inventory provenance")
+    return run, inventory
+
+
+def validate_schema1_collection_unit(
+    unit,
+    unit_ids: set[str],
+    reports: set[str],
+    *,
+    code: str,
+    validate_path=None,
+) -> tuple[str, str]:
+    """Validate shared unit identity, report path, applicability, execution status, and rule_version."""
+    ensure(isinstance(unit, dict), code, "unit must be an object")
+    uid = require_id(unit.get("review_unit_id"), "review_unit_id")
+    require_id(unit.get("item_id"), "item_id")
+    ensure(uid not in unit_ids, code, "duplicate review_unit_id")
+    unit_ids.add(uid)
+    report = unit.get("report")
+    ensure(isinstance(report, str) and report.startswith("reports/"), code, "report must start with reports/")
+    if validate_path is not None:
+        validate_path(report)
+    else:
+        parts = PurePosixPath(report).parts
+        ensure(
+            len(parts) >= 2
+            and not any(p in (".", "..") for p in parts)
+            and "\\" not in report
+            and "\x00" not in report
+            and str(PurePosixPath(report)) == report,
+            code,
+            "report must be a canonical relative path",
+        )
+    ensure(report not in reports, code, "duplicate report path")
+    reports.add(report)
+    ensure(type(unit.get("applicable")) is bool, code, "applicable must be boolean")
+    ensure(
+        unit.get("execution_status") in ("COMPLETED", "FAILED", "UNKNOWN", "NOT_RUN"),
+        code,
+        "invalid execution_status",
+    )
+    ensure(_text(unit.get("rule_version")), code, "missing rule_version")
+    return uid, report
+
+
 def validate_payload(payload) -> None:
     _require(isinstance(payload, dict), "Payload must be an object")
     _require(type(payload.get("schema_version")) is int and payload["schema_version"] == 1,
              "Unsupported schema version")
     require_id(payload.get("bundle_id"), "bundle_id")
-    run = payload.get("run")
-    _require(isinstance(run, dict), "Missing run")
-    require_id(run.get("run_id"), "run_id")
-    _require(all(_text(run.get(key)) for key in
-                 ("project", "design", "stage", "tool", "tool_version")), "Incomplete run metadata")
-    run_scope(run, code="INVALID_SCHEMA")
-    inventory = payload.get("inventory")
-    _require(isinstance(inventory, dict), "Missing inventory")
-    _require(type(inventory.get("confirmed")) is bool, "Invalid inventory confirmation")
-    _require(all(_text(inventory.get(key)) for key in ("source", "version", "sha256")),
-             "Incomplete inventory provenance")
+    _, inventory = validate_schema1_run_and_inventory(
+        payload,
+        code="INVALID_SCHEMA",
+        require_inventory_sha256=True,
+        id_before_text=True,
+    )
     ids = inventory.get("expected_unit_ids")
     _require(isinstance(ids, list), "Expected unit IDs must be a list")
     for unit_id in ids:

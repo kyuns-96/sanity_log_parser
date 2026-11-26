@@ -245,6 +245,25 @@ class WorkspaceCoreStore:
         return {"revision": row["version"], "version": version["payload"] if version else None,
                 "assigned_by": state.get("assigned_by"), "assigned_at": state.get("assigned_at")}
 
+    def _block_report_summary(self, block_record_id, por):
+        report_version = por["version"]
+        if report_version is None:
+            received = self.db.execute(
+                "SELECT v.* FROM {oa} v WHERE v.record_type='WS_VERSION' "
+                "AND v.workspace_block_ref=%s AND EXISTS (SELECT 1 FROM {oa} r WHERE r.record_type='WS_REPORT' "
+                "AND r.workspace_version_ref=v.record_id) ORDER BY v.payload->>'net_ver' DESC,v.created_at DESC LIMIT 1",
+                (block_record_id,),
+            ).fetchone()
+            report_version = self.version_ecos(received) if received else None
+        reports = self.db.execute(
+            "SELECT payload->>'check_status' AS check_status,count(*) AS count FROM {oa} "
+            "WHERE record_type='WS_REPORT' AND workspace_block_ref=%s AND workspace_version_ref=%s "
+            "AND " + CURRENT_SOURCES_SQL + " GROUP BY payload->>'check_status'",
+            (block_record_id, record_id("WS_VERSION", report_version["id"]) if report_version else None),
+        ).fetchall()
+        counts = {row["check_status"]: row["count"] for row in reports}
+        return report_version, counts, sum(counts.values())
+
     def overview(self, user_id):
         user = self.user(user_id)
         people = {row["workspace_key"]: self.public_user(row) for row in self.rows("WS_USER")}
@@ -258,20 +277,10 @@ class WorkspaceCoreStore:
                 if user_id not in value["owners"] and user_id not in data["tops"]:
                     continue
                 por = self.por(value["id"])
-                report_version = por["version"]
-                if report_version is None:
-                    received = self.db.execute("SELECT v.payload FROM {oa} v WHERE v.record_type='WS_VERSION' "
-                        "AND v.workspace_block_ref=%s AND EXISTS (SELECT 1 FROM {oa} r WHERE r.record_type='WS_REPORT' "
-                        "AND r.workspace_version_ref=v.record_id) ORDER BY v.payload->>'net_ver' DESC,v.created_at DESC LIMIT 1",
-                        (block["record_id"],)).fetchone()
-                    report_version = received["payload"] if received else None
-                reports = self.db.execute("SELECT payload->>'check_status' AS check_status,count(*) AS count FROM {oa} "
-                    "WHERE record_type='WS_REPORT' AND workspace_block_ref=%s AND workspace_version_ref=%s "
-                    "AND " + CURRENT_SOURCES_SQL + " GROUP BY payload->>'check_status'", (block["record_id"], record_id("WS_VERSION", report_version["id"]) if report_version else None)).fetchall()
-                counts = {row["check_status"]: row["count"] for row in reports}
+                report_version, counts, total = self._block_report_summary(block["record_id"], por)
                 blocks.append({**value, "owners": [people[uid] for uid in value["owners"]],
                                "can_assign_por": self.can_write(user_id, block), "por": por, "report_version": report_version,
-                               "counts": counts, "total": sum(counts.values())})
+                               "counts": counts, "total": total})
             if blocks:
                 projects.append({**data, "tops": [people[uid] for uid in data["tops"]], "blocks": blocks})
         return {"user": user, "projects": projects, "data_origin": "SYNTHETIC_PUBLIC_REFERENCE"}
@@ -308,34 +317,101 @@ class WorkspaceCoreStore:
                                "ORDER BY created_at DESC,workspace_key LIMIT 50", (block["record_id"],)).fetchall()
         return {"items": [row["payload"] for row in rows], "por": self.por(block_id)}
 
-    def assign_por(self, user_id, block_id, version_id, expected_revision, request_id, reason):
-        block, project = self.access(user_id, block_id, write=True)
-        version = self.version(user_id, block_id, version_id)
+    def assign_por_record(
+        self,
+        project,
+        block,
+        version,
+        *,
+        user_id: str,
+        actor_info: dict | None = None,
+        expected_revision: int,
+        request_id,
+        reason: str,
+        production_lock: bool = False,
+    ):
         request_id = str(uuid_value(request_id))
         if type(expected_revision) is not int or expected_revision < 0 or not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 500:
             raise ReviewError("INVALID_REQUEST", "Version, expected revision and reason are required")
+        block_id = block["workspace_key"]
+        version_id = version["workspace_key"] if "workspace_key" in version else version["payload"]["id"]
+        if production_lock:
+            self.db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("production-por-" + block_id),))
         self.db.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key("workspace-request-" + request_id),))
-        current = self.get("WS_POR", block_id, lock=True)
-        command = {"user_id": user_id, "block_id": block_id, "version_id": version_id,
-                   "expected_revision": expected_revision, "reason": reason.strip()}
-        previous = self.db.execute("SELECT payload FROM {oa} WHERE record_type='WS_POR_EVENT' AND workspace_key=%s", (request_id,)).fetchone()
+        command = {
+            "user_id": user_id,
+            "block_id": block_id,
+            "version_id": version_id,
+            "expected_revision": expected_revision,
+            "reason": reason.strip(),
+        }
+        previous = self.db.execute(
+            "SELECT payload FROM {oa} WHERE record_type='WS_POR_EVENT' AND workspace_key=%s", (request_id,)
+        ).fetchone()
         if previous:
             if previous["payload"]["command"] != command:
                 raise ReviewError("REQUEST_CONFLICT", "Request ID has different contents")
             return previous["payload"]["result"]
+        if production_lock:
+            exists = self.db.execute(
+                "SELECT 1 FROM {oa} WHERE record_type='WS_POR' AND workspace_key=%s", (block_id,)
+            ).fetchone()
+            if not exists:
+                if expected_revision != 0:
+                    raise ReviewError("REVISION_CONFLICT", "PoR changed; reload the current version")
+                self.put("WS_POR", block_id, {"block_id": block_id},
+                         project=project["workspace_key"], block=block["workspace_key"])
+        current = self.get("WS_POR", block_id, lock=True)
         if current["version"] != expected_revision:
             raise ReviewError("REVISION_CONFLICT", "PoR changed; reload the current version")
         if current["state"].get("version_id") == version_id:
             raise ReviewError("POR_UNCHANGED", "This version is already the current PoR")
-        at, revision, user = utcnow().isoformat(), current["version"] + 1, self.user(user_id)
-        next_state = {"version_id": version_id, "version_record_id": str(version["record_id"]),
-                      "assigned_by": user, "assigned_at": at}
-        self.db.execute("UPDATE {oa} SET state=%s,version=%s,updated_at=clock_timestamp() WHERE record_id=%s",
-                        (json_value(next_state), revision, current["record_id"]))
-        result = {"status": "POR_ASSIGNED", "revision": revision, "version": version["payload"],
-                  "assigned_by": user, "assigned_at": at}
-        event = {"id": request_id, "command": command, "previous_version_id": current["state"].get("version_id"),
-                 "version_record_id": str(version["record_id"]), "version": version["payload"], "actor": user,
-                 "reason": reason.strip(), "at": at, "revision": revision, "result": result}
+        at = utcnow().isoformat()
+        revision = current["version"] + 1
+        user = actor_info if actor_info is not None else self.user(user_id)
+        version_payload = version["payload"] if "ecos" in version["payload"] and version["payload"]["ecos"] else self.version_ecos(version)
+        next_state = {
+            "version_id": version_id,
+            "version_record_id": str(version["record_id"]),
+            "assigned_by": user,
+            "assigned_at": at,
+        }
+        self.db.execute(
+            "UPDATE {oa} SET state=%s,version=%s,updated_at=clock_timestamp() WHERE record_id=%s",
+            (json_value(next_state), revision, current["record_id"]),
+        )
+        result = {
+            "status": "POR_ASSIGNED",
+            "revision": revision,
+            "version": version_payload,
+            "assigned_by": user,
+            "assigned_at": at,
+        }
+        event = {
+            "id": request_id,
+            "command": command,
+            "previous_version_id": current["state"].get("version_id"),
+            "version_record_id": str(version["record_id"]),
+            "version": version_payload,
+            "actor": user,
+            "reason": reason.strip(),
+            "at": at,
+            "revision": revision,
+            "result": result,
+        }
         self.put("WS_POR_EVENT", request_id, event, project=project["workspace_key"], block=block_id)
         return result
+
+    def assign_por(self, user_id, block_id, version_id, expected_revision, request_id, reason):
+        block, project = self.access(user_id, block_id, write=True)
+        version = self.version(user_id, block_id, version_id)
+        return self.assign_por_record(
+            project,
+            block,
+            version,
+            user_id=user_id,
+            expected_revision=expected_revision,
+            request_id=request_id,
+            reason=reason,
+            production_lock=False,
+        )

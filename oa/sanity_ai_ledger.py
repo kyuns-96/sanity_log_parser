@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import base64
+from datetime import timedelta
 import re
+from uuid import uuid4
 
 from common.sanity_ai_projection import policy_for, source_policy_pin
 from common.sanity_ai_retry import valid_receipt
@@ -10,11 +12,11 @@ from common.sanity_common import ReviewError, digest, pack_json, unpack_json
 from common.sanity_preserved_ai import available, model_metadata, receipt
 from common.sanity_submission import check
 from common.sanity_validation_diagnostics import sanitize_validation_failure
+from oa import sanity_ai_store as _ai_store
 from oa.sanity_ai_batch_model import BatchModel, VERSION
 from oa.sanity_ai_evidence_batch import EvidenceBatchModel
 from oa.sanity_ai_live import capture as live_capture
-from oa.sanity_ai_store import NULL_COLUMNS
-from oa.sanity_workspace_core import record_id
+from oa.sanity_ws_config import verify_ws_config_row
 
 NAMESPACE = 'oa-ai-batch-v1'
 MAX_BYTES = 64 * 1024 * 1024
@@ -42,14 +44,11 @@ class Ledger:
         return {'key': key, 'sha256': value['sha256']}
 
     def decode(self, row):
-        value = row['payload']
-        check(isinstance(value, dict) and set(value) == {'namespace', 'version', 'job_id', 'binding', 'key', 'packed', 'sha256'}
+        value = verify_ws_config_row(row, error_code='AI_BATCH_CORRUPT', message='Invalid immutable batch data')
+        check(set(value) == {'namespace', 'version', 'job_id', 'binding', 'key', 'packed', 'sha256'}
               and value['namespace'] == NAMESPACE and type(value['version']) is int and value['version'] == 1
               and value['job_id'] == self.parent['job_id'] and value['binding'] == self.binding
               and isinstance(value['key'], str) and row['workspace_key'] == self.prefix + value['key']
-              and row['record_id'] == record_id('WS_CONFIG', row['workspace_key'])
-              and row['state'] == {} and row['version'] == 0 and row['status'] == 'RECORDED'
-              and row['updated_at'] == row['created_at'] and all(row.get(k) is None for k in NULL_COLUMNS)
               and value['sha256'] == digest({k: v for k, v in value.items() if k != 'sha256'}), 'AI_BATCH_CORRUPT')
         try:
             body = unpack_json({**value['packed'], 'payload_gzip': base64.b64decode(value['packed']['payload_gzip'], validate=True)}, max_bytes=MAX_BYTES)
@@ -195,6 +194,44 @@ def record_plan(model):
 def bind_preserved(model, ledger, state):
     if state.get('preserved_ref'):
         model.bind_preserved(ledger.nodes([state['preserved_ref']])[0])
+
+
+def prepare_batch_run(service, event, now, *, ledger_cls=Ledger, parallel=False):
+    """Prepare a sequential or parallel batch run inside a short DB transaction (no HTTP)."""
+    _, context, cases, criteria = service._inputs(event)
+    advisor = service._job_advisor(event)
+    revision = None
+    if service._personal_tokens(event):
+        token, revision = service._user_token(event['data']['command']['user_id'], event['data']['command'].get('connection_id'))
+        advisor = advisor.with_user_token(token)
+    model = build_batch_model(advisor, event, context, cases, criteria)
+    ledger = ledger_cls(service, event)
+    if event['status'] == 'PENDING':
+        if getattr(model, 'segments', []):
+            model.leaf_plan()
+        text_plan = model.text_plan() if hasattr(model, 'text_plan') else []
+        descriptors = text_plan or record_plan(model)
+        plan = ledger.plans(0, descriptors, len(text_plan) or len(model.records))
+        started = now or _ai_store.db_now(service.db)
+        batch = {**event['data']['batch'], 'total_records': len(model.records), 'leaf_count': len(descriptors),
+                 'plan': plan, 'credential_revision': revision}
+        event = service._append(event, 'RUNNING', {**event['data'], 'batch': batch, 'call_token': str(uuid4()),
+            'model_attempted': False, 'model_called': False, 'started_at': started.isoformat(),
+            'deadline': (started + timedelta(seconds=model.settings.deadline_seconds)).isoformat()}, now=started)
+        ledger = ledger_cls(service, event)
+        phase = 'TEXT' if text_plan else 'REVIEW' if getattr(model, 'review', False) else 'CLASSIFY'
+        state = {'round': 0, 'index': 0, 'records': 0, 'calls': 0, 'nodes': 0, 'stable': 0, 'actual_model': None,
+                 'round_total': len(descriptors), 'round_seconds': 0, 'round_samples': 0, 'seconds': 0, 'record_seconds': 0,
+                 'current_groups': 1 if getattr(model, 'review', False) else None if text_plan else 0}
+        if parallel:
+            state.update(next_index=0, wave=[], phase=phase)
+            if batch['version'] == 2:
+                state['stage_round'] = 0
+        elif batch['version'] == 2:
+            state.update(phase=phase, stage_round=0)
+        ledger.step(None, None, 'READY', state)
+    bind_preserved(model, ledger, ledger.last()[0]['state'])
+    return event, ledger, model, revision
 
 
 def _text_round(ledger, model, step, ref, nodes, node_refs):

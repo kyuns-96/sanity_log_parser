@@ -11,11 +11,22 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.sanity_common import ReviewError, canonical_json, digest, read_json, require_id, safe_path, sha256_file, validate_payload, identity_value_valid
+from common.sanity_common import (
+    ReviewError,
+    canonical_json,
+    digest,
+    identity_value_valid,
+    read_json,
+    require_id,
+    safe_path,
+    sha256_file,
+    validate_payload,
+    validate_schema1_collection_unit,
+    validate_schema1_run_and_inventory,
+)
 from common.sanity_db import Database
 from vwp_bridge.sanity_evidence import PgEvidence, PRODUCER_VERSION
 from common.sanity_parsers import ParseContext, ParserRegistry, checked_records, extraction_reasons, NOT_PERFORMED
-from common.sanity_scope import run_scope
 from common.sanity_submission import AI_INPUT_KEYS
 
 HEADER = ["object", "check_point", "mode", "code", "severity", "observed", "unit"]
@@ -38,16 +49,12 @@ def validate_manifest(manifest, root):
     require(isinstance(manifest, dict), "BAD_MANIFEST", "Manifest must be an object")
     require(type(manifest.get("schema_version")) is int and manifest["schema_version"] == 1 and manifest.get("ready") is True,
             "NOT_READY", "Expected ready schema version 1 manifest")
-    run = manifest.get("run")
-    require(isinstance(run, dict), "BAD_MANIFEST", "Missing run")
-    for field in ("run_id", "project", "design", "stage", "tool", "tool_version"):
-        require(nonempty(run.get(field)), "BAD_MANIFEST", "Invalid run field " + field)
-    require_id(run["run_id"], "run_id")
-    run_scope(run, code="BAD_MANIFEST")
-    inventory = manifest.get("inventory")
-    require(isinstance(inventory, dict), "BAD_MANIFEST", "Missing inventory")
-    require(type(inventory.get("confirmed")) is bool and nonempty(inventory.get("source"))
-            and nonempty(inventory.get("version")), "BAD_MANIFEST", "Invalid inventory provenance")
+    _, inventory = validate_schema1_run_and_inventory(
+        manifest,
+        code="BAD_MANIFEST",
+        require_inventory_sha256=False,
+        id_before_text=False,
+    )
     require(inventory.get("sha256") == digest({k: v for k, v in inventory.items()
                                                if k != "sha256"}),
             "INVENTORY_INTEGRITY", "Inventory hash mismatch")
@@ -55,21 +62,13 @@ def validate_manifest(manifest, root):
     require(isinstance(units, list), "BAD_MANIFEST", "Inventory units must be a list")
     unit_ids, reports = set(), set()
     for unit in units:
-        require(isinstance(unit, dict), "BAD_MANIFEST", "Invalid unit")
-        uid = require_id(unit.get("review_unit_id"), "review_unit_id")
-        require_id(unit.get("item_id"), "item_id")
-        require(uid not in unit_ids, "BAD_MANIFEST", "Duplicate review unit")
-        unit_ids.add(uid)
-        path = unit.get("report")
-        require(isinstance(path, str) and path.startswith("reports/"),
-                "BAD_MANIFEST", "Report must be under reports/")
-        safe_path(root, path)
-        require(path not in reports, "BAD_MANIFEST", "Duplicate report path")
-        reports.add(path)
-        require(type(unit.get("applicable")) is bool, "BAD_MANIFEST", "Invalid applicability")
-        require(unit.get("execution_status") in ("COMPLETED", "FAILED", "UNKNOWN", "NOT_RUN"),
-                "BAD_MANIFEST", "Invalid execution status")
-        require(nonempty(unit.get("rule_version")), "BAD_MANIFEST", "Missing rule version")
+        validate_schema1_collection_unit(
+            unit,
+            unit_ids,
+            reports,
+            code="BAD_MANIFEST",
+            validate_path=lambda path: safe_path(root, path),
+        )
     files = manifest.get("files")
     require(isinstance(files, list), "BAD_MANIFEST", "Missing file list")
     by_path, ids = {}, set()

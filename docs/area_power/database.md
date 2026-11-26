@@ -210,7 +210,7 @@ stateDiagram-v2
 2. 신청 완료한 `di_area_power_tracking_record`의 실제 생성·컬럼을 사내에서 확인한다. 재신청하지 않는다.
 3. 두 테이블·컬럼이 맞는지 확인한 뒤 사내 권한 있는 실행자가 03의 미적용 제약을 PK·UNIQUE → CHECK → FK 순으로 적용한다.
 4. 04의 인덱스와 실제 권한·유효 상태를 확인한다. 특히 selection UNIQUE 누락 상태로 운영하지 않는다.
-5. [실행 안내](../../area_power/README.md)에 따라 구현된 vwp_server·OA·worker를 사내 환경변수로 연결하고 실제 CSV·AI·메일의 통합 동작을 확인한다. 공통 JSON 계약·상태 전이는 [공통 코드](../../area_power/common/models.py)와 각 서비스가 검증한다.
+5. [실행 안내](README.md)에 따라 구현된 vwp_server·OA·worker를 사내 환경변수로 연결하고 실제 CSV·AI·메일의 통합 동작을 확인한다. 공통 JSON 계약·상태 전이는 [공통 코드](../../common/area_power/models.py)와 각 서비스가 검증한다.
 
 
 ## 검증 범위
@@ -235,9 +235,9 @@ stateDiagram-v2
 
 ### 구현 앱의 DB 연동
 
-실행 코드는 [공통 DB 계층](../../area_power/common/db.py), [VWP 적재](../../area_power/vwp_server/ingest.py), [분석 worker](../../area_power/vwp_server/worker.py), [OA 서비스](../../area_power/oa/service.py), [OA 메일](../../area_power/oa/mail.py)이다. 실제 스키마는 런타임 `AREA_POWER_DB_SCHEMA`로만 주입하며 Identifier로 인용한다. 앱은 컬럼·키·FK·필수 selection 유일성·CHECK 설치 상태를 읽기 전용으로 확인하고 DDL을 실행하지 않는다.
+실행 코드는 [공통 DB 계층](../../common/area_power/db.py), [VWP 적재](../../vwp_bridge/area_power/ingest.py), [분석 worker](../../vwp_bridge/area_power/worker.py), [OA 서비스](../../oa/area_power/service.py), [OA 메일](../../oa/area_power/mail.py)이다. 실제 스키마는 런타임 `AREA_POWER_DB_SCHEMA`로만 주입하며 Identifier로 인용한다. 앱은 컬럼·키·FK·필수 selection 유일성·CHECK 설치 상태를 읽기 전용으로 확인하고 DDL을 실행하지 않는다.
 
-이전 구현 당시 로컬 PostgreSQL 18.6의 USAGE/DML 전용 계정으로 업로드·gzip bytea 왕복·명시 선택·revision 충돌·전체/target/split 비교·새 AI 실행·사용자 상태 보존·SMTP 수락을 확인했다. SMTP 구현은 현재 제거됐으므로 이 기록이 사내 메일 어댑터 검증을 뜻하지 않는다. 실제 입력·결과와 검증 한계는 [README의 로컬 실행 검증](../../area_power/README.md#로컬-실행-검증)을 따른다. AI는 미설정 실패 경로만 확인했으며 사내 운영 연결·실데이터·성능 검증은 아니다.
+이전 구현 당시 로컬 PostgreSQL 18.6의 USAGE/DML 전용 계정으로 업로드·gzip bytea 왕복·명시 선택·revision 충돌·전체/target/split 비교·새 AI 실행·사용자 상태 보존·SMTP 수락을 확인했다. SMTP 구현은 현재 제거됐으므로 이 기록이 사내 메일 어댑터 검증을 뜻하지 않는다. 실제 입력·결과와 검증 한계는 [README의 로컬 실행 검증](README.md#로컬-실행-검증)을 따른다. AI는 미설정 실패 경로만 확인했으며 사내 운영 연결·실데이터·성능 검증은 아니다.
 
 ### 실제 이름 cutover 실행 결과 — 2026-11-12
 

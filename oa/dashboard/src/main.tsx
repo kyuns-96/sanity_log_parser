@@ -1,9 +1,7 @@
+import { entryApplicationPath, entryDemoEnabled } from '@/lib/entryMode'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from '@/features/review/BundleReviewApp'
-import AccessFlowDemo from '@/features/demo/AccessFlowDemo'
-import VersionFlowDemo from '@/features/demo/VersionFlowDemo'
-import ReportsPreview from '@/features/demo/ReportsPreview'
 import Workspace from '@/features/workspace/Workspace'
 import DashboardNavigation from '@/features/atlas/DashboardNavigation'
 import { initializeColorMode } from '@/lib/colorMode'
@@ -21,12 +19,14 @@ import '@/features/area-power/styles.css'
 import '@/styles/module-navigation.css'
 import '@/styles/atlas.css'
 
-
 const AtlasDemo = React.lazy(() => import('@/features/demo/AtlasDemo'))
+const AccessFlowDemo = React.lazy(() => import('@/features/demo/AccessFlowDemo'))
+const VersionFlowDemo = React.lazy(() => import('@/features/demo/VersionFlowDemo'))
+const ReportsPreview = React.lazy(() => import('@/features/demo/ReportsPreview'))
 document.documentElement.classList.add('studio-system')
 initializeColorMode()
 
-if (['/workspace', '/workspace/'].includes(appPathname()) && new URLSearchParams(location.search).get('demo') !== '1') {
+if (['/workspace', '/workspace/'].includes(entryApplicationPath()) && !entryDemoEnabled()) {
   const target = new URL(appUrl('/'), location.origin)
   target.search = location.search
   target.searchParams.set('page', 'workbench')
@@ -47,4 +47,4 @@ if (dashboard) document.title = 'Design Atlas · 설계 검토와 구성·전력
 else if (workspace) document.title = `${params.get('demo') === '1' ? '합성 워크스페이스 데모' : '로그 워크스페이스'} | Design Atlas`
 if (versionDemo) document.title = 'PRE · POST · ECO · PoR | Design Atlas · 데모'
 if (reportsPreview) document.title = 'GCA · VC LP · SpyGlass | Design Atlas · 미리보기'
-ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode>{integratedDemo ? <React.Suspense fallback={<p role="status">통합 합성 데모를 준비하고 있습니다…</p>}><AtlasDemo /></React.Suspense> : dashboard ? <DashboardNavigation /> : workspace ? <Workspace /> : reportsPreview ? <ReportsPreview /> : versionDemo ? <VersionFlowDemo /> : accessDemo ? <AccessFlowDemo /> : <App />}</React.StrictMode>)
+ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode>{integratedDemo ? <React.Suspense fallback={<p role="status">통합 합성 데모를 준비하고 있습니다…</p>}><AtlasDemo /></React.Suspense> : dashboard ? <DashboardNavigation /> : workspace ? <Workspace /> : reportsPreview ? <React.Suspense fallback={<p role="status">예시 데이터를 준비하고 있습니다…</p>}><ReportsPreview /></React.Suspense> : versionDemo ? <React.Suspense fallback={<p role="status">데모 화면을 준비하고 있습니다…</p>}><VersionFlowDemo /></React.Suspense> : accessDemo ? <React.Suspense fallback={<p role="status">데모 화면을 준비하고 있습니다…</p>}><AccessFlowDemo /></React.Suspense> : <App />}</React.StrictMode>)

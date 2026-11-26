@@ -10,9 +10,24 @@ export function Field({ label, hint, children, className = '' }: { label: string
 export function Empty({ title = '아직 등록된 데이터가 없습니다', children }: { title?: string; children?: ReactNode }) {
   return <div className="empty"><span className="empty-icon"><Database size={23} /></span><h3>{title}</h3>{children && <p>{children}</p>}</div>
 }
+const BADGE_GOOD = new Set([
+  'ready', 'completed', 'comparable', 'expected', 'published', 'active',
+  '조회 준비 완료', '사용', '접수 완료', '발송됨', '완료', '설명됨', '최신 현황',
+])
+const BADGE_BAD = new Set([
+  'failed', 'unexpected', 'open', 'anomaly',
+  '발송 실패', '수신자 거부', '분석 실패', '인증 오류', '이상',
+])
+const BADGE_WARN = new Set([
+  'pending', 'running', 'queued', 'contextual', 'needs_review', 'review',
+  '발송 후 수정', '발송 대기', '발송 요청됨', '일부 거부', '결과 불명', '발송 전 요약',
+  '매핑 확인 필요', '기준 실행 미고정', '분석 대기', '분석 중', '미도착',
+])
+
 export function Badge({ value }: { value: unknown }) {
   const label = text(value) || 'unknown'
-  return <span className={`badge ${['ready', 'completed', 'comparable', 'expected', 'published', 'active'].includes(label) ? 'good' : ['failed', 'unexpected', 'open', 'anomaly'].includes(label) ? 'bad' : ['pending', 'running', 'queued', 'contextual', 'needs_review', 'review'].includes(label) ? 'warn' : ''}`}>{label}</span>
+  const tone = BADGE_GOOD.has(label) ? 'good' : BADGE_BAD.has(label) ? 'bad' : BADGE_WARN.has(label) ? 'warn' : ''
+  return <span className={`badge${tone ? ` ${tone}` : ''}`}>{label}</span>
 }
 export function Json({ value, label = '전체 JSON 보기', open = false }: { value: unknown; label?: string; open?: boolean }) {
   return <details className="json-details" open={open}><summary>{label}</summary><pre>{pretty(value)}</pre></details>
@@ -34,9 +49,6 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
 }
 export function RecordOptions({ records }: { records: TrackingRecord[] }) {
   return <>{records.map(record => <option key={record.id} value={record.id}>{nameOf(record)} · r{record.revision} · {record.id.slice(0, 8)}</option>)}</>
-}
-export function MultiRecords({ label, records, value, onChange, hint }: { label: string; records: TrackingRecord[]; value: string[]; onChange: (value: string[]) => void; hint?: string }) {
-  return <Field label={label} hint={hint || 'Ctrl / ⌘ 또는 Shift로 여러 항목을 선택할 수 있습니다.'}><select multiple size={Math.min(5, Math.max(2, records.length))} value={value} onChange={event => onChange(Array.from(event.target.selectedOptions, option => option.value))}><RecordOptions records={records} /></select></Field>
 }
 export function Modal({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null)

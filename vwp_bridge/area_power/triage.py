@@ -10,16 +10,20 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from time import monotonic
 
-from common.sanity_ai_retry import receipt, retry_delay_seconds
-from common.sanity_common import ReviewError
-from .ai_runtime import runtime_for
 from common.area_power.analysis import advisory_lock, existing_dedupe, observation_view
 from common.area_power.errors import ConfigurationError, DomainError
 from common.area_power.jsonutil import digest
 from common.area_power.tracking import match_approved_expectations
 from common.area_power.triage import (BATCH_SIZE, PROMPT_VERSION, Thresholds, batch_request, build_card, select_items,
                                       side_context, validate_batch)
-from .ai_models import ACTOR, AI_CONTEXT_ERRORS, failure_detail
+from common.sanity_common import ReviewError
+from .ai_runtime import (
+    ACTOR,
+    RetryableValidationError,
+    aborts_ai_context,
+    failure_detail,
+    runtime_for,
+)
 from .tracking.dispatch import on_triage_finished
 
 FINISHED = ('completed', 'failed')
@@ -35,64 +39,55 @@ def _now_iso() -> str:
     return _now().isoformat()
 
 
-def _aborts(code: str) -> bool:
-    return code in AI_CONTEXT_ERRORS or code.startswith(('AUTHORIZATION_', 'DATABASE_', 'DBAAS_'))
-
-
-def _http_status(error) -> int | None:
-    status = getattr(error, 'http_status', None)
-    return status if isinstance(status, int) and 100 <= status <= 599 else None
-
-
 def judge(runtime, cards, notes, context, same_rtl, kind, task, retry_limit, coverage, *, on_progress=None, attribution=None):
     """Retry this batch only after a confirmed, retryable failure."""
     evidence, instructions = batch_request(cards, notes, context, same_rtl, kind, attribution=attribution)
-    retries = 0
-    max_attempts = retry_limit + 1
+    state = {'attempt': 1, 'max_attempts': retry_limit + 1}
 
     def report(**fields):
         if on_progress is not None:
             on_progress(**fields)
 
-    while True:
-        retry_error = None
-        last_error = None
-        last_http_status = None
-        attempt = retries + 1
+    def on_attempt(attempt: int, max_attempts: int):
+        state['attempt'] = attempt
+        state['max_attempts'] = max_attempts
         report(phase='calling_model', sub_phase='preparing', attempt=attempt, max_attempts=max_attempts,
                retry_wait_seconds=None, retry_at=None)
 
-        def observe(step):
-            mapped = _OBSERVED_SUB_PHASES.get(str(step))
-            if mapped is not None:
-                report(phase='calling_model', sub_phase=mapped, attempt=attempt, max_attempts=max_attempts,
-                       retry_wait_seconds=None, retry_at=None)
+    def observe(step):
+        mapped = _OBSERVED_SUB_PHASES.get(str(step))
+        if mapped is not None:
+            report(phase='calling_model', sub_phase=mapped, attempt=state['attempt'],
+                   max_attempts=state['max_attempts'], retry_wait_seconds=None, retry_at=None)
 
-        try:
-            response = runtime.infer(task, evidence, instructions, PROMPT_VERSION, observer=observe)
-        except ReviewError as exc:
-            if _aborts(exc.code) or exc.code == 'AI_INPUT_LIMIT':
-                raise
-            if retries >= retry_limit or receipt(exc) is None:
-                return validate_batch(cards, notes, None, exc.code)
-            retry_error = exc
-            last_error = exc.code
-            last_http_status = _http_status(exc)
-        except (ValueError, KeyError, IndexError, TypeError):
-            return validate_batch(cards, notes, None, 'ai_invalid_response')
-        else:
-            results = validate_batch(cards, notes, response)
-            if retries >= retry_limit or not any(item['failed'] for item in results):
-                return results
+    def parse_reply(response):
+        results = validate_batch(cards, notes, response)
+        if any(item['failed'] for item in results):
             last_error = next((item.get('failure') for item in results if item.get('failed')), 'ai_invalid_response')
-        retries += 1
-        delay = retry_delay_seconds(retries, retry_error)
+            raise RetryableValidationError(last_error, fallback=results, has_fallback=True)
+        return results
+
+    def on_retry(attempt: int, max_attempts: int, last_error: str, last_http_status: int | None, delay: float):
         retry_at = (_now() + timedelta(seconds=delay)).isoformat()
         report(phase='retrying', sub_phase=None, attempt=attempt, max_attempts=max_attempts,
                last_error=last_error, last_http_status=last_http_status,
                retry_wait_seconds=round(float(delay), 1), retry_at=retry_at)
-        runtime.wait_for_retry(delay)
+
+    def on_waited():
         coverage['retry_calls'] += 1
+
+    try:
+        return runtime.infer_with_retry(
+            task, evidence, instructions, PROMPT_VERSION,
+            retry_limit=retry_limit, parse=parse_reply, observer=observe,
+            on_attempt=on_attempt, on_retry=on_retry, on_retry_waited=on_waited,
+        )
+    except ReviewError as exc:
+        if aborts_ai_context(exc.code) or exc.code == 'AI_INPUT_LIMIT':
+            raise
+        return validate_batch(cards, notes, None, exc.code)
+    except (ValueError, KeyError, IndexError, TypeError):
+        return validate_batch(cards, notes, None, 'ai_invalid_response')
 
 
 def _update(db, run_id, *, state=None, error=None, **payload):

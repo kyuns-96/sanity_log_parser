@@ -1,11 +1,7 @@
-from oa import sanity_ai_store as _ai_store
 """Explicit user acceptance of duplicate execution for an uncertain batch call."""
-from datetime import timedelta
 import re
 
 from common.sanity_ai_retry import MAX_RESUMES
-from common.sanity_common import ReviewError
-from common.sanity_db import lock_key, uuid_value
 from common.sanity_submission import check
 from oa.sanity_ai_ledger import Ledger, attempts
 from oa.sanity_ai_parallel_recovery import (
@@ -13,13 +9,14 @@ from oa.sanity_ai_parallel_recovery import (
     unknown_availability as parallel_availability,
     validate_recovery as parallel_validate,
 )
-from oa.sanity_ai_store import (
-    AVAILABILITY_ERRORS, INTENT_ACTIVE, INTENT_PREFIX, JOB_ACTIVE,
-    RESUME_PREFIX, UNKNOWN_NAMESPACE as NAMESPACE, UNKNOWN_PREFIX as PREFIX,
-    job_lock, parse_timestamp, report_header as header,
-    resume_marker, unknown_marker as marker,
+from oa.sanity_ai_recovery import (
+    append_recovered_job_event,
+    begin_job_recovery,
+    evaluate_unknown_availability,
+    validate_common_recovery_fields,
+    verify_submission_snapshot,
 )
-from oa.sanity_ai_submissions import Submissions
+from oa.sanity_ai_store import UNKNOWN_NAMESPACE as NAMESPACE, UNKNOWN_PREFIX as PREFIX
 
 
 def recovery_info(event, step, ref):
@@ -45,40 +42,28 @@ def unknown_availability(service, event, user_id, meta, job):
     """Display-only lightweight preflight; dispatch still revalidates inputs."""
     if event['data'].get('batch', {}).get('execution') in ('parallel-v1', 'parallel-v2'):
         return parallel_availability(service, event, user_id, meta, job)
-    if event['status'] != 'UNKNOWN' or 'batch' not in event['data']:
-        return False, None
-    if event['data']['command']['user_id'] != user_id or not meta['can_review']:
-        return False, 'FORBIDDEN'
-    try:
-        current = header(service, {**event['data']['command'], 'user_id': user_id})
-        check(current['can_review'], 'FORBIDDEN')
-        check(current['ready'] and current['group_ready'], 'AI_INPUT_STALE')
+
+    def _verify_budget(_current):
         step, ref = Ledger(service, event).last()
         info = recovery_info(event, step, ref)
         check(info is not None and info == job.get('unknown_recovery'), 'AI_RESUME_UNAVAILABLE')
-        intent = Submissions(service).load(event['job_id'], required=False)
-        if intent: check(intent['data']['snapshot'] == current['snapshot'], 'AI_INPUT_STALE')
-        service._check_credential_pin(event)
         advisor = service._job_advisor(event)
         check(advisor.describe()['config_sha256'] == event['data']['pins']['config_sha256'], 'AI_CONFIG_CHANGED')
         check(attempts(step['state']) + 1 < advisor.settings.batch.max_calls, 'AI_BATCH_LIMIT')
-        return True, None
-    except ReviewError as error:
-        if error.code not in AVAILABILITY_ERRORS: raise
-        return False, error.code
+
+    return evaluate_unknown_availability(service, event, user_id, meta, _verify_budget)
 
 
 def validate_recovery(service, previous, status, data):
     if previous['data'].get('batch', {}).get('execution') in ('parallel-v1', 'parallel-v2'):
         return parallel_validate(service, previous, status, data)
-    check(previous['status'] == 'UNKNOWN' and status == 'RUNNING' and 'batch' in previous['data']
-          and previous['data'].get('fail_safe') is True and type(data.get('resume_count')) is int
-          and data['resume_count'] == previous['data'].get('resume_count', 0) + 1 and data['resume_count'] <= MAX_RESUMES
-          and data.get('resumed_by') == previous['data']['command']['user_id']
-          and isinstance(data.get('resume_request_id'), str)
-          and str(uuid_value(data['resume_request_id'])) == data['resume_request_id']
-          and data.get('retry_count', 0) == 0 and all(k not in data for k in ('error', 'finished_at', 'retry_after', 'retry_failure', 'unknown_reason')),
-          'AI_JOB_CORRUPT')
+    check(previous['status'] == 'UNKNOWN' and 'batch' in previous['data']
+          and previous['data'].get('fail_safe') is True, 'AI_JOB_CORRUPT')
+    validate_common_recovery_fields(
+        previous, status, data,
+        expected_status='RUNNING',
+        forbidden_keys=('error', 'finished_at', 'retry_after', 'retry_failure', 'unknown_reason'),
+    )
     checkpoint = data.get('resume_checkpoint')
     check(isinstance(checkpoint, dict) and set(checkpoint) == {'key', 'sha256'}
           and isinstance(checkpoint['key'], str) and re.fullmatch(r'step\.\d{8}', checkpoint['key'])
@@ -101,33 +86,24 @@ def validate_recovery(service, previous, status, data):
 def retry_unknown(service, user_id, job_id, request_id, expected_event_sha256, expected_step_sha256, acknowledge_duplicate):
     check(acknowledge_duplicate is True and all(isinstance(v, str) and re.fullmatch(r'[0-9a-f]{64}', v)
           for v in (expected_event_sha256, expected_step_sha256)), 'INVALID_REQUEST')
-    job_id, request_id = str(uuid_value(job_id, 'job_id')), str(uuid_value(request_id, 'request_id'))
-    service.db.execute('SELECT pg_advisory_xact_lock(%s)', (lock_key(RESUME_PREFIX + request_id),))
-    job_lock(service, job_id)
-    event = service._load(job_id); command = event['data']['command']
-    if event['data'].get('batch', {}).get('execution') in ('parallel-v1', 'parallel-v2'):
-        return parallel_retry(service, user_id, job_id, request_id, expected_event_sha256, expected_step_sha256, acknowledge_duplicate)
-    check(command['user_id'] == user_id, 'FORBIDDEN')
-    meta = header(service, {**command, 'user_id': user_id}, write=True)
-    old = marker(service, request_id)
-    if old:
-        check(old['job_id'] == job_id and old['actor_id'] == user_id and old['event_sha256'] == expected_event_sha256
-              and old['step_sha256'] == expected_step_sha256, 'REQUEST_CONFLICT')
+    job_id, request_id, event, meta, already_done = begin_job_recovery(
+        service, user_id, job_id, request_id,
+        unknown=True, expected_event=expected_event_sha256, expected_step=expected_step_sha256,
+    )
+    if already_done:
         return service.public(event)
-    check(resume_marker(service, request_id) is None, 'REQUEST_CONFLICT')
-    check(meta['ready'] and meta['can_review'] and meta['group_ready'], 'AI_INPUT_STALE')
-    target = event['data']['target']
-    service.db.execute('SELECT pg_advisory_xact_lock(%s)', (lock_key(INTENT_PREFIX + target),))
-    latest = service._latest(target=target); intent = Submissions(service).latest(target=target)
-    check(not latest or latest['job_id'] == job_id or latest['status'] not in JOB_ACTIVE, 'AI_JOB_ACTIVE')
-    check(not intent or intent['id'] == job_id or intent['status'] not in INTENT_ACTIVE, 'AI_JOB_ACTIVE')
+    if event['data'].get('batch', {}).get('execution') in ('parallel-v1', 'parallel-v2'):
+        return parallel_retry(
+            service, user_id, job_id, request_id,
+            expected_event_sha256, expected_step_sha256, acknowledge_duplicate,
+            _started=(event, meta),
+        )
     check(event['status'] == 'UNKNOWN' and 'batch' in event['data'], 'AI_RESUME_UNAVAILABLE')
     ledger = Ledger(service, event); step, ref = ledger.last()
     info = recovery_info(event, step, ref)
     check(info is not None, 'AI_RESUME_UNAVAILABLE')
     check(event['sha256'] == expected_event_sha256 and ref['sha256'] == expected_step_sha256, 'REVISION_CONFLICT')
-    original_intent = Submissions(service).load(job_id, required=False)
-    if original_intent: check(original_intent['data']['snapshot'] == meta['snapshot'], 'AI_INPUT_STALE')
+    verify_submission_snapshot(service, job_id, meta['snapshot'])
     service._check_credential_pin(event)
     advisor = service._job_advisor(event)
     check(advisor.describe()['config_sha256'] == event['data']['pins']['config_sha256'], 'AI_CONFIG_CHANGED')
@@ -137,16 +113,16 @@ def retry_unknown(service, user_id, job_id, request_id, expected_event_sha256, e
         'step_sha256': ref['sha256'], 'call_token': step['call_token'], 'input_sha256': step['input_sha256'],
         'acknowledge_duplicate': True}
     _, checkpoint = ledger.step(step, ref, 'READY', state, unknown_resolution=resolution)
-    data = {k: v for k, v in event['data'].items() if k not in
-          ('finished_at', 'cancelled_by', 'error', 'retry_after', 'retry_failure', 'resume_checkpoint', 'unknown_reason')}
-    data.update(resume_count=event['data'].get('resume_count', 0) + 1, resume_request_id=request_id,
-                resumed_by=user_id, retry_count=0, resume_checkpoint=checkpoint)
-    now = _ai_store.db_now(service.db)
-    duration = parse_timestamp(event['data']['deadline']) - parse_timestamp(event['data']['started_at'])
-    check(timedelta(seconds=60) <= duration <= timedelta(seconds=604800), 'AI_JOB_CORRUPT')
-    data.update(started_at=now.isoformat(), deadline=(now + duration).isoformat())
-    result = service._append(event, 'RUNNING', data, now=now)
-    value = {'namespace': NAMESPACE, 'id': request_id, 'job_id': job_id, 'actor_id': user_id,
-           'event_sha256': expected_event_sha256, 'step_sha256': expected_step_sha256}
-    service.ws.put('WS_CONFIG', PREFIX + request_id, value)
-    return service.public(result)
+    return append_recovered_job_event(
+        service,
+        event,
+        user_id=user_id,
+        request_id=request_id,
+        batch=True,
+        checkpoint=checkpoint,
+        marker_key=PREFIX + request_id,
+        marker_payload={
+            'namespace': NAMESPACE, 'id': request_id, 'job_id': job_id, 'actor_id': user_id,
+            'event_sha256': expected_event_sha256, 'step_sha256': expected_step_sha256,
+        },
+    )

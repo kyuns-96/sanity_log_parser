@@ -42,7 +42,9 @@ def render_block_mail_text(snapshot: dict[str, Any], *, mail_id: str | None = No
         "",
         f"프로젝트: {project}",
         f"블록: {block}" + (" (Full-chip)" if snapshot.get("is_full_chip") else ""),
-        f"NET_VER: {net_ver}" + (f" · REVISION {snapshot['revision_label']}" if snapshot.get("revision_label") else ""),
+        f"NET_VER: {net_ver}"
+        + (f" · REVISION {snapshot['revision_label']}" if snapshot.get("revision_label") else "")
+        + (f" · ECO {snapshot['eco_label']}" if snapshot.get("eco_label") else ""),
         f"결과 요약: 이상 {totals.get('unexpected', 0)}건 · 확인 필요 {totals.get('needs_review', 0)}건 · 설명됨 {totals.get('expected', 0)}건(코드 대조 {totals.get('code_explained', 0)}건) · 변화 미미 {totals.get('minor', 0)}건",
     ]
     power_eval = snapshot.get("power_evaluation") or {}
@@ -198,7 +200,10 @@ def render_top_mail_text(snapshot: dict[str, Any], *, mail_id: str | None = None
         name = row.get("block_name") or str(row.get("block_id"))
         if row.get("is_full_chip"):
             name = f"{project} · Full-chip"
-        rev = f" · {row['revision_label']}" if row.get("revision_label") else ""
+        rev = (
+            (f" · {row['revision_label']}" if row.get("revision_label") else "")
+            + (f" · {row['eco_label']}" if row.get("eco_label") else "")
+        )
         lines.append(
             f"- {name}{rev} | 필수 corner 도착 {row.get('arrived_corners', 0)}/{row.get('required_corners', 0)} | "
             f"분석 완료 {row.get('completed_corners', 0)}/{row.get('required_corners', 0)} | {row.get('status_summary') or '대기'}"

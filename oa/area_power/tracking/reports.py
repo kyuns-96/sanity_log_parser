@@ -4,7 +4,11 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from common.area_power.tracking import render_block_mail_text, render_top_mail_text
+from common.area_power.tracking import (
+    build_live_round_mail_snapshots,
+    render_block_mail_text,
+    render_top_mail_text,
+)
 from ..schemas import reject
 from .overview import is_tracking_admin, mail_delivery_info, overview
 
@@ -51,6 +55,7 @@ def project_reports(service, project_id: UUID) -> dict[str, Any]:
                 "block_name": snap.get("block_name") or ("Full-chip · TOP 요약" if row["record_type"] == "tracking_top_mail" else ""),
                 "is_full_chip": bool(snap.get("is_full_chip")) if row["record_type"] == "tracking_block_mail" else True,
                 "revision_label": snap.get("revision_label") or "",
+                "eco_label": snap.get("eco_label") or "",
                 "trigger": row.get("payload", {}).get("trigger") or snap.get("trigger") or "",
                 "created_at": row.get("created_at"),
                 "frozen_at": snap.get("frozen_at") or row.get("created_at"),
@@ -63,39 +68,17 @@ def project_reports(service, project_id: UUID) -> dict[str, Any]:
 
     live_reports = []
     for chosen in data["rounds"]:
-        full_chip = next((b for b in chosen["blocks"] if b["is_full_chip"]), None)
-        top_snapshot = {
-            "project_name": data["project_name"],
-            "net_ver": chosen["net_ver"],
-            "trigger": "all_completed" if all(b["all_completed"] for b in chosen["blocks"]) and chosen["blocks"] else "deadline",
-            "netlist_arrived_at": chosen["netlist_arrived_at"],
-            "deadline_display": f"{chosen.get('deadline_date') or ''} {chosen.get('deadline_time') or ''} ({chosen.get('deadline_timezone') or ''})".strip(),
-            "full_chip": full_chip,
-            "full_chip_counts": chosen["full_chip_counts"],
-            "sub_block_counts": chosen["sub_block_counts"],
-            "blocks": chosen["blocks"],
-        }
+        top_snapshot, block_snapshots = build_live_round_mail_snapshots(data["project_name"], chosen)
         top_subject, top_body = render_top_mail_text(top_snapshot)
         block_items = []
-        for block in chosen["blocks"]:
-            bsnap = {
-                "project_name": data["project_name"],
-                "block_name": block["block_name"],
-                "is_full_chip": block["is_full_chip"],
-                "net_ver": chosen["net_ver"],
-                "revision_label": block["revision_label"],
-                "totals": block["totals"],
-                "power_evaluation": block["power_evaluation"],
-                "corners": block["corners"],
-                "revised": False,
-                "post_top_mail_revised": block["post_top_mail_revised"],
-            }
+        for block, bsnap in zip(chosen["blocks"], block_snapshots):
             b_subj, b_body = render_block_mail_text(bsnap)
             block_items.append({
                 "block_id": block["block_id"],
                 "block_name": block["block_name"],
                 "is_full_chip": block["is_full_chip"],
                 "revision_label": block["revision_label"],
+                "eco_label": block.get("eco_label") or "",
                 "mail_sent": bool((block.get("block_mail") or {}).get("mail_id")),
                 "subject": b_subj,
                 "body": b_body,

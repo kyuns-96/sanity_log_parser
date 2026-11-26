@@ -10,7 +10,7 @@ from common.sanity_db import lock_key, uuid_value
 from oa.sanity_access import require_admin_access
 from oa.sanity_ai_connections import ConnectionStore, PREFIX as CONNECTION_PREFIX
 from oa.sanity_ai_model import valid_model_id
-from oa.sanity_workspace_core import WorkspaceCoreStore, record_id
+from oa.sanity_ws_config import read_latest_revisioned_ws_config, write_revisioned_ws_config
 
 PREFIX = 'ai.task-defaults.'
 DEFAULT_AREA_RETRY_LIMIT = 5
@@ -39,15 +39,9 @@ class TaskDefaults:
         self.db = db
 
     def current(self):
-        row = self.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s "
-                              "ORDER BY workspace_key DESC LIMIT 1", (PREFIX + '%',)).fetchone()
-        if row is None:
+        _, value = read_latest_revisioned_ws_config(self.db, PREFIX, error_code='AI_TASK_DEFAULTS_CORRUPT')
+        if value is None:
             return {'revision': 0, 'defaults': {task: None for task in TASKS}, 'area_retry_limit': DEFAULT_AREA_RETRY_LIMIT}
-        value = row['payload']
-        check(isinstance(value, dict) and type(value.get('revision')) is int
-              and 1 <= value['revision'] <= 9999999999
-              and row['workspace_key'] == PREFIX + f"{value['revision']:010d}"
-              and row['record_id'] == record_id('WS_CONFIG', row['workspace_key']), 'AI_TASK_DEFAULTS_CORRUPT')
         retry_limit = value.get('area_retry_limit', DEFAULT_AREA_RETRY_LIMIT)
         check(type(retry_limit) is int and 0 <= retry_limit <= MAX_RETRIES, 'AI_TASK_DEFAULTS_CORRUPT')
         return {'revision': value['revision'], 'area_retry_limit': retry_limit,
@@ -84,7 +78,7 @@ class TaskDefaults:
                     check(value['model_id'] in connection['config']['models'], 'AI_MODEL_NOT_ALLOWED')
         revision = expected_revision + 1
         value = {'revision': revision, 'defaults': defaults, 'area_retry_limit': area_retry_limit}
-        WorkspaceCoreStore(self.db).put('WS_CONFIG', PREFIX + f'{revision:010d}', {**value, 'actor_id': actor.user_id})
+        write_revisioned_ws_config(self.db, PREFIX, revision, {**value, 'actor_id': actor.user_id})
         return value
 
 

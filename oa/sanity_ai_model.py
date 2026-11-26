@@ -10,25 +10,26 @@ from copy import copy
 from dataclasses import dataclass, field, replace
 import hashlib
 import json
-import logging
 import os
 from pathlib import Path
-import ssl
-import time
 from typing import Mapping
-from urllib.parse import urlsplit
 from uuid import uuid4
 
-import httpx
-
 from common.sanity_ai_contracts import review_evidence, validate_criteria, validate_review_v2
+from common.sanity_ai_http import (
+    build_auth_headers,
+    build_tls_context,
+    stream_openai_post,
+    unknown_outcome_error,
+    validate_http_endpoint,
+)
 from common.sanity_ai_knowledge import shared_case
 from common.sanity_ai_projection import (
     alias_rows, instruction as projection_instruction, policy_for, project_rows,
     restore_clustering, restore_review, source_policy_pin,
 )
 from common.sanity_ai_reasoning import ReasoningSettings
-from common.sanity_ai_retry import annotate, response_headers
+from common.sanity_ai_retry import annotate
 from common.sanity_clustering import check
 from common.sanity_clustering_advice import evidence, identity_fields_valid, validate_clustering_advice
 from common.sanity_common import ReviewError, canonical_json, decode_json, digest
@@ -54,15 +55,7 @@ def valid_model_id(value):
 
 
 def _endpoint(value):
-    try:
-        parsed = urlsplit(value)
-        return (isinstance(value, str) and parsed.scheme in ("http", "https") and bool(parsed.hostname)
-                and parsed.port != 0 and parsed.path not in ("", "/")
-                and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
-                and not any(ch.isspace() or ord(ch) < 32 for ch in value)
-                and "\\" not in value)
-    except (ValueError, TypeError, AttributeError):
-        return False
+    return validate_http_endpoint(value, require_path=True)
 
 
 PRESERVED_PROMPT = """
@@ -327,9 +320,7 @@ def _strict_json(raw):
 
 
 def _unknown(reason):
-    error = ReviewError("AI_OUTCOME_UNKNOWN", "OA AI call completion is unknown")
-    error.unknown_reason = reason
-    return error
+    return unknown_outcome_error(reason, "OA AI call completion is unknown")
 
 
 def _usage(value):
@@ -398,12 +389,12 @@ class OAAdvisor:
                                    "SANITY_OA_AI_CLIENT_API_KEY": self.settings.client_api_key,
                                    "OA_ENDPOINT_SECRET": self.settings.endpoint,
                                    "OA_FALLBACK_ENDPOINT_SECRET": self.settings.fallback_endpoint})
-        try:
-            uses_tls = any(urlsplit(endpoint).scheme == "https" for endpoint in
-                           (self.settings.endpoint, self.settings.fallback_endpoint) if endpoint)
-            self._tls = ssl.create_default_context(cafile=self.settings.ca_path or None) if uses_tls else True
-        except (OSError, ValueError, ssl.SSLError):
-            raise ReviewError("AI_CONFIG", "Cannot load OA AI TLS trust configuration") from None
+        self._tls = build_tls_context(
+            (self.settings.endpoint, self.settings.fallback_endpoint),
+            self.settings.ca_path,
+            error_code="AI_CONFIG",
+            message="Cannot load OA AI TLS trust configuration",
+        )
 
     def describe(self):
         settings = self.settings
@@ -575,14 +566,8 @@ class OAAdvisor:
         settings = self.settings
         check(bool(settings.token), "AI_USER_TOKEN_REQUIRED", "Register a personal AI token")
         body, input_tokens = self._body(packet, instruction, budget=budget)
-        headers = {"Authorization": "Bearer " + settings.token,
-                   "Content-Type": "application/json", "Accept": "application/json",
-                   "Accept-Encoding": "identity"}
-        if settings.auth_mode == "x_client_api_key":
-            del headers["Authorization"]
-            headers["x-client-api-key"] = settings.token
+        headers = build_auth_headers(settings.auth_mode, settings.token, settings.client_api_key)
         if settings.client_api_key:
-            headers["x-client-api-key"] = settings.client_api_key
             body["extraData"] = {"clientName": settings.client_name, "clientVersion": settings.client_version,
                                  "sessionId": str(uuid4()) if settings.session_mode == "per_request" else settings.session_id}
             self._guard.ensure_public(body["extraData"])
@@ -593,72 +578,26 @@ class OAAdvisor:
 
     def _call(self, packet, instruction, prompt_version, attempt, *, budget=None, prepared_request=None):
         settings = self.settings
-        data, headers, input_tokens = (self._request(packet,instruction,budget=budget)
-                                      if prepared_request is None else prepared_request)
-        # HTTP debug logs may otherwise include URLs and credential headers.
-        for name in ("httpx", "httpcore", *list(logging.Logger.manager.loggerDict)):
-            if name in ("httpx", "httpcore") or name.startswith(("httpx.", "httpcore.")):
-                logging.getLogger(name).setLevel(logging.CRITICAL + 1)
-        started = time.monotonic()
-        endpoints = [("primary", settings.endpoint)]
-        if settings.fallback_endpoint:
-            endpoints.append(("fallback", settings.fallback_endpoint))
-        attempted_endpoints = []
-        for role, endpoint in endpoints:
-            remaining = settings.timeout - (time.monotonic() - started)
-            check(remaining > 0, "AI_CONNECT_FAILED", "OA AI connection deadline exceeded before dispatch")
-            response_started = False
-            attempted_endpoints.append(role)
-            # Reserve time for the backup when the primary connection stalls.
-            # Read/write retain the remaining inference budget; only connection
-            # establishment can qualify for another endpoint.
-            timeout = (httpx.Timeout(remaining, connect=remaining / 2)
-                       if role == "primary" and settings.fallback_endpoint else remaining)
-            try:
-                with httpx.Client(timeout=timeout, trust_env=False, follow_redirects=False,
-                                  verify=self._tls, transport=self.transport) as client:
-                    attempt["model_called"] = True
-                    self._observe("SENDING")
-                    with client.stream("POST", endpoint, content=data, headers=headers) as response:
-                        response_started = True
-                        response_headers(attempt,response)
-                        self._observe("SERVER_RESPONDED")
-                        if settings.token_source == "user" and response.status_code == 401:
-                            raise ReviewError("AI_AUTH_FAILED", "Check personal token and gateway authentication")
-                        check(response.status_code == 200, "AI_CALL_FAILED", "OA AI call did not succeed")
-                        # Never allocate an unbounded decompressed body before
-                        # enforcing the configured output budget.
-                        check(response.headers.get("content-encoding", "identity").lower() == "identity",
-                              "INVALID_AI_RESPONSE", "Compressed OA AI responses are not supported")
-                        raw = bytearray()
-                        # Inspect every arrival, including trickled small chunks.
-                        for chunk in response.iter_bytes():
-                            check(len(raw) + len(chunk) <= settings.max_output_bytes, "AI_OUTPUT_LIMIT",
-                                  "OA AI response exceeds its configured bound")
-                            if time.monotonic() - started > settings.timeout:raise _unknown("RESPONSE_DEADLINE")
-                            raw.extend(chunk)
-                        if time.monotonic() - started > settings.timeout:raise _unknown("RESPONSE_DEADLINE")
-                        attempt["response_complete"] = True
-            except (httpx.ConnectError, httpx.ConnectTimeout):
-                # Only connection establishment failures prove that this POST
-                # was not sent. Read/write errors and any HTTP response never
-                # qualify; neither does a failure after response headers.
-                if response_started:
-                    raise _unknown("TRANSPORT_ERROR") from None
-                attempt["model_called"] = False
-                if role == endpoints[-1][0]:
-                    raise ReviewError("AI_CONNECT_FAILED", "Cannot connect to an approved OA AI endpoint") from None
-                continue
-            except httpx.ReadTimeout:
-                raise _unknown("READ_TIMEOUT") from None
-            except httpx.WriteTimeout:
-                raise _unknown("WRITE_TIMEOUT") from None
-            except (httpx.HTTPError, ValueError, OSError):
-                raise _unknown("TRANSPORT_ERROR") from None
-            break
-        self._observe("RESPONSE_RECEIVED")
-        routing = {"endpoint": role, "attempted_endpoints": attempted_endpoints} if settings.fallback_endpoint else None
-        return self._decode_reply(data, bytes(raw), prompt_version, budget=budget,
+        data, headers, input_tokens = (self._request(packet, instruction, budget=budget)
+                                       if prepared_request is None else prepared_request)
+        raw, route = stream_openai_post(
+            data,
+            headers,
+            endpoint=settings.endpoint,
+            fallback_endpoint=settings.fallback_endpoint,
+            timeout=settings.timeout,
+            max_output_bytes=settings.max_output_bytes,
+            tls=self._tls,
+            transport=self.transport,
+            observer=self._observe,
+            attempt=attempt,
+            auth_401=settings.token_source == "user",
+            sending_model_called=True,
+            unknown_model_called=True,
+            label="OA AI",
+        )
+        routing = route if settings.fallback_endpoint else None
+        return self._decode_reply(data, raw, prompt_version, budget=budget,
                                   input_tokens=input_tokens, routing=routing)
 
     def _decode_reply(self, data, raw, prompt_version, *, budget=None, input_tokens=None, routing=None):

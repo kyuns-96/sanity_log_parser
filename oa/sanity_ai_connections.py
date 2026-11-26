@@ -15,7 +15,7 @@ from oa.sanity_ai_budget import BatchSettings
 from oa.sanity_ai_model import OAAdvisor, OASettings
 from oa.sanity_ai_tokens import UserTokenStore
 from oa.sanity_vwp_inference import Catalog, VwpAdvisor
-from oa.sanity_workspace_core import WorkspaceCoreStore, record_id
+from oa.sanity_ws_config import verify_ws_config_row, write_revisioned_ws_config
 
 NAMESPACE, PREFIX = "oa-ai-connections-v1", "aic1."
 CONFIG_KEYS = frozenset(("label", "enabled", "endpoint", "fallback_endpoint", "api", "auth_mode",
@@ -63,16 +63,51 @@ def validate_config(config):
     except (TypeError, ValueError):
         raise ReviewError("AI_BATCH_CONFIG", "Invalid connection batch settings") from None
     # Validate enabled and disabled entries equally, before they can be used.
-    OASettings(enabled=True, endpoint=config["endpoint"], fallback_endpoint=config["fallback_endpoint"],
-        token_source="user", token="", model=config["model"], models=tuple(config["models"]),
-        api=config["api"], auth_mode=config["auth_mode"], json_mode=config["json_mode"],
-        timeout=config["timeout"], max_input_bytes=config["max_input_bytes"], max_output_bytes=config["max_output_bytes"],
+    _build_oa_settings(
+        config,
+        batch=settings,
         client_api_key="validation-placeholder" if config["auth_mode"] == "bearer_x_client" else "",
-        client_name=config["client_name"], client_version=config["client_version"],
-        session_mode=config["session_mode"], session_id=config["session_id"], batch=settings,
-        reasoning=ReasoningSettings.from_config(config["reasoning"]) if "reasoning" in config else None,
-        cache=True if "cache" in config else None)
+    )
     return config
+
+
+def _build_oa_settings(
+    config,
+    *,
+    batch=None,
+    ca_path="",
+    client_api_key="",
+    connection_id="",
+    connection_revision=0,
+    connection_label="",
+):
+    return OASettings(
+        enabled=True,
+        endpoint=config["endpoint"],
+        fallback_endpoint=config.get("fallback_endpoint", ""),
+        token_source="user",
+        token="",
+        model=config["model"],
+        models=tuple(config["models"]),
+        api=config["api"],
+        auth_mode=config["auth_mode"],
+        json_mode=config["json_mode"],
+        timeout=config["timeout"],
+        max_input_bytes=config["max_input_bytes"],
+        max_output_bytes=config["max_output_bytes"],
+        ca_path=ca_path,
+        client_api_key=client_api_key,
+        client_name=config.get("client_name", ""),
+        client_version=config.get("client_version", ""),
+        session_mode=config.get("session_mode", "disabled"),
+        session_id=config.get("session_id", ""),
+        batch=batch if batch is not None else BatchSettings(**config["batch"]),
+        reasoning=ReasoningSettings.from_config(config["reasoning"]) if "reasoning" in config else None,
+        cache=True if "cache" in config else None,
+        connection_id=connection_id,
+        connection_revision=connection_revision,
+        connection_label=connection_label,
+    )
 
 
 class ConnectionStore:
@@ -87,7 +122,7 @@ class ConnectionStore:
             raise ReviewError("AI_TOKEN_STORE_NOT_CONFIGURED", "Configure the AI credential encryption key") from None
 
     def _validate(self, row):
-        value = row["payload"]
+        value = row.get("payload")
         required = {"namespace", "connection_id", "revision", "actor_id", "config", "client_key_ciphertext", "sha256"}
         check(isinstance(value, dict) and required <= set(value) <= required | {"deleted"} and value["namespace"] == NAMESPACE
               and type(value["revision"]) is int and 1 <= value["revision"] <= 9999999999
@@ -95,11 +130,8 @@ class ConnectionStore:
               "AI_CONNECTION_CORRUPT")
         connection_id = str(uuid_value(value["connection_id"]))
         key = PREFIX + connection_id + "." + f"{value['revision']:010d}"
-        check(row["workspace_key"] == key and row["record_id"] == record_id("WS_CONFIG", key)
-              and row["state"] == {} and row["version"] == 0 and row["status"] == "RECORDED"
-              and row["created_at"] == row["updated_at"] and row["project"] is None
-              and row["workspace_project_ref"] is None and row["workspace_block_ref"] is None
-              and value["sha256"] == digest({k:v for k,v in value.items() if k != "sha256"}), "AI_CONNECTION_CORRUPT")
+        verify_ws_config_row(row, key, error_code="AI_CONNECTION_CORRUPT")
+        check(value["sha256"] == digest({k: v for k, v in value.items() if k != "sha256"}), "AI_CONNECTION_CORRUPT")
         validate_config(value["config"])
         encrypted = value["client_key_ciphertext"]
         if 'deleted' in value:
@@ -248,26 +280,25 @@ class ConnectionStore:
         if is_vwp(config):
             profile = Catalog(self.db).get(config["profile_id"])
             self._check_profile(config, profile)
-            settings = OASettings(enabled=True, endpoint="https://vwp.invalid/inference", token_source="user", token="",
-                auth_mode="bearer", model=config["model"], models=tuple(config["models"]), api=config["api"],
-                json_mode=config["json_mode"], timeout=config["timeout"], max_input_bytes=config["max_input_bytes"],
-                max_output_bytes=config["max_output_bytes"], batch=BatchSettings(**config["batch"]),
-                reasoning=ReasoningSettings.from_config(config["reasoning"]) if "reasoning" in config else None,
-                cache=True if "cache" in config else None,
-                connection_id=value["connection_id"], connection_revision=value["revision"], connection_label=config["label"])
+            settings = _build_oa_settings(
+                {**config, "endpoint": "https://vwp.invalid/inference", "auth_mode": "bearer"},
+                connection_id=value["connection_id"],
+                connection_revision=value["revision"],
+                connection_label=config["label"],
+            )
             advisor = VwpAdvisor(settings, profile)
             return advisor.for_model(model_id) if model_id is not None else advisor
-        advisor = OAAdvisor(OASettings(enabled=True, endpoint=config["endpoint"], fallback_endpoint=config["fallback_endpoint"],
-            token_source="user", token="", model=config["model"], models=tuple(config["models"]), api=config["api"],
-            auth_mode=config["auth_mode"], json_mode=config["json_mode"], timeout=config["timeout"],
-            max_input_bytes=config["max_input_bytes"], max_output_bytes=config["max_output_bytes"],
-            ca_path=self.settings.get("SANITY_OA_AI_CA_PATH", ""), client_api_key=self._client_key(value),
-            client_name=config["client_name"], client_version=config["client_version"],
-            session_mode=config["session_mode"], session_id=config["session_id"], batch=BatchSettings(**config["batch"]),
-            reasoning=ReasoningSettings.from_config(config["reasoning"]) if "reasoning" in config else None,
-            cache=True if "cache" in config else None,
-            connection_id=value["connection_id"], connection_revision=value["revision"], connection_label=config["label"]),
-            transport=transport)
+        advisor = OAAdvisor(
+            _build_oa_settings(
+                config,
+                ca_path=self.settings.get("SANITY_OA_AI_CA_PATH", ""),
+                client_api_key=self._client_key(value),
+                connection_id=value["connection_id"],
+                connection_revision=value["revision"],
+                connection_label=config["label"],
+            ),
+            transport=transport,
+        )
         return advisor.for_model(model_id) if model_id is not None else advisor
 
     @staticmethod
@@ -315,7 +346,7 @@ class ConnectionStore:
         value = {"namespace":NAMESPACE, "connection_id":connection_id,"revision":revision,"actor_id":actor.user_id,
                  "config":config,"client_key_ciphertext":encrypted}
         value["sha256"] = digest(value)
-        WorkspaceCoreStore(self.db).put("WS_CONFIG", PREFIX + connection_id + "." + f"{revision:010d}", value)
+        write_revisioned_ws_config(self.db, PREFIX + connection_id + ".", revision, value)
         return self.admin_public(value)
 
     def delete(self, actor, connection_id, expected_revision):
@@ -337,5 +368,5 @@ class ConnectionStore:
         value = {'namespace':NAMESPACE,'connection_id':connection_id,'revision':revision,'actor_id':actor.user_id,
                  'config':{**previous['config'],'enabled':False},'client_key_ciphertext':None,'deleted':True}
         value['sha256'] = digest(value)
-        WorkspaceCoreStore(self.db).put('WS_CONFIG',PREFIX + connection_id + '.' + f'{revision:010d}',value)
+        write_revisioned_ws_config(self.db, PREFIX + connection_id + '.', revision, value)
         return {'id':connection_id,'revision':revision,'deleted':True}

@@ -14,9 +14,10 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 from common.sanity_common import ReviewError
-from common.sanity_db import json_value, lock_key, stable_uuid
+from common.sanity_db import json_value, lock_key, stable_uuid, table_unique_indexes
 from oa.sanity_auth import Actor
 from oa.sanity_workspace_core import WorkspaceCoreStore as WorkspaceStore
+from oa.sanity_ws_config import WS_CONFIG_NULL_COLUMNS as _NULL_FIELDS, verify_ws_config_row
 
 NAMESPACE = "oa-rbac-v1"
 PREFIX = "rbac1.event."
@@ -24,12 +25,6 @@ ACCESS_LOCK_KEY = lock_key("oa-rbac-v1:all-access-control")
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\Z")
 _TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\Z")
 _EVENT_FIELDS = {"namespace", "schema_version", "revision", "kind", "command_id", "actor_id", "created_at", "data"}
-_NULL_FIELDS = ("project", "run_id", "bundle_id", "review_unit_id", "review_revision", "request_id",
-                "entity_key", "classification_revision", "payload_bytes", "payload_sha256",
-                "workspace_project_ref", "workspace_block_ref", "workspace_version_ref",
-                "workspace_review_report_ref", "workspace_review_version_ref", "workspace_review_event_ref",
-                "workspace_pipeline_report_ref", "workspace_pipeline_version_ref", "workspace_pipeline_event_ref",
-                "workspace_pipeline_cluster_ref")
 
 
 def _error(code="AUTHORIZATION_STATE_CORRUPT"):
@@ -138,14 +133,7 @@ class AccessStore:
             self._ingestion = True
         if self._ready:
             return
-        rows = self.db.execute(
-            "SELECT pg_get_expr(i.indpred,i.indrelid) AS predicate, "
-            "ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum,position) "
-            "JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.attnum "
-            "WHERE k.position<=i.indnkeyatts ORDER BY k.position) AS key_columns "
-            "FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace "
-            "WHERE n.nspname=%s AND t.relname='sanity_oa_data' AND i.indisvalid AND i.indisready "
-            "AND i.indislive AND i.indisunique AND i.indimmediate AND i.indexprs IS NULL", (self.db.schema,)).fetchall()
+        rows = table_unique_indexes(self.db, self.db.schema, ("sanity_oa_data",))
         if not any(tuple(row["key_columns"]) == ("record_type", "workspace_key")
                    and row["predicate"] == "(workspace_key IS NOT NULL)" for row in rows):
             _error("AUTHORIZATION_SCHEMA")
@@ -202,23 +190,26 @@ class AccessStore:
         rows = self.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s", (PREFIX + "%",)).fetchall()
         events = []
         for row in rows:
-            event = row["payload"]
+            event = row.get("payload")
             if (not isinstance(event, dict) or set(event) != _EVENT_FIELDS or event["namespace"] != NAMESPACE
                     or type(event["schema_version"]) is not int or event["schema_version"] != 1
                     or type(event["revision"]) is not int or event["revision"] < 1
                     or not _identifier(event["actor_id"]) or not isinstance(event["kind"], str)
-                    or not isinstance(event["data"], dict)
-                    or row["state"] != {} or row["version"] != 0 or row["updated_at"] != row["created_at"]
-                    or any(row.get(field) is not None for field in _NULL_FIELDS)):
+                    or not isinstance(event["data"], dict)):
                 _error()
             try:
                 command_id = str(UUID(event["command_id"]))
             except (ValueError, TypeError, AttributeError):
                 _error()
             key = PREFIX + command_id
-            if (command_id != event["command_id"] or row["workspace_key"] != key
-                    or row["record_id"] != stable_uuid("workspace-v1", "WS_CONFIG", key)):
+            if command_id != event["command_id"]:
                 _error()
+            verify_ws_config_row(
+                row,
+                key,
+                error_code="AUTHORIZATION_STATE_CORRUPT",
+                message="Access-control contract could not be satisfied",
+            )
             _timestamp(event["created_at"])
             events.append(event)
         events.sort(key=lambda e: e["revision"])
@@ -532,6 +523,15 @@ class AccessStore:
             _error("RESOURCE_NOT_FOUND")
         self._registered_role_scope("OWNER", scope["project_id"], scope["block_id"])
         return dict(scope)
+
+    def active_identity(self, user_id, *, require_active=True):
+        return self._identity(user_id, require_active=require_active)
+
+    def registry_state(self):
+        return self._state()
+
+    def allowed_scopes(self, user_id, *, write=False):
+        return self._scopes(user_id, write=write)
 
     def _scopes(self, user_id, *, write=False):
         self._identity(user_id)

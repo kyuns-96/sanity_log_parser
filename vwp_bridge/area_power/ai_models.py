@@ -7,24 +7,16 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from common.area_power.errors import DomainError
 from common.area_power.jsonutil import digest, dumps
 from common.sanity_common import ReviewError
-
-PROMPT_VERSION = 'hierarchy-evidence-2'
-ACTOR = 'vwp-worker'
-AI_CONTEXT_ERRORS = frozenset({
-    'AI_AUTHENTICATED_REQUEST_REQUIRED', 'AI_NOT_CONFIGURED', 'AI_CONFIG', 'AI_BATCH_CONFIG', 'AI_CONFIG_CHANGED',
-    'AI_CONNECTION_CONFIG', 'AI_CONNECTION_CORRUPT', 'AI_CONNECTION_UNAVAILABLE',
-    'AI_MODEL_NOT_ALLOWED', 'AI_CREDENTIAL_CHANGED', 'AI_CREDENTIAL_SCOPE_CHANGED',
-    'AI_USER_TOKEN_REQUIRED', 'AI_USER_TOKEN_EXPIRED', 'AI_TOKEN_STORE_NOT_CONFIGURED',
-    'AI_TOKEN_UNAVAILABLE', 'AI_AUTH_FAILED', 'AI_VWP_PROFILE_UNAVAILABLE',
-    'FORBIDDEN', 'RESOURCE_NOT_FOUND',
-})
-
-
-class AIError(Exception):
-    """Safe failure code; response/provider bodies are deliberately not retained."""
+from .ai_runtime import (
+    ACTOR,
+    AI_CONTEXT_ERRORS,
+    AIError,
+    LEGACY_PROMPT_VERSION as PROMPT_VERSION,
+    aborts_ai_context,
+    failure_detail,
+)
 
 
 class StrictModel(BaseModel):
@@ -91,7 +83,7 @@ def provider(runtime, task: str, context: dict, schema: type[BaseModel]):
         task_kind = 'CLUSTER' if schema is Extraction else 'REVIEW'
         return schema.model_validate(runtime.infer(task_kind, context, instructions, PROMPT_VERSION))
     except ReviewError as exc:
-        if exc.code in AI_CONTEXT_ERRORS or exc.code.startswith(('AUTHORIZATION_', 'DATABASE_', 'DBAAS_')):
+        if aborts_ai_context(exc.code):
             raise
         raise AIError('ai_context_limit' if exc.code == 'AI_INPUT_LIMIT' else exc.code) from None
     except (ValueError, KeyError, IndexError, TypeError):
@@ -162,13 +154,3 @@ def judgement_provider(settings, context):
                        unexplained_parts=[v for piece in pieces for v in piece.unexplained_parts],
                        requested_information=[v for piece in pieces for v in piece.requested_information],
                        applied_change_ids=list(dict.fromkeys(v for piece in pieces for v in piece.applied_change_ids)))
-
-
-def failure_detail(exc: Exception) -> dict:
-    if isinstance(exc, (ReviewError, DomainError)):
-        code = exc.code
-    elif isinstance(exc, AIError):
-        code = str(exc)
-    else:
-        code = 'analysis_failure'
-    return {'code': code, 'error_class': type(exc).__name__}

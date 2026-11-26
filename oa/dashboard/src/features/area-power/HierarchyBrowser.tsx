@@ -6,7 +6,8 @@ import { gateCountRow, type GateBases } from './gateCount'
 import { format, formatPercent, text, type TrackingRecord } from './api'
 import { Button } from './components/workspace'
 import { EffectiveFormulaHint, type LiveEpsItem } from './EffectiveFormulaHint'
-import { AREA_THRESHOLD, DEFAULT_COLUMNS, DEFAULT_MIN_AREA, MAX_COLUMNS, METRIC_CATALOG, METRIC_GROUPS, atLeast, metricDef, type MetricDef } from './metricCatalog'
+import { columnWidth, INSTANCE_MIN, PANE_MIN, stateWidth, valueWidth } from './comparison/columnWidths'
+import { AREA_THRESHOLD, DEFAULT_COLUMNS, DEFAULT_MIN_AREA, MAX_COLUMNS, METRIC_CATALOG, METRIC_GROUPS, metricDef, type MetricDef } from './metricCatalog'
 
 export type HierarchyItem = { path: string; parent_path: string | null; depth: number; area: unknown; logic_area?: unknown; power_mw: unknown }
 export type ResultGroup = { id: string; baselinePaths: string[]; currentPaths: string[]; metrics: Record<string, TrackingRecord['payload']> }
@@ -19,7 +20,6 @@ const defaultSort: Sort = { key: 'size', descending: true }
 type Line = { kind: 'row'; row: BrowserRow; depth: number; parent: string; parentRow?: BrowserRow } | { kind: 'status'; key: string; depth: number; parent: string; state: ChildState; missing: boolean }
 // Amounts show Δ and Δ%; shares (Vth, drive, CTS) show the percentage-point change.
 const fieldsOf = (metric: MetricDef): [Field, string][] => metric.ratio ? [['baseline', '기준'], ['current', '현재'], ['pct_point_change', 'Δ%p']] : [['baseline', '기준'], ['current', '현재'], ['delta', 'Δ'], ['relative_change_pct', 'Δ%']]
-const changeOf = (metric: MetricDef): [Field, string] => metric.ratio ? ['pct_point_change', 'Δ%p'] : ['relative_change_pct', 'Δ%']
 const unitOf = (metric: MetricDef) => metric.unit && metric.unit !== 'GE' ? ` ${metric.unit}` : ''
 const ABS_PERCENT_FIELDS = new Set<Field>(['relative_change_pct', 'pct_point_change'])
 const MARK_LABEL: Record<string, string> = { unexpected: '이상', needs_review: '확인', expected: '설명됨', minor: '미미' }
@@ -65,33 +65,6 @@ function shown(row: BrowserRow, metric: MetricDef, field: Field) {
   if (direction) return `${direction > 0 ? '▲' : '▼'} ${amount(raw, metric)}`
   return metric.ratio ? formatPercent(raw) : amount(raw, metric)
 }
-
-// Number columns are as wide as their content (the header label or the longest
-// loaded value) instead of a fixed 92px, so the default Logic area · Power set
-// fits a 1920px screen side by side. Instance columns share the width that is
-// left and never go below their minimum; past that the table scrolls sideways.
-// DIGIT, CELL_SLACK and HEAD_FONT mirror the cell and header styles in styles.css.
-const CELL_SLACK = 16, DIGIT = 7.8, SORT_MARK = 14, COLUMN_MIN = 48, COLUMN_MAX = 150
-const PANE_MIN = 150, INSTANCE_MIN = 240
-const HEAD_FONT = '600 12px "Pretendard Variable", Pretendard, sans-serif'
-// Mono digits are DIGIT wide; the ▲▼ markers come from a wider fallback glyph.
-const valueWidth = (shownText: string) => Math.ceil(shownText.length * DIGIT) + (/[▲▼]/.test(shownText) ? 5 : 0)
-// State labels are short Korean words (about 12px a glyph) after a 13px dot.
-const stateWidth = (label: string) => 13 + [...label].reduce((sum, glyph) => sum + (glyph === ' ' ? 4 : 12), 0) + CELL_SLACK
-const measuredHeads = new Map<string, number>()
-let ruler: CanvasRenderingContext2D | null | undefined
-function headWidth(label: string) {
-  const cached = measuredHeads.get(label)
-  if (cached !== undefined) return cached
-  if (ruler === undefined) ruler = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d')
-  if (!ruler) return label.length * 7
-  ruler.font = HEAD_FONT
-  const width = Math.ceil(ruler.measureText(label).width)
-  // Before the web font is ready the measurement uses a fallback face; do not keep it.
-  if (document.fonts?.status === 'loaded') measuredHeads.set(label, width)
-  return width
-}
-const columnWidth = (label: string, longest: number, sorted: boolean) => Math.min(COLUMN_MAX, Math.max(COLUMN_MIN, headWidth(label) + CELL_SLACK + (sorted ? SORT_MARK : 0), longest + CELL_SLACK))
 
 function reasonOf(row: BrowserRow, hasResult: boolean) {
   const notes = ['total_area', 'pwr_all_total_mw'].map(metric => {

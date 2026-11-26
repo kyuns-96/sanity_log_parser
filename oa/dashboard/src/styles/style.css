@@ -13,7 +13,7 @@
   --color-input: var(--line); --color-ring: var(--accent-line);
   --radius-sm: 5px; --radius-md: 7px; --radius-lg: 10px; --radius-xl: 13px;
 }
-:root { font-family: var(--font-sans); --background: var(--surface); --foreground: var(--ink); --card: var(--surface); --primary: var(--accent); --border: var(--line); color: var(--foreground); background: var(--surface); font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; }
+:root { font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; }
 * { box-sizing: border-box; border-color: var(--border); }
 body { margin: 0; font-size: var(--text-body); }
 button, input, select, textarea { font: inherit; }

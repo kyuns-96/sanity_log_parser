@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, FileSearch, Files, RefreshCw } from 'lucide-react'
+import { Check, FileSearch, Files, RefreshCw } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { PaginationBar } from '@/components/ui/pagination-bar'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { appUrl } from '@/lib/appUrl'
 import { useDashboardNavigation } from '@/lib/dashboardMode'
+import { formatRevisionLabel, formatVersionLabel } from '@/lib/versionUtils'
 import type { Page } from '@/lib/types'
 import { useDashboardAuth } from '@/features/auth/useDashboardAuth'
 import { useAtlas } from './atlasContext'
@@ -30,16 +32,6 @@ function Empty({ children }: { children: React.ReactNode }) {
   return <div className="empty"><Files size={26} /><p>{children}</p></div>
 }
 
-function Pagination({ offset, total, limit, change }: { offset: number; total: number; limit: number; change: (offset: number) => void }) {
-  return (
-    <div className="pagination">
-      <span>{total ? `${number(offset + 1)}–${number(Math.min(offset + limit, total))}` : '0'} / {number(total)}</span>
-      <Button aria-label="이전 페이지" size="icon" variant="outline" disabled={offset === 0} onClick={() => change(Math.max(0, offset - limit))}><ChevronLeft /></Button>
-      <Button aria-label="다음 페이지" size="icon" variant="outline" disabled={offset + limit >= total} onClick={() => change(offset + limit)}><ChevronRight /></Button>
-    </div>
-  )
-}
-
 function LoadingDetail() {
   return <div className="loading-state" role="status"><p>검토 결과를 불러오는 중입니다.</p><div aria-hidden="true"><div className="skeleton skeleton-title" />{Array.from({ length: 5 }, (_, row) => <div key={row} className="skeleton-row"><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div>)}</div></div>
 }
@@ -59,7 +51,7 @@ function ScopeFilters() {
         <label>프로젝트<select value={atlas.scope.projectId} onChange={event => choose(event.target.value, '', '')}><option value="">프로젝트 선택</option>{atlas.catalog?.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
         <label>블록<select disabled={!atlas.project} value={atlas.scope.blockId} onChange={event => choose(atlas.scope.projectId, event.target.value, '')}><option value="">블록 선택</option>{atlas.project?.blocks.map(block => <option key={block.id} value={block.id}>{block.name}</option>)}</select></label>
         <label>NET_VER<select disabled={!atlas.block} value={atlas.netVer} onChange={event => { setError(''); void atlas.selectNetVer(event.target.value).catch(fail) }}><option value="">NET_VER 선택</option>{netVersions.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-        <label>REVISION<select disabled={!atlas.block || !atlas.netVer} value={atlas.scope.versionId} onChange={event => choose(atlas.scope.projectId, atlas.scope.blockId, event.target.value)}><option value="">REVISION 선택</option>{revisions.map(version => <option key={version.id} value={version.id}>{[version.revision, version.layout, version.eco_num].filter(Boolean).join(' · ')}</option>)}</select></label>
+        <label>REVISION<select disabled={!atlas.block || !atlas.netVer} value={atlas.scope.versionId} onChange={event => choose(atlas.scope.projectId, atlas.scope.blockId, event.target.value)}><option value="">REVISION 선택</option>{revisions.map(version => <option key={version.id} value={version.id}>{formatRevisionLabel(version)}</option>)}</select></label>
       </div>
     </section>
     {error && <p className="error-banner" role="alert">{error}</p>}
@@ -116,8 +108,8 @@ export function AtlasReports({ onLegacy, canWorkbench }: { onLegacy: () => void;
         {reports.items.length ? <Table><TableHeader><TableRow><TableHead>보고서</TableHead><TableHead>블록 · 버전</TableHead><TableHead>검사 결과</TableHead><TableHead>기록 수</TableHead><TableHead>근거</TableHead></TableRow></TableHeader><TableBody>{reports.items.map(report => {
           const block = atlas?.project?.blocks.find(item => item.id === report.block_id)
           const version = block?.versions.find(item => item.id === report.version_id)
-          return <TableRow key={report.id} className={selected?.id === report.id ? 'selected-row' : ''}><TableCell><strong>{report.id}</strong><div>{report.item_id || '항목 미분류'} · {report.family || '도구 미분류'}</div></TableCell><TableCell>{block?.name || '블록 정보 없음'}<br /><small>{version ? `${version.net_ver} · ${version.revision} · ${version.layout}` : '버전 정보 없음'}</small></TableCell><TableCell>{report.check_status ? <Status value={report.check_status} /> : '미제공'}</TableCell><TableCell>{report.record_count === undefined ? '미제공' : number(report.record_count)}</TableCell><TableCell><Button variant="outline" size="sm" onClick={() => setSelected(report)}>수신 내용 보기</Button></TableCell></TableRow>})}</TableBody></Table> : <Empty>선택한 범위에 수신된 로그가 없습니다. 버전 선언이나 수치 분석 준비만으로 로그가 생성되지는 않습니다.</Empty>}
-        <Pagination offset={offset} total={reports.total} limit={25} change={setOffset} />
+          return <TableRow key={report.id} className={selected?.id === report.id ? 'selected-row' : ''}><TableCell><strong>{report.id}</strong><div>{report.item_id || '항목 미분류'} · {report.family || '도구 미분류'}</div></TableCell><TableCell>{block?.name || '블록 정보 없음'}<br /><small>{version ? formatVersionLabel(version) : '버전 정보 없음'}</small></TableCell><TableCell>{report.check_status ? <Status value={report.check_status} /> : '미제공'}</TableCell><TableCell>{report.record_count === undefined ? '미제공' : number(report.record_count)}</TableCell><TableCell><Button variant="outline" size="sm" onClick={() => setSelected(report)}>수신 내용 보기</Button></TableCell></TableRow>})}</TableBody></Table> : <Empty>선택한 범위에 수신된 로그가 없습니다. 버전 선언이나 수치 분석 준비만으로 로그가 생성되지는 않습니다.</Empty>}
+        <PaginationBar offset={offset} total={reports.total} limit={25} onChange={setOffset} />
       </section>
       {selected && <section className="detail-panel ledger-detail" ref={detailRef} aria-label={`${selected.id} 수신 내용`}><div className="detail-header"><div><h2>{selected.id}</h2><p>{atlas?.demo ? '현재 탭의 합성 보고서 payload입니다. 실제 서버나 DB에서 읽은 자료가 아닙니다.' : '서버에 저장된 보고서의 검사 정보입니다. 분할 저장된 원본은 이 목록 API에서 펼치지 않습니다.'}</p></div><Button variant="ghost" onClick={() => setSelected(null)}>닫기</Button></div><div className="unit-detail"><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(Object.fromEntries(Object.entries(selected).filter(([key]) => key !== 'project_id' && key !== 'block_id')), null, 2)}</pre>{canWorkbench ? <Button onClick={() => openWorkbench(selected)}><FileSearch size={16} />로그 분류·판정 열기</Button> : <p className="session-notice">운영 로그 분류·판정은 권한이 확인된 SSO 세션에서만 지원합니다. 로컬 토큰에서 데모로 대체하지 않습니다.</p>}</div></section>}
       </div>

@@ -4,14 +4,23 @@
 import argparse
 import copy
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import shutil
 import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from common.sanity_common import ReviewError, atomic_json, atomic_text, digest, read_json, require_id, safe_path, sha256_file
-from common.sanity_scope import run_scope
+from common.sanity_common import (
+    ReviewError,
+    atomic_json,
+    atomic_text,
+    digest,
+    read_json,
+    safe_path,
+    sha256_file,
+    validate_schema1_collection_unit,
+    validate_schema1_run_and_inventory,
+)
 
 
 def _require(condition, message):
@@ -28,47 +37,24 @@ def validate_plan(plan):
     _require(isinstance(plan, dict), "plan must be an object")
     _require(type(plan.get("schema_version")) is int and plan["schema_version"] == 1,
              "schema_version must be 1")
-    run = plan.get("run")
-    _require(isinstance(run, dict), "run must be an object")
-    for key in ("run_id", "project", "design", "stage", "tool", "tool_version"):
-        _require(_text(run.get(key)), f"missing run.{key}")
-    require_id(run["run_id"], "run_id")
-    run_scope(run, code="INVALID_PLAN")
-    inventory = plan.get("inventory")
-    _require(isinstance(inventory, dict), "inventory must be an object")
-    _require(type(inventory.get("confirmed")) is bool, "inventory.confirmed must be boolean")
-    for key in ("source", "version"):
-        _require(_text(inventory.get(key)), f"missing inventory.{key}")
+    _, inventory = validate_schema1_run_and_inventory(
+        plan,
+        code="INVALID_PLAN",
+        require_inventory_sha256=False,
+        id_before_text=False,
+    )
     units = inventory.get("units")
     _require(isinstance(units, list), "inventory.units must be a list")
     unit_ids, reports = set(), set()
     for unit in units:
-        _require(isinstance(unit, dict), "unit must be an object")
-        uid = require_id(unit.get("review_unit_id"), "review_unit_id")
-        require_id(unit.get("item_id"), "item_id")
-        _require(uid not in unit_ids, "duplicate review_unit_id")
-        unit_ids.add(uid)
-        report = unit.get("report")
-        _require(isinstance(report, str) and report.startswith("reports/"),
-                 "report must start with reports/")
-        parts = PurePosixPath(report).parts
-        _require(len(parts) >= 2 and not any(p in (".", "..") for p in parts)
-                 and "\\" not in report and "\x00" not in report
-                 and str(PurePosixPath(report)) == report,
-                 "report must be a canonical relative path")
-        _require(report not in reports, "duplicate report path")
-        reports.add(report)
-        for key in ("parser", "rule_version"):
-            _require(_text(unit.get(key)), f"missing {key}")
+        validate_schema1_collection_unit(unit, unit_ids, reports, code="INVALID_PLAN")
+        _require(_text(unit.get("parser")), "missing parser")
         _require(isinstance(unit.get("condition"), dict), "condition must be an object")
         fields = unit.get("identity_fields")
         _require(isinstance(fields, list) and all(_text(f) for f in fields)
                  and len(fields) == len(set(fields)), "invalid identity_fields")
         from common.sanity_ai_projection import declaration
-        declaration(unit,code='INVALID_PLAN')
-        _require(unit.get("execution_status") in ("COMPLETED", "FAILED", "UNKNOWN", "NOT_RUN"),
-                 "invalid execution_status")
-        _require(type(unit.get("applicable")) is bool, "applicable must be boolean")
+        declaration(unit, code='INVALID_PLAN')
         # Missing exclusion approval is intentionally retained for coverage to flag.
     return reports
 

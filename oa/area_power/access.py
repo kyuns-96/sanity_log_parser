@@ -5,10 +5,12 @@ independent; an embedded/frozen row never constitutes an authorization grant.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from uuid import UUID
 
-from common.sanity_common import ReviewError
+from common.area_power.atlas_bindings import BINDING_NAMESPACE, BINDING_PREFIX
 from common.area_power.errors import DomainError
+from common.sanity_common import ReviewError
 
 
 RECORD_REFERENCES = {
@@ -91,13 +93,13 @@ class AreaAccess:
                 "AND jsonb_typeof(binding.payload->'version_id')='string' "
                 "AND native.workspace_key=binding.payload->>'version_id' "
                 "WHERE binding.record_type='WS_CONFIG' AND binding.workspace_key LIKE %s",
-                ("design-atlas-v1.binding.%",)).fetchall()
+                (BINDING_PREFIX + "%",)).fetchall()
             for row in rows:
                 binding = row["payload"]
                 project_id, block_id = binding.get("project_id"), binding.get("block_id")
                 if project_id not in self.projects:
                     continue
-                if binding.get("namespace") != "design-atlas-v1" or self.blocks.get(block_id) != project_id:
+                if binding.get("namespace") != BINDING_NAMESPACE or self.blocks.get(block_id) != project_id:
                     hidden()
                 if (row["native_id"] is None or row["workspace_project_ref"] != record_id("WS_PROJECT", project_id)
                         or row["workspace_block_ref"] != record_id("WS_BLOCK", block_id)
@@ -235,26 +237,76 @@ class AreaAccess:
                 self.value(db, conn, item, seen)
 
 
+class _CachedRawReader:
+    """Transaction-scoped read cache for repeated Area reference graph checks."""
+
+    def __init__(self, raw, record_cache: dict, upload_cache: dict):
+        self._raw = raw
+        self._records = record_cache
+        self._uploads = upload_cache
+
+    def record(self, conn, value, *, lock=False, kind=None):
+        key = (id(conn), str(value))
+        if lock:
+            row = self._raw.record(conn, value, lock=True, kind=kind)
+            self._records[(id(conn), str(row["id"]))] = row
+            self._records[key] = row
+            return row
+        row = self._records.get(key)
+        if row is None:
+            row = self._raw.record(conn, value, kind=kind)
+            self._records[(id(conn), str(row["id"]))] = row
+            self._records[key] = row
+            return row
+        if kind is not None and row.get("record_type") != kind:
+            raise DomainError("Record not found", "not_found", 404)
+        return row
+
+    def upload(self, conn, value, *, include_blob=False, lock=False):
+        if include_blob or lock:
+            return self._raw.upload(conn, value, include_blob=include_blob, lock=lock)
+        key = (id(conn), str(value))
+        row = self._uploads.get(key)
+        if row is None:
+            row = self._raw.upload(conn, value)
+            self._uploads[(id(conn), str(row["id"]))] = row
+            self._uploads[key] = row
+        return row
+
+
 class AuthorizedDatabase:
     """Apply current access on reads, nested references, and transactional writes."""
     def __init__(self, db, access):
         self.raw, self.access = db, access
+        self._record_cache: dict = {}
+        self._upload_cache: dict = {}
+        self._reader = _CachedRawReader(db, self._record_cache, self._upload_cache)
 
+    def invalidate_cache(self) -> None:
+        self._record_cache.clear()
+        self._upload_cache.clear()
+
+    @contextmanager
     def connect(self):
-        return self.raw.connect()
+        try:
+            with self.raw.connect() as conn:
+                yield conn
+        finally:
+            self.invalidate_cache()
 
     def table(self, name):
         return self.raw.table(name)
 
     def authorize(self, conn, row, *, upload=False, write=False):
-        self.access.row(self.raw, conn, row, upload=upload, write=write)
+        reader = self.raw if write else self._reader
+        self.access.row(reader, conn, row, upload=upload, write=write)
         if row.get("record_type") == "project":
             payload = row.get("payload", {})
             baseline_id = payload.get("baseline_project_id")
             status = "unset"
             if baseline_id:
                 try:
-                    baseline = self.raw.record(conn, identifier(baseline_id), kind="project")
+                    baseline = reader.record(conn, identifier(baseline_id), kind="project")
                     if not self.access.development:
                         self.access.host_project(baseline["payload"].get("sanity_project_id"))
                     status = "available"
@@ -267,16 +319,18 @@ class AuthorizedDatabase:
         return row
 
     def references(self, conn, value):
-        self.access.value(self.raw, conn, value)
+        self.access.value(self._reader, conn, value)
 
     def record(self, conn, value, **kwargs):
-        return self.authorize(conn, self.raw.record(conn, value, **kwargs))
+        row = self._reader.record(conn, value, **kwargs)
+        return self.authorize(conn, row)
 
     def latest_record(self, conn, kind, entity_id, **kwargs):
         return self.authorize(conn, self.raw.latest_record(conn, kind, entity_id, **kwargs))
 
     def upload(self, conn, value, **kwargs):
-        return self.authorize(conn, self.raw.upload(conn, value, **kwargs), upload=True)
+        row = self._reader.upload(conn, value, **kwargs)
+        return self.authorize(conn, row, upload=True)
 
     def _visible(self, conn, loader, args, filters, limit, offset, *, upload=False):
         self.references(conn, filters)
@@ -284,6 +338,8 @@ class AuthorizedDatabase:
         while True:
             rows = loader(conn, *args, **filters, limit=500, offset=scanned)
             for row in rows:
+                if not upload:
+                    self._record_cache[(id(conn), str(row["id"]))] = row
                 try:
                     row = self.authorize(conn, row, upload=upload)
                 except ReviewError as exc:
@@ -305,29 +361,32 @@ class AuthorizedDatabase:
             scanned += len(rows)
 
     def records(self, conn, record_type=None, *, limit=100, offset=0, **filters):
-        self.raw._page(limit, offset)
+        self.raw.validate_page(limit, offset)
         return self._visible(conn, self.raw.records, (record_type,), filters, limit, offset)
 
-    def all_records(self, conn, record_type, **filters):
+    def all_records(self, conn, record_type=None, **filters):
         # One scan retains authorization filtering without rescanning every
         # earlier visible page for each successive offset.
         return self._visible(conn, self.raw.records, (record_type,), filters, None, 0)
 
     def uploads(self, conn, *, limit=100, offset=0, **filters):
-        self.raw._page(limit, offset)
+        self.raw.validate_page(limit, offset)
         return self._visible(conn, self.raw.uploads, (), filters, limit, offset, upload=True)
 
     def insert_record(self, conn, record_type, payload, actor, **fields):
         row = {**fields, "record_type": record_type, "payload": payload}
         self.authorize(conn, row, write=True)
+        self.invalidate_cache()
         return self.raw.insert_record(conn, record_type, payload, actor, **fields)
 
     def update_record(self, conn, value, actor, **fields):
         previous = self.authorize(conn, self.raw.record(conn, value), write=True)
         self.authorize(conn, {**previous, **fields}, write=True)
+        self.invalidate_cache()
         return self.raw.update_record(conn, value, actor, **fields)
 
     def enqueue(self, conn, job_kind, **fields):
         self.authorize(conn, {"record_type": "job", **fields}, write=True)
+        self.invalidate_cache()
         row = self.raw.enqueue(conn, job_kind, **fields)
         return self.authorize(conn, row)

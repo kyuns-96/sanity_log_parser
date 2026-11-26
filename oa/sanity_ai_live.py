@@ -8,21 +8,24 @@ from common.sanity_db import Database, json_value, lock_key
 from common.sanity_vwp_ai import require
 from oa.sanity_ai_store import JOB_PREFIX, deletion_marker
 from oa.sanity_workspace_core import WorkspaceCoreStore, record_id
+from oa.sanity_ws_config import verify_ws_config_row
 
 PREFIX, NAMESPACE = "ai.live.", "ai-live-v1"
 
 
 def validate(row):
-    value = row["payload"]
+    value = row.get("payload")
     require(
         isinstance(value, dict) and value.get("namespace") == NAMESPACE
-        and type(value.get("sequence")) is int and value["sequence"] >= 1
-        and row["workspace_key"] == PREFIX + value["id"] + "." + f"{value['sequence']:010d}"
-        and row["record_id"] == record_id("WS_CONFIG", row["workspace_key"])
-        and row["state"] == {} and row["version"] == 0 and row["created_at"] == row["updated_at"],
+        and isinstance(value.get("id"), str)
+        and type(value.get("sequence")) is int and value["sequence"] >= 1,
         "AI_MONITOR_CORRUPT",
     )
-    return value
+    return verify_ws_config_row(
+        row,
+        PREFIX + value["id"] + "." + f"{value['sequence']:010d}",
+        error_code="AI_MONITOR_CORRUPT",
+    )
 
 
 def record(service, identity, command, target, public, *, phase=None, call_id=None):

@@ -10,7 +10,7 @@ from common.sanity_common import ReviewError
 from common.sanity_db import lock_key, uuid_value
 from common.sanity_vwp_ai import require
 from oa.sanity_ai_progress import display_metrics
-from oa.sanity_workspace_core import record_id
+from oa.sanity_ws_config import WS_CONFIG_NULL_COLUMNS as NULL_COLUMNS, read_ws_config_marker
 
 JOB_NAMESPACE, JOB_PREFIX = "oa-ai-v1", "ai1.job."
 JOB_ACTIVE = frozenset(("PENDING", "RUNNING", "RESULT_READY"))
@@ -30,14 +30,16 @@ AVAILABILITY_ERRORS = frozenset((
     "FORBIDDEN", "UNAUTHORIZED", "AI_RESUME_UNAVAILABLE",
 ))
 
-NULL_COLUMNS = (
-    "project", "run_id", "bundle_id", "review_unit_id", "review_revision", "request_id",
-    "entity_key", "classification_revision", "payload_bytes", "payload_sha256",
-    "workspace_project_ref", "workspace_block_ref", "workspace_version_ref",
-    "workspace_review_report_ref", "workspace_review_version_ref", "workspace_review_event_ref",
-    "workspace_pipeline_report_ref", "workspace_pipeline_version_ref",
-    "workspace_pipeline_event_ref", "workspace_pipeline_cluster_ref",
-)
+STALE_AI_ERRORS = frozenset((
+    "AI_INPUT_STALE", "AI_CASES_STALE", "AI_CRITERIA_STALE", "REVISION_CONFLICT",
+    "AI_CONFIG_CHANGED", "AI_CONNECTION_UNAVAILABLE", "AI_CREDENTIAL_CHANGED",
+    "UNAUTHORIZED", "FORBIDDEN",
+))
+
+APPLY_STALE_ERRORS = frozenset((
+    "REVISION_CONFLICT", "PROPOSAL_STALE", "CLUSTER_NOT_CONFIRMED",
+    "AI_CASES_STALE", "AI_CRITERIA_STALE",
+))
 
 
 def db_now(db):
@@ -152,19 +154,16 @@ def deletion_available(service):
 
 def deletion_marker(service, identity):
     key = DELETE_PREFIX + str(uuid_value(identity, "job_id"))
-    row = service.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key=%s", (key,)).fetchone()
-    if row is None:
-        return None
-    value = row["payload"]
-    check(
-        isinstance(value, dict) and {"namespace", "id", "actor_id"} <= set(value)
-        and value["namespace"] == DELETE_NAMESPACE and value["id"] == str(identity)
-        and isinstance(value["actor_id"], str) and 1 <= len(value["actor_id"]) <= 100
-        and row["record_id"] == record_id("WS_CONFIG", key) and row["state"] == {} and row["version"] == 0
-        and row["status"] == "RECORDED" and row["created_at"] == row["updated_at"]
-        and all(row.get(k) is None for k in NULL_COLUMNS),
-        "AI_JOB_CORRUPT",
+    value = read_ws_config_marker(
+        service.db,
+        key,
+        namespace=DELETE_NAMESPACE,
+        expected_id=str(identity),
+        required_keys=("namespace", "id", "actor_id"),
+        error_code="AI_JOB_CORRUPT",
     )
+    if value is not None:
+        check(isinstance(value["actor_id"], str) and 1 <= len(value["actor_id"]) <= 100, "AI_JOB_CORRUPT")
     return value
 
 
@@ -179,34 +178,22 @@ def worker_load(service, identity, loader=None):
 
 
 def resume_marker(service, request_id):
-    key = RESUME_PREFIX + request_id
-    row = service.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key=%s", (key,)).fetchone()
-    if not row:
-        return None
-    value = row["payload"]
-    check(
-        isinstance(value, dict) and {"namespace", "id", "job_id", "actor_id"} <= set(value)
-        and value["namespace"] == RESUME_NAMESPACE and value["id"] == request_id
-        and row["record_id"] == record_id("WS_CONFIG", key) and row["state"] == {} and row["version"] == 0
-        and row["status"] == "RECORDED" and row["created_at"] == row["updated_at"]
-        and all(row.get(k) is None for k in NULL_COLUMNS),
-        "AI_JOB_CORRUPT",
+    return read_ws_config_marker(
+        service.db,
+        RESUME_PREFIX + request_id,
+        namespace=RESUME_NAMESPACE,
+        expected_id=request_id,
+        required_keys=("namespace", "id", "job_id", "actor_id"),
+        error_code="AI_JOB_CORRUPT",
     )
-    return value
 
 
 def unknown_marker(service, request_id):
-    key = UNKNOWN_PREFIX + request_id
-    row = service.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key=%s", (key,)).fetchone()
-    if not row:
-        return None
-    value = row["payload"]
-    check(
-        isinstance(value, dict) and {"namespace", "id", "job_id", "actor_id", "event_sha256", "step_sha256"} <= set(value)
-        and value["namespace"] == UNKNOWN_NAMESPACE and value["id"] == request_id
-        and row["record_id"] == record_id("WS_CONFIG", key) and row["state"] == {} and row["version"] == 0
-        and row["status"] == "RECORDED" and row["created_at"] == row["updated_at"]
-        and all(row.get(k) is None for k in NULL_COLUMNS),
-        "AI_JOB_CORRUPT",
+    return read_ws_config_marker(
+        service.db,
+        UNKNOWN_PREFIX + request_id,
+        namespace=UNKNOWN_NAMESPACE,
+        expected_id=request_id,
+        required_keys=("namespace", "id", "job_id", "actor_id", "event_sha256", "step_sha256"),
+        error_code="AI_JOB_CORRUPT",
     )
-    return value

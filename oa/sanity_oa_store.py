@@ -169,6 +169,3 @@ class OAStore:
         decisions[unit_id] = decision
         self.save_report(payload, decisions, context, revision)
         return {"status": "REVIEWED", "bundle_id": bundle_id, "coverage": coverage(payload, decisions), "review_revision": revision}
-
-    def publish(self, bundle_id, dry_run, simulate):
-        raise ReviewError("JIRA_DISABLED", "Jira publishing is disabled; use the OA dashboard")

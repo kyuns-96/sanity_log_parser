@@ -1,6 +1,5 @@
 import { Activity, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode, RefObject } from 'react'
-import App from '@/features/review/BundleReviewApp'
 import Workspace from '@/features/workspace/Workspace'
 import type { Session } from '@/lib/types'
 import type { WorkspaceSession } from '@/features/workspace/workspaceApi'
@@ -12,6 +11,7 @@ import type { DashboardNavigate } from '@/lib/dashboardMode'
 import { AtlasProvider } from './atlasContext'
 import AtlasShell from './AtlasShell'
 import AtlasHome from './AtlasHome'
+import { AtlasRouteSurface } from './AtlasRouteSurface'
 
 type DashboardPage = 'home' | 'review' | 'welcome' | 'admin' | 'workbench' | 'area-power'
 type Destination = { page: DashboardPage; href: string }
@@ -161,7 +161,7 @@ export default function DashboardNavigation({ demo = false, demoToolbar, demoAcc
   return <DashboardAuthContext value={auth}><DashboardNavigationContext value={navigate}><DashboardSidebarContext value={sidebar}>
     <AtlasProvider demo={demo} routeSearch={new URL(state.route.href, location.origin).search} replaceRoute={replaceRoute}><AtlasShell demoToolbar={demoToolbar}>
       {state.visited.map(page => <Activity key={`${state.epoch}:${page}`} mode={state.route.page === page ? 'visible' : 'hidden'}>
-        <DashboardSurface page={page} positions={positions}>{page === 'home' ? <AtlasHome /> : page === 'workbench' ? auth.session?.auth_method === 'local_token' ? <main className="atlas-home"><h1>회사 SSO 전용 로그 워크스페이스</h1><p>현재는 실제 로컬 모드입니다. 회사 계정·권한이 필요한 검토 워크스페이스를 사용할 수 없습니다. 실제 수신 보고서는 수신 로그 대장에서 확인하세요.</p><button className="atlas-button" onClick={() => { const url = new URL(location.href); url.searchParams.set('page', 'review'); void navigate(url.pathname + url.search).catch(cause => setError(String(cause))) }}>수신 로그 대장 열기</button></main> : <Workspace routeSearch={workbenchSearch.current} initialSession={state.initialWorkspace} /> : page === 'area-power' ? <AreaPower /> : demo && (page === 'welcome' || page === 'admin') ? demoAccount : <App routePage={page} />}</DashboardSurface>
+        <DashboardSurface page={page} positions={positions}>{page === 'home' ? <AtlasHome /> : page === 'workbench' ? auth.session?.auth_method === 'local_token' ? <main className="atlas-home"><h1>회사 SSO 전용 로그 워크스페이스</h1><p>현재는 실제 로컬 모드입니다. 회사 계정·권한이 필요한 검토 워크스페이스를 사용할 수 없습니다. 실제 수신 보고서는 수신 로그 대장에서 확인하세요.</p><button className="atlas-button" onClick={() => { const url = new URL(location.href); url.searchParams.set('page', 'review'); void navigate(url.pathname + url.search).catch(cause => setError(String(cause))) }}>수신 로그 대장 열기</button></main> : <Workspace routeSearch={workbenchSearch.current} initialSession={state.initialWorkspace} /> : page === 'area-power' ? <AreaPower /> : demo && (page === 'welcome' || page === 'admin') ? demoAccount : <AtlasRouteSurface page={page} />}</DashboardSurface>
       </Activity>)}
     </AtlasShell></AtlasProvider>
     {error && <p className="dashboard-navigation-error" role="alert">{error}<button type="button" onClick={() => setError('')}>닫기</button></p>}

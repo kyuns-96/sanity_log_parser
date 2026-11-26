@@ -12,7 +12,8 @@ from common.sanity_ai_execution import worker_site
 from common.sanity_privacy import SecretGuard
 from common.sanity_vwp_ai import VERSION, CATALOG_BYTES, CATALOG_TTL, require, strict_json, timestamp, validate_profile
 from oa.sanity_ai_model import OAAdvisor
-from oa.sanity_workspace_core import WorkspaceCoreStore as WorkspaceStore, record_id
+from oa.sanity_workspace_core import WorkspaceCoreStore as WorkspaceStore
+from oa.sanity_ws_config import verify_ws_config_row
 
 PROVIDER = "VWP_OPENAI_COMPATIBLE"
 PREFIX, NAMESPACE = "vwpai.catalog.", "vwp-ai-catalog-v1"
@@ -40,15 +41,11 @@ class Catalog:
         row = self.db.execute("SELECT * FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s "
             "ORDER BY workspace_key DESC LIMIT 1", (PREFIX + "%",)).fetchone()
         if row is None: return None
-        value = row["payload"]
-        require(isinstance(value, dict) and set(value) == {"namespace", "catalog", "sha256"}
-                and value["namespace"] == NAMESPACE and value["sha256"] == digest(value["catalog"])
-                and row["record_id"] == record_id("WS_CONFIG", row["workspace_key"])
-                and row["state"] == {} and row["version"] == 0 and row["created_at"] == row["updated_at"],
+        value = verify_ws_config_row(row, error_code="AI_VWP_CATALOG_CORRUPT")
+        require(set(value) == {"namespace", "catalog", "sha256"}
+                and value["namespace"] == NAMESPACE and value["sha256"] == digest(value["catalog"]),
                 "AI_VWP_CATALOG_CORRUPT")
         return self.validate(value["catalog"])
-
-    _latest = latest
 
     def profiles(self):
         value = self.latest()

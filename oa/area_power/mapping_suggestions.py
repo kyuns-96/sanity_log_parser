@@ -4,11 +4,10 @@ from uuid import UUID
 from psycopg import sql
 from pydantic import Field, StrictInt
 
-from oa.area_power.ai_context import capture_context
 from common.area_power.analysis import advisory_lock, existing_dedupe
 from common.area_power.jsonutil import digest
 from common.area_power.models import MappingRule
-from oa.sanity_ai_task_defaults import TaskDefaults
+from oa.area_power.ai_context import pin_area_triage_task
 from .schemas import ConfigInput, Input, reject
 
 
@@ -50,13 +49,12 @@ def submit(service, body, actor):
                     or old['payload'].get('max_depth') != body.max_depth):
                 reject('The request inputs have changed.', 'request_conflict', 409)
             return {'id': old['id']}
-        settings = TaskDefaults(host.db).current()
-        pin = capture_context(service.access, tasks=('AREA_TRIAGE',), defaults=settings['defaults'], vwp_only=True)
+        pin, retry_limit = pin_area_triage_task(service.access, host.db, vwp_only=True)
         if pin['AREA_TRIAGE'].get('error'):
             reject('Project comparison model is unavailable.', pin['AREA_TRIAGE']['error'], 409)
         scope = service.scope(current)
         payload = {'mapping_id': body.mapping_id, 'draft': draft, 'max_depth': body.max_depth,
-                   'ai_context': pin, 'retry_limit': settings['area_retry_limit']}
+                   'ai_context': pin, 'retry_limit': retry_limit}
         run = service.db.insert_record(conn, 'mapping_proposal', payload, actor.user_id, state='queued',
                                        upload_id=current['id'], baseline_upload_id=baseline['id'], dedupe_key=key, **scope)
         service.db.enqueue(conn, 'judge', actor=actor.user_id, parent_id=run['id'], payload={}, **scope)

@@ -1,32 +1,30 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { ArrowRight, Check, ChevronLeft, ChevronRight, Download, GitMerge, GripVertical, Layers3, LoaderCircle, Pencil, Plus, RefreshCw, X } from 'lucide-react'
+import { ArrowRight, Check, Download, GitMerge, GripVertical, Layers3, LoaderCircle, Pencil, Plus, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { PaginationBar } from '@/components/ui/pagination-bar'
 import Records from './Records'
 import { WorkbenchContextSidebar } from './WorkbenchContextSidebar'
 import { WorkbenchGroupDialog } from './WorkbenchGroupDialog'
+import { WorkbenchSupportDrawer } from './WorkbenchSupportDrawer'
+import { WorkspaceAiNotices } from './WorkspaceAiNotices'
 import WorkspaceReview from './WorkspaceReview'
-import AiModelSelect, { selectedAiModel, selectedAiConnection, aiConnectionNotice, needsPersonalCredential, taskDefaultNotice } from '@/features/ai/AiModelSelect'
-import UnknownBatchRecovery, { canRetryUnknown } from '@/features/ai/UnknownBatchRecovery'
+import { useWorkspaceAiController } from './useWorkspaceAiController'
+import AiModelSelect from '@/features/ai/AiModelSelect'
+import UnknownBatchRecovery from '@/features/ai/UnknownBatchRecovery'
 import GroupRationale, { rationaleLabels } from './GroupRationale'
 import EvidenceSharing from './EvidenceSharing'
-import CaseSource from './CaseSource'
 import PreservedSources, { PreservedCitations } from './PreservedSources'
 import { NEW_LOG_GROUP, useLogDrag } from './useLogDrag'
 import type { LogMove } from './useLogDrag'
-import { reportDisplayName, aiJobActive, aiJobMessage, aiValidationMessage, aiExecutionLabel, workspaceApiBase, WorkspaceError, toolResultStatus, workspaceLabels as labels, workspaceRequest as request, workspaceTime as time } from './workspaceApi'
-import type { ClusterBrief, CodexJob, GroupBrief, GroupRecords, PageResult, PipelineTask, WorkbenchView, WorkspaceSession } from './workspaceApi'
+import { reportDisplayName, aiJobMessage, aiValidationMessage, aiExecutionLabel, workspaceApiBase, WorkspaceError, toolResultStatus, workspaceLabels as labels, workspaceRequest as request } from './workspaceApi'
+import type { CodexJob, GroupBrief, GroupRecords, PageResult, PipelineTask, WorkbenchView, WorkspaceSession } from './workspaceApi'
 
 const n = (value: number) => value.toLocaleString('ko-KR')
 const activeTask = (task: PipelineTask | null) => !!task && ['PENDING', 'RUNNING', 'FAILED', 'STALE'].includes(task.status)
 const statusLabels: Record<string, string> = { PENDING: '미검토', STALE: '재검토', PASS: 'PASS', FAIL: 'FAIL', DEFER: '보류' }
-const actions: Record<string, string> = { PROPOSE: '분류 초안', EDIT: '구성 수정', CONFIRM: '분류 확정', WITHDRAW: '확정 해제' }
-
-function Pager({ total, offset, limit, onChange, label }: { total: number; offset: number; limit: number; onChange: (offset: number) => void; label: string }) {
-  return <div className="ws-pagination"><span>{total ? `${n(offset+1)}–${n(Math.min(offset+limit, total))}` : '0'} / {n(total)}</span><Button variant="outline" size="icon" aria-label={`이전 ${label} 페이지`} disabled={!offset} onClick={() => onChange(Math.max(0, offset-limit))}><ChevronLeft /></Button><Button variant="outline" size="icon" aria-label={`다음 ${label} 페이지`} disabled={offset+limit >= total} onClick={() => onChange(offset+limit)}><ChevronRight /></Button></div>
-}
 
 export default function WorkspaceWorkbench({ reportId, blockId, versionId, session, context, onBack, onExpired, onChanged }: {
   reportId: string; blockId: string; versionId: string; session: WorkspaceSession; context?: { projectName?: string; blockName?: string; porLabel?: string }; onBack: () => void; onExpired: () => void; onChanged: (value: WorkbenchView) => void
@@ -59,22 +57,10 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
   const [busy, setBusy] = useState(false)
   const [groupNavigating, setGroupNavigating] = useState(false)
   const [aiSubmitting, setAiSubmitting] = useState(false)
-  const [selectedModel, setSelectedModel] = useState('')
-  const [selectedConnection, setSelectedConnection] = useState('')
-  const [pollPaused, setPollPaused] = useState(false)
-  const polls = useRef({ id: '', count: 0 })
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [refresh, setRefresh] = useState(0)
-  const [showSource, setShowSource] = useState(false)
-  const [showHistory, setShowHistory] = useState(false)
-  const [history, setHistory] = useState<PageResult<ClusterBrief> | null>(null)
-  const [historyOffset, setHistoryOffset] = useState(0)
   const [historyEvent, setHistoryEvent] = useState<string | null>(null)
-  const [showRemoved, setShowRemoved] = useState(false)
-  const [removed, setRemoved] = useState<PageResult<{ id: string; label: string; conclusion: string }> | null>(null)
-  const [removedOffset, setRemovedOffset] = useState(0)
-  const [removedId, setRemovedId] = useState('')
   const panel = useRef<HTMLElement>(null)
   const [nameEditing, setNameEditing] = useState(false)
   const [editor, setEditor] = useState<'rename' | 'split' | 'merge' | null>(null)
@@ -86,17 +72,6 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
   const pending = useRef<{ key: string; id: string } | null>(null)
   const newGroup = useRef<string | null>(null)
   const lastRevision = useRef(-1)
-  const aiFetchEpoch = useRef(0)
-  const aiRunning = aiJobActive(data?.ai?.job)
-  const recoverableUnknown = canRetryUnknown(data?.ai?.job)
-  const connectionId = aiRunning ? data!.ai!.job!.connection_id || '' : data?.ai?.connections?.some(value => value.id === selectedConnection) ? selectedConnection : data?.ai?.connection_id || ''
-  const choice = selectedAiConnection(data?.ai, connectionId)
-  const modelId = aiRunning ? data!.ai!.job!.model : selectedAiModel(choice, selectedModel)
-  const confirmed = !!data?.summary.confirmed && !activeTask(data.task) && !aiRunning
-  const dirtyName = !!member?.group && groupName !== member.group.label
-  const identityChanged = !!data?.current && JSON.stringify([...fields].sort()) !== JSON.stringify([...data.current.identity_fields].sort())
-  const writable = !!data?.can_edit && !busy && !groupNavigating && !historyEvent && !activeTask(data.task) && !aiRunning
-  const drag = useLogDrag({ scope: panel, enabled: writable && step === 1 && !editor && !dirtyRationale, revision: data?.revision ?? -1, onDrop: moveLogs })
 
   function fail(value: unknown) {
     if (value instanceof DOMException && value.name === 'AbortError') return
@@ -116,26 +91,46 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
     setData(value); onChanged(value); setRefresh(previous => previous+1)
     if (!value.summary.confirmed || activeTask(value.task)) setStep(1)
   }
+  const {
+    setSelectedModel,
+    chooseConnection,
+    pollPaused,
+    aiFetchEpoch,
+    bumpEpoch,
+    resetPoll,
+    aiRunning,
+    recoverableUnknown,
+    connectionId,
+    choice,
+    modelId,
+  } = useWorkspaceAiController({
+    ai: data?.ai,
+    production,
+    baseKey: base,
+    pollEnabled: true,
+    pollIntervalMs: production ? 2000 : 1000,
+    pollTrigger: refresh,
+    onPoll: signal => load(signal),
+    onTokenChanged: async (signal, epoch) => {
+      const value = await request<WorkbenchView>(`${base}/workbench`, { signal })
+      if (!signal.aborted && epoch === aiFetchEpoch.current) {
+        setData(previous => previous ? { ...previous, ai: value.ai } : previous)
+      }
+    },
+    onError: fail,
+  })
   async function load(signal?: AbortSignal) {
     const epoch = aiFetchEpoch.current
     const value = await request<WorkbenchView>(`${base}/workbench`, { signal })
     if (alive.current && !signal?.aborted && epoch === aiFetchEpoch.current) initialize(value)
     return value
   }
-  useEffect(() => {
-    if (!production) return
-    let pending: AbortController | undefined
-    const changed = () => {
-      pending?.abort()
-      const controller = new AbortController(); pending = controller
-      const epoch = aiFetchEpoch.current
-      request<WorkbenchView>(`${base}/workbench`, { signal: controller.signal }).then(value => {
-        if (!controller.signal.aborted && epoch === aiFetchEpoch.current) setData(previous => previous ? { ...previous, ai: value.ai } : previous)
-      }).catch(fail)
-    }
-    window.addEventListener('sanity-ai-token-changed', changed)
-    return () => { pending?.abort(); window.removeEventListener('sanity-ai-token-changed', changed) }
-  }, [base, production])
+  const confirmed = !!data?.summary.confirmed && !activeTask(data.task) && !aiRunning
+  const dirtyName = !!member?.group && groupName !== member.group.label
+  const identityChanged = !!data?.current && JSON.stringify([...fields].sort()) !== JSON.stringify([...data.current.identity_fields].sort())
+  const writable = !!data?.can_edit && !busy && !groupNavigating && !historyEvent && !activeTask(data.task) && !aiRunning
+  const drag = useLogDrag({ scope: panel, enabled: writable && step === 1 && !editor && !dirtyRationale, revision: data?.revision ?? -1, onDrop: moveLogs })
+
   async function downloadDemoSource() {
     try {
       const report = await request<{ raw_report: string | null }>(base)
@@ -155,15 +150,6 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
   }, [base])
   useEffect(() => { if (data) panel.current?.scrollIntoView({ block: 'start' }) }, [!!data])
   useEffect(() => {
-    if (!aiRunning || pollPaused) return
-    const id = data!.ai!.job!.id
-    if (polls.current.id !== id) polls.current = { id, count: 0 }
-    if (polls.current.count >= 60) { setPollPaused(true); return }
-    const controller = new AbortController()
-    const timer = setTimeout(() => { polls.current.count++; load(controller.signal).catch(fail) }, production ? 2000 : 1000)
-    return () => { clearTimeout(timer); controller.abort() }
-  }, [base, aiRunning, data?.ai?.job?.id, refresh, pollPaused])
-  useEffect(() => {
     if (!data?.current) { setGroups(null); return }
     const controller = new AbortController()
     const params = new URLSearchParams({ expected_revision: String(data.revision), offset: String(groupOffset), limit: '25', search: groupSearch, status: step === 2 ? filter : '', rationale_status: step === 1 ? rationaleFilter : '' })
@@ -174,18 +160,6 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
     }).catch(fail), 120)
     return () => { clearTimeout(timer); controller.abort() }
   }, [base, data?.revision, groupOffset, groupSearch, filter, rationaleFilter, step, historyEvent, refresh])
-  useEffect(() => {
-    if (!showHistory || !data) return
-    const controller = new AbortController()
-    request<PageResult<ClusterBrief>>(`${base}/clustering/history?offset=${historyOffset}&limit=25`, { signal: controller.signal }).then(value => { if (!controller.signal.aborted) setHistory(value) }).catch(fail)
-    return () => controller.abort()
-  }, [showHistory, historyOffset, refresh])
-  useEffect(() => {
-    if (!showRemoved || !data) return
-    const controller = new AbortController()
-    request<typeof removed>(`${base}/clustering/history?removed=true&offset=${removedOffset}&limit=25`, { signal: controller.signal }).then(value => { if (!controller.signal.aborted) setRemoved(value) }).catch(fail)
-    return () => controller.abort()
-  }, [showRemoved, removedOffset, refresh])
 
   async function mutate(path: string, body: Record<string, unknown>, success: string, destination?: string) {
     if (!data) return false
@@ -271,7 +245,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
     const key = `AI:${JSON.stringify(command)}`
     if (saveOnly && previous) pending.current = { key, id: previous.id }
     else if (pending.current?.key !== key) pending.current = { key, id: crypto.randomUUID() }
-    setBusy(true); setAiSubmitting(true); setError(''); setNotice(''); setPollPaused(false); polls.current.count = 0
+    setBusy(true); setAiSubmitting(true); setError(''); setNotice(''); resetPoll()
     try {
       const job = await request<CodexJob>(`${base}/clustering/ai`, { csrf: session.csrf,
         body: { ...command, request_id: pending.current.id } })
@@ -364,7 +338,6 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
   const mergeRecordCount = mergeGroups.reduce((total, group) => total + group.record_count, 0)
   const mergeConflict = new Set(mergeGroups.map(group => typeof group.example.code === 'string' ? group.example.code.trim() : '').filter(Boolean)).size > 1
   const chosen = member?.group
-  const model = data.current?.model_metadata
   const reviewReport = { ...data.report, check_status: chosen?.check_status || 'UNKNOWN' }
   const transitionBlocked = !confirmed || dirtyName || dirtyRationale || identityChanged || !!historyEvent || busy || groupNavigating || aiRunning
   const missing = data.summary.rationale_counts.MISSING
@@ -394,14 +367,14 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
         <button type="button" aria-current={step === 2 ? 'step' : undefined} disabled={transitionBlocked} aria-describedby={transitionBlocked && step === 1 && !confirmed ? `${inputId}-step-hint` : undefined} onClick={beginJudgment}><b>2</b><span>그룹별 판정</span><small>{n(data.summary.reviewed)}/{n(data.summary.total)}</small></button>
       </nav>
       <div className="ws-workbench-stage-actions">
-        {production && step === 1 && !data.current && data.can_edit && !historyEvent && <AiModelSelect ai={data.ai} connectionValue={connectionId} onConnectionChange={value => { setSelectedConnection(value); setSelectedModel('') }} value={modelId} onChange={setSelectedModel} disabled={!writable || !data.ready || aiSubmitting} label="분류 AI 모델" />}
+        {production && step === 1 && !data.current && data.can_edit && !historyEvent && <AiModelSelect ai={data.ai} connectionValue={connectionId} onConnectionChange={chooseConnection} value={modelId} onChange={setSelectedModel} disabled={!writable || !data.ready || aiSubmitting} label="분류 AI 모델" />}
         {data.current && data.can_edit && !historyEvent && <Button variant="outline" disabled={!writable || dirtyName || dirtyRationale || data.summary.total < 2} onClick={beginMerge}><GitMerge size={15} />그룹 병합</Button>}
         {step === 1 && confirmed && <Button disabled={transitionBlocked} onClick={beginJudgment}>{data.can_edit ? '그룹 판정 계속' : '판정 보기'}<ArrowRight size={16} /></Button>}
         {step === 1 && data.current && data.can_edit && !historyEvent && !confirmed && <Button aria-describedby={`${inputId}-confirm-hint`} disabled={confirmBlocked} onClick={() => mutate('/clustering?compact=true', { action: 'CONFIRM', reason, reusable, compatible_versions: reusable && compatible, criteria: reusable ? criteria : '' }, '전체 분류를 확정했습니다. 그룹별 사용자 판정을 저장하세요.')}>분류 확정 · 판정 시작<ArrowRight size={16} /></Button>}
         {step === 1 && !data.current && data.can_edit && !historyEvent && <>
           {production || data.ai?.enabled && data.ai.supported ? <div className="ws-workbench-ai"><Button disabled={!writable || !data.ready || !choice?.available || dirtyName || dirtyRationale || recoverableUnknown} onClick={() => proposeAI()}>{aiRunning || aiSubmitting ? <LoaderCircle size={15} className="animate-spin" /> : <Layers3 size={15} />}{aiRunning || aiSubmitting ? 'AI 분류 중…' : 'AI로 그룹 만들기'}</Button>{(!production || !data.ai?.enabled || !data.ai.supported) && <span>{production ? !data.ai?.enabled ? 'OA AI 연결 설정 필요' : '분류 입력 상태 확인 필요' : '합성 보고서 전용'}</span>}</div> : <Button disabled={!writable || !data.ready || dirtyRationale} onClick={() => propose()}><Layers3 size={15} />그룹 초안 만들기</Button>}
         </>}
-        <Button variant="ghost" size="icon" aria-label="최신 구성 다시 조회" disabled={busy} onClick={() => { polls.current.count = 0; setPollPaused(false); load().catch(fail) }}><RefreshCw size={15} /></Button>
+        <Button variant="ghost" size="icon" aria-label="최신 구성 다시 조회" disabled={busy} onClick={() => { resetPoll(); load().catch(fail) }}><RefreshCw size={15} /></Button>
       </div>
     </div>
     </div>
@@ -421,14 +394,12 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
     {!data.can_edit && <p className="ws-step-hint">조회 전용 · 현재 분류 및 사용자 판정을 변경할 권한이 없습니다.</p>}
     {!data.current && <section className="ws-workbench-empty"><Layers3 size={28} /><h2>분류 초안을 생성하세요</h2><p>{production || data.ai?.enabled && data.ai.supported ? 'AI가 전체 로그와 확정 사례를 바탕으로 초기 그룹과 분류 근거를 제안합니다. 첫 보고서도 과거 사례 없이 시작할 수 있습니다.' : '참고 엔진이 원본 필드와 확정 사례를 바탕으로 그룹 초안을 생성합니다. 사내 AI는 미연결 상태입니다.'}</p></section>}
     {production && !data.ai?.enabled && <p className="ws-notice" role="status">OA AI가 아직 설정되지 않았습니다. 운영 담당자가 모델 연결을 설정한 뒤 AI 분류를 시작할 수 있습니다.</p>}
-    {production && needsPersonalCredential(choice) && <p className="ws-notice" role="status">개인 AI 토큰을 사용할 수 없습니다. 화면 상단의 ‘개인 AI 토큰’에서 등록 상태와 만료일을 확인해 주세요.</p>}
-    {production && aiConnectionNotice(choice) && <p className="ws-notice" role="status">{aiConnectionNotice(choice)}</p>}
-    {production && taskDefaultNotice(data.ai, '분류') && <p className="ws-notice" role="status">{taskDefaultNotice(data.ai, '분류')}</p>}
+    <WorkspaceAiNotices production={production} ai={data.ai} choice={choice} stage="분류" />
     {production && data.can_edit && data.ai?.enabled && !data.ai.supported && <p className="ws-notice" role="status">AI 분류 요청 조건을 충족하지 못했습니다. 보고서 수신·파싱과 전체 로그의 준비 상태를 확인해 주세요.</p>}
     {pollPaused && aiRunning && <p className="ws-notice" role="status">상태 자동 조회를 잠시 멈췄습니다. 서버 작업은 계속됩니다. ‘최신 구성 다시 조회’로 상태 확인을 이어가세요.</p>}
     {data.ai?.job && data.ai.job.status !== 'COMPLETED' && <div role="status" aria-live="polite" className={['FAILED', 'STALE', 'UNKNOWN', 'SAVE_FAILED'].includes(data.ai.job.status) ? 'ws-error' : 'ws-notice'}>{production ? `${aiExecutionLabel(data.ai.job)} · ${aiJobMessage(data.ai.job)}` : aiRunning ? 'AI가 전체 로그와 확정 사례로 분류 초안을 생성·저장하고 있습니다. 새로고침 후에도 상태를 확인할 수 있습니다.' : data.ai.job.status === 'UNKNOWN' ? 'AI 호출 결과를 확인하지 못했습니다. 자동 재호출하지 않습니다. 새 요청은 추가 사용량이 발생할 수 있습니다.' : data.ai.job.status === 'SAVE_FAILED' ? '받은 AI 결과를 저장하지 못했습니다. 모델을 다시 호출하지 않고 저장을 재시도할 수 있습니다.' : data.ai.job.status === 'STALE' ? '검토 개정이나 참고 사례가 바뀌어 AI 결과를 적용하지 않았습니다. 최신 상태를 확인하고 새 초안을 요청하세요.' : `AI 분류를 완료하지 못했습니다. 기존 구성은 유지됩니다. (${data.ai.job.error || 'AI_CALL_FAILED'})`}{data.ai.job.status === 'SAVE_FAILED' && data.can_edit && <Button variant="outline" disabled={busy} onClick={() => proposeAI(true)}>받은 AI 결과 저장</Button>}</div>}
     {production && data.ai?.job && aiValidationMessage(data.ai.job) && <p className="ws-notice" role="status">{aiValidationMessage(data.ai.job)}</p>}
-    {production && data.ai?.job && <UnknownBatchRecovery job={data.ai.job} disabled={!data.can_edit || busy} onAccessDenied={() => { aiFetchEpoch.current++; setData(null) }} onRefresh={() => { aiFetchEpoch.current++; void load().catch(fail) }} />}
+    {production && data.ai?.job && <UnknownBatchRecovery job={data.ai.job} disabled={!data.can_edit || busy} onAccessDenied={() => { bumpEpoch(); setData(null) }} onRefresh={() => { bumpEpoch(); void load().catch(fail) }} />}
     {!data.ready && <p className="ws-notice">원문 수신·파싱과 필수 근거가 준비되어야 분류를 확정할 수 있습니다.</p>}
     {identityChanged && <p className="ws-notice">분류 필드를 변경했습니다. 새 초안을 생성하거나 필드를 현재 분류 기준으로 되돌린 뒤 진행하세요.</p>}
     {task && activeTask(task) && <div className="ws-workbench-task" aria-label="전체 로그 분류 진행"><div><strong>{task.status === 'FAILED' ? '분류 작업 실패' : task.status === 'STALE' ? '참조 변경 · 작업 재검토' : '전체 로그 분류 진행'}</strong><span>{n(task.processed)} / {n(task.record_count)}건</span></div><progress max={Math.max(task.record_count, 1)} value={task.processed} />{task.error && <p>{task.error} · 부분 결과는 확정되지 않았습니다.</p>}{busy && ['PENDING', 'RUNNING'].includes(task.status) ? <Button variant="outline" onClick={() => { run.current++ }}>현재 작업 뒤 일시정지</Button> : !busy && data.can_edit && activeTask(task) && <div><Button variant="outline" disabled={task.status === 'STALE'} onClick={() => propose(true)}>저장한 위치에서 이어서 처리</Button><Button variant="outline" onClick={cancelTask}>분류 작업 취소</Button></div>}</div>}
@@ -454,7 +425,7 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
         })}</div>
         {groups && !groups.total && <p className="ws-muted">검색 결과가 없습니다.</p>}
         {step === 1 && data.can_edit && !historyEvent && <button type="button" className={`ws-log-new-group${drag.drag?.target === NEW_LOG_GROUP ? ' ws-log-drop-active' : ''}`} data-log-drop={writable ? NEW_LOG_GROUP : undefined} data-drop-label="새 그룹" disabled={!writable || dirtyRationale} onClick={() => { if (!selectedRecords.size) { setNotice('새 그룹으로 옮길 로그를 먼저 선택하거나 이곳으로 끌어다 놓으세요.'); return } moveLogs(selectionMove(), NEW_LOG_GROUP) }}><Plus size={15} />새 그룹으로 분리</button>}
-        {groups && <Pager {...groups} label="그룹" onChange={offset => { if (dirtyRationale || dirtyName) { setError('작성 중인 내용을 저장하거나 취소한 뒤 그룹 페이지를 변경하세요.'); return } setGroupOffset(offset) }} />}
+        {groups && <PaginationBar className="ws-pagination" offset={groups.offset} limit={groups.limit} total={groups.total} label="그룹" onChange={offset => { if (dirtyRationale || dirtyName) { setError('작성 중인 내용을 저장하거나 취소한 뒤 그룹 페이지를 변경하세요.'); return } setGroupOffset(offset) }} />}
         {step === 1 && data.current && confirmedReasons < data.summary.total && <Button className="ws-next-explanation" variant="ghost" size="sm" disabled={dirtyRationale || dirtyName || busy || groupNavigating || !!historyEvent} onClick={nextExplanation}>다음 미검토 근거<ArrowRight size={14} /></Button>}
       </section>
       <section className="ws-workbench-detail ws-studio-evidence" aria-label="선택 그룹 상세">
@@ -473,17 +444,45 @@ export default function WorkspaceWorkbench({ reportId, blockId, versionId, sessi
       </aside>
     </div>}
 
-    <details className="ws-workbench-support"><summary>설정과 이전 기록</summary><div className="ws-workbench-support-content">
-      <details className="ws-report-context"><summary>보고서 정보</summary><dl><div><dt>보고서</dt><dd>{data.report.id}</dd></div><div><dt>검사 항목</dt><dd>{data.report.item_id} · {data.report.family}</dd></div><div><dt>버전</dt><dd>{data.version.net_ver} · {data.version.layout} · {data.version.revision}</dd></div><div><dt>ECO</dt><dd>{data.report.eco || '해당 없음'}</dd></div><div><dt>원문</dt><dd>{n(data.raw_line_count)}행 · 로그 {n(data.record_count)}건</dd></div><div><dt>원본 SHA-256</dt><dd><code>{data.source_sha256}</code></dd></div></dl></details>
-      {step === 1 && data.current && data.can_edit && !historyEvent && <details><summary>{production ? '전체 분류 메모 (선택)' : '전체 메모와 참고 엔진 설정 (선택)'}</summary><div className="ws-review-field"><label htmlFor={`${inputId}-reason`}>전체 분류 메모 (선택)</label><textarea id={`${inputId}-reason`} value={reason} maxLength={2000} disabled={busy} onChange={event => setReason(event.target.value)} placeholder="전체 분류에 대한 추가 검토 내용을 입력하세요." /></div>{!production && !model?.synthetic_only && <div className="ws-reuse-options"><p className="ws-muted">운영 AI 참고에는 사용자가 등록한 근거만 제공합니다. 등록한 지식은 블록·revision·ECO를 넘어 비교합니다. 아래 설정은 AI 참고와 별개인 참고 엔진의 조건 일치 규칙용입니다.</p><label className="ws-review-checkbox"><input type="checkbox" checked={reusable} disabled={busy} onChange={event => { setReusable(event.target.checked); if (!event.target.checked) setCompatible(false) }} />동일 조건의 참고 엔진에 분류 규칙 적용 허용</label>{reusable && <><div className="ws-review-field"><label htmlFor={`${inputId}-criteria`}>재사용할 분류 기준</label><textarea id={`${inputId}-criteria`} value={criteria} maxLength={2000} disabled={busy} onChange={event => setCriteria(event.target.value)} /></div><label className="ws-review-checkbox"><input type="checkbox" checked={compatible} disabled={busy} onChange={event => setCompatible(event.target.checked)} />같은 블록의 호환되는 다른 버전에도 적용</label></>}</div>}{confirmed && <><p className="ws-muted">확정 해제 사유를 전체 분류 메모에 입력하세요.</p><Button variant="outline" disabled={!writable || !reason.trim()} onClick={() => mutate('/clustering?compact=true', { action: 'WITHDRAW', reason }, '분류 확정을 해제했습니다. 이전 판정은 이력으로 보존됩니다.')}>분류 확정 해제</Button></>}</details>}
-      {step === 1 && data.current && data.can_edit && !historyEvent && data.ai?.enabled && data.ai.supported && <details className="ws-rebuild-groups"><summary>AI로 그룹 다시 만들기</summary>{production && <AiModelSelect ai={data.ai} connectionValue={connectionId} onConnectionChange={value => { setSelectedConnection(value); setSelectedModel('') }} value={modelId} onChange={setSelectedModel} disabled={!writable || !data.ready} label="분류 AI 모델" />}<p className="ws-muted">{production ? '전체 로그와 관련 확정 사례를 OA AI가 검토합니다. 새 초안과 이전 구성은 이력으로 남습니다.' : '현재 그룹 구성을 새 초안으로 대체하며 기존 구성은 이력에 보존합니다. 합성 보고서와 검토 근거가 외부 AI에 전달됩니다.'}</p><Button variant="outline" disabled={!writable || !data.ready || !choice?.available || dirtyName || dirtyRationale || recoverableUnknown} onClick={() => proposeAI()}><Layers3 size={15} />AI로 그룹 만들기</Button><small>{choice?.connection_label ? `${choice.connection_label} / ` : ''}{modelId}{!production && <> · 남은 테스트 {data.ai.remaining}회</>}</small></details>}
-      {step === 1 && data.can_edit && !historyEvent && !production && <details className="ws-workbench-settings"><summary>분류 설정</summary><p className="ws-muted">{data.ai?.enabled && data.ai.supported ? `합성 report 전용 · ${data.ai.model} 실제 호출 · 남은 테스트 ${data.ai.remaining}회. 새 초안은 기존 확정을 대체하며 이전 구성은 이력으로 남습니다. 이 테스트에 작성한 그룹 이름·검토 사유도 외부 모델에 전달됩니다.` : '사내 AI 미연결 · 현재 초안과 판정 제안은 확정 사례와 원본 필드를 참고하는 엔진입니다.'}</p><div className="ws-workbench-propose"><fieldset disabled={busy || activeTask(task) || aiRunning}><legend>참고 엔진에서 구분할 필드</legend>{Object.entries({ object: '대상', check_point: '검사 지점', mode: '모드', observed: '측정값', expected: '기준값', unit: '단위' }).map(([key, name]) => <label key={key}><input type="checkbox" checked={fields.includes(key)} disabled={key === 'mode'} onChange={event => setFields(previous => event.target.checked ? [...previous, key] : previous.filter(value => value !== key))} />{name}</label>)}</fieldset><Button variant="outline" disabled={!writable || !data.ready || dirtyRationale} onClick={() => propose()}><Layers3 size={15} />참고 엔진으로 초안 생성</Button></div></details>}
-      {data.current && <details className="ws-cluster-references"><summary>현재 분류의 기준과 출처</summary><p>{data.current.reason}<small>구분 필드: {data.current.identity_fields.join(', ')} · {data.current.actor.name} · {time(data.current.at)}</small></p>{model && <p>초기 분류 모델: {model.model}<small>입력 사례 {model.input_case_count}건 · 입력 토큰 {n(model.usage.input_tokens || 0)} · 출력 토큰 {n(model.usage.output_tokens || 0)} · {model.seconds}초</small></p>}{data.current.references.map(reference => <p key={reference.id}>{reference.report_id} · 분류 개정 {reference.revision}<small>{reference.criteria || '공유 확정 분류 사례'}</small><CaseSource value={reference} report={data.report} version={data.version} /></p>)}<p className="ws-muted">{production ? data.case_count_scope === 'REFERENCED' ? `현재 분류에서 참조한 유효 사례 ${n(data.case_count)}건 · 전체 누적 건수가 아닙니다. AI 분류 실행 시 전체 로그로 관련 사례를 검색하며 원문은 기존 조회 권한을 따릅니다.` : `이번 조회에서 선정한 관련 분류 후보 ${n(data.case_count)}건 · 현재 분류의 인용 사례 ${data.current.references.length}건. 전체 누적 건수가 아닙니다. 블록·revision·ECO를 넘어 관련 사례를 찾고 이번 조건과의 차이를 다시 확인합니다. 과거 확정 근거를 참고하며 원문은 기존 조회 권한을 따릅니다.` : `다른 report의 확정 사례 ${n(data.case_count)}건 · 참고 엔진 재사용 기준 ${n(data.reusable_count)}건`}</p></details>}
-      {task && <details className="ws-workbench-task-history"><summary><span>{task.status === 'COMPLETED' ? task.id === data.current?.id ? '분류 초안 생성 완료' : '이전 참고 엔진의 분류 작업' : '분류 작업 근거'}</span> · {n(task.processed)} / {n(task.record_count)}건</summary>{task.chunks.map(chunk => <p key={chunk.index}>{n(chunk.start+1)}–{n(chunk.stop)}번째 로그 · {chunk.record_count}건 · {chunk.status}<code>{chunk.input_sha256}</code></p>)}</details>}
-      <details className="ws-workbench-source" onToggle={event => setShowSource(event.currentTarget.open)}><summary>원본 로그 검색·조회 · {n(data.record_count)}건</summary>{showSource && <Records base={base} revision={data.revision} selected={new Set()} onSelect={() => {}} onError={fail} />}</details>
-      <details className="ws-cluster-history" onToggle={event => setShowHistory(event.currentTarget.open)}><summary>분류 변경 이력</summary>{showHistory && history && <>{history.items.map(event => <article key={event.id}><strong>{actions[event.action]} · 개정 {event.revision} · {n(event.group_count)}개 그룹</strong><span>{event.actor.name} · {time(event.at)}</span><p>{event.reason}</p><Button variant="outline" size="sm" onClick={() => { setHistoryEvent(event.id); setGroupId(''); setGroupOffset(0); setStep(1) }}>당시 그룹 구성 조회</Button></article>)}<Pager {...history} label="분류 이력" onChange={setHistoryOffset} /></>}</details>
-      {!!data.removed_count && <details onToggle={event => setShowRemoved(event.currentTarget.open)}><summary>이전 구성에서 제거된 그룹의 판정 이력 · {data.removed_count}개</summary>{showRemoved && removed && <>{removed.items.map(group => <button className="ws-removed-group" key={group.id} onClick={() => setRemovedId(group.id)}>{group.label} · 이전 {labels[group.conclusion]}</button>)}<Pager {...removed} label="제거된 그룹" onChange={setRemovedOffset} />{removedId && <WorkspaceReview key={removedId} compact report={data.report} version={data.version} session={session} group={{ id: removedId, cluster_revision: data.revision }} onExpired={onExpired} onSaved={() => load().catch(fail)} />}</>}</details>}
-    </div></details>
+    <WorkbenchSupportDrawer
+      base={base}
+      inputId={inputId}
+      data={data}
+      session={session}
+      production={production}
+      step={step}
+      historyEvent={historyEvent}
+      writable={writable}
+      confirmed={confirmed}
+      busy={busy}
+      aiRunning={aiRunning}
+      recoverableUnknown={recoverableUnknown}
+      dirtyName={dirtyName}
+      dirtyRationale={dirtyRationale}
+      connectionId={connectionId}
+      choice={choice}
+      modelId={modelId}
+      reason={reason}
+      reusable={reusable}
+      compatible={compatible}
+      criteria={criteria}
+      fields={fields}
+      refresh={refresh}
+      onConnectionChange={chooseConnection}
+      onModelChange={setSelectedModel}
+      onReasonChange={setReason}
+      onReusableChange={checked => { setReusable(checked); if (!checked) setCompatible(false) }}
+      onCompatibleChange={setCompatible}
+      onCriteriaChange={setCriteria}
+      onFieldsChange={setFields}
+      onWithdraw={() => mutate('/clustering?compact=true', { action: 'WITHDRAW', reason }, '분류 확정을 해제했습니다. 이전 판정은 이력으로 보존됩니다.')}
+      onProposeAI={() => proposeAI()}
+      onProposeEngine={() => propose()}
+      onSelectHistoryEvent={eventId => { setHistoryEvent(eventId); setGroupId(''); setGroupOffset(0); setStep(1) }}
+      onReload={() => load().catch(fail)}
+      onExpired={onExpired}
+      onError={fail}
+    />
     <p id={drag.helpId} className="sr-only">손잡이에서 Space 또는 Enter로 로그를 집고, 방향키로 그룹을 선택한 다음 Enter로 이동합니다. Escape로 취소합니다.</p><p role="status" aria-live="polite" className="sr-only">{drag.announcement}</p>
     {drag.drag && <div className={`ws-log-drag-preview${drag.drag.keyboard ? ' ws-log-keyboard-preview' : ''}`} style={drag.drag.keyboard ? undefined : { left: Math.max(8, Math.min(drag.drag.x+14, window.innerWidth-238)), top: Math.max(8, Math.min(drag.drag.y+14, window.innerHeight-80)) }} aria-hidden="true"><GripVertical size={17} /><div><strong>{n(drag.drag.ids.length)}건 이동</strong><span>{drag.drag.keyboard ? '↑ ↓ 그룹 선택 · Enter 이동 · Esc 취소' : drag.drag.target === NEW_LOG_GROUP ? '놓아서 새 그룹 만들기' : drag.drag.target && drag.drag.target !== drag.drag.sourceGroup ? '놓아서 이 그룹으로 이동' : '왼쪽 그룹에 놓으세요'}</span></div></div>}
     <WorkbenchGroupDialog

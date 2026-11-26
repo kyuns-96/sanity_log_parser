@@ -5,11 +5,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from common.sanity_clustering import check
+from common.sanity_ai_retry import MAX_RETRIES
+from common.sanity_common import ensure as check
 from oa.ai_tokens_api import TokenCommand, RemoveTokenCommand
 from oa.sanity_access import require_admin_access
 from oa.sanity_ai_connections import ConnectionStore
-from oa.sanity_ai_retry import MAX_RETRIES
 
 
 class ConnectionCommand(BaseModel):

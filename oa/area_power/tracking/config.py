@@ -22,8 +22,8 @@ from common.area_power.tracking import (
     resolve_versioned_spec,
     round_dedupe_key,
 )
-from oa.sanity_ai_task_defaults import DEFAULT_AREA_RETRY_LIMIT, TaskDefaults
-from ..ai_context import capture_context
+from oa.sanity_ai_task_defaults import DEFAULT_AREA_RETRY_LIMIT
+from ..ai_context import pin_area_triage_task
 from ..schemas import reject
 from .overview import host_db, latest_one, require_admin
 
@@ -45,9 +45,7 @@ def save_project_config(service, project_id: UUID, body: ProjectTrackingConfigIn
         ai_context = existing["payload"].get("ai_context") if existing else {}
         retry_limit = existing["payload"].get("retry_limit", DEFAULT_AREA_RETRY_LIMIT) if existing else DEFAULT_AREA_RETRY_LIMIT
         if body.enabled and host is not None:
-            settings = TaskDefaults(host).current()
-            retry_limit = settings["area_retry_limit"]
-            ai_context = capture_context(service.access, tasks=("AREA_TRIAGE",), defaults=settings["defaults"], vwp_only=True)
+            ai_context, retry_limit = pin_area_triage_task(service.access, host, vwp_only=True)
             if ai_context["AREA_TRIAGE"].get("error"):
                 reject("Central VWP project comparison AI is unavailable for activation.", ai_context["AREA_TRIAGE"]["error"], 409)
 
@@ -192,7 +190,7 @@ def save_round(service, project_id: UUID, body: RoundInput, actor: str) -> dict[
 
         rkey = round_dedupe_key(project_id, body.net_ver)
         service.lock(conn, ["tracking_round", str(project_id), body.net_ver])
-        existing = existing_dedupe(service.db.raw if service.access is not None else service.db, conn, "tracking_round", rkey, lock=True)
+        existing = existing_dedupe(service.db.raw, conn, "tracking_round", rkey, lock=True)
         applied = {
             "deadline_days": days,
             "deadline_time": dtime,
@@ -299,12 +297,11 @@ def propose_expectations(service, project_id: UUID, block_id: UUID, body: Expect
         service.authorize(conn, block, write=True)
         key = digest(["expected_change_proposal", actor.user_id, str(body.request_id)])
         advisory_lock(conn, key)
-        old = existing_dedupe(service.db.raw if service.access is not None else service.db, conn, "expected_change_proposal", key)
+        old = existing_dedupe(service.db.raw, conn, "expected_change_proposal", key)
         if old:
             service.authorize(conn, old, write=True)
             return {"id": old["id"], "state": old["state"]}
-        settings = TaskDefaults(host.db).current()
-        pin = capture_context(service.access, tasks=("AREA_TRIAGE",), defaults=settings["defaults"], vwp_only=True)
+        pin, retry_limit = pin_area_triage_task(service.access, host.db, vwp_only=True)
         if pin["AREA_TRIAGE"].get("error"):
             reject("Project comparison model is unavailable.", pin["AREA_TRIAGE"]["error"], 409)
         payload = {
@@ -312,7 +309,7 @@ def propose_expectations(service, project_id: UUID, block_id: UUID, body: Expect
             "source_text": body.source_text,
             "source_note_id": body.source_note_id,
             "ai_context": pin,
-            "retry_limit": settings["area_retry_limit"],
+            "retry_limit": retry_limit,
         }
         run = service.db.insert_record(
             conn, "expected_change_proposal", payload, actor.user_id, state="queued",

@@ -4,30 +4,30 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { appUrl } from '@/lib/appUrl'
+import { CREDENTIAL_ERROR_MESSAGES, formatCredentialErrorMessage } from '@/lib/apiErrors'
+import { fetchJson } from '@/lib/fetchJson'
 import './ai.css'
 
 type Status = { registered: boolean; revision: number; connection_changed?: boolean; expired?: boolean; expires_soon?: boolean; expires_at?: string | null }
 type Connection = { id: string; label: string; enabled: boolean; auth_mode: string; execution_site?: string; model: string; models: string[]; issuance_url: string | null; credential: Status; credential_error: string | null }
-const errors: Record<string,string> = {
-  AI_USER_TOKEN_REQUIRED: '개인 인증값이 필요합니다. 발급받은 토큰 또는 API 키를 등록해 주세요.',
-  AI_USER_TOKEN_EXPIRED: '만료된 인증값입니다. 새로 발급받아 입력해 주세요.',
-  AI_CREDENTIAL_SCOPE_CHANGED: '연결 주소나 인증 방식이 바뀌었습니다. 현재 연결에 맞는 인증값을 다시 등록해 주세요.',
-  AI_CONNECTION_UNAVAILABLE: '사용 중지되었거나 더 이상 사용할 수 없는 연결입니다.',
-  AI_TOKEN_STORE_NOT_CONFIGURED: '인증값 암호화 설정을 운영 담당자에게 확인해 주세요.',
-  AI_TOKEN_UNAVAILABLE: '저장된 인증값을 사용할 수 없습니다. 운영 담당자에게 문의해 주세요.',
-  AI_VWP_PROFILE_UNAVAILABLE: 'VWP AI 실행 프로필을 사용할 수 없습니다. 운영 담당자에게 확인해 주세요.',
-  AI_CONFIG_CHANGED: 'AI 연결 설정이 변경되었습니다. 운영 담당자에게 연결 상태를 확인해 주세요.',
-  INVALID_AI_TOKEN: '공백이나 Bearer 접두어 없이 토큰·API 키만 입력해 주세요.',
-  REVISION_CONFLICT: '다른 창에서 설정이 바뀌었습니다. 창을 다시 열어 현재 상태를 확인해 주세요.',
-  FORBIDDEN: '로그인한 본인의 인증값만 변경할 수 있습니다.',
-  UNAUTHORIZED: '로그인 세션을 확인해 주세요.',
+
+class CredentialRequestError extends Error {
+  known: boolean
+  constructor(code: string) {
+    super(formatCredentialErrorMessage(code, 'AI 연결 설정을 완료하지 못했습니다. 창을 다시 열어 현재 상태를 확인해 주세요.'))
+    this.known = Object.hasOwn(CREDENTIAL_ERROR_MESSAGES, code)
+  }
 }
+
 async function request<T>(path: string, body?: Record<string,unknown>, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(appUrl('/api/ai/connections' + path), { method: body ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal,
-    ...(body ? { headers: { 'Content-Type': 'application/json', 'X-Sanity-Request': '1' }, body: JSON.stringify(body) } : {}) })
-  const data = await response.json()
-  if (!response.ok) throw new Error(errors[data.code] || 'AI 연결 설정을 완료하지 못했습니다. 창을 다시 열어 현재 상태를 확인해 주세요.')
-  return data as T
+  return fetchJson<T, CredentialRequestError>(appUrl('/api/ai/connections' + path), {
+    body,
+    signal,
+    redirect: 'error',
+    headers: body ? { 'X-Sanity-Request': '1' } : undefined,
+    createError: code => new CredentialRequestError(code),
+    networkErrorCode: 'NETWORK_ERROR',
+  })
 }
 function issuance(value: string | null) {
   if (!value || value.length > 2048 || /[\s\u0000-\u001f\u007f\\]/u.test(value)) return null
@@ -57,7 +57,7 @@ export default function ConnectionCredentials({ onBusyChange }: { onBusyChange: 
         credential_error: token === null && value.credential_error && !['AI_USER_TOKEN_REQUIRED', 'AI_USER_TOKEN_EXPIRED', 'AI_CREDENTIAL_SCOPE_CHANGED'].includes(value.credential_error) ? value.credential_error : null } : value))
       setNotice(`${connection.label}: ${token === null ? '개인 인증값 연결을 해제했습니다.' : '개인 인증값을 저장했습니다.'}`)
       window.dispatchEvent(new Event('sanity-ai-token-changed'))
-    } catch (failure) { setError(failure instanceof Error && Object.values(errors).includes(failure.message)
+    } catch (failure) { setError(failure instanceof CredentialRequestError && failure.known
       ? failure.message : '인증값을 저장하지 못했습니다. 창을 다시 열어 현재 상태를 확인해 주세요.') }
     finally { setBusy(false); onBusyChange(false) }
   }
@@ -90,7 +90,7 @@ function Credentials({ connection, busy, onSave }: { connection: Connection; bus
     {!blocked && status.expired && <p role="alert" className="ws-error">인증값이 만료됐습니다. 새로 발급받아 교체해 주세요.</p>}
     {!blocked && status.expires_soon && <p role="status">30일 안에 만료됩니다. 새 인증값을 발급받아 교체해 주세요.</p>}
     {status.expires_at && <small>토큰에 기재된 만료일: {new Date(status.expires_at).toLocaleDateString('ko-KR')}</small>}
-    {(blocked || !status.connection_changed && !status.expired) && connection.credential_error && <p className="ws-notice">{connection.execution_site === 'vwp' && connection.credential_error === 'FORBIDDEN' ? '현재 사용자에게 VWP 모델 사용 권한이 없습니다. 운영 담당자에게 문의해 주세요.' : errors[connection.credential_error] || 'AI 연결을 현재 사용할 수 없습니다. 운영 담당자에게 연결 상태를 확인해 주세요.'}</p>}
+    {(blocked || !status.connection_changed && !status.expired) && connection.credential_error && <p className="ws-notice">{connection.execution_site === 'vwp' && connection.credential_error === 'FORBIDDEN' ? '현재 사용자에게 VWP 모델 사용 권한이 없습니다. 운영 담당자에게 문의해 주세요.' : formatCredentialErrorMessage(connection.credential_error, 'AI 연결을 현재 사용할 수 없습니다. 운영 담당자에게 연결 상태를 확인해 주세요.')}</p>}
     {url && connection.enabled && !blocked && <a href={url} className="personal-ai-token-issue-link" target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{connection.label} 인증값 발급받기<ExternalLink size={14} /><span className="sr-only"> (새 탭)</span></a>}
     <form onSubmit={event => { event.preventDefault(); const value = token.trim(); if (!value) return; setToken(''); onSave(value) }}>
       <label htmlFor={inputId}>{name}</label><Input id={inputId} aria-label={`${connection.label} ${name}`} type="password" autoComplete="off" spellCheck={false} autoCapitalize="none" maxLength={8192} disabled={busy || !connection.enabled || blocked} value={token} onChange={event => setToken(event.target.value)} />

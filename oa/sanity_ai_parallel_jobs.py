@@ -16,19 +16,14 @@ from common.sanity_ai_retry import MAX_RETRIES, receipt as failure_receipt, retr
 from common.sanity_common import ReviewError, digest
 from common.sanity_submission import check
 from oa.sanity_ai_ledger import (
-    attempts, bind_preserved, build_batch_model, finish_round, record_plan,
+    attempts, finish_round, prepare_batch_run,
 )
 from oa.sanity_ai_parallel_ledger import ParallelLedger
 from oa.sanity_ai_parallel_recovery import can_resume, recovery_info
 from oa.sanity_ai_progress import display_metrics, group_count_after
 from oa.sanity_ai_rolling_metrics import eta as rolling_eta
 from oa.sanity_ai_scheduler import release, reserve
-from oa.sanity_ai_store import error_code, parse_timestamp, public_event, worker_load
-
-STALE = frozenset((
-    'AI_INPUT_STALE', 'AI_CASES_STALE', 'AI_CRITERIA_STALE', 'REVISION_CONFLICT',
-    'AI_CONFIG_CHANGED', 'AI_CONNECTION_UNAVAILABLE', 'AI_CREDENTIAL_CHANGED', 'UNAUTHORIZED', 'FORBIDDEN',
-))
+from oa.sanity_ai_store import STALE_AI_ERRORS as STALE, error_code, parse_timestamp, public_event, worker_load
 
 
 def _wall_metrics(event, state, wave):
@@ -124,35 +119,69 @@ def public(service, event):
 
 
 def prepare_parallel(service, event, now):
-    _, context, cases, criteria = service._inputs(event)
-    advisor = service._job_advisor(event)
-    revision = None
-    if service._personal_tokens(event):
-        token, revision = service._user_token(event['data']['command']['user_id'], event['data']['command'].get('connection_id'))
-        advisor = advisor.with_user_token(token)
-    model = build_batch_model(advisor, event, context, cases, criteria)
-    ledger = ParallelLedger(service, event)
-    if event['status'] == 'PENDING':
-        if getattr(model, 'segments', []): model.leaf_plan()
-        text = model.text_plan() if hasattr(model, 'text_plan') else []
-        descriptors = text or record_plan(model)
-        plan = ledger.plans(0, descriptors, len(text) or len(model.records))
-        at = now or _ai_store.db_now(service.db)
-        batch = {**event['data']['batch'], 'plan': plan, 'total_records': len(model.records),
-                 'leaf_count': len(descriptors), 'credential_revision': revision}
-        event = service._append(event, 'RUNNING', {**event['data'], 'batch': batch, 'call_token': str(uuid4()),
-            'model_called': False, 'model_attempted': False, 'started_at': at.isoformat(),
-            'deadline': (at + timedelta(seconds=model.settings.deadline_seconds)).isoformat()}, now=at)
-        ledger = ParallelLedger(service, event)
-        state = {'round': 0, 'index': 0, 'next_index': 0, 'wave': [], 'records': 0, 'calls': 0, 'nodes': 0,
-            'stable': 0, 'actual_model': None, 'round_total': len(descriptors),
-            'round_seconds': 0, 'round_samples': 0, 'seconds': 0, 'record_seconds': 0,
-            'phase': 'TEXT' if text else 'REVIEW' if getattr(model, 'review', False) else 'CLASSIFY'}
-        state['current_groups'] = 1 if getattr(model, 'review', False) else None if text else 0
-        if batch['version'] == 2: state['stage_round'] = 0
-        ledger.step(None, None, 'READY', state)
-    bind_preserved(model, ledger, ledger.last()[0]['state'])
-    return event, ledger, model, revision
+    return prepare_batch_run(service, event, now, ledger_cls=ParallelLedger, parallel=True)
+
+
+def reserve_wave_slot(service, job_id, event, ledger, model, state, old, revision, *, current, now=None, rolling=False):
+    """Prepare and reserve a single parallel child slot (legacy wave or rolling window)."""
+    descriptor = ledger.descriptor({**state, 'index': old['index']})
+    nodes = ledger.nodes(descriptor['node_refs']) if 'node_refs' in descriptor else None
+    if nodes is not None and len(nodes) == 1:
+        result_ref = ledger.put(f"result.{state['round']:03d}.{old['index']:06d}", {'nodes': nodes, 'metadata': None})
+        new = {**old, 'status': 'DONE', 'result': result_ref}
+        state = {**state, 'nodes': state['nodes'] + 1,
+                 'wave': [new if s['index'] == old['index'] else s for s in state['wave']]}
+        return state, None, True
+    child = copy(model)
+    child.advisor = copy(model.advisor)
+    # Per-call progress comes from reservation and durable outcome;
+    # the HTTP thread never opens an observation DB connection.
+    child.advisor.observer = None
+    prepared = child.prepare(descriptor, nodes)
+    raw = prepared[1][0]
+    token = str(uuid4())
+    attempt = old['attempt'] + 1
+    at = (now or _ai_store.db_now(service.db)) if rolling else current
+    if rolling and parse_timestamp(event['data']['deadline']) <= at:
+        raise ReviewError('AI_BATCH_DEADLINE', 'Overall batch deadline exceeded')
+    timing = state.get('wall_timing')
+    if (not isinstance(timing, dict) or timing.get('round') != state['round'] or
+            timing.get('resume_count') != event['data'].get('resume_count', 0)):
+        started_at = at.isoformat() if rolling else _ai_store.db_now(service.db).isoformat()
+        wall_timing = {
+            'round': state['round'],
+            'resume_count': event['data'].get('resume_count', 0),
+            'started_at': started_at,
+            'measured_at': None,
+            'base_samples': state['round_samples'],
+            'base_records': state['records'],
+            'base_units': state['index'] + sum(s['status'] == 'DONE' for s in state['wave']),
+        }
+        if rolling:
+            wall_timing['base_seconds'] = state['round_seconds']
+        state = {**state, 'wall_timing': wall_timing}
+    call = {
+        'kind': 'RESERVATION', 'round': state['round'], 'index': old['index'], 'attempt': attempt,
+        'call_token': token, 'descriptor_sha256': digest(descriptor),
+        'input_sha256': hashlib.sha256(raw).hexdigest(), 'input_bytes': len(raw),
+        'prompt_version': prepared[0][2],
+        'deadline': (at + timedelta(seconds=child.advisor.settings.timeout + 60)).isoformat(),
+    }
+    slot_keys = ('attempt', 'call_token', 'input_sha256', 'input_bytes', 'prompt_version', 'deadline')
+    if rolling:
+        work = descriptor['stop'] - descriptor['start'] if descriptor['kind'] in ('LEAF', 'REVIEW_LEAF') else 1
+        call.update(reserved_at=at.isoformat(), work=work)
+        slot_keys = (*slot_keys, 'reserved_at', 'work')
+    if not reserve(service, job_id, token, call['deadline']):
+        return state, None, False
+    reservation = ledger.put(f"call.{state['round']:03d}.{old['index']:06d}.{attempt:03d}", call)
+    clean = {k: v for k, v in old.items()
+             if k not in ('receipt', 'error', 'result', 'model_called', 'unknown_reason', 'validation_failure')}
+    new = {**clean, **{k: call[k] for k in slot_keys},
+           'status': 'RESERVED', 'reservation': reservation, 'retry_after': None}
+    child.advisor = service._bind_advisor(child.advisor, event, token)
+    state = {**state, 'wave': [new if s['index'] == old['index'] else s for s in state['wave']]}
+    return state, (copy_context(), child, descriptor, nodes, prepared, new, revision), True
 
 
 def _outcome(ledger, slot, status, **extra):
@@ -329,39 +358,13 @@ def run_step(open_service, job_id, *, now=None):
                 for old in wave:
                     if old['status'] != 'RETRY' or old.get('retry_after') and parse_timestamp(old['retry_after']) > current: continue
                     if attempts(state) + sum(s['status'] == 'RESERVED' for s in state['wave']) >= model.settings.max_calls: break
-                    descriptor = ledger.descriptor({**state, 'index': old['index']})
-                    nodes = ledger.nodes(descriptor['node_refs']) if 'node_refs' in descriptor else None
-                    if nodes is not None and len(nodes) == 1:
-                        result_ref = ledger.put(f"result.{state['round']:03d}.{old['index']:06d}", {'nodes': nodes, 'metadata': None})
-                        new = {**old, 'status': 'DONE', 'result': result_ref}
-                        state = {**state, 'nodes': state['nodes'] + 1}
-                    else:
-                        child = copy(model); child.advisor = copy(model.advisor)
-                        # Per-call progress comes from reservation and durable outcome;
-                        # the HTTP thread never opens an observation DB connection.
-                        child.advisor.observer = None
-                        prepared = child.prepare(descriptor, nodes)
-                        raw = prepared[1][0]; token = str(uuid4()); attempt = old['attempt'] + 1
-                        timing = state.get('wall_timing')
-                        if (not isinstance(timing, dict) or timing.get('round') != state['round'] or
-                                timing.get('resume_count') != event['data'].get('resume_count', 0)):
-                            state = {**state, 'wall_timing': {'round': state['round'],
-                                'resume_count': event['data'].get('resume_count', 0), 'started_at': _ai_store.db_now(service.db).isoformat(),
-                                'measured_at': None, 'base_samples': state['round_samples'],
-                                'base_records': state['records'],
-                                'base_units': state['index'] + sum(s['status'] == 'DONE' for s in state['wave'])}}
-                        call = {'kind': 'RESERVATION', 'round': state['round'], 'index': old['index'], 'attempt': attempt,
-                            'call_token': token, 'descriptor_sha256': digest(descriptor), 'input_sha256': hashlib.sha256(raw).hexdigest(),
-                            'input_bytes': len(raw), 'prompt_version': prepared[0][2],
-                            'deadline': (current + timedelta(seconds=child.advisor.settings.timeout + 60)).isoformat()}
-                        if not reserve(service, job_id, token, call['deadline']): break
-                        reservation = ledger.put(f"call.{state['round']:03d}.{old['index']:06d}.{attempt:03d}", call)
-                        clean = {k: v for k, v in old.items() if k not in ('receipt', 'error', 'result', 'model_called', 'unknown_reason', 'validation_failure')}
-                        new = {**clean, **{k: call[k] for k in ('attempt', 'call_token', 'input_sha256', 'input_bytes', 'prompt_version', 'deadline')},
-                               'status': 'RESERVED', 'reservation': reservation, 'retry_after': None}
-                        child.advisor = service._bind_advisor(child.advisor, event, token)
-                        dispatch.append((copy_context(), child, descriptor, nodes, prepared, new, revision))
-                    state = {**state, 'wave': [new if s['index'] == old['index'] else s for s in state['wave']]}
+                    state, item, reserved_ok = reserve_wave_slot(
+                        service, job_id, event, ledger, model, state, old, revision, current=current, rolling=False,
+                    )
+                    if not reserved_ok:
+                        break
+                    if item is not None:
+                        dispatch.append(item)
                 ledger.step(step, ref, 'READY', state)
             if not dispatch:
                 if any(s['status'] == 'RETRY' for s in state['wave']) and attempts(state) >= model.settings.max_calls:

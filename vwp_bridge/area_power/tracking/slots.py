@@ -16,7 +16,7 @@ from common.area_power.tracking import (
     upload_corner_label,
 )
 from common.area_power.triage import ENGINE as TRIAGE_ENGINE, Thresholds
-from ..ai_models import ACTOR
+from ..ai_runtime import ACTOR
 from .context import (
     applicable_notes_and_watch,
     check_mapping_for_uploads,
@@ -213,6 +213,13 @@ def advance_slot(db, settings, slot_id: UUID, *, host_db=None) -> dict | None:
         advisory_lock(conn, run_key)
         run = existing_dedupe(db, conn, "ai_run", run_key)
         if run is None:
+            created_iso = iso_now()
+            triage_pin = (ai_context.get("AREA_TRIAGE") or {}) if isinstance(ai_context, dict) else {}
+            ai_model = {
+                "connection_label": None,
+                "model": triage_pin.get("model"),
+                "site": "vwp" if triage_pin.get("model") else None,
+            }
             run_payload = {
                 "engine": TRIAGE_ENGINE,
                 "retry_limit": retry_limit,
@@ -227,11 +234,20 @@ def advance_slot(db, settings, slot_id: UUID, *, host_db=None) -> dict | None:
                 "labels": labels,
                 "requested_by": owner_actor,
                 "ai_context": ai_context,
+                "ai_model": ai_model,
                 "tracking_slot_id": str(slot_id),
                 "tracking_round_id": str(round_row["id"]),
                 "tracking_generation": slot["payload"]["generation"],
                 "comparison_condition": "same_condition",
                 "coverage": {},
+                "progress": {
+                    "phase": "queued",
+                    "sub_phase": None,
+                    "phase_started_at": created_iso,
+                    "updated_at": created_iso,
+                    "total_batches": None,
+                    "max_attempts": retry_limit + 1,
+                },
             }
             scope = {k: comparison[k] for k in ("project_id", "version_id", "block_id", "snapshot_id") if comparison.get(k) is not None}
             run = db.insert_record(

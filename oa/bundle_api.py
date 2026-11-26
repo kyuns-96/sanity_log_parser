@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 from argparse import Namespace
-import importlib.util
-from pathlib import Path
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -13,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from common.sanity_common import ReviewError, coverage
 from common.sanity_db import Database, Queue
+from oa.main import receive as receive_bundle
 from oa.sanity_cluster_store import ClusterStore, receive_cluster
 from oa.sanity_exchange import receive_evidence, request_evidence, validate_response
 from oa.sanity_oa_store import OAStore
@@ -21,10 +20,6 @@ ID = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")]
 BundleID = Annotated[str, Field(pattern=r"^b-[0-9a-f]{64}$")]
 Offset = Annotated[int, Query(ge=0, le=1_000_000)]
 Limit = Annotated[int, Query(ge=1, le=100)]
-
-_spec = importlib.util.spec_from_file_location("dashboard_oa_commands", Path(__file__).with_name("main.py"))
-_commands = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_commands)
 
 
 class Command(BaseModel):
@@ -110,7 +105,7 @@ def create_bundle_router(authorized_actor, *, scoped_actor_type):
     def receive(body: Command, actor=Depends(authorized_actor)):
         if isinstance(actor, scoped_actor_type):
             raise ReviewError("FORBIDDEN", "Global queue ingestion is a trusted worker responsibility")
-        result = _commands.receive(Namespace(message_id=None, lease_seconds=300))
+        result = receive_bundle(Namespace(message_id=None, lease_seconds=300))
         if "coverage" in result:
             result["coverage"] = summary_only(result["coverage"])
         return result

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LoaderCircle, RefreshCw } from 'lucide-react'
 import type { z } from 'zod'
-import { allRecords, allUploads, request, revision, text, type Auth, type TrackingRecord, type Upload } from './api'
+import { allRecords, allUploads, object, request, revision, text, type Auth, type TrackingRecord, type Upload } from './api'
 import { Button, Empty, Field, useAction } from './components/workspace'
 import { useAtlas, type AtlasCatalog, type AtlasProject } from '@/features/atlas/atlasContext'
 import { useDashboardAuth } from '@/features/auth/useDashboardAuth'
-import { trackingOverviewSchema, type CornerSpec, type TrackingOverviewData } from './trackingApi'
-import { baselineSchema } from './tracking/trackingUtils'
+import { trackingOverviewSchema, type TrackingOverviewData } from './trackingApi'
+import { baselineSchema, parseCornerSpecList } from './tracking/trackingUtils'
 import { TrackingRoundsCard } from './tracking/TrackingRoundsCard'
 import { ProjectTrackingConfigCard } from './tracking/ProjectTrackingConfigCard'
 import { BlockTrackingConfigCard } from './tracking/BlockTrackingConfigCard'
@@ -319,9 +319,14 @@ export function TrackingSettings({
 }: TrackingSettingsProps) {
   const action = useAction()
   const areaBlocks = useMemo(() => project.blocks.filter(b => Boolean(b.area_id)), [project.blocks])
-  const [defaultCorners, setDefaultCorners] = useState<CornerSpec[]>([])
-  const [deadlineDays, setDeadlineDays] = useState('7')
-  const [deadlineTime, setDeadlineTime] = useState('18:00')
+  const committedDefaults = useMemo(() => {
+    const projCfg = object(data?.project_config)
+    return {
+      corners: parseCornerSpecList(projCfg.default_required_corners),
+      deadlineDays: text(projCfg.deadline_days ?? 7) || '7',
+      deadlineTime: text(projCfg.deadline_time) || '18:00',
+    }
+  }, [data?.project_config])
 
   return (
     <div className="tracking-settings">
@@ -332,8 +337,8 @@ export function TrackingSettings({
         areaProjectId={areaProjectId}
         areaBlocks={areaBlocks}
         rounds={data?.rounds || []}
-        deadlineDays={deadlineDays}
-        deadlineTime={deadlineTime}
+        deadlineDays={committedDefaults.deadlineDays}
+        deadlineTime={committedDefaults.deadlineTime}
         busy={action.busy}
         runAction={action.run}
         onReload={onReload}
@@ -343,12 +348,6 @@ export function TrackingSettings({
         project={project}
         areaProjectId={areaProjectId}
         data={data}
-        defaultCorners={defaultCorners}
-        setDefaultCorners={setDefaultCorners}
-        deadlineDays={deadlineDays}
-        setDeadlineDays={setDeadlineDays}
-        deadlineTime={deadlineTime}
-        setDeadlineTime={setDeadlineTime}
         busy={action.busy}
         runAction={action.run}
         onReload={onReload}
@@ -362,7 +361,7 @@ export function TrackingSettings({
         areaBlocks={areaBlocks}
         uploads={uploads}
         data={data}
-        defaultCorners={defaultCorners}
+        defaultCorners={committedDefaults.corners}
         initialBlockId={initialBlockId}
         busy={action.busy}
         runAction={action.run}

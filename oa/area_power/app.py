@@ -91,6 +91,12 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
             raise AuthError('UNAUTHORIZED')
         return current
 
+    @contextmanager
+    def authorized_service(request, actor, raw, *, reauth=False):
+        target_actor = reauthenticated(request, actor) if reauth else actor
+        with authorization_scope(request, target_actor) as identity:
+            yield Service(raw, AreaAccess(identity)), identity
+
     def access(request: Request, identity=Depends(authorized_dependency, scope="function")):
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             from oa.sanity_access import require_mutation_request
@@ -154,8 +160,7 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
         from common.area_power.analysis import validate_frozen_upload
 
         raw = Database(Settings.from_env())
-        with authorization_scope(request, actor) as identity:
-            context = Service(raw, AreaAccess(identity))
+        with authorized_service(request, actor, raw) as (context, _):
             with context.db.connect() as conn:
                 selected = context.ready_upload(conn, identifier)
 
@@ -166,9 +171,7 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
         validate_frozen_upload(selected, upload)
         response = json(Service(raw).upload_hierarchy(upload))
 
-        current_actor = reauthenticated(request, actor)
-        with authorization_scope(request, current_actor) as identity:
-            context = Service(raw, AreaAccess(identity))
+        with authorized_service(request, actor, raw, reauth=True) as (context, _):
             with context.db.connect() as conn:
                 current = context.ready_upload(conn, identifier)
                 validate_frozen_upload(upload, current)
@@ -240,8 +243,8 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
     def compare(body: ComparisonRequest, request: Request, actor=Depends(authenticated_dependency)):
         from common.area_power.analysis import comparison_coverage
         raw = Database(Settings.from_env())
-        with authorization_scope(request, actor) as identity:
-            result, designation = Service(raw, AreaAccess(identity)).prepare_comparison(body, identity.user_id)
+        with authorized_service(request, actor, raw) as (context, identity):
+            result, designation = context.prepare_comparison(body, identity.user_id)
         selected = result['comparison']
         coverage = None
         if selected['state'] != 'completed':
@@ -249,12 +252,10 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
                 coverage = comparison_coverage(raw, raw.settings, selected)
             except Exception as exc:
                 error = {'code': exc.code if isinstance(exc, DomainError) else 'comparison_preparation_failed'}
-                with authorization_scope(request, reauthenticated(request, actor)) as identity:
-                    Service(raw, AreaAccess(identity)).finish_comparison(selected, None, identity.user_id,
-                        error=error, baseline_designation=designation)
+                with authorized_service(request, actor, raw, reauth=True) as (context, identity):
+                    context.finish_comparison(selected, None, identity.user_id, error=error, baseline_designation=designation)
                 raise
-        with authorization_scope(request, reauthenticated(request, actor)) as identity:
-            context = Service(raw, AreaAccess(identity))
+        with authorized_service(request, actor, raw, reauth=True) as (context, identity):
             result['comparison'] = context.finish_comparison(selected, coverage, identity.user_id, baseline_designation=designation)
             return json(result)
 
@@ -268,16 +269,14 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
         observed = [name for name in metrics.split(",") if name] or None
         from common.area_power.models import COMPARISON_FORMAT
         raw = Database(Settings.from_env())
-        with authorization_scope(request, actor) as identity:
-            context = Service(raw, AreaAccess(identity))
+        with authorized_service(request, actor, raw) as (context, _):
             with context.db.connect() as conn:
                 selected = context.db.record(conn, identifier, kind='comparison')
             if view == 'summary' or selected['payload'].get('result_format') != COMPARISON_FORMAT:
                 return json(context.comparison_detail(identifier, view=view, offset=offset, limit=limit, search=search, parent=parent, metrics=observed, min_area=min_area))
         value = Service(raw).comparison_detail(identifier, view=view, offset=offset, limit=limit, search=search, parent=parent, metrics=observed, min_area=min_area)
         response = json(value)
-        with authorization_scope(request, reauthenticated(request, actor)) as identity:
-            context = Service(raw, AreaAccess(identity))
+        with authorized_service(request, actor, raw, reauth=True) as (context, _):
             with context.db.connect() as conn:
                 context.validate_comparison(conn, value['comparison'])
                 # Observations use the frozen uploads checked above. AI records
@@ -289,25 +288,24 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
         # Same shape as the comparison routes: no authorization transaction is
         # held while the stored originals are parsed and candidates selected.
         raw = Database(Settings.from_env())
-        with authorization_scope(request, actor) as identity:
-            prepared = triage.prepare(Service(raw, AreaAccess(identity)), identifier)
-        context, selection = triage.select(raw, prepared, body.thresholds)
-        return raw, prepared, context, selection
+        with authorized_service(request, actor, raw) as (context, _):
+            prepared = triage.prepare(context, identifier)
+        context_meta, selection = triage.select(raw, prepared, body.thresholds)
+        return raw, prepared, context_meta, selection
 
     @router.post("/comparisons/{identifier}/triage/preview")
     def triage_preview(identifier: UUID, body: TriageInput, request: Request, actor=Depends(authenticated_dependency)):
-        raw, prepared, context, selection = triage_selection(identifier, body, request, actor)
-        with authorization_scope(request, reauthenticated(request, actor)) as identity:
-            current = Service(raw, AreaAccess(identity))
+        raw, prepared, context_meta, selection = triage_selection(identifier, body, request, actor)
+        with authorized_service(request, actor, raw, reauth=True) as (current, _):
             with current.db.connect() as conn:
                 current.validate_comparison(conn, prepared['comparison'])
-            return json(triage.preview_result(prepared, context, selection, body.thresholds))
+            return json(triage.preview_result(prepared, context_meta, selection, body.thresholds))
 
     @router.post("/comparisons/{identifier}/triage")
     def triage_run(identifier: UUID, body: TriageInput, request: Request, actor=Depends(authenticated_dependency)):
-        raw, prepared, context, selection = triage_selection(identifier, body, request, actor)
-        with authorization_scope(request, reauthenticated(request, actor)) as identity:
-            return json(triage.request_run(Service(raw, AreaAccess(identity)), prepared, selection, body, identity.user_id), 201)
+        raw, prepared, context_meta, selection = triage_selection(identifier, body, request, actor)
+        with authorized_service(request, actor, raw, reauth=True) as (current, identity):
+            return json(triage.request_run(current, prepared, selection, body, identity.user_id), 201)
 
     @router.get("/comparisons/{identifier}/triage")
     def triage_runs(identifier: UUID, context=Depends(service)):

@@ -7,10 +7,7 @@ import re
 from pydantic import BaseModel, ConfigDict, Field
 
 from common.area_power.jsonutil import dumps
-from common.sanity_ai_retry import receipt, retry_delay_seconds
-from common.sanity_common import ReviewError
-from ..ai_models import ACTOR
-from ..ai_runtime import runtime_for
+from ..ai_runtime import ACTOR, RetryableValidationError, runtime_for
 
 D = Decimal
 
@@ -61,20 +58,16 @@ def run_expectation_proposal(db, run: dict) -> dict:
     instructions = EXPECTATION_PROMPT + "\nRequired JSON schema: " + dumps(ProposedExpectationReply.model_json_schema())
     retry_limit = int(payload.get("retry_limit", 0))
 
-    reply = None
-    for attempt in range(retry_limit + 1):
+    def _validate(raw):
         try:
-            raw = runtime.infer("AREA_TRIAGE", evidence, instructions, "expected-change-proposal-1")
-            reply = ProposedExpectationReply.model_validate(raw)
-            break
-        except ReviewError as exc:
-            if attempt >= retry_limit or receipt(exc) is None:
-                raise
-            runtime.wait_for_retry(retry_delay_seconds(attempt + 1, exc))
+            return ProposedExpectationReply.model_validate(raw)
         except ValueError as exc:
-            if attempt >= retry_limit:
-                raise ReviewError("INVALID_AI_RESPONSE", "Invalid expectation proposal") from exc
-            runtime.wait_for_retry(retry_delay_seconds(attempt + 1, None))
+            raise RetryableValidationError("INVALID_AI_RESPONSE", "Invalid expectation proposal") from exc
+
+    reply = runtime.infer_with_retry(
+        "AREA_TRIAGE", evidence, instructions, "expected-change-proposal-1",
+        retry_limit=retry_limit, parse=_validate,
+    )
 
     plain_source = re.sub(r"\s+", " ", source_text).strip()
     source_numbers = {abs(D(v)) for v in re.findall(r"(?<![\w.])[+-]?(?:\d+(?:\.\d*)?|\.\d+)", source_text)}

@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { cornerKey, formatCornerLabel, uploadName, type Upload } from '../api'
 import { Button, Field } from '../components/workspace'
-import type { AtlasProject, AtlasVersion } from '@/features/atlas/atlasContext'
+import type { AtlasProject } from '@/features/atlas/atlasContext'
+import {
+  formatEcoOptionLabel,
+  formatVersionLabel,
+  groupVersionsByRevision,
+  pickPreferredVersion,
+  revisionGroupKey,
+} from '@/lib/versionUtils'
 import { versionEcoNumbers } from '../tracking/trackingUtils'
 import { emptySelection, type Selection } from './hierarchyUtils'
 
@@ -17,13 +24,6 @@ interface RunSelectorProps {
   hint?: string
 }
 
-const revisionKey = (v: AtlasVersion) => `${v.revision}\0${v.layout}`
-
-function ecoLabel(v: AtlasVersion): string {
-  const ecos = versionEcoNumbers(v)
-  return ecos.length ? ecos.join(', ') : 'ECO 미기록'
-}
-
 export function RunSelector({ label, project, selection, onChange, uploads, busy, onPrepare, lockedBlock = false, hint }: RunSelectorProps) {
   const block = project.blocks.find(row => row.id === selection.block)
   const version = block?.versions.find(row => row.id === selection.version && row.net_ver === selection.net)
@@ -32,7 +32,7 @@ export function RunSelector({ label, project, selection, onChange, uploads, busy
 
   useEffect(() => setPrevious(''), [project.id, selection.block, selection.version])
   useEffect(() => {
-    if (version) setSelectedRevKey(revisionKey(version))
+    if (version) setSelectedRevKey(revisionGroupKey(version))
     else if (!selection.net) setSelectedRevKey('')
   }, [selection.block, selection.net, version?.id])
 
@@ -40,18 +40,9 @@ export function RunSelector({ label, project, selection, onChange, uploads, busy
     () => (block?.versions || []).filter(row => row.net_ver === selection.net),
     [block, selection.net],
   )
-  const revisionGroups = useMemo(() => {
-    const map = new Map<string, { key: string; label: string; versions: AtlasVersion[] }>()
-    for (const row of netVersions) {
-      const key = revisionKey(row)
-      const existing = map.get(key)
-      if (existing) existing.versions.push(row)
-      else map.set(key, { key, label: `${row.revision} · ${row.layout}`, versions: [row] })
-    }
-    return [...map.values()]
-  }, [netVersions])
+  const revisionGroups = useMemo(() => groupVersionsByRevision(netVersions), [netVersions])
 
-  const activeRevKey = version ? revisionKey(version) : (revisionGroups.some(g => g.key === selectedRevKey) ? selectedRevKey : '')
+  const activeRevKey = version ? revisionGroupKey(version) : (revisionGroups.some(g => g.key === selectedRevKey) ? selectedRevKey : '')
   const ecoOptions = useMemo(
     () => revisionGroups.find(g => g.key === activeRevKey)?.versions || [],
     [revisionGroups, activeRevKey],
@@ -70,14 +61,14 @@ export function RunSelector({ label, project, selection, onChange, uploads, busy
       setSelectedRevKey(nextKey)
       setPrevious('')
       const group = revisionGroups.find(g => g.key === nextKey)
-      const autoVer = group && group.versions.length === 1 ? group.versions[0].id : ''
+      const autoVer = pickPreferredVersion(group?.versions || [], block?.por?.version_id)?.id || ''
       onChange({ ...selection, version: autoVer, corner: '', upload: '' })
     }}><option value="">REVISION 선택</option>{revisionGroups.map(group => <option key={group.key} value={group.key}>{group.label}</option>)}</select></Field>
-    <Field label={`${label} ECO_NUM`}><select value={selection.version} disabled={!block || !selection.net || !activeRevKey} onChange={event => { onChange({ ...selection, version: event.target.value, corner: '', upload: '' }); setPrevious('') }}><option value="">ECO_NUM 선택</option>{ecoOptions.map(row => <option key={row.id} value={row.id}>{ecoLabel(row)}{row.id === block?.por?.version_id ? ' (PoR)' : ''}</option>)}</select></Field>
+    <Field label={`${label} ECO_NUM`}><select value={selection.version} disabled={!block || !selection.net || !activeRevKey} onChange={event => { onChange({ ...selection, version: event.target.value, corner: '', upload: '' }); setPrevious('') }}><option value="">ECO_NUM 선택</option>{ecoOptions.map(row => <option key={row.id} value={row.id}>{formatEcoOptionLabel(versionEcoNumbers(row), row.id === block?.por?.version_id)}</option>)}</select></Field>
     <Field label={`${label} corner`}><select value={selection.corner} disabled={!version?.area_id} onChange={event => onChange({ ...selection, corner: event.target.value, upload: '' })}><option value="">corner 선택</option>{[...corners].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
     <Field label={`${label} 실행 파일`} className="run-file"><select value={selection.upload} disabled={!selection.corner} onChange={event => onChange({ ...selection, upload: event.target.value })}><option value="">실행 파일 선택</option>{runs.map(row => <option key={row.id} value={row.id}>{uploadName(row)}</option>)}</select></Field>
   </div>
-    {block && (!block.area_id || version && !version.area_id) && <div className="scope-preparation"><small>선택한 정확한 범위의 수치 연결이 필요합니다. 다른 범위 파일로 대체하지 않습니다.</small>{needsLineage && <Field label={`${label} 명시적 이전 버전`}><select value={previous} onChange={event => setPrevious(event.target.value)}><option value="">계보를 선택하세요</option><option value="none">이 버전에서 계보 시작</option>{block.versions.filter(row => row.id !== version.id).map(row => <option key={row.id} value={row.id}>{[row.net_ver, row.revision, row.layout, row.eco_num].filter(Boolean).join(' · ')}</option>)}</select></Field>}<Button variant="outline" disabled={busy || !project.can_write || !!needsLineage && !previous} onClick={() => onPrepare(selection, needsLineage ? previous === 'none' ? null : previous : undefined)}>선택 범위 연결</Button></div>}
+    {block && (!block.area_id || version && !version.area_id) && <div className="scope-preparation"><small>선택한 정확한 범위의 수치 연결이 필요합니다. 다른 범위 파일로 대체하지 않습니다.</small>{needsLineage && <Field label={`${label} 명시적 이전 버전`}><select value={previous} onChange={event => setPrevious(event.target.value)}><option value="">계보를 선택하세요</option><option value="none">이 버전에서 계보 시작</option>{block.versions.filter(row => row.id !== version.id).map(row => <option key={row.id} value={row.id}>{formatVersionLabel(row)}</option>)}</select></Field>}<Button variant="outline" disabled={busy || !project.can_write || !!needsLineage && !previous} onClick={() => onPrepare(selection, needsLineage ? previous === 'none' ? null : previous : undefined)}>선택 범위 연결</Button></div>}
     {version?.area_id && !uploads.length && <small>선택한 버전에 준비된 CSV가 없습니다. 아래 업로드 이력의 메타데이터로 PC CLI 업로드를 준비하세요.</small>}
     {hint && <small>{hint}</small>}
   </fieldset>

@@ -3,13 +3,14 @@
 import { isLosslessNumber, parse } from 'lossless-json'
 import type { AtlasCatalog } from '@/features/atlas/atlasContext'
 import { workspaceDemoRequest } from '@/features/demo/workspaceDemo'
+import { formatVersionLabel } from '@/lib/versionUtils'
 import type { Payload, TrackingRecord } from './api'
 import {
   baselineSetting, cas, config, fail, filterRows, latest, list, notice, now, object, original,
   page, publicProject, publicUpload, readable, record, records, scoped, scopedRecord, scopedUpload,
   scopeFromRecord, seededComparisons, seedVersion, strings, text, touch, uploads, versions,
 } from './demo/demoStore'
-import { createComparison, rejudge, TRIAGE_ENGINE, triageRun, triageSelection, triageSummary } from './demo/demoComparison'
+import { createComparison, TRIAGE_ENGINE, triageRun, triageSelection, triageSummary } from './demo/demoComparison'
 import { handleTrackingRoute } from './demo/demoTracking'
 
 export function demoProjectProcess(areaId: string) {
@@ -30,7 +31,7 @@ async function synchronize(): Promise<{ catalog: AtlasCatalog; visible: Set<stri
         if (!version.area_id) continue
         versions.set(version.area_id, version)
         const previous = block.versions.find(candidate => candidate.id === version.previous_version_id)
-        if (!records.has(version.area_id)) record('version', { project_id: project.area_id, block_id: block.area_id, version_id: version.area_id }, { name: [version.net_ver, version.revision, version.layout, version.eco_num].filter(Boolean).join(' · '), net_ver: version.net_ver, revision: version.revision, layout: version.layout, eco_num: version.eco_num || null, sanity_version_id: version.id, previous_version_id: previous?.area_id || null, source_namespace: version.source_namespace, source: 'synthetic_memory_demo' }, 'active', version.area_id)
+        if (!records.has(version.area_id)) record('version', { project_id: project.area_id, block_id: block.area_id, version_id: version.area_id }, { name: formatVersionLabel(version), net_ver: version.net_ver, revision: version.revision, layout: version.layout, eco_num: version.eco_num || null, sanity_version_id: version.id, previous_version_id: previous?.area_id || null, source_namespace: version.source_namespace, source: 'synthetic_memory_demo' }, 'active', version.area_id)
         if (version.id.startsWith('demo-')) seedVersion(project.area_id, block.area_id, version, block.name)
       }
     }
@@ -138,24 +139,7 @@ async function dispatch(path: string, body: Payload | undefined, plain: boolean 
     if (params.get('latest') !== 'false') rows = latest(rows)
     return { items: page(filterRows(rows.map(row => row.record_type === 'project' ? publicProject(row, visible) : row), params), params) }
   }
-  if (route === '/dashboard' && !body) {
-    const rows = filterRows(accessible(), params)
-    const scopedUploads = filterRows([...uploads.values()].filter(upload => visible.has(upload.project_id)).map(publicUpload), params)
-    const selections = rows.filter(row => row.record_type === 'selection' && row.selection_scope === 'shared')
-    const chosen = selections.length === 1 ? uploads.get(text(selections[0].upload_id)) : undefined
-    const byType = (type: string) => rows.filter(row => row.record_type === type)
-    return { uploads: scopedUploads, records: latest(rows).map(row => row.record_type === 'project' ? publicProject(row, visible) : row), jobs: byType('job'), alerts: byType('alert'), comparisons: byType('comparison'), counts: { uploads: String(scopedUploads.length), comparisons: String(byType('comparison').length), open_alerts: String(byType('alert').filter(row => !row.resolved_at).length), pending_jobs: String(byType('job').filter(row => row.state === 'pending').length) }, root_metrics: chosen?.root_summary || null, source: 'synthetic_memory_demo', notice }
-  }
   if (route === '/config' && body) return config(body, visible)
-  if (route === '/selections' && body) {
-    if (body.selection_scope !== 'shared') fail('현재 UI는 shared 선택만 지원합니다.')
-    const upload = scopedUpload(text(body.upload_id), visible)
-    let row = accessible().find(value => value.record_type === 'selection' && value.snapshot_id === upload.snapshot_id && value.condition_key === upload.condition_key && value.selection_scope === 'shared')
-    if (row) { cas(row, body.expected_row_version); row.upload_id = upload.id; touch(row) }
-    else { if (body.expected_row_version != null) fail('REVISION_CONFLICT · 선택이 존재하지 않습니다.'); row = record('selection', { ...scoped(upload), upload_id: upload.id, condition_key: upload.condition_key, selection_scope: 'shared' }, { source: 'synthetic_memory_demo', selected_by: actor }) }
-    row.payload.selected_by = actor
-    return row
-  }
   if (route === '/comparisons' && body) return createComparison(body, visible)
   const detail = /^\/comparisons\/([^/]+)$/.exec(route)
   if (detail && !body) {
@@ -164,33 +148,6 @@ async function dispatch(path: string, body: Payload | undefined, plain: boolean 
     const runs = related.filter(row => row.record_type === 'ai_run')
     const runIds = new Set(runs.map(row => row.id))
     return { comparison, results: related.filter(row => row.record_type === 'metric_result'), ai_runs: runs, judgements: accessible().filter(row => row.record_type === 'judgement' && runIds.has(text(row.parent_id))) }
-  }
-  const judge = /^\/comparisons\/([^/]+)\/rejudge$/.exec(route)
-  if (judge && body) {
-    const comparison = scopedRecord(decodeURIComponent(judge[1]), 'comparison', visible)
-    if (comparison.state !== 'completed') fail('수치 계산이 완료된 비교만 재검토할 수 있습니다.')
-    return rejudge(comparison, strings(body.change_ids), strings(body.recipients), visible)
-  }
-  const alert = /^\/alerts\/([^/]+)\/state$/.exec(route)
-  if (alert && body) {
-    const row = scopedRecord(decodeURIComponent(alert[1]), 'alert', visible); cas(row, body.expected_row_version)
-    const action = text(body.action)
-    if (!['read', 'acknowledge', 'resolve'].includes(action)) fail('지원하지 않는 알림 상태 변경입니다.')
-    if (row.resolved_at && action !== 'read') fail('이미 해소된 알림입니다.')
-    const field = action === 'read' ? 'read_at' : action === 'acknowledge' ? 'acknowledged_at' : 'resolved_at'
-    if (row[field]) fail('이미 처리된 알림 동작입니다.')
-    row[field] = now(); if (action === 'resolve') row.state = 'resolved'; touch(row)
-    record('alert_event', { ...scopeFromRecord(row), parent_id: row.id }, { action, actor, note: text(body.note), row_version: row.row_version, source: 'synthetic_memory_demo' })
-    return row
-  }
-  const rerun = /^\/jobs\/([^/]+)\/rerun$/.exec(route)
-  if (rerun && body) {
-    const old = scopedRecord(decodeURIComponent(rerun[1]), 'job', visible); cas(old, body.expected_row_version)
-    if (old.state !== 'failed' || !['numeric', 'compare'].includes(text(old.job_kind))) fail('실패한 브라우저 수치 작업만 재실행할 수 있습니다. 외부 AI/메일은 실행하지 않습니다.')
-    const previousComparison = scopedRecord(text(old.parent_id), 'comparison', visible)
-    const created = createComparison(structuredClone(object(previousComparison.payload.request)), visible)
-    created.job.previous_id = old.id; old.payload.rerun_job_id = created.job.id; touch(old)
-    return { ...created, source: 'synthetic_memory_demo', previous_job_id: old.id }
   }
   return fail(`지원하지 않는 경로 또는 동작: ${body ? 'POST' : 'GET'} ${route}`)
 }

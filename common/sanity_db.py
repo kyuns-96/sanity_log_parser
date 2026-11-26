@@ -41,6 +41,56 @@ def lock_key(value):
     return int.from_bytes(hashlib.sha256(str(value).encode()).digest()[:8], "big", signed=True)
 
 
+def table_unique_indexes(executor, schema: str, table_names: list[str] | tuple[str, ...]):
+    """Stateless pg_catalog lookup of valid immediate non-expression UNIQUE indexes."""
+    return executor.execute(
+        "SELECT t.relname AS table_name, pg_get_expr(i.indpred,i.indrelid) AS predicate, "
+        "ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum,position) "
+        "JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.attnum "
+        "WHERE k.position<=i.indnkeyatts ORDER BY k.position) AS key_columns "
+        "FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid "
+        "JOIN pg_namespace n ON n.oid=t.relnamespace "
+        "WHERE n.nspname=%s AND t.relname=ANY(%s) AND i.indisvalid AND i.indisready "
+        "AND i.indislive AND i.indisunique AND i.indimmediate AND i.indexprs IS NULL",
+        (schema, list(table_names)),
+    ).fetchall()
+
+
+def validated_table_constraints(
+    executor,
+    schema: str,
+    constraint_names: list[str] | tuple[str, ...],
+    *,
+    table_name: str | None = None,
+    check_only: bool = False,
+) -> set[tuple[str, str]]:
+    """Stateless pg_catalog lookup of validated table constraints."""
+    query = (
+        "SELECT t.relname,c.conname FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid "
+        "JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=%s AND c.convalidated "
+        "AND c.conname=ANY(%s)"
+    )
+    params: list = [schema, list(constraint_names)]
+    if table_name is not None:
+        query += " AND t.relname=%s"
+        params.append(table_name)
+    if check_only:
+        query += " AND c.contype='c' AND NOT c.connoinherit"
+    rows = executor.execute(query, tuple(params)).fetchall()
+    return {(row["relname"], row["conname"]) if isinstance(row, dict) else tuple(row) for row in rows}
+
+
+def bytea_column_storage(executor, schema: str, table_name: str, column_name: str):
+    """Stateless pg_attribute check for an external-storage bytea column."""
+    return executor.execute(
+        "SELECT a.atttypid='bytea'::regtype AS bytes_type,a.attstorage "
+        "FROM pg_attribute a JOIN pg_class t ON t.oid=a.attrelid "
+        "JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=%s "
+        "AND t.relname=%s AND a.attname=%s AND a.attnum>0 AND NOT a.attisdropped",
+        (schema, table_name, column_name),
+    ).fetchone()
+
+
 class Database:
     def __init__(self, side):
         if side not in ("vwp", "oa"):
@@ -128,16 +178,7 @@ class Database:
                     for table, columns, field, value in definitions}
         required.add((TABLES["oa"], ("request_id",), "(request_id IS NOT NULL)"))
         required.add((TABLES["oa"], ("bundle_id", "review_unit_id", "record_type", "entity_key"), "(entity_key IS NOT NULL)"))
-        indexes = self.conn.execute(
-            "SELECT t.relname AS table_name, pg_get_expr(i.indpred,i.indrelid) AS predicate, "
-            "ARRAY(SELECT a.attname::text FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum,position) "
-            "JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.attnum "
-            "WHERE k.position<=i.indnkeyatts ORDER BY k.position) AS key_columns "
-            "FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid "
-            "JOIN pg_namespace n ON n.oid=t.relnamespace "
-            "WHERE n.nspname=%s AND t.relname=ANY(%s) AND i.indisvalid AND i.indisready "
-            "AND i.indislive AND i.indisunique AND i.indimmediate AND i.indexprs IS NULL",
-            (self.schema, list(TABLES.values()))).fetchall()
+        indexes = table_unique_indexes(self.conn, self.schema, list(TABLES.values()))
         actual = {(row["table_name"], tuple(row["key_columns"]), row["predicate"]) for row in indexes}
         if not required <= actual:
             raise ReviewError("DATABASE_SCHEMA", "Required UNIQUE indexes must match db/002_indexes.sql and db/004_clustering.sql")

@@ -361,13 +361,23 @@ class WorkspaceClusteringStore:
                  "membership_sha256": digest([{key: group[key] for key in ("id", "record_ids")} for group in groups])}
         proposed = rationale.validate_group_rationales(value["group_rationales"], groups, cases, value["reference_ids"])
         event["rationales"] = rationale.carry(None, event, proposed)
+        return self._commit_cluster_event(context, head, report_id, block_id, rid, revision, event)
+
+    def _commit_cluster_event(self, context, head, report_id, block_id, rid, revision, event, *, task=None):
         self.ws.put("WS_CLUSTER_EVENT", rid, rationale.pack(event), project=event["project_id"], block=block_id)
         if head is None:
             self.ws.put("WS_CLUSTER", report_id, WorkspaceReviewStore.metadata(context), project=event["project_id"], block=block_id)
-        self.db.execute("UPDATE {oa} SET state=%s,version=%s,updated_at=clock_timestamp() "
-                        "WHERE record_type='WS_CLUSTER' AND workspace_key=%s",
-                        (json_value({**(head["state"] if head else {}), "event_id": rid,
-                                     "event_record_id": str(record_id("WS_CLUSTER_EVENT", rid))}), revision + 1, report_id))
+        state = {
+            **(head["state"] if head else {}),
+            "event_id": rid,
+            "event_record_id": str(record_id("WS_CLUSTER_EVENT", rid)),
+            **({"task": task} if task is not None else {}),
+        }
+        self.db.execute(
+            "UPDATE {oa} SET state=%s,version=%s,updated_at=clock_timestamp() "
+            "WHERE record_type='WS_CLUSTER' AND workspace_key=%s",
+            (json_value(state), revision + 1, report_id),
+        )
         return event
 
     def change(self, user_id, block_id, version_id, report_id, *, action, expected_revision, request_id,
@@ -531,14 +541,7 @@ class WorkspaceClusteringStore:
             for key in ("case_policy", "retrieval", "input_cases", "input_sha256"):
                 if key in old:
                     event[key] = old[key]
-        self.ws.put("WS_CLUSTER_EVENT", rid, rationale.pack(event), project=event["project_id"], block=block_id)
-        if head is None:
-            self.ws.put("WS_CLUSTER", report_id, WorkspaceReviewStore.metadata(context), project=event["project_id"], block=block_id)
-        self.db.execute("UPDATE {oa} SET state=%s,version=%s,updated_at=clock_timestamp() "
-                        "WHERE record_type='WS_CLUSTER' AND workspace_key=%s",
-                        (json_value({**(head["state"] if head else {}), "event_id": rid, "event_record_id": str(record_id("WS_CLUSTER_EVENT", rid)),
-                                     **({"task": task} if task is not None else {})}), revision + 1, report_id))
-        return event
+        return self._commit_cluster_event(context, head, report_id, block_id, rid, revision, event, task=task)
 
 
 def pipeline_summaries(db, report_ids, compact=False, *, ws=None, user_id=None):

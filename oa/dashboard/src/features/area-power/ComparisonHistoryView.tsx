@@ -3,6 +3,7 @@ import { History, Search } from 'lucide-react'
 import { date, formatCornerLabel, object, text, uploadName, type TrackingRecord, type Upload } from './api'
 import { Badge, Button, Empty } from './components/workspace'
 import type { AtlasProject } from '@/features/atlas/atlasContext'
+import { formatRevisionLabel } from '@/lib/versionUtils'
 import type { TrackingOverviewData } from './trackingApi'
 
 interface ComparisonHistoryViewProps {
@@ -62,7 +63,7 @@ export function ComparisonHistoryView({
       blockName: blk?.name || '',
       blockId: blk?.id || '',
       netVer: ver?.net_ver || '',
-      revision: ver ? [ver.revision, ver.layout, ver.eco_num].filter(Boolean).join(' ') : '',
+      revision: ver ? formatRevisionLabel(ver, ' ') : '',
       corner: formatCornerLabel(u),
       fileName: uploadName(u),
     }

@@ -30,7 +30,8 @@ from oa.workspace_schemas import (
     ClusterChange, ClusterEdit, ClusterOperation, ClusterProposal, ClusterTaskStep,
     CodexProposal, GroupReviewChange, GroupReviewProposal, ID, Login, PipelineGroup,
     PorChange, RationaleChange, RationaleContent, RationaleReference, ReviewChange,
-    ReviewException, ReviewProposal,
+    ReviewException, ReviewProposal, build_rationale_operation,
+    raw_report_source_response, workbench_body_ceiling,
 )
 
 COOKIE = "sanity_workspace_session"
@@ -67,10 +68,8 @@ def create_app(*, origins, static_dir=None, codex_service=None, mock_report_ids=
                 if request.headers.get("content-type", "").split(";")[0] != "application/json":
                     return JSONResponse({"code": "INVALID_CONTENT_TYPE"}, status_code=415)
                 body = bytearray()
+                ceiling = workbench_body_ceiling(request.url.path, default_ceiling=16384)
                 async for chunk in request.stream():
-                    ceiling = (16777216 if request.url.path.endswith('/clustering/operations') else
-                               4194304 if '/clustering' in request.url.path else
-                               262144 if request.url.path.endswith('/rationale') else 16384)
                     if len(body) + len(chunk) > ceiling:
                         return JSONResponse({"code": "REQUEST_TOO_LARGE"}, status_code=413)
                     body.extend(chunk)
@@ -266,11 +265,7 @@ def create_app(*, origins, static_dir=None, codex_service=None, mock_report_ids=
     @app.post(API + "/blocks/{block_id}/versions/{version_id}/reports/{report_id}/groups/{group_id}/rationale")
     def group_rationale_save(block_id: ID, version_id: ID, report_id: ID, group_id: ID,
                              body: RationaleChange, actor=Depends(authenticated)):
-        operation = {"kind": body.action, "group_id": group_id}
-        if body.action == "SAVE":
-            operation.update(content=body.content.model_dump(mode="json", exclude_none=True) if body.content else None, reviewed=body.reviewed)
-        else:
-            check(body.content is None and not body.reviewed, "INVALID_REQUEST")
+        operation = build_rationale_operation(group_id, body)
         with workspace_transaction() as db:
             return event_brief(WorkspaceClusteringStore(db).change(actor["user"]["id"], block_id, version_id, report_id,
                 action="EDIT", expected_revision=body.expected_revision, request_id=body.request_id,
@@ -314,9 +309,7 @@ def create_app(*, origins, static_dir=None, codex_service=None, mock_report_ids=
     def report_source(block_id: ID, version_id: ID, report_id: ID, actor=Depends(authenticated)):
         with workspace_transaction(readonly=True) as db:
             report = WorkspaceStore(db).report(actor["user"]["id"], block_id, version_id, report_id, hydrate_source=False)
-            check(report.get('source_storage') != 'PARTS_V2', 'SOURCE_FILE_ON_VWP', 'Original report bytes are retained on VWP')
-            return Response(report.get("raw_report") or "", media_type="text/plain",
-                headers={"Content-Disposition": f'attachment; filename="{report_id}.rpt"'})
+            return raw_report_source_response(report, report_id)
 
     @app.get(API + "/blocks/{block_id}/versions/{version_id}/reports/{report_id}/groups/{group_id}/review")
     def group_review_detail(block_id: ID, version_id: ID, report_id: ID, group_id: ID, compact: bool = False, actor=Depends(authenticated)):

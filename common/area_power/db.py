@@ -34,6 +34,17 @@ class Database:
     def __init__(self, settings=None):
         self.settings = settings or Settings.from_env()
 
+    @property
+    def raw(self):
+        return self
+
+    def invalidate_cache(self) -> None:
+        return None
+
+    @staticmethod
+    def advisory_lock(conn, key: bytes) -> None:
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (int.from_bytes(key[:8], "big", signed=True),))
+
     def table(self, name):
         if name not in {"di_area_power_csv", "di_area_power_tracking_record"}:
             raise ValueError("Unknown application table")
@@ -80,7 +91,7 @@ class Database:
         return row
 
     def records(self, conn, record_type=None, *, project_id=None, version_id=None, block_id=None, snapshot_id=None, parent_id=None, state=None, limit=100, offset=0, latest=False, metrics=None):
-        limit, offset = self._page(limit, offset)
+        limit, offset = self.validate_page(limit, offset)
         condition, params = _where(dict(record_type=record_type, project_id=project_id, version_id=version_id, block_id=block_id, snapshot_id=snapshot_id, parent_id=parent_id, state=state))
         if record_type is None:
             condition += sql.SQL(" AND record_type <> 'worker_heartbeat'")
@@ -95,11 +106,30 @@ class Database:
             query = sql.SQL("SELECT * FROM {} WHERE {} ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s").format(self.table("di_area_power_tracking_record"), condition)
         return conn.execute(query, params + [limit, offset]).fetchall()
 
+    def all_records(self, conn, record_type=None, **filters):
+        rows, offset = [], 0
+        while True:
+            page = self.records(conn, record_type, limit=1000, offset=offset, **filters)
+            rows.extend(page)
+            if len(page) < 1000:
+                return rows
+            offset += len(page)
+
+    def existing_dedupe(self, conn, kind: str, key: bytes, *, lock: bool = False):
+        return conn.execute(
+            sql.SQL("SELECT * FROM {} WHERE record_type=%s AND dedupe_key=%s" + (" FOR UPDATE" if lock else "")).format(
+                self.table("di_area_power_tracking_record")
+            ),
+            (kind, key),
+        ).fetchone()
+
     @staticmethod
-    def _page(limit, offset):
+    def validate_page(limit, offset):
         if not isinstance(limit, int) or not isinstance(offset, int) or limit <= 0 or limit > 10000 or offset < 0:
             raise DomainError("Pagination requires limit 1..10000 and nonnegative offset")
         return limit, offset
+
+    _page = validate_page
 
     def insert_record(self, conn, record_type, payload, actor, **fields):
         if set(fields) - RECORD_FIELDS:

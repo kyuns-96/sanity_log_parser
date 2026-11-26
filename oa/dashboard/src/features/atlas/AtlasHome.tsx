@@ -4,7 +4,8 @@ import { useAtlas } from './atlasContext'
 import type { AtlasBlock, AtlasProject, AtlasVersion, UnboundArea } from './atlasContext'
 import { useDashboardAuth } from '@/features/auth/useDashboardAuth'
 import { useDashboardNavigation } from '@/lib/dashboardMode'
-import ProjectProcessField from './ProjectProcessField'
+import { formatVersionLabel } from '@/lib/versionUtils'
+import { BlockCreateFields, ProjectCreateFields, formatCatalogAreaNotice } from './CatalogCreateFields'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 export default function AtlasHome() {
@@ -56,9 +57,6 @@ export default function AtlasHome() {
       setBusyAction(false)
     }
   }
-
-  const formatVersionLabel = (v: AtlasVersion) =>
-    [v.net_ver, v.revision, v.layout, v.eco_num].filter(Boolean).join(' · ')
 
   const blockPorLabel = (block: AtlasBlock) => {
     const porId = block.por?.version_id
@@ -134,7 +132,6 @@ function PorAssignDialog({ project, block, initialVersion, onClose, onAssigned }
   const [requestId] = useState(() => crypto.randomUUID())
   const targetVersion = block.versions.find(v => v.id === targetVersionId)
   const sameAsPor = Boolean(targetVersion && currentPorId && targetVersion.id === currentPorId)
-  const formatVer = (v: AtlasVersion) => [v.net_ver, v.revision, v.layout, v.eco_num].filter(Boolean).join(' · ')
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!targetVersion || sameAsPor || !reason.trim()) return
@@ -148,7 +145,7 @@ function PorAssignDialog({ project, block, initialVersion, onClose, onAssigned }
         reason: reason.trim(),
       })
       await atlas.reload()
-      onAssigned(`${block.name}의 PoR을 ${formatVer(targetVersion)}로 지정했습니다.`)
+      onAssigned(`${block.name}의 PoR을 ${formatVersionLabel(targetVersion)}로 지정했습니다.`)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -162,8 +159,8 @@ function PorAssignDialog({ project, block, initialVersion, onClose, onAssigned }
         <DialogDescription>VWP에서 업로드된 버전 중 기준 버전(PoR)을 선택합니다. 로그 검토와 Area/Power 기준 프로젝트 참조에 공통 적용됩니다.</DialogDescription>
       </DialogHeader>
       <form onSubmit={submit}>
-        <p><strong>현재 PoR:</strong> {currentPor ? formatVer(currentPor) : '미지정'}</p>
-        <label>PoR로 지정할 버전<select required disabled={busy} value={targetVersionId} onChange={event => setTargetVersionId(event.target.value)}>{block.versions.map(v => <option key={v.id} value={v.id}>{formatVer(v)}{v.id === currentPorId ? ' (현재 PoR)' : ''}</option>)}</select></label>
+        <p><strong>현재 PoR:</strong> {currentPor ? formatVersionLabel(currentPor) : '미지정'}</p>
+        <label>PoR로 지정할 버전<select required disabled={busy} value={targetVersionId} onChange={event => setTargetVersionId(event.target.value)}>{block.versions.map(v => <option key={v.id} value={v.id}>{formatVersionLabel(v)}{v.id === currentPorId ? ' (현재 PoR)' : ''}</option>)}</select></label>
         {sameAsPor && <p className="atlas-message">이미 현재 PoR로 지정된 버전입니다. 다른 버전을 선택하세요.</p>}
         {project.status === 'completed' && <p className="atlas-message">완료된 프로젝트입니다. PoR 변경 시 이 프로젝트를 기준으로 참조하는 신규 Area/Power 설정의 기본 기준 버전이 갱신됩니다.</p>}
         <label>변경 사유<textarea autoFocus required maxLength={500} value={reason} onChange={event => setReason(event.target.value)} placeholder="예: 최종 ECO 확정 / 마일스톤 기준 버전 지정" disabled={busy} /></label>
@@ -192,15 +189,37 @@ function CatalogForm({ kind, onClose, onCreated }: { kind: 'project' | 'block'; 
       const result = await auth.request<{ status: string; project_id?: string; block_id?: string; area_prepared?: boolean; area_error?: string }>(path, body)
       await atlas.reload()
       await atlas.selectScope({ projectId: result.project_id || atlas.scope.projectId, blockId: kind === 'project' ? '' : result.block_id || atlas.scope.blockId, versionId: '' })
-      const areaNote = result.area_prepared === false ? ' (Area/Power 자동 연결은 대기 중입니다. 프로젝트 비교 화면에서 다시 연결해 주세요.)' : result.area_prepared === true ? ' (Area/Power 범위도 함께 연결했습니다.)' : ''
-      onCreated(`공통 카탈로그에 등록했습니다.${areaNote}`)
+      onCreated(`공통 카탈로그에 등록했습니다.${formatCatalogAreaNotice(result.area_prepared, 'dialog')}`)
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
     finally { setBusy(false) }
   }
+  const commonNameHint = '같은 프로젝트 이름은 같은 프로젝트이며, 같은 프로젝트의 같은 블록 이름은 기존 블록을 사용합니다. 앞뒤 공백만 제거하고 대소문자와 내부 공백은 구분합니다.'
   return <Dialog open onOpenChange={open => { if (!open && !busy) onClose() }}><DialogContent className="atlas-modal" showCloseButton={!busy}><DialogHeader><DialogTitle>{kind === 'project' ? '공통 프로젝트 등록' : '공통 블록 등록'}</DialogTitle><DialogDescription>{atlas.demo ? '현재 탭의 합성 카탈로그에 저장합니다. 실제 DB나 권한에는 반영하지 않으며 새로고침 시 초기화됩니다.' : '실제 공통 카탈로그에 저장합니다. 기존 분석 데이터와 인증 권한은 유지됩니다.'}</DialogDescription></DialogHeader><form onSubmit={submit}>
-    {kind === 'block' && <p>프로젝트: {atlas.project?.name}</p>}
-    <label>{kind === 'project' ? '프로젝트 이름' : '블록 이름'}<input autoFocus required maxLength={100} value={fields.name} onChange={event => field('name', event.target.value)} /><small>같은 프로젝트 이름은 같은 프로젝트이며, 같은 프로젝트의 같은 블록 이름은 기존 블록을 사용합니다. 앞뒤 공백만 제거하고 대소문자와 내부 공백은 구분합니다.</small></label>
-    {kind === 'project' && <><ProjectProcessField processes={atlas.catalog?.processes || []} value={fields.process} onChange={name => field('process', name)} api={auth.request} reload={atlas.reload} disabled={busy} /><label>설명<textarea value={fields.description} onChange={event => field('description', event.target.value)} /></label></>}
+    {kind === 'project' ? (
+      <ProjectCreateFields
+        autoFocus
+        name={fields.name}
+        process={fields.process}
+        description={fields.description}
+        processes={atlas.catalog?.processes || []}
+        disabled={busy}
+        nameHint={commonNameHint}
+        api={auth.request}
+        reload={atlas.reload}
+        onNameChange={value => field('name', value)}
+        onProcessChange={value => field('process', value)}
+        onDescriptionChange={value => field('description', value)}
+      />
+    ) : (
+      <BlockCreateFields
+        autoFocus
+        name={fields.name}
+        projectName={atlas.project?.name || ''}
+        disabled={busy}
+        nameHint={commonNameHint}
+        onNameChange={value => field('name', value)}
+      />
+    )}
     {error && <p role="alert" className="atlas-message error">{error}</p>}<div className="atlas-actions"><button className="atlas-button secondary" type="button" disabled={busy} onClick={onClose}>취소</button><button className="atlas-button" disabled={busy}>{busy ? '저장 중…' : '등록'}</button></div>
   </form></DialogContent></Dialog>
 }
