@@ -94,7 +94,7 @@ class AreaAdapters:
             for project in projects:
                 p = self.match(rows, "project", project["id"])
                 project["area_id"] = str(p["id"]) if p else None
-                if p:
+                if p and p["payload"].get("process"):
                     project["process"] = p["payload"].get("process")
                 for block in project["blocks"]:
                     b = self.match(rows, "block", block["id"])

@@ -8,11 +8,11 @@ export function fraction(n: bigint, d = 1n): Fraction {
   return { n: n / a, d: d / a }
 }
 export function parseDecimal(value: unknown): Fraction | null {
-  const match = /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(String(value))
-  if (!match) return null
+  const match = /^([+-]?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(String(value ?? '').trim())
+  if (!match || !(match[2] || match[3])) return null
   const exponent = Number(match[4] || 0) - (match[3]?.length || 0)
   if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > 1000) return null
-  const n = BigInt(`${match[1]}${match[2]}${match[3] || ''}`)
+  const n = BigInt(`${match[1]}${match[2] || '0'}${match[3] || ''}`)
   return exponent >= 0 ? fraction(n * 10n ** BigInt(exponent)) : fraction(n, 10n ** BigInt(-exponent))
 }
 export const add = (a: Fraction, b: Fraction) => fraction(a.n * b.d + b.n * a.d, a.d * b.d)

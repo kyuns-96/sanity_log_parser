@@ -85,7 +85,7 @@ def comparability(metric, group, cm, bm, current, baseline, cu, bu):
         return 'comparable', None
     if metric.startswith(('vt_', 'drv_', 'vth_', 'drive_')):
         if not known_metadata(cm.library) or not known_metadata(bm.library) or cm.library != bm.library or not known_metadata(cm.classification) or not known_metadata(bm.classification) or cm.classification != bm.classification:
-            return 'unavailable', 'library_or_classification_mapping_unconfirmed'
+            return 'contextual', 'library_or_classification_mapping_unconfirmed'
     checks = ('design_stage', 'constraint_context', 'classification', 'library')
     if '_area' in metric or metric.endswith('_pct') or metric in DISTRIBUTIONS:
         checks += ('area_unit', 'area_basis')

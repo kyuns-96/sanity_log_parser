@@ -135,16 +135,35 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
     return children.get(row.key)
   }
   const flatResults = referenceComparison && !!resultQuery.search
-  const displayedCurrent = props.uploads.find(row => row.id === displayedCurrentId)
-  const displayedBefore = props.uploads.find(row => row.id === displayedBaselineId)
+  const frozenUploads = object(detail?.comparison.payload.frozen)
+  const frozenUpload = (key: 'current_upload' | 'baseline_upload'): Upload | undefined => {
+    const raw = object(frozenUploads[key])
+    return text(raw.id) && text(raw.project_id) ? (raw as unknown as Upload) : undefined
+  }
+  const displayedCurrent = props.uploads.find(row => row.id === displayedCurrentId) || frozenUpload('current_upload')
+  const displayedBefore = props.uploads.find(row => row.id === displayedBaselineId) || frozenUpload('baseline_upload')
+  const projectRecordByAreaId = useMemo(
+    () => new Map(props.records.filter(row => row.record_type === 'project').map(row => [row.id, row])),
+    [props.records],
+  )
+  // Resolve each side from the displayed upload, including a history entry with a different baseline.
   const ownerOf = (upload?: Upload) => upload && candidates.find(row => (row.area_id || projectRecords.get(row.id)?.id) === upload.project_id)
   const currentOwner = ownerOf(displayedCurrent), beforeOwner = ownerOf(displayedBefore)
+  const resolveProcess = (upload: Upload | undefined, owner: AtlasProject | undefined, side: 'current' | 'baseline') => {
+    const areaProjProc = upload ? text(projectRecordByAreaId.get(upload.project_id)?.payload.process).trim() : ''
+    const baselineHint = upload
+      ? (upload.project_id === currentAreaId ? (baseline?.process || '') : upload.project_id === baseline?.baseline_project_id ? (baseline?.baseline_process || '') : '')
+      : (side === 'current' ? (baseline?.process || '') : (baseline?.baseline_process || ''))
+    return (owner?.process || '').trim() || baselineHint.trim() || areaProjProc || null
+  }
+  const currentSideProcess = resolveProcess(displayedCurrent, currentOwner, 'current')
+  const beforeSideProcess = resolveProcess(displayedBefore, beforeOwner, 'baseline')
   const gateBases = useMemo(() => {
     if (!props.gateCount) return null
     const definitions = atlas.catalog?.processes || []
-    return { baseline: gateBasis(displayedBefore, beforeOwner?.process, definitions),
-      current: gateBasis(displayedCurrent, currentOwner?.process, definitions) }
-  }, [props.gateCount, displayedBefore, displayedCurrent, beforeOwner?.process, currentOwner?.process, atlas.catalog?.processes])
+    return { baseline: gateBasis(displayedBefore, beforeSideProcess, definitions),
+      current: gateBasis(displayedCurrent, currentSideProcess, definitions) }
+  }, [props.gateCount, displayedBefore, displayedCurrent, beforeSideProcess, currentSideProcess, atlas.catalog?.processes])
   const sideLabel = (owner: AtlasProject | undefined, upload: Upload | undefined, fallback: string) =>
     [owner?.name, owner?.blocks.find(row => row.area_id === upload?.block_id)?.name].filter(Boolean).join(' · ') || fallback
   const sideLabels = { current: sideLabel(currentOwner, displayedCurrent, project.name), baseline: sideLabel(beforeOwner, displayedBefore, savedProject?.name || '') }
