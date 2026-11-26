@@ -70,6 +70,13 @@ class WorkspaceCoreStore:
             raise ReviewError("PROCESS_NOT_FOUND", "Select a registered process")
 
     def initial_process(self, project_id):
+        meta_row = self.db.execute(
+            "SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE 'atlas.pmeta.%' "
+            "AND payload->>'project_id'=%s ORDER BY COALESCE((payload->>'revision')::bigint, 0) DESC, created_at DESC LIMIT 1",
+            (project_id,),
+        ).fetchone()
+        if meta_row and "process" in (meta_row["payload"] or {}):
+            return meta_row["payload"]["process"]
         key = "atlas.project-process." + str(record_id("WS_PROJECT", project_id))
         row = self.db.execute("SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key=%s",
                               (key,)).fetchone()
@@ -265,6 +272,7 @@ class WorkspaceCoreStore:
         return report_version, counts, sum(counts.values())
 
     def overview(self, user_id):
+        from oa.project_lifecycle import apply_project_overlay
         user = self.user(user_id)
         people = {row["workspace_key"]: self.public_user(row) for row in self.rows("WS_USER")}
         projects = []
@@ -283,6 +291,7 @@ class WorkspaceCoreStore:
                                "counts": counts, "total": total})
             if blocks:
                 projects.append({**data, "tops": [people[uid] for uid in data["tops"]], "blocks": blocks})
+        projects = apply_project_overlay(self.db, projects, include_hidden=False)
         return {"user": user, "projects": projects, "data_origin": "SYNTHETIC_PUBLIC_REFERENCE"}
 
     def versions(self, user_id, block_id):

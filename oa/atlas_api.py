@@ -91,6 +91,23 @@ class ProjectStatus(Input):
     status: Literal["active", "completed"]
 
 
+class ProjectUpdate(Input):
+    name: Text
+    process: Text | None = None
+    description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
+
+
+class ProjectVisibility(Input):
+    hidden: bool
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
+
+
+class ProjectDelete(Input):
+    force: bool = False
+    confirm_name: Text
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
+
+
 class PorAssign(Input):
     project_id: ID
     version_id: ID
@@ -125,10 +142,15 @@ def create_atlas_router(authorized_dependency):
         raise exc
 
     @router.get("/catalog")
-    def catalog(request: Request, actor=Depends(authorized_dependency, scope="function")):
+    def catalog(
+        request: Request,
+        include_hidden: bool = Query(default=False),
+        actor=Depends(authorized_dependency, scope="function"),
+    ):
         with context(actor, readonly=True) as store:
             result = {"product": "Design Atlas", "local_mode": store.local, "can_manage_catalog": store.can_manage,
-                      "area_enabled": bool(getattr(request.app.state, "area_power_enabled", False)), "projects": store.catalog(),
+                      "area_enabled": bool(getattr(request.app.state, "area_power_enabled", False)),
+                      "projects": store.catalog(include_hidden=include_hidden),
                       "processes": store.ws.processes()}
             result["area_status"] = "disabled"
             if result["area_enabled"]:
@@ -256,6 +278,33 @@ def create_atlas_router(authorized_dependency):
     def project_status(project_id: ID, body: ProjectStatus, actor=Depends(mutation)):
         with context(actor) as store:
             return store.set_project_status(project_id, body.status)
+
+    @router.post("/projects/{project_id}/update")
+    def update_project_route(project_id: ID, body: ProjectUpdate, request: Request, actor=Depends(mutation)):
+        area_on = bool(getattr(request.app.state, "area_power_enabled", False))
+        with context(actor) as store:
+            return store.update_project(
+                project_id, name=body.name, description=body.description, process=body.process, area_enabled=area_on,
+            )
+
+    @router.post("/projects/{project_id}/visibility")
+    def project_visibility(project_id: ID, body: ProjectVisibility, actor=Depends(mutation)):
+        with context(actor) as store:
+            return store.set_project_hidden(project_id, hidden=body.hidden, reason=body.reason)
+
+    @router.get("/projects/{project_id}/delete-preview")
+    def project_delete_preview_route(project_id: ID, request: Request, actor=Depends(authorized_dependency, scope="function")):
+        area_on = bool(getattr(request.app.state, "area_power_enabled", False))
+        with context(actor, readonly=True) as store:
+            return store.project_delete_preview(project_id, area_enabled=area_on)
+
+    @router.post("/projects/{project_id}/delete")
+    def delete_project_route(project_id: ID, body: ProjectDelete, request: Request, actor=Depends(mutation)):
+        area_on = bool(getattr(request.app.state, "area_power_enabled", False))
+        with context(actor) as store:
+            return store.delete_project(
+                project_id, force=body.force, confirm_name=body.confirm_name, reason=body.reason, area_enabled=area_on,
+            )
 
     @router.post("/blocks/{block_id}/por")
     def block_por(block_id: ID, body: PorAssign, actor=Depends(mutation)):

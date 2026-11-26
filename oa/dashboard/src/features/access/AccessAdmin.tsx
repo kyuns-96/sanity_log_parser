@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Check, FolderKanban, GitCompareArrows, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react'
+import { Check, Eye, EyeOff, FolderKanban, GitCompareArrows, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
@@ -10,9 +10,10 @@ import AIConnectionsAdmin from '@/features/ai/AIConnectionsAdmin'
 import { AreaTrackingAdmin } from '@/features/area-power/TrackingSettings'
 import UserGrants from './UserGrants'
 import { BlockCreateFields, ProjectCreateFields, formatCatalogAreaNotice } from '@/features/atlas/CatalogCreateFields'
+import ProjectManageDialog from '@/features/atlas/ProjectManageDialog'
 import type { AccessScreenProps } from './AccessWelcome'
 import { accessError, requestStatus, roleLabel, scopeName } from './accessApi'
-import type { AccessCatalog, AccessGrant, AccessRequest, AdminAccess } from './accessApi'
+import type { AccessCatalog, AccessGrant, AccessProject, AccessRequest, AdminAccess } from './accessApi'
 
 type Decision = { kind: 'request'; value: AccessRequest; decision: 'APPROVE' | 'REJECT' } | { kind: 'revoke'; value: AccessGrant }
 
@@ -36,18 +37,22 @@ export default function AccessAdmin(props: AccessScreenProps) {
   const [decision, setDecision] = useState<Decision | null>(null)
   const [reason, setReason] = useState('')
   const [commandId, setCommandId] = useState(() => crypto.randomUUID())
+  const [includeHidden, setIncludeHidden] = useState(true)
+  const [managing, setManaging] = useState<{ project: AccessProject; tab: 'edit' | 'visibility' | 'delete' } | null>(null)
+
+  const catalogPath = includeHidden ? '/api/access/catalog?include_hidden=true' : '/api/access/catalog'
 
   useEffect(() => {
     let active = true
-    Promise.all([api<AccessCatalog>('/api/access/catalog'), api<AdminAccess>('/api/admin/access')])
+    Promise.all([api<AccessCatalog>(catalogPath), api<AdminAccess>('/api/admin/access')])
       .then(([nextCatalog, nextAccess]) => { if (active) { setCatalog(nextCatalog); setAccess(nextAccess) } })
       .catch(error => { if (active) setError(accessError(error)) })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [api])
+  }, [api, catalogPath])
 
   async function refresh() {
-    const [nextCatalog, nextAccess] = await Promise.all([api<AccessCatalog>('/api/access/catalog'), api<AdminAccess>('/api/admin/access'), props.onRefreshSession()])
+    const [nextCatalog, nextAccess] = await Promise.all([api<AccessCatalog>(catalogPath), api<AdminAccess>('/api/admin/access'), props.onRefreshSession()])
     setCatalog(nextCatalog); setAccess(nextAccess)
   }
   async function command(action: () => Promise<void>) {
@@ -132,10 +137,57 @@ export default function AccessAdmin(props: AccessScreenProps) {
         />
         <Button type="submit" disabled={busy || !blockProject || !blockName.trim()}><Plus size={15} />블록 등록</Button>
       </form></section></div>
-      <section className="am-panel"><div className="am-panel-heading"><h2>등록된 프로젝트·블록</h2><span>{catalog.projects.length}개 프로젝트</span></div>{catalog.projects.length ? <ul className="am-list">{catalog.projects.map(project => <li key={project.id}><div><strong>{project.name}</strong>{project.description && <p>{project.description}</p>}<div className="am-block-tags">{catalog.blocks.filter(block => block.project_id === project.id).map(block => <span key={block.id}>{block.name}</span>)}{!catalog.blocks.some(block => block.project_id === project.id) && <span>아직 등록된 블록이 없습니다.</span>}</div></div></li>)}</ul> : <div className="am-empty am-empty-small"><p>등록된 프로젝트가 없습니다.</p></div>}</section>
+      <section className="am-panel">
+        <div className="am-panel-heading">
+          <div>
+            <h2>등록된 프로젝트·블록</h2>
+            <span>{catalog.projects.length}개 프로젝트</span>
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+            <input type="checkbox" checked={includeHidden} onChange={e => setIncludeHidden(e.target.checked)} />
+            숨긴 프로젝트 포함
+          </label>
+        </div>
+        {catalog.projects.length ? <ul className="am-list">{catalog.projects.map(project => (
+          <li key={project.id}>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <strong>{project.name}</strong>
+                {project.process && <Badge variant="outline">공정 {project.process}</Badge>}
+                {project.hidden && <Badge variant="secondary">숨김</Badge>}
+              </div>
+              {project.description && <p>{project.description}</p>}
+              <div className="am-block-tags">
+                {catalog.blocks.filter(block => block.project_id === project.id).map(block => <span key={block.id}>{block.name}</span>)}
+                {!catalog.blocks.some(block => block.project_id === project.id) && <span>아직 등록된 블록이 없습니다.</span>}
+              </div>
+            </div>
+            <div className="am-row-actions">
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => setManaging({ project, tab: 'edit' })}><Pencil size={14} />수정</Button>
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => setManaging({ project, tab: 'visibility' })}>{project.hidden ? <Eye size={14} /> : <EyeOff size={14} />}{project.hidden ? '복구' : '숨김'}</Button>
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => setManaging({ project, tab: 'delete' })}><Trash2 size={14} />삭제</Button>
+            </div>
+          </li>
+        ))}</ul> : <div className="am-empty am-empty-small"><p>등록된 프로젝트가 없습니다.</p></div>}
+      </section>
       {completed.length > 0 && <section className="am-panel"><div className="am-panel-heading"><h2>처리한 요청</h2><span>{completed.length}건</span></div><ul className="am-list">{completed.map(request => <li key={request.request_id}><div><strong>{userName(request.user_id)}</strong><span>{scopeName(catalog, request)} · {roleLabel(request.role)}</span>{request.decision_reason && <p>{request.decision_reason}</p>}</div><Badge variant="outline" className={`am-status am-status-${request.status.toLowerCase()}`}>{requestStatus[request.status]}</Badge></li>)}</ul></section>}
     </>}
     <Dialog open={!!decision} onOpenChange={open => { if (!open && !busy) setDecision(null) }}><DialogContent><DialogHeader><DialogTitle>{decision?.kind === 'revoke' ? '권한 회수' : decision?.decision === 'APPROVE' ? '권한 요청 승인' : '권한 요청 거절'}</DialogTitle><DialogDescription>{decision && `${userName(decision.value.user_id)} (${decision.value.user_id}) · ${scopeName(catalog, decision.value)} · ${roleLabel(decision.value.role)}`}{decision && <span className="block mt-2">{decision.kind === 'revoke' ? '이 프로젝트의 검토·수정 권한을 회수합니다. 모든 프로젝트 조회는 유지됩니다.' : decision.decision === 'APPROVE' ? '승인하면 이 프로젝트의 모든 블록을 검토·수정할 수 있습니다.' : '이 프로젝트의 멤버 참여 요청을 거절합니다.'}</span>}</DialogDescription></DialogHeader><form className="am-form am-dialog-form" onSubmit={decide}>{error && <p className="am-error" role="alert">{error}</p>}<label>처리 사유<Textarea aria-label="처리 사유" value={reason} required rows={3} maxLength={1000} disabled={busy} onChange={event => { setReason(event.target.value); setCommandId(crypto.randomUUID()) }} /></label><DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => setDecision(null)}>취소</Button><Button type="submit" disabled={busy || !reason.trim()}>{busy ? '저장 중…' : decision?.kind === 'revoke' ? '회수 확정' : decision?.decision === 'APPROVE' ? '승인 확정' : '거절 확정'}</Button></DialogFooter></form></DialogContent></Dialog>
+    {managing && (
+      <ProjectManageDialog
+        project={managing.project}
+        processes={catalog.processes || []}
+        apiPrefix="/api/admin"
+        initialTab={managing.tab}
+        api={api}
+        reload={refresh}
+        onClose={() => setManaging(null)}
+        onCompleted={message => {
+          setManaging(null)
+          setNotice(message)
+        }}
+      />
+    )}
     </div>
   </AccessLayout>
 }

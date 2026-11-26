@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { ArrowRight, Boxes, Check, CheckCircle2, ChevronRight, FolderPlus, Link2, Plus, RefreshCw, ShieldCheck } from 'lucide-react'
+import { ArrowRight, Boxes, Check, CheckCircle2, ChevronRight, FolderPlus, Link2, Pencil, Plus, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useAtlas } from './atlasContext'
 import type { AtlasBlock, AtlasProject, AtlasVersion, UnboundArea } from './atlasContext'
 import { useDashboardAuth } from '@/features/auth/useDashboardAuth'
 import { useDashboardNavigation } from '@/lib/dashboardMode'
 import { formatVersionLabel } from '@/lib/versionUtils'
 import { BlockCreateFields, ProjectCreateFields, formatCatalogAreaNotice } from './CatalogCreateFields'
+import ProjectManageDialog from './ProjectManageDialog'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 export default function AtlasHome() {
@@ -13,6 +14,7 @@ export default function AtlasHome() {
   const auth = useDashboardAuth(true)
   const navigate = useDashboardNavigation()
   const [kind, setKind] = useState<'project' | 'block' | null>(null)
+  const [managingProject, setManagingProject] = useState<AtlasProject | null>(null)
   const [porOpen, setPorOpen] = useState(false)
   const [busyAction, setBusyAction] = useState(false)
   const [error, setError] = useState('')
@@ -78,6 +80,7 @@ export default function AtlasHome() {
         {atlas.version && <small>{atlas.version.eco_num ? `ECO ${atlas.version.eco_num} · ` : ''}수신 ECO {atlas.version.ecos.filter(Boolean).length}개</small>}
       </div>
       <div className="atlas-actions">
+        {atlas.project && catalog?.can_manage_catalog && <button type="button" className="atlas-button secondary" disabled={busyAction} onClick={() => setManagingProject(atlas.project!)}><Pencil size={15} />수정·숨김·삭제</button>}
         {atlas.project && canWrite && <button type="button" className="atlas-button secondary" disabled={busyAction} onClick={() => void toggleProjectStatus()}><CheckCircle2 size={15} />{selectedProjectStatus === 'completed' ? '진행 중으로 전환' : '완료로 전환'}</button>}
         <button className="atlas-button" onClick={() => open(logsPath)}>{catalog?.local_mode ? '수신 로그 대장 열기' : '로그 검토 열기'}<ArrowRight size={16} /></button>
         {catalog && !catalog.area_enabled ? <span className="atlas-selection-note">수치 분석 서비스를 사용할 수 없습니다. {catalog.area_error || ''}</span> : <button className="atlas-button secondary" onClick={() => open('/?page=area-power')}>프로젝트 비교 열기<ArrowRight size={16} /></button>}
@@ -85,9 +88,20 @@ export default function AtlasHome() {
     </section>
     <section className="atlas-picker" aria-label="프로젝트 · 블록 · 버전">
       <div className="atlas-picker-column">
-        <header><h2>프로젝트{catalog && <span>{catalog.projects.length}</span>}</h2>{catalog?.can_manage_catalog && <button className="atlas-button secondary" onClick={() => setKind('project')}><FolderPlus size={15} />프로젝트 등록</button>}</header>
+        <header>
+          <h2>프로젝트{catalog && <span>{catalog.projects.length}</span>}</h2>
+          {catalog?.can_manage_catalog && (
+            <div className="flex items-center gap-2">
+              <label className="flex cursor-pointer items-center gap-1 text-xs text-muted-foreground">
+                <input type="checkbox" checked={atlas.includeHidden} onChange={e => atlas.setIncludeHidden(e.target.checked)} />
+                숨김 포함
+              </label>
+              <button className="atlas-button secondary" onClick={() => setKind('project')}><FolderPlus size={15} />프로젝트 등록</button>
+            </div>
+          )}
+        </header>
         {atlas.loading && !catalog ? <p className="atlas-picker-empty" role="status">불러오는 중…</p> : !catalog ? <p className="atlas-picker-empty">프로젝트를 조회할 수 없습니다. 연결 상태를 확인하고 새로고침하세요.</p> : !catalog.projects.length ? <p className="atlas-picker-empty">등록된 프로젝트가 없습니다. {catalog.can_manage_catalog ? '프로젝트를 등록하세요.' : '관리자에게 프로젝트 등록을 요청하세요.'}</p> : <ul>{catalog.projects.map(project => <li key={project.id}><button type="button" className="atlas-picker-item" aria-pressed={atlas.scope.projectId === project.id} onClick={() => select({ projectId: project.id, blockId: '', versionId: '' })}>
-          <Boxes size={18} /><span className="atlas-picker-text"><strong>{project.name}</strong>{project.description && <small>{project.description}</small>}<small>{project.process && `공정 ${project.process} · `}블록 {project.blocks.length} · 버전 {project.blocks.reduce((count, block) => count + block.versions.length, 0)}</small></span>{project.status === 'completed' && <em className="is-completed">완료</em>}<em>{project.can_write ? '읽기 · 쓰기' : '읽기'}</em><ChevronRight size={16} />
+          <Boxes size={18} /><span className="atlas-picker-text"><strong>{project.name}</strong>{project.description && <small>{project.description}</small>}<small>{project.process && `공정 ${project.process} · `}블록 {project.blocks.length} · 버전 {project.blocks.reduce((count, block) => count + block.versions.length, 0)}</small></span>{project.hidden && <em className="is-completed">숨김</em>}{project.status === 'completed' && <em className="is-completed">완료</em>}<em>{project.can_write ? '읽기 · 쓰기' : '읽기'}</em><ChevronRight size={16} />
         </button></li>)}</ul>}
       </div>
       <div className="atlas-picker-column">
@@ -105,6 +119,21 @@ export default function AtlasHome() {
     </section>
     {catalog?.local_mode && catalog.unbound_area && <LocalBinding key={`${atlas.scope.projectId}:${atlas.scope.blockId}:${atlas.scope.versionId}`} />}
     {kind && <CatalogForm kind={kind} onClose={() => setKind(null)} onCreated={message => { setKind(null); setNotice(message) }} />}
+    {managingProject && (
+      <ProjectManageDialog
+        project={managingProject}
+        processes={catalog?.processes || []}
+        apiPrefix="/api/atlas"
+        api={auth.request}
+        reload={atlas.reload}
+        onClose={() => setManagingProject(null)}
+        onCompleted={(message, deleted) => {
+          setManagingProject(null)
+          setNotice(message)
+          if (deleted) select({ projectId: '', blockId: '', versionId: '' })
+        }}
+      />
+    )}
     {porOpen && atlas.project && atlas.block && atlas.block.versions.length > 0 && <PorAssignDialog project={atlas.project} block={atlas.block} initialVersion={atlas.version} onClose={() => setPorOpen(false)} onAssigned={message => { setPorOpen(false); setNotice(message) }} />}
   </main>
 }

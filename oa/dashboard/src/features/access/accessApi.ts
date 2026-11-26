@@ -1,6 +1,6 @@
 export type ProcessDefinition = { name: string; unit_area: string }
 export type AccessRole = 'MEMBER' | 'TOP' | 'OWNER'
-export type AccessProject = { id: string; name: string; description: string }
+export type AccessProject = { id: string; name: string; description: string; process?: string | null; hidden?: boolean; hidden_reason?: string }
 export type AccessBlock = { id: string; project_id: string; name: string }
 export type AccessCatalog = { processes?: ProcessDefinition[]; projects: AccessProject[]; blocks: AccessBlock[] }
 export type AccessGrant = { grant_id: string; user_id: string; role: AccessRole; project_id: string; block_id: string | null }

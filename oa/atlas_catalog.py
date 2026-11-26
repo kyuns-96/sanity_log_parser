@@ -239,8 +239,10 @@ class AtlasCatalog:
 
         return self.command(body.request_id, "VERSION", body.model_dump(mode="json", exclude={"request_id"}), create)
 
-    def catalog(self):
-        allowed = None if self.local else {p["id"] for p in self.access.catalog()["projects"]}
+    def catalog(self, *, include_hidden: bool = False):
+        from oa.project_lifecycle import apply_project_overlay
+        show_hidden = bool(include_hidden and self.can_manage)
+        allowed = None if self.local else {p["id"] for p in self.access.catalog(include_hidden=show_hidden)["projects"]}
         writable = None if self.local else {g["project_id"] for g in self.access.snapshot(self.actor.user_id)["grants"]}
         blocks = self.ws.rows("WS_BLOCK")
         versions = self.ws.rows("WS_VERSION")
@@ -330,7 +332,43 @@ class AtlasCatalog:
                     child["versions"].append({**hydrated, **meta_by_version.get(version["workspace_key"], {})})
                 item["blocks"].append(child)
             result.append(item)
-        return result
+        return apply_project_overlay(self.db, result, include_hidden=show_hidden)
+
+    def update_project(self, project_id: str, *, name: str, description: str = "", process: str | None = None, area_enabled: bool = False):
+        if not self.can_manage:
+            fail("FORBIDDEN")
+        self.project(project_id, manage=True)
+        from oa.project_lifecycle import update_project
+        return update_project(
+            self.db, self.actor.user_id, project_id,
+            name=name, description=description, process=process, area_enabled=area_enabled,
+        )
+
+    def set_project_hidden(self, project_id: str, *, hidden: bool, reason: str = ""):
+        if not self.can_manage:
+            fail("FORBIDDEN")
+        self.project(project_id, manage=True)
+        from oa.project_lifecycle import set_project_hidden
+        return set_project_hidden(self.db, self.actor.user_id, project_id, hidden=hidden, reason=reason)
+
+    def project_delete_preview(self, project_id: str, *, area_enabled: bool = False):
+        if not self.can_manage:
+            fail("FORBIDDEN")
+        self.project(project_id, manage=True)
+        from oa.project_lifecycle import project_delete_preview
+        return project_delete_preview(self.db, project_id, area_enabled=area_enabled)
+
+    def delete_project(self, project_id: str, *, force: bool = False, confirm_name: str = "", reason: str = "", area_enabled: bool = False):
+        if not self.can_manage:
+            fail("FORBIDDEN")
+        self.project(project_id, manage=True)
+        from oa.project_lifecycle import delete_project
+        return delete_project(
+            self.db, self.actor, project_id,
+            force=force, confirm_name=confirm_name, reason=reason,
+            access_store=None if self.local else self.access,
+            area_enabled=area_enabled,
+        )
 
     def set_project_status(self, project_id: str, status: str):
         if status not in ("active", "completed"):

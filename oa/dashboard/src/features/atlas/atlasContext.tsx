@@ -9,12 +9,13 @@ export type AtlasScope = { projectId: string; blockId: string; versionId: string
 export type AtlasPor = { revision: number; version_id: string | null; assigned_by?: { id?: string; name?: string } | null; assigned_at?: string | null }
 export type AtlasVersion = { id: string; project_id: string; block_id: string; source_namespace: string; net_ver: string; revision: string; layout: 'PRE' | 'POST'; eco_num?: string | null; ecos: (string | null)[]; declared_ecos?: (string | null)[]; source_pre_id: string | null; previous_version_id?: string | null; area_id?: string | null }
 export type AtlasBlock = { id: string; name: string; versions: AtlasVersion[]; area_id?: string | null; por?: AtlasPor }
-export type AtlasProject = { id: string; process?: string | null; status?: 'active' | 'completed'; name: string; description?: string; can_write: boolean; blocks: AtlasBlock[]; area_id?: string | null }
+export type AtlasProject = { id: string; process?: string | null; status?: 'active' | 'completed'; name: string; description?: string; hidden?: boolean; hidden_reason?: string; can_write: boolean; blocks: AtlasBlock[]; area_id?: string | null }
 export type UnboundArea = { id: string; project_id?: string | null; block_id?: string | null; payload?: Record<string, unknown>; name?: string }
 export type AtlasCatalog = { processes?: ProcessDefinition[]; product: string; local_mode: boolean; can_manage_catalog: boolean; area_enabled: boolean; area_status?: string; area_error?: string; projects: AtlasProject[]; unbound_area?: { projects: UnboundArea[]; blocks: UnboundArea[]; versions: UnboundArea[] }; bindable_area?: { projects: UnboundArea[]; blocks: UnboundArea[]; versions: UnboundArea[] } }
 export type AreaScope = { project_id: string; block_id: string | null; version_id: string | null; area_project_id: string; area_block_id: string | null; area_version_id: string | null }
 export type AtlasContextValue = {
   demo: boolean; catalog: AtlasCatalog | null; scope: AtlasScope; routeSearch: string; loading: boolean; error: string;
+  includeHidden: boolean; setIncludeHidden: (value: boolean) => void;
   project?: AtlasProject; block?: AtlasBlock; version?: AtlasVersion; netVer: string; areaScope: AreaScope | null;
   reload: () => Promise<void>; selectScope: (scope: AtlasScope) => Promise<void>; selectNetVer: (netVer: string) => Promise<void>; href: (path: string) => string;
   replaceRoute: (href: string) => void;
@@ -28,6 +29,7 @@ export function AtlasProvider({ routeSearch, replaceRoute, children, demo = fals
   const [catalog, setCatalog] = useState<AtlasCatalog | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [includeHidden, setIncludeHidden] = useState(false)
   const [netSelection, setNetSelection] = useState({ projectId: '', blockId: '', netVer: '' })
   const catalogRequest = useRef<AbortController | null>(null)
   const sessionKey = auth.session && (auth.session.auth_method === 'local_token' || auth.session.authorization_ready === true)
@@ -39,12 +41,13 @@ export function AtlasProvider({ routeSearch, replaceRoute, children, demo = fals
     catalogRequest.current = controller
     setLoading(true)
     try {
-      const value = await auth.request<AtlasCatalog>('/api/atlas/catalog', undefined, false, controller.signal)
+      const path = includeHidden ? '/api/atlas/catalog?include_hidden=true' : '/api/atlas/catalog'
+      const value = await auth.request<AtlasCatalog>(path, undefined, false, controller.signal)
       if (!controller.signal.aborted) { setCatalog(value); setError('') }
     } catch (cause) {
       if (!controller.signal.aborted) { setCatalog(null); setError(cause instanceof Error ? cause.message : '공통 카탈로그를 불러오지 못했습니다.'); throw cause }
     } finally { if (!controller.signal.aborted) setLoading(false) }
-  }, [auth.request, sessionKey])
+  }, [auth.request, sessionKey, includeHidden])
   useEffect(() => {
     setCatalog(null)
     void reload().catch(() => undefined)
@@ -84,5 +87,5 @@ export function AtlasProvider({ routeSearch, replaceRoute, children, demo = fals
     setNetSelection({ projectId: scope.projectId, blockId: scope.blockId, netVer: next })
     await selectScope({ projectId: scope.projectId, blockId: scope.blockId, versionId: '' })
   }, [selectScope, scope.projectId, scope.blockId])
-  return <AtlasContext value={{ demo, catalog, scope, routeSearch, project, block, version, netVer, areaScope, loading, error, reload, selectScope, selectNetVer, href, replaceRoute }}>{children}</AtlasContext>
+  return <AtlasContext value={{ demo, catalog, scope, routeSearch, includeHidden, setIncludeHidden, project, block, version, netVer, areaScope, loading, error, reload, selectScope, selectNetVer, href, replaceRoute }}>{children}</AtlasContext>
 }

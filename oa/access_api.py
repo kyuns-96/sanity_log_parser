@@ -32,6 +32,23 @@ class ProjectCommand(AccessCommand):
     description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
 
 
+class ProjectUpdateCommand(AccessCommand):
+    name: Name
+    process: Name | None = None
+    description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
+
+
+class ProjectVisibilityCommand(AccessCommand):
+    hidden: bool
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
+
+
+class ProjectDeleteCommand(AccessCommand):
+    force: bool = False
+    confirm_name: Name
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
+
+
 class BlockCommand(AccessCommand):
     request_id: UUID
     name: Name
@@ -79,9 +96,15 @@ def create_access_router(authenticated_dependency):
     router = APIRouter()
 
     @router.get("/api/access/catalog")
-    def catalog(actor=Depends(authenticated_dependency)):
+    def catalog(include_hidden: bool = False, actor=Depends(authenticated_dependency)):
         with _access(actor) as store:
-            return {**store.catalog(), "processes": WorkspaceStore(store.db).processes()}
+            show_hidden = bool(include_hidden and store.is_admin(actor.user_id))
+            ws = WorkspaceStore(store.db)
+            data = store.catalog(include_hidden=show_hidden)
+            for p in data["projects"]:
+                if "process" not in p:
+                    p["process"] = ws.initial_process(p["id"])
+            return {**data, "processes": ws.processes()}
 
     @router.get("/api/access/me")
     def me(actor=Depends(authenticated_dependency)):
@@ -113,6 +136,47 @@ def create_access_router(authenticated_dependency):
             project_name=body.name.strip(),
             process=process,
         )
+
+    @router.post("/api/admin/projects/{project_id}/update")
+    def update_project_admin(project_id: Identifier, body: ProjectUpdateCommand, request: Request, actor=Depends(authenticated_dependency)):
+        require_mutation_request(request)
+        from oa.project_lifecycle import update_project
+        area_on = bool(getattr(request.app.state, "area_power_enabled", False))
+        with _access(actor, write=True) as store:
+            store.require_admin(actor)
+            return update_project(
+                store.db, actor.user_id, project_id,
+                name=body.name, description=body.description, process=body.process, area_enabled=area_on,
+            )
+
+    @router.post("/api/admin/projects/{project_id}/visibility")
+    def project_visibility_admin(project_id: Identifier, body: ProjectVisibilityCommand, request: Request, actor=Depends(authenticated_dependency)):
+        require_mutation_request(request)
+        from oa.project_lifecycle import set_project_hidden
+        with _access(actor, write=True) as store:
+            store.require_admin(actor)
+            return set_project_hidden(store.db, actor.user_id, project_id, hidden=body.hidden, reason=body.reason)
+
+    @router.get("/api/admin/projects/{project_id}/delete-preview")
+    def project_delete_preview_admin(project_id: Identifier, request: Request, actor=Depends(authenticated_dependency)):
+        from oa.project_lifecycle import project_delete_preview
+        area_on = bool(getattr(request.app.state, "area_power_enabled", False))
+        with _access(actor) as store:
+            store.require_admin(actor)
+            return project_delete_preview(store.db, project_id, area_enabled=area_on)
+
+    @router.post("/api/admin/projects/{project_id}/delete")
+    def delete_project_admin(project_id: Identifier, body: ProjectDeleteCommand, request: Request, actor=Depends(authenticated_dependency)):
+        require_mutation_request(request)
+        from oa.project_lifecycle import delete_project
+        area_on = bool(getattr(request.app.state, "area_power_enabled", False))
+        with _access(actor, write=True) as store:
+            store.require_admin(actor)
+            return delete_project(
+                store.db, actor, project_id,
+                force=body.force, confirm_name=body.confirm_name, reason=body.reason,
+                access_store=store, area_enabled=area_on,
+            )
 
     @router.post("/api/admin/projects/{project_id}/blocks")
     def create_block(project_id: Identifier, body: BlockCommand, request: Request, actor=Depends(authenticated_dependency)):

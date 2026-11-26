@@ -298,6 +298,22 @@ class AccessStore:
                                      if (grant["user_id"], grant["project_id"]) ==
                                         (target["user_id"], target["project_id"])]:
                         del grants[grant_id]
+            elif kind == "PROJECT_DELETE":
+                if (set(data) != {"project_id", "force", "reason"} or not _identifier(data["project_id"])
+                        or type(data["force"]) is not bool or not _text(data["reason"], 1000, empty=True)
+                        or data["project_id"] not in projects):
+                    _error()
+                pid = data["project_id"]
+                del projects[pid]
+                for bid in [k for k, b in blocks.items() if b["project_id"] == pid]:
+                    del blocks[bid]
+                for gid in [k for k, g in grants.items() if g["project_id"] == pid]:
+                    del grants[gid]
+                for req in requests.values():
+                    if req["project_id"] == pid and req["status"] == "PENDING":
+                        req["status"] = "REJECTED"
+                        req["decided_by"] = event["actor_id"]
+                        req["decision_reason"] = "PROJECT_DELETED"
             else:
                 _error()
         self._validate_registry(projects, blocks)
@@ -346,10 +362,31 @@ class AccessStore:
         self._cached = None
         return revision
 
-    def catalog(self):
+    def record_project_deleted(self, actor, project_id, *, force=False, reason=""):
+        self._admin(actor)
+        if not _identifier(project_id) or not _text(reason, 1000, empty=True):
+            _error("INVALID_REQUEST")
+        if project_id not in self._state()["projects"]:
+            _error("RESOURCE_NOT_FOUND")
+        from uuid import uuid4
+        command_id = str(uuid4())
+        return self._append(command_id, "PROJECT_DELETE", actor, {
+            "project_id": project_id, "force": bool(force), "reason": reason,
+        })
+
+    def catalog(self, *, include_hidden=False):
+        from oa.project_lifecycle import apply_project_overlay
         state = self._state()
-        return {"projects": sorted(state["projects"].values(), key=lambda p: p["id"]),
-                "blocks": sorted(state["blocks"].values(), key=lambda b: (b["project_id"], b["id"]))}
+        raw_projects = sorted(state["projects"].values(), key=lambda p: p["id"])
+        projects = apply_project_overlay(self.db, raw_projects, include_hidden=include_hidden)
+        visible_ids = {p["id"] for p in projects}
+        return {
+            "projects": projects,
+            "blocks": sorted(
+                (b for b in state["blocks"].values() if b["project_id"] in visible_ids),
+                key=lambda b: (b["project_id"], b["id"]),
+            ),
+        }
 
     def snapshot(self, user_id):
         self._identity(user_id)

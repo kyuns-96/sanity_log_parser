@@ -120,7 +120,11 @@ def authorized_actor(request: Request, actor: Actor = Depends(authenticated)):
         require_mutation_request(request)
     with Database("oa") as db, db.transaction():
         db.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        access_lock(db, exclusive=request.method == "POST" and request.url.path.endswith(("/api/atlas/projects", "/api/atlas/blocks")))
+        exclusive_atlas = request.method == "POST" and (
+            request.url.path.endswith(("/api/atlas/projects", "/api/atlas/blocks"))
+            or (request.url.path.startswith("/api/atlas/projects/") and request.url.path.endswith("/delete"))
+        )
+        access_lock(db, exclusive=exclusive_atlas)
         store = AccessStore(db, admin)
         store.require_ready()
         store.require_actor(actor)
@@ -130,7 +134,7 @@ def authorized_actor(request: Request, actor: Actor = Depends(authenticated)):
 def _review_error_status(code: str) -> int:
     if code == "UNAUTHORIZED":
         return 401
-    if code in {"ACCOUNT_NOT_LINKED", "ACCOUNT_DISABLED", "FORBIDDEN"}:
+    if code in {"ACCOUNT_NOT_LINKED", "ACCOUNT_DISABLED", "FORBIDDEN", "FORCE_DELETE_DISABLED"}:
         return 403
     if code.endswith("NOT_FOUND"):
         return 404
@@ -151,6 +155,7 @@ def _review_error_status(code: str) -> int:
         "RATIONALE_REQUIRED", "RATIONALE_STALE", "SOURCE_FILE_ON_VWP", "AI_BUSY",
         "AI_JOB_ACTIVE", "AI_JOB_DELETED", "AI_INPUT_STALE", "AI_CASES_STALE", "AI_CRITERIA_STALE", "AI_CONFIG_CHANGED",
         "REMOVAL_CHANGED", "POR_VERSION_IN_USE", "VERSION_REFERENCED", "SUBMISSION_BUSY", "SOURCE_REMOVED",
+        "PROJECT_HAS_DATA", "CONFIRMATION_MISMATCH",
         "AI_EVIDENCE_CHANGED", "AI_EVIDENCE_NOT_READY",
         "SOURCE_INTAKE_NOT_READY", "SOURCE_SCOPE_CONFIRMATION_REQUIRED",
         "AREA_BINDING_CONFLICT", "AREA_PREVIOUS_NOT_PREPARED", "AREA_LINEAGE_REQUIRED",
