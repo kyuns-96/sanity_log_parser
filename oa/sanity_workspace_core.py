@@ -71,9 +71,9 @@ class WorkspaceCoreStore:
 
     def initial_process(self, project_id):
         meta_row = self.db.execute(
-            "SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE 'atlas.pmeta.%' "
+            "SELECT payload FROM {oa} WHERE record_type='WS_CONFIG' AND workspace_key LIKE %s "
             "AND payload->>'project_id'=%s ORDER BY COALESCE((payload->>'revision')::bigint, 0) DESC, created_at DESC LIMIT 1",
-            (project_id,),
+            ("atlas.pmeta.%", project_id),
         ).fetchone()
         if meta_row and "process" in (meta_row["payload"] or {}):
             return meta_row["payload"]["process"]
