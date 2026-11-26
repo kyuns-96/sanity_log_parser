@@ -262,6 +262,7 @@
 .area-power.area-power .hierarchy-browser td.up { color: var(--warning); }
 .area-power.area-power .hierarchy-browser td.down { color: var(--accent); }
 .area-power.area-power .hierarchy-browser td.noise-muted { color: var(--text-muted); }
+.area-power.area-power .hierarchy-browser td.ratio-contextual { text-decoration: underline dotted; text-underline-offset: 3px; }
 .area-power.area-power .tree-cell { display: flex; align-items: center; height: 26px; min-width: 0; }
 .area-power.area-power .tree-guide { flex: none; align-self: stretch; width: 16px; background: linear-gradient(var(--line), var(--line)) 7px 0 / 1px 100% no-repeat; }
 .area-power.area-power .tree-toggle, .area-power.area-power .tree-spacer { flex: none; width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; }

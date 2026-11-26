@@ -25,6 +25,24 @@ const fieldsOf = (metric: MetricDef, pctField: 'effective_pct' | 'relative_chang
     : [['baseline', '기준'], ['current', '현재'], ['delta', 'Δ'], [pctField, pctField === 'effective_pct' ? 'Eff. Δ%' : 'Δ%']]
 const unitOf = (metric: MetricDef) => metric.unit && metric.unit !== 'GE' ? ` ${metric.unit}` : ''
 const ABS_PERCENT_FIELDS = new Set<Field>(['effective_pct', 'relative_change_pct', 'pct_point_change'])
+// Option B (power-oriented polarity for Vth/Drive/CTS ratio shifts):
+// Low-power bins (RVT/HVT, sub-1x, D1~D3): increase (+) is power-friendly (cool/down), decrease (-) is warm/up.
+// High-power bins (SLVT/LVT, D4+, D4~D16, CTS): increase (+) is warm/up, decrease (-) is cool/down.
+const LOW_POWER_RATIO_METRICS = new Set([
+  'vt_rvt_pct', 'vt_rvt_llp_pct', 'vt_hvt_pct', 'vt_hvt_llp_pct',
+  'drv_sub1x_pct', 'drv_d1_d3_pct', 'drv_D0P5_pct', 'drv_D0P7_pct',
+  'drv_D1_pct', 'drv_D2_pct', 'drv_D3_pct',
+])
+const HIGH_POWER_RATIO_METRICS = new Set([
+  'vt_slvt_pct', 'vt_slvt_llp_pct', 'vt_lvt_pct', 'vt_lvt_llp_pct',
+  'drv_d4_plus_pct', 'drv_D4_pct', 'drv_D5_pct', 'drv_D6_pct', 'drv_D7_pct',
+  'drv_D8_pct', 'drv_D10_pct', 'drv_D12_pct', 'drv_D14_pct', 'drv_D16_pct',
+  'cts_area_pct',
+])
+const RATIO_REASON_LABEL: Record<string, string> = {
+  library_or_classification_mapping_unconfirmed: '참고용 · library/분류 기준 미확인 또는 다름',
+  structural_metadata_unknown_or_different: '참고용 · 구조 메타데이터 미확인 또는 다름',
+}
 const MARK_LABEL: Record<string, string> = { unexpected: '이상', needs_review: '확인', expected: '설명됨', minor: '미미' }
 const stateLabel: Record<string, string> = { comparable: '비교', contextual: '조건 차이', unavailable: '불가', pending: '실행 전' }
 
@@ -61,8 +79,15 @@ function amount(input: unknown, metric: MetricDef) {
   return metric.unit === 'GE' ? formatPercent(input).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1') : format(input)
 }
 
+function formatSignedPercent(input: unknown) {
+  const formatted = formatPercent(input)
+  if (formatted === '—') return formatted
+  return sign(input) > 0 && !formatted.startsWith('+') ? `+${formatted}` : formatted
+}
+
 function shown(row: BrowserRow, metric: MetricDef, field: Field) {
   const raw = value(row, metric.id, field)
+  if (field === 'pct_point_change') return formatSignedPercent(raw)
   if (ABS_PERCENT_FIELDS.has(field)) return formatPercent(raw)
   const direction = field === 'delta' ? sign(raw) : 0
   if (direction) return `${direction > 0 ? '▲' : '▼'} ${amount(raw, metric)}`
@@ -438,32 +463,73 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
     const direction = field === 'effective_pct'
       ? (scale?.dampedPct ? (scale.dampedPct.n > 0n ? 1 : scale.dampedPct.n < 0n ? -1 : 0) : 0)
       : (isChangeField ? sign(raw) : 0)
-    const isNoise = Boolean(direction && scale?.isNoise)
+    const mResult = row.result?.metrics[metric.id]
+    let isNoise = Boolean(direction && scale?.isNoise)
+    let toneClass = ''
     let barMagnitude = 0
-    if (field === 'pct_point_change' && direction) {
-      barMagnitude = Math.min(100, Math.abs(Number(text(raw))) * 5)
-    } else if (isChangeField && direction && !metric.ratio && !isNoise && scale?.rootSharePct) {
-      const absShare = absFraction(scale.rootSharePct)
-      if (compareFraction(absShare, fraction(40n)) >= 0) {
-        barMagnitude = 100
-      } else {
-        const bps = Number((absShare.n * 10000n) / absShare.d)
-        const scaledBar = Math.min(100, (bps / 10000) * 2.5)
-        barMagnitude = scaledBar >= 1 ? scaledBar : 0
-      }
-    }
     const label = cellText(row, metric, field)
     let tooltip: string | undefined = raw == null || raw === '' ? undefined : text(raw)
-    if (scale && direction) {
-      const rawDelta = amount(value(row, metric.id, 'delta'), metric)
-      const u = unitOf(metric)
-      const rawPctText = percent(value(row, metric.id, 'relative_change_pct'))
-      tooltip = field === 'effective_pct'
-        ? `Effective Δ% ${fracToApproxPct(scale.dampedPct)} · 단순 Δ% ${rawPctText} · Δ ${direction > 0 ? '+' : ''}${rawDelta}${u} · 루트 비중 ${fracToApproxPct(scale.rootSharePct).replace(/^\+/, '')}${isNoise ? ' (미소 변화 완충)' : ''}`
-        : `Δ ${direction > 0 ? '+' : ''}${rawDelta}${u} · Effective Δ% ${fracToApproxPct(scale.dampedPct)} · 루트 비중 ${fracToApproxPct(scale.rootSharePct).replace(/^\+/, '')}${isNoise ? ' (미소 변화 완충)' : ''}`
+
+    if (field === 'pct_point_change') {
+      const ppFrac = parseDecimal(raw)
+      const isContextual = text(mResult?.comparability) === 'contextual'
+      const reasonKey = text(mResult?.reason)
+      if (ppFrac !== null) {
+        const absPp = absFraction(ppFrac)
+        const minorShift = ppFrac.n === 0n || compareFraction(absPp, fraction(1n)) < 0
+        isNoise = minorShift
+        if (!minorShift && direction) {
+          const inverted = LOW_POWER_RATIO_METRICS.has(metric.id)
+          const polarity = inverted ? -direction : direction
+          toneClass = polarity > 0 ? ' up' : ' down'
+          if (compareFraction(absPp, fraction(20n)) >= 0) {
+            barMagnitude = 100
+          } else {
+            const bps = Number((absPp.n * 10000n) / absPp.d)
+            const scaledBar = Math.min(100, (bps / 10000) * 5)
+            barMagnitude = scaledBar >= 1 ? scaledBar : 0
+          }
+        } else {
+          toneClass = ' noise-muted'
+        }
+        if (isContextual) toneClass += ' ratio-contextual'
+        const bText = percent(value(row, metric.id, 'baseline'))
+        const cText = percent(value(row, metric.id, 'current'))
+        const hintParts: string[] = [`기준 ${bText} → 현재 ${cText} (${label}%p)`]
+        if (minorShift) {
+          hintParts.push(ppFrac.n === 0n ? '변화 없음' : '1%p 미만 미세 변동')
+        } else if (LOW_POWER_RATIO_METRICS.has(metric.id)) {
+          hintParts.push(direction > 0 ? '저전력/저드라이브 비중 증가' : '저전력/저드라이브 비중 감소')
+        } else if (HIGH_POWER_RATIO_METRICS.has(metric.id)) {
+          hintParts.push(direction > 0 ? '고전력/고드라이브 비중 증가' : '고전력/고드라이브 비중 감소')
+        }
+        if (isContextual) {
+          hintParts.push(RATIO_REASON_LABEL[reasonKey] || '참고용 · 조건 차이')
+        }
+        tooltip = hintParts.join(' · ')
+      }
+    } else {
+      if (isChangeField && direction && !metric.ratio && !isNoise && scale?.rootSharePct) {
+        const absShare = absFraction(scale.rootSharePct)
+        if (compareFraction(absShare, fraction(40n)) >= 0) {
+          barMagnitude = 100
+        } else {
+          const bps = Number((absShare.n * 10000n) / absShare.d)
+          const scaledBar = Math.min(100, (bps / 10000) * 2.5)
+          barMagnitude = scaledBar >= 1 ? scaledBar : 0
+        }
+      }
+      if (scale && direction) {
+        const rawDelta = amount(value(row, metric.id, 'delta'), metric)
+        const u = unitOf(metric)
+        const rawPctText = percent(value(row, metric.id, 'relative_change_pct'))
+        tooltip = field === 'effective_pct'
+          ? `Effective Δ% ${fracToApproxPct(scale.dampedPct)} · 단순 Δ% ${rawPctText} · Δ ${direction > 0 ? '+' : ''}${rawDelta}${u} · 루트 비중 ${fracToApproxPct(scale.rootSharePct).replace(/^\+/, '')}${isNoise ? ' (미소 변화 완충)' : ''}`
+          : `Δ ${direction > 0 ? '+' : ''}${rawDelta}${u} · Effective Δ% ${fracToApproxPct(scale.dampedPct)} · 루트 비중 ${fracToApproxPct(scale.rootSharePct).replace(/^\+/, '')}${isNoise ? ' (미소 변화 완충)' : ''}`
+      }
+      toneClass = isNoise ? ' noise-muted' : direction > 0 ? ' up' : direction < 0 ? ' down' : ''
     }
-    const toneClass = isNoise ? ' noise-muted' : direction > 0 ? ' up' : direction < 0 ? ' down' : ''
-    // The size of a change is a bar along the cell proportional to share of root total.
+    // The size of a change is a bar along the cell proportional to share of root total (or Δ%p magnitude for ratios).
     return <td key={`${metric.id}.${field}`} className={`numeric${extra ? ` ${extra}` : ''}${toneClass}${barMagnitude ? ' change-bar' : ''}`} style={barMagnitude ? { '--magnitude': barMagnitude / 100 } as CSSProperties : undefined} title={tooltip}>{label}</td>
   }
   const splitColumns = 2 + metrics.length * 3 + 1
@@ -614,7 +680,7 @@ export function HierarchyBrowser({ roots, childrenOf, onRequestChildren, flat, h
       {metrics.map(metric => {
         const sc = !metric.ratio ? scaleMetrics(current.row, metric) : null
         return <div key={metric.id}><dt>{metric.label}{unitOf(metric)}</dt><dd>{metric.ratio
-          ? <>{percent(value(current.row, metric.id, 'baseline'))} → {percent(value(current.row, metric.id, 'current'))} · Δ {formatPercent(value(current.row, metric.id, 'pct_point_change'))}%p</>
+          ? <>{percent(value(current.row, metric.id, 'baseline'))} → {percent(value(current.row, metric.id, 'current'))} · Δ {formatSignedPercent(value(current.row, metric.id, 'pct_point_change'))}%p</>
           : <>{amount(value(current.row, metric.id, 'baseline'), metric)} → {amount(value(current.row, metric.id, 'current'), metric)} · Δ {amount(value(current.row, metric.id, 'delta'), metric)} · {percent(value(current.row, metric.id, 'relative_change_pct'))}{sc?.dampedPct ? ` (Effective Δ% ${fracToApproxPct(sc.dampedPct)} · 비중 ${fracToApproxPct(sc.rootSharePct).replace(/^\+/, '')})` : ''}</>}</dd></div>
       })}
       {reasonOf(current.row, hasResult) && <div><dt>사유</dt><dd>{reasonOf(current.row, hasResult)}</dd></div>}
