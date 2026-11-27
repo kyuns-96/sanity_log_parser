@@ -244,9 +244,13 @@ export default function VersionInventoryPage() {
   return (
     <main className="atlas-home">
       <section className="atlas-home-heading">
-        <div>
+        <div className="flex flex-wrap items-baseline gap-3">
           <h1>버전 · 자료 현황</h1>
-          <p className="text-sm text-muted-foreground">프로젝트별 모든 버전의 Sanity 보고서·Area 기준·Power 레이어 적재 현황을 한눈에 보고 관리합니다.</p>
+          {data && (
+            <span className="text-xs text-muted-foreground">
+              버전 <strong>{data.summary.total_versions}</strong> · PoR <strong>{data.summary.por_count}/{data.summary.total_blocks}</strong> · Sanity <strong>{data.summary.with_reports}</strong> · Area <strong>{data.summary.with_area}</strong> · Power <strong>{data.summary.with_power}</strong>{data.summary.empty_versions > 0 ? <> · 빈 버전 <strong>{data.summary.empty_versions}</strong></> : null}
+            </span>
+          )}
         </div>
         <div className="atlas-actions">
           <button type="button" className="atlas-button secondary" disabled={loading} onClick={() => void loadInventory()}>
@@ -258,48 +262,32 @@ export default function VersionInventoryPage() {
       {error && <p className="atlas-message error" role="alert">{error}</p>}
       {notice && <p className="atlas-message" role="status">{notice}</p>}
 
-      {data && (
-        <section className="grid grid-cols-2 gap-3 md:grid-cols-6" aria-label="버전 자료 요약">
-          <div className="rounded-lg border border-border bg-card p-3"><div className="text-xs text-muted-foreground">전체 버전</div><div className="mt-1 text-xl font-semibold">{data.summary.total_versions}</div></div>
-          <div className="rounded-lg border border-border bg-card p-3"><div className="text-xs text-muted-foreground">PoR 지정 블록</div><div className="mt-1 text-xl font-semibold">{data.summary.por_count} / {data.summary.total_blocks}</div></div>
-          <div className="rounded-lg border border-border bg-card p-3"><div className="text-xs text-muted-foreground">Sanity 수신 버전</div><div className="mt-1 text-xl font-semibold">{data.summary.with_reports}</div></div>
-          <div className="rounded-lg border border-border bg-card p-3"><div className="text-xs text-muted-foreground">Area 확보 버전</div><div className="mt-1 text-xl font-semibold">{data.summary.with_area}</div></div>
-          <div className="rounded-lg border border-border bg-card p-3"><div className="text-xs text-muted-foreground">Power 확보 버전</div><div className="mt-1 text-xl font-semibold">{data.summary.with_power}</div></div>
-          <div className="rounded-lg border border-border bg-card p-3"><div className="text-xs text-muted-foreground">미수신(빈) 버전</div><div className="mt-1 text-xl font-semibold">{data.summary.empty_versions}</div></div>
-        </section>
-      )}
-
-      <section className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-3" aria-label="필터">
-        <label className="flex items-center gap-2 text-xs font-medium">
-          프로젝트
-          <select
-            className="studio-native-select"
-            value={selectedProjectId}
-            onChange={e => { setSelectedProjectId(e.target.value); setSelectedBlockId('') }}
-          >
-            {!projects.length && <option value="">등록된 프로젝트 없음</option>}
-            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </label>
-        <label className="flex items-center gap-2 text-xs font-medium">
-          블록
-          <select className="studio-native-select" value={selectedBlockId} onChange={e => setSelectedBlockId(e.target.value)}>
-            <option value="">전체 블록 ({blocks.length})</option>
-            {blocks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
-        </label>
-        <div className="relative min-w-[200px] flex-1">
-          <Search size={14} className="pointer-events-none absolute left-2.5 top-2.5 text-muted-foreground" />
-          <Input className="h-8 pl-8 text-xs" placeholder="NET_VER / REVISION / ECO / 블록 검색" value={search} onChange={e => setSearch(e.target.value)} />
+      <section className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-3 py-2" aria-label="필터">
+        <select
+          aria-label="프로젝트"
+          className="studio-native-select"
+          value={selectedProjectId}
+          onChange={e => { setSelectedProjectId(e.target.value); setSelectedBlockId('') }}
+        >
+          {!projects.length && <option value="">프로젝트 없음</option>}
+          {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        <select aria-label="블록" className="studio-native-select" value={selectedBlockId} onChange={e => setSelectedBlockId(e.target.value)}>
+          <option value="">전체 블록 ({blocks.length})</option>
+          {blocks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+        <div className="relative min-w-[180px] flex-1">
+          <Search size={14} className="pointer-events-none absolute left-2.5 top-2 text-muted-foreground" />
+          <Input className="h-8 pl-8 text-xs" placeholder="NET_VER / REV / ECO / 블록" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <div className="flex flex-wrap gap-1">
           {([
             ['all', '전체'],
-            ['por', 'PoR만'],
+            ['por', 'PoR'],
             ['sanity', 'Sanity'],
             ['area', 'Area'],
             ['power', 'Power'],
-            ['empty', '자료 없음'],
+            ['empty', '빈 버전'],
           ] as [StatusFilter, string][]).map(([key, label]) => (
             <Button key={key} size="sm" variant={statusFilter === key ? 'default' : 'outline'} onClick={() => setStatusFilter(key)}>
               {label}
@@ -356,34 +344,34 @@ export default function VersionInventoryPage() {
                           {item.is_por && <Badge className="gap-1"><ShieldCheck size={11} />PoR</Badge>}
                         </div>
                       </td>
-                      <td className="px-3 py-2.5">
+                      <td className="px-3 py-2">
                         {item.sanity.total > 0 ? (
                           <div className="flex flex-wrap items-center gap-1">
-                            <strong>{item.sanity.total}건</strong>
-                            {item.sanity.pass > 0 && <Badge variant="outline">PASS {item.sanity.pass}</Badge>}
-                            {item.sanity.warn > 0 && <Badge variant="secondary">WARN {item.sanity.warn}</Badge>}
-                            {item.sanity.fail > 0 && <Badge variant="destructive">FAIL {item.sanity.fail}</Badge>}
+                            <strong>{item.sanity.total}</strong>
+                            {item.sanity.pass > 0 && <Badge variant="outline">P {item.sanity.pass}</Badge>}
+                            {item.sanity.warn > 0 && <Badge variant="secondary">W {item.sanity.warn}</Badge>}
+                            {item.sanity.fail > 0 && <Badge variant="destructive">F {item.sanity.fail}</Badge>}
                           </div>
                         ) : (
-                          <span className="text-muted-foreground">미수신</span>
+                          <span className="text-muted-foreground">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-2.5">
+                      <td className="px-3 py-2">
                         {item.area_power.has_area ? (
                           <div className="flex flex-wrap items-center gap-1">
                             <Badge variant="outline">
-                              {latestAreaBase?.is_area_only ? 'Area 전용' : 'Area+Power 기준'}
-                              {item.area_power.area_base_count > 1 ? ` ${item.area_power.area_base_count}건` : ''}
+                              {latestAreaBase?.is_area_only ? '전용' : '기준'}
+                              {item.area_power.area_base_count > 1 ? ` ×${item.area_power.area_base_count}` : ''}
                             </Badge>
                             {latestAreaBase?.row_count != null && (
                               <span className="text-[11px] text-muted-foreground">{latestAreaBase.row_count.toLocaleString()}행</span>
                             )}
                           </div>
                         ) : (
-                          <span className="text-muted-foreground">미업로드</span>
+                          <span className="text-muted-foreground">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-2.5">
+                      <td className="px-3 py-2">
                         {powerCorners.length > 0 ? (
                           <div className="flex flex-wrap items-center gap-1">
                             {powerCorners.map(c => (
@@ -391,16 +379,13 @@ export default function VersionInventoryPage() {
                                 {c.label}{c.count > 1 ? ` ×${c.count}` : ''}
                               </span>
                             ))}
-                            {item.area_power.power_layer_count > 0 && (
-                              <Badge variant="secondary">레이어 {item.area_power.power_layer_count}</Badge>
-                            )}
                           </div>
                         ) : (
-                          <span className="text-muted-foreground">미업로드</span>
+                          <span className="text-muted-foreground">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 text-muted-foreground">{formatTime(item.latest_activity_at)}</td>
-                      <td className="px-3 py-2.5 text-right" onClick={e => e.stopPropagation()}>
+                      <td className="px-3 py-2 text-muted-foreground">{formatTime(item.latest_activity_at)}</td>
+                      <td className="px-3 py-2 text-right" onClick={e => e.stopPropagation()}>
                         <div className="inline-flex items-center gap-1">
                           <Button size="sm" variant="ghost" onClick={() => void openScoped(logsPage, item)}>로그<ArrowRight size={12} /></Button>
                           {data?.area_enabled && <Button size="sm" variant="ghost" onClick={() => void openScoped('area-power', item)}>비교<ArrowRight size={12} /></Button>}
@@ -410,16 +395,16 @@ export default function VersionInventoryPage() {
 
                     {isOpen && (
                       <tr className="border-b border-border bg-muted/10">
-                        <td colSpan={8} className="p-4">
-                          <div className="space-y-4">
-                            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
-                              <div className="text-xs text-muted-foreground">
-                                버전 상세 관리 · <strong>{item.block_name}</strong> / {item.net_ver} · {item.revision} {item.eco_num ? `(${item.eco_num})` : ''}
+                        <td colSpan={8} className="p-3">
+                          <div className="space-y-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2">
+                              <div className="text-xs font-medium">
+                                {item.block_name} / {item.net_ver} · {item.revision} {item.eco_num ? `(${item.eco_num})` : ''}
                               </div>
                               <div className="flex flex-wrap items-center gap-2">
                                 {canWrite && !item.is_por && (
                                   <Button size="sm" variant="outline" onClick={() => setPorTarget(item)}>
-                                    <ShieldCheck size={14} />이 버전을 PoR로 지정
+                                    <ShieldCheck size={14} />PoR 지정
                                   </Button>
                                 )}
                                 {isSSO && canWrite && (
@@ -438,26 +423,26 @@ export default function VersionInventoryPage() {
                               </div>
                             </div>
 
-                            <div className="grid gap-4 lg:grid-cols-3">
-                              <div className="rounded-md border border-border bg-background p-3">
-                                <div className="mb-2 flex items-center gap-1.5 font-medium">
-                                  <FileSpreadsheet size={14} />Area 기준 CSV ({areaBaseUploads.length}건)
+                            <div className="grid gap-3 lg:grid-cols-3">
+                              <div className="rounded-md border border-border bg-background p-2.5">
+                                <div className="mb-1.5 flex items-center gap-1.5 font-medium">
+                                  <FileSpreadsheet size={14} />Area 기준 ({areaBaseUploads.length})
                                 </div>
                                 {!areaBaseUploads.length ? (
-                                  <p className="text-xs text-muted-foreground">이 버전에 업로드된 Area 기준 CSV가 없습니다.</p>
+                                  <p className="text-xs text-muted-foreground">없음</p>
                                 ) : (
                                   <ul className="divide-y divide-border">
                                     {areaBaseUploads.map(u => (
-                                      <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                                      <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
                                         <div>
                                           <div className="flex flex-wrap items-center gap-1.5">
                                             <strong>{u.execution_name || u.original_filename || u.id.slice(0, 8)}</strong>
-                                            <Badge variant="outline">{u.is_area_only ? 'Area 전용' : `기준 · ${u.corner_label}`}</Badge>
+                                            <Badge variant="outline">{u.is_area_only ? '전용' : u.corner_label}</Badge>
                                             {u.state !== 'ready' && <Badge variant="destructive">{u.state}</Badge>}
                                           </div>
                                           <div className="mt-0.5 text-[11px] text-muted-foreground">
                                             {u.row_count != null ? `${u.row_count.toLocaleString()}행 · ` : ''}
-                                            저장 {formatBytes(u.compressed_byte_length)} · {formatTime(u.created_at)}
+                                            {formatBytes(u.compressed_byte_length)} · {formatTime(u.created_at)}
                                           </div>
                                         </div>
                                         <div className="flex items-center gap-1">
@@ -476,20 +461,18 @@ export default function VersionInventoryPage() {
                                 )}
                               </div>
 
-                              <div className="rounded-md border border-border bg-background p-3">
-                                <div className="mb-2 flex items-center gap-1.5 font-medium">
-                                  <Zap size={14} />Power 레이어 CSV ({powerLayerUploads.length}건)
+                              <div className="rounded-md border border-border bg-background p-2.5">
+                                <div className="mb-1.5 flex items-center gap-1.5 font-medium">
+                                  <Zap size={14} />Power 레이어 ({powerLayerUploads.length})
                                 </div>
                                 {!powerLayerUploads.length ? (
                                   <p className="text-xs text-muted-foreground">
-                                    {powerCorners.length > 0
-                                      ? '단독 85컬럼 기준 CSV에 Power가 포함되어 있습니다. 추가 코너 업로드 시 이곳에 Power 레이어로 적재됩니다.'
-                                      : '이 버전에 업로드된 Power 레이어 CSV가 없습니다.'}
+                                    {powerCorners.length > 0 ? '기준 CSV에 포함됨' : '없음'}
                                   </p>
                                 ) : (
                                   <ul className="divide-y divide-border">
                                     {powerLayerUploads.map(u => (
-                                      <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                                      <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
                                         <div>
                                           <div className="flex flex-wrap items-center gap-1.5">
                                             <strong>{u.execution_name || u.original_filename || u.id.slice(0, 8)}</strong>
@@ -498,7 +481,7 @@ export default function VersionInventoryPage() {
                                           </div>
                                           <div className="mt-0.5 text-[11px] text-muted-foreground">
                                             {u.row_count != null ? `${u.row_count.toLocaleString()}행 · ` : ''}
-                                            저장 {formatBytes(u.compressed_byte_length)} · {formatTime(u.created_at)}
+                                            {formatBytes(u.compressed_byte_length)} · {formatTime(u.created_at)}
                                           </div>
                                         </div>
                                         <div className="flex items-center gap-1">
@@ -517,16 +500,16 @@ export default function VersionInventoryPage() {
                                 )}
                               </div>
 
-                              <div className="rounded-md border border-border bg-background p-3">
-                                <div className="mb-2 flex items-center gap-1.5 font-medium">
-                                  <FileText size={14} />Sanity 보고서 ({item.sanity.total}건)
+                              <div className="rounded-md border border-border bg-background p-2.5">
+                                <div className="mb-1.5 flex items-center gap-1.5 font-medium">
+                                  <FileText size={14} />Sanity 보고서 ({item.sanity.total})
                                 </div>
                                 {reportState?.loading ? (
-                                  <p className="text-xs text-muted-foreground">보고서 목록을 불러오고 있습니다…</p>
+                                  <p className="text-xs text-muted-foreground">불러오는 중…</p>
                                 ) : reportState?.error ? (
                                   <p className="text-xs text-destructive">{reportState.error}</p>
                                 ) : !(reportState?.items.length) ? (
-                                  <p className="text-xs text-muted-foreground">이 버전에 수신된 Sanity 보고서가 없습니다.</p>
+                                  <p className="text-xs text-muted-foreground">없음</p>
                                 ) : (
                                   <ul className="divide-y divide-border">
                                     {reportState.items.map(r => (
