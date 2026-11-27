@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type MouseEvent, type WheelEvent } from 'react'
-import { Download, FlipHorizontal2, FlipVertical2, Maximize2, MousePointer, Move, MapPin, RotateCcw, RotateCw, Save } from 'lucide-react'
+import { Download, FlipHorizontal2, FlipVertical2, Lock, Maximize2, MousePointer, Move, MapPin, RotateCcw, RotateCw, Save, Unlock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   BIST_PALETTE,
@@ -11,6 +11,7 @@ import {
   pin1Offset,
   rotateOrient90,
   type DatapathFlow,
+  type EffectiveMacroBox,
   type FloorplanScene,
   type MacroBox,
   type MacroOverride,
@@ -34,6 +35,8 @@ interface FloorplanCanvasProps {
   reviewPins: ReviewPin[]
   onAddPinAt: (xUm: number, yUm: number) => void
   canWrite: boolean
+  onlyChangedTcl: boolean
+  onOnlyChangedTclChange: (val: boolean) => void
   onSaveProposal: (title: string, note: string) => Promise<void>
 }
 
@@ -59,6 +62,8 @@ export function FloorplanCanvas({
   reviewPins,
   onAddPinAt,
   canWrite,
+  onlyChangedTcl,
+  onOnlyChangedTclChange,
   onSaveProposal,
 }: FloorplanCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null)
@@ -83,7 +88,7 @@ export function FloorplanCanvas({
 
   const dragRef = useRef<
     | { kind: 'pan'; startX: number; startY: number; origPan: { x: number; y: number } }
-    | { kind: 'macro'; startUmX: number; startUmY: number; origins: Map<string, { llx: number; lly: number; orient: MacroBox['orient'] }> }
+    | { kind: 'macro'; startUmX: number; startUmY: number; origins: Map<string, { llx: number; lly: number; orient: MacroBox['orient']; halo_um: MacroBox['halo_um'] }> }
     | null
   >(null)
 
@@ -107,6 +112,16 @@ export function FloorplanCanvas({
     () => scene.module_regions.find(mr => mr.hier_path === selectedModule || selectedModule.startsWith(mr.hier_path + '/')),
     [scene.module_regions, selectedModule],
   )
+
+  const activeTargets = useMemo(() => {
+    const names = selectedSet.size ? [...selectedSet] : (selectedInst ? [selectedInst] : [])
+    return names
+      .map(n => sandbox.effectiveMacros.find(m => m.inst_name === n))
+      .filter((m): m is EffectiveMacroBox => Boolean(m))
+  }, [selectedSet, selectedInst, sandbox.effectiveMacros])
+
+  const anySelectedUnlocked = activeTargets.some(m => !m.locked)
+  const allSelectedLocked = activeTargets.length > 0 && activeTargets.every(m => m.locked)
 
   function clientToUm(clientX: number, clientY: number): [number, number] {
     const svg = svgRef.current
@@ -139,7 +154,7 @@ export function FloorplanCanvas({
     dragRef.current = { kind: 'pan', startX: e.clientX, startY: e.clientY, origPan: { ...pan } }
   }
 
-  function onMacroMouseDown(e: MouseEvent<SVGGElement>, macro: MacroBox) {
+  function onMacroMouseDown(e: MouseEvent<SVGGElement>, macro: EffectiveMacroBox) {
     e.stopPropagation()
     onSelectInst(macro.inst_name)
     const nextSel = new Set(selectedSet)
@@ -154,12 +169,16 @@ export function FloorplanCanvas({
 
     if (tool === 'sandbox' && canWrite) {
       const [ux, uy] = clientToUm(e.clientX, e.clientY)
-      const origins = new Map<string, { llx: number; lly: number; orient: MacroBox['orient'] }>()
+      const origins = new Map<string, { llx: number; lly: number; orient: MacroBox['orient']; halo_um: MacroBox['halo_um'] }>()
       for (const name of nextSel) {
         const cur = sandbox.effectiveMacros.find(m => m.inst_name === name)
-        if (cur) origins.set(name, { llx: cur.llx, lly: cur.lly, orient: cur.orient })
+        if (cur && !cur.locked) {
+          origins.set(name, { llx: cur.llx, lly: cur.lly, orient: cur.orient, halo_um: cur.halo_um })
+        }
       }
-      dragRef.current = { kind: 'macro', startUmX: ux, startUmY: uy, origins }
+      if (origins.size > 0) {
+        dragRef.current = { kind: 'macro', startUmX: ux, startUmY: uy, origins }
+      }
     }
   }
 
@@ -180,7 +199,15 @@ export function FloorplanCanvas({
     const dy = uy - drag.startUmY
     const next = new Map(overrides)
     for (const [name, orig] of drag.origins.entries()) {
-      next.set(name, { inst_name: name, llx: snap(orig.llx + dx), lly: snap(orig.lly + dy), orient: orig.orient })
+      const prevOv = next.get(name)
+      next.set(name, {
+        inst_name: name,
+        llx: snap(orig.llx + dx),
+        lly: snap(orig.lly + dy),
+        orient: orig.orient,
+        halo_um: prevOv?.halo_um ?? orig.halo_um,
+        locked: false,
+      })
     }
     onOverridesChange(next)
   }
@@ -189,47 +216,108 @@ export function FloorplanCanvas({
     dragRef.current = null
   }
 
-  function transformSelected(fn: (m: MacroBox) => MacroOverride) {
-    const targets = selectedSet.size ? [...selectedSet] : (selectedInst ? [selectedInst] : [])
-    if (!targets.length) return
+  function transformSelected(fn: (m: EffectiveMacroBox) => Partial<MacroOverride>) {
+    if (!activeTargets.length) return
     const next = new Map(overrides)
-    for (const name of targets) {
-      const cur = sandbox.effectiveMacros.find(m => m.inst_name === name)
-      if (cur) next.set(name, fn(cur))
+    for (const cur of activeTargets) {
+      if (cur.locked) continue
+      const prevOv = next.get(cur.inst_name)
+      next.set(cur.inst_name, {
+        inst_name: cur.inst_name,
+        llx: cur.llx,
+        lly: cur.lly,
+        orient: cur.orient,
+        halo_um: prevOv?.halo_um ?? cur.halo_um,
+        locked: cur.locked,
+        ...fn(cur),
+      })
+    }
+    onOverridesChange(next)
+  }
+
+  function toggleLockSelected() {
+    if (!activeTargets.length) return
+    const targetLocked = !allSelectedLocked
+    const next = new Map(overrides)
+    for (const cur of activeTargets) {
+      const prevOv = next.get(cur.inst_name)
+      next.set(cur.inst_name, {
+        inst_name: cur.inst_name,
+        llx: cur.llx,
+        lly: cur.lly,
+        orient: cur.orient,
+        halo_um: prevOv?.halo_um ?? cur.halo_um,
+        locked: targetLocked,
+      })
+    }
+    onOverridesChange(next)
+  }
+
+  function alignEdges(edge: 'left' | 'bottom') {
+    if (activeTargets.length < 2) return
+    const lockedAnchor = activeTargets.find(m => m.locked)
+    const refVal = lockedAnchor
+      ? (edge === 'left' ? lockedAnchor.llx : lockedAnchor.lly)
+      : Math.min(...activeTargets.map(m => (edge === 'left' ? m.llx : m.lly)))
+    const next = new Map(overrides)
+    for (const m of activeTargets) {
+      if (m.locked) continue
+      const prevOv = next.get(m.inst_name)
+      next.set(m.inst_name, {
+        inst_name: m.inst_name,
+        llx: edge === 'left' ? Number(refVal.toFixed(2)) : m.llx,
+        lly: edge === 'bottom' ? Number(refVal.toFixed(2)) : m.lly,
+        orient: m.orient,
+        halo_um: prevOv?.halo_um ?? m.halo_um,
+        locked: false,
+      })
     }
     onOverridesChange(next)
   }
 
   function stackSelected(axis: 'x' | 'y') {
-    const targets = (selectedSet.size ? [...selectedSet] : [])
-      .map(n => sandbox.effectiveMacros.find(m => m.inst_name === n))
-      .filter((m): m is MacroBox => Boolean(m))
-    if (targets.length < 2) return
+    if (activeTargets.length < 2) return
     const gap = Math.max(0, Number(channelGapUm) || 0)
-    targets.sort((a, b) => axis === 'x' ? a.llx - b.llx : a.lly - b.lly)
-    const anchor = targets[0]
+    const sorted = [...activeTargets].sort((a, b) => axis === 'x' ? a.llx - b.llx : a.lly - b.lly)
+    const anchor = sorted.find(m => m.locked) || sorted[0]
     let cursor = axis === 'x' ? anchor.llx : anchor.lly
     const next = new Map(overrides)
-    for (const m of targets) {
+    for (const m of sorted) {
       const [ow, oh] = orientedSize(m.width, m.height, m.orient)
-      if (axis === 'x') {
-        next.set(m.inst_name, { inst_name: m.inst_name, llx: Number(cursor.toFixed(2)), lly: anchor.lly, orient: m.orient })
-        cursor += ow + gap
+      const prevOv = next.get(m.inst_name)
+      if (!m.locked) {
+        if (axis === 'x') {
+          next.set(m.inst_name, { inst_name: m.inst_name, llx: Number(cursor.toFixed(2)), lly: anchor.lly, orient: m.orient, halo_um: prevOv?.halo_um ?? m.halo_um, locked: false })
+        } else {
+          next.set(m.inst_name, { inst_name: m.inst_name, llx: anchor.llx, lly: Number(cursor.toFixed(2)), orient: m.orient, halo_um: prevOv?.halo_um ?? m.halo_um, locked: false })
+        }
       } else {
-        next.set(m.inst_name, { inst_name: m.inst_name, llx: anchor.llx, lly: Number(cursor.toFixed(2)), orient: m.orient })
-        cursor += oh + gap
+        cursor = axis === 'x' ? m.llx : m.lly
       }
+      cursor += (axis === 'x' ? ow : oh) + gap
     }
     onOverridesChange(next)
   }
 
+  function selectByFilter(filter: 'all' | 'sram' | 'non_sram') {
+    const matched = sandbox.effectiveMacros.filter(m => {
+      if (filter === 'sram') return m.kind === 'sram'
+      if (filter === 'non_sram') return m.kind !== 'sram'
+      return true
+    })
+    const next = new Set(matched.map(m => m.inst_name))
+    setSelectedSet(next)
+    if (matched[0]) onSelectInst(matched[0].inst_name)
+  }
+
   function downloadClientExport(format: 'innovus' | 'icc2' | 'csv') {
-    const content = generateClientTcl(scene, overrides, format, proposalTitle || 'Designer_Draft')
+    const content = generateClientTcl(scene, overrides, format, proposalTitle || 'Designer_Draft', onlyChangedTcl)
     const ext = format === 'csv' ? 'csv' : 'tcl'
+    const suffix = onlyChangedTcl ? '_delta' : ''
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `${scene.design_name}_${scene.fp_ver}_${format}.${ext}`
+    a.download = `${scene.design_name}_${scene.fp_ver}_${format}${suffix}.${ext}`
     a.click()
     URL.revokeObjectURL(a.href)
   }
@@ -249,7 +337,7 @@ export function FloorplanCanvas({
             </button>
           )}
           <button type="button" className={tool === 'sandbox' ? 'is-active' : ''} onClick={() => onToolChange('sandbox')}>
-            <Move size={14} />Designer Memory 배치 툴
+            <Move size={14} />Hard Macro 배치 툴
           </button>
         </div>
 
@@ -294,11 +382,20 @@ export function FloorplanCanvas({
       </div>
 
       {tool === 'sandbox' && (
-        <div className="fp-sandbox-bar" aria-label="Designer Memory 배치 툴바">
+        <div className="fp-sandbox-bar" aria-label="Hard Macro 배치 툴바">
           <div className="fp-sandbox-ops">
             <span className="fp-sandbox-badge">
-              실측 스케일 배치 ({selectedSet.size || (selectedInst ? 1 : 0)}개 선택 · 변경 {sandbox.changedCount}개)
+              Hard Macro 배치 ({activeTargets.length}개 선택 · 변경 {sandbox.changedCount}개{sandbox.lockedCount ? ` · 잠금 ${sandbox.lockedCount}개` : ''})
             </span>
+            <div className="fp-quick-sel">
+              <button type="button" className="fp-chip-toggle" onClick={() => selectByFilter('all')}>전체({scene.macros.length})</button>
+              {scene.macros.some(m => m.kind === 'sram') && (
+                <button type="button" className="fp-chip-toggle" onClick={() => selectByFilter('sram')}>SRAM</button>
+              )}
+              {scene.macros.some(m => m.kind !== 'sram') && (
+                <button type="button" className="fp-chip-toggle" onClick={() => selectByFilter('non_sram')}>IP·Macro·Sub</button>
+              )}
+            </div>
             <label className="fp-inline-field">
               <span>그리드</span>
               <select value={snapUm} onChange={e => setSnapUm(Number(e.target.value))}>
@@ -308,23 +405,28 @@ export function FloorplanCanvas({
                 <option value={10}>10 µm</option>
               </select>
             </label>
-            <Button variant="outline" size="sm" disabled={!canWrite} onClick={() => transformSelected(m => ({ inst_name: m.inst_name, llx: m.llx, lly: m.lly, orient: flipOrientX(m.orient) }))} title="좌우 미러링 (MY)">
+            <Button variant="outline" size="sm" disabled={!canWrite || !anySelectedUnlocked} onClick={() => transformSelected(m => ({ orient: flipOrientX(m.orient) }))} title="좌우 미러링 (MY)">
               <FlipHorizontal2 size={13} />Flip X (MY)
             </Button>
-            <Button variant="outline" size="sm" disabled={!canWrite} onClick={() => transformSelected(m => ({ inst_name: m.inst_name, llx: m.llx, lly: m.lly, orient: flipOrientY(m.orient) }))} title="상하 미러링 (MX)">
+            <Button variant="outline" size="sm" disabled={!canWrite || !anySelectedUnlocked} onClick={() => transformSelected(m => ({ orient: flipOrientY(m.orient) }))} title="상하 미러링 (MX)">
               <FlipVertical2 size={13} />Flip Y (MX)
             </Button>
-            <Button variant="outline" size="sm" disabled={!canWrite} onClick={() => transformSelected(m => ({ inst_name: m.inst_name, llx: m.llx, lly: m.lly, orient: rotateOrient90(m.orient) }))}>
+            <Button variant="outline" size="sm" disabled={!canWrite || !anySelectedUnlocked} onClick={() => transformSelected(m => ({ orient: rotateOrient90(m.orient) }))}>
               <RotateCw size={13} />90° 회전
             </Button>
+            <Button variant="outline" size="sm" disabled={!canWrite || !activeTargets.length} onClick={toggleLockSelected} title="잠긴 Hard Macro는 드래그·정렬 시 고정 기준점이 됩니다">
+              {allSelectedLocked ? <><Unlock size={13} />잠금 해제</> : <><Lock size={13} />위치 잠금</>}
+            </Button>
             <label className="fp-inline-field">
-              <span>채널 간격(µm)</span>
-              <input type="number" min={0} max={200} value={channelGapUm} onChange={e => setChannelGapUm(e.target.value)} />
+              <span>채널(µm)</span>
+              <input type="number" min={0} max={500} value={channelGapUm} onChange={e => setChannelGapUm(e.target.value)} />
             </label>
-            <Button variant="outline" size="sm" disabled={!canWrite || selectedSet.size < 2} onClick={() => stackSelected('x')}>가로 정렬·배열</Button>
-            <Button variant="outline" size="sm" disabled={!canWrite || selectedSet.size < 2} onClick={() => stackSelected('y')}>세로 정렬·배열</Button>
+            <Button variant="outline" size="sm" disabled={!canWrite || activeTargets.length < 2} onClick={() => alignEdges('left')}>좌측 정렬</Button>
+            <Button variant="outline" size="sm" disabled={!canWrite || activeTargets.length < 2} onClick={() => alignEdges('bottom')}>하단 정렬</Button>
+            <Button variant="outline" size="sm" disabled={!canWrite || activeTargets.length < 2} onClick={() => stackSelected('x')}>가로 배열</Button>
+            <Button variant="outline" size="sm" disabled={!canWrite || activeTargets.length < 2} onClick={() => stackSelected('y')}>세로 배열</Button>
             <Button variant="ghost" size="sm" disabled={!overrides.size} onClick={() => onOverridesChange(new Map())}>
-              <RotateCcw size={13} />초기화
+              <RotateCcw size={13} />전체 초기화
             </Button>
           </div>
 
@@ -332,24 +434,24 @@ export function FloorplanCanvas({
             <span className={sandbox.outOfBounds.size || sandbox.overlapping.size ? 'fp-collision-warn' : 'fp-collision-ok'}>
               {sandbox.outOfBounds.size || sandbox.overlapping.size
                 ? `경계 이탈 ${sandbox.outOfBounds.size} · 충돌 ${sandbox.overlapping.size}`
-                : '물리 경계·충돌 정상'}
+                : '물리 경계·Halo 충돌 정상'}
             </span>
             {canWrite && (
               <>
                 <input
                   type="text"
                   className="fp-proposal-input"
-                  placeholder="제안안 이름 (예: Designer안 #1)"
+                  placeholder="제안안 이름 (예: Hard Macro안 #1)"
                   value={proposalTitle}
                   onChange={e => setProposalTitle(e.target.value)}
                 />
                 <Button
                   size="sm"
-                  disabled={savingProp || !overrides.size}
+                  disabled={savingProp || !sandbox.changedCount}
                   onClick={async () => {
                     setSavingProp(true)
                     try {
-                      await onSaveProposal(proposalTitle.trim() || `Designer 배치안 (${new Date().toLocaleTimeString('ko-KR')})`, '')
+                      await onSaveProposal(proposalTitle.trim() || `Hard Macro 배치안 (${new Date().toLocaleTimeString('ko-KR')})`, '')
                       setProposalTitle('')
                     } finally {
                       setSavingProp(false)
@@ -360,6 +462,10 @@ export function FloorplanCanvas({
                 </Button>
               </>
             )}
+            <label className="fp-tpl-check" title="체크 시 위치·방향·Halo가 수정된 Hard Macro만 Tcl/CSV로 내보냅니다">
+              <input type="checkbox" checked={onlyChangedTcl} onChange={e => onOnlyChangedTclChange(e.target.checked)} />
+              <span>변경분만 Tcl</span>
+            </label>
             <Button variant="outline" size="sm" onClick={() => downloadClientExport('innovus')}>
               <Download size={13} />Innovus Tcl
             </Button>
@@ -479,7 +585,7 @@ export function FloorplanCanvas({
             )
           })}
 
-          {/* Macros / SRAMs / IPs / Subblocks */}
+          {/* All Hard Macros: SRAMs / Hard IPs / Custom Macros / Sub-blocks */}
           {sandbox.effectiveMacros.map(m => {
             const [ow, oh] = orientedSize(m.width, m.height, m.orient)
             const rx = m.llx
@@ -490,17 +596,18 @@ export function FloorplanCanvas({
             const hasCollision = sandbox.outOfBounds.has(m.inst_name) || sandbox.overlapping.has(m.inst_name)
             const bCol = m.bist_group ? bistColorMap.get(m.bist_group) : undefined
             const style = KIND_STYLE[m.kind] || KIND_STYLE.macro
-            const stroke = hasCollision ? '#dc2626' : (layers.bistColor && bCol ? bCol : style.stroke)
+            const stroke = hasCollision ? '#dc2626' : (m.locked ? '#d97706' : (layers.bistColor && bCol ? bCol : style.stroke))
             const fill = hasCollision ? 'rgba(254,202,202,0.85)' : (layers.bistColor && bCol ? `${bCol}26` : style.fill)
             const [hl, hb, hr, ht] = m.halo_um
             const [nx, ny] = pin1Offset(m.width, m.height, m.orient)
             const shortName = m.inst_name.split('/').pop() || m.inst_name
-            const fontSize = Math.max(Math.min(ow / Math.max(shortName.length * 0.68, 4), oh * 0.3), Math.max(dw, dh) * 0.009)
+            const labelText = `${m.locked ? '🔒 ' : ''}${shortName}${m.changed ? ' Δ' : ''}`
+            const fontSize = Math.max(Math.min(ow / Math.max(labelText.length * 0.68, 4), oh * 0.3), Math.max(dw, dh) * 0.009)
 
             return (
               <g
                 key={m.inst_name}
-                className="fp-macro-node"
+                className={`fp-macro-node${m.locked ? ' is-locked' : ''}`}
                 opacity={dimmed ? 0.28 : 1}
                 onMouseDown={e => onMacroMouseDown(e, m)}
               >
@@ -523,7 +630,8 @@ export function FloorplanCanvas({
                   height={oh}
                   fill={fill}
                   stroke={stroke}
-                  strokeWidth={strokeUnit * (isSelected || isBistFocused ? 2.6 : 1.3)}
+                  strokeDasharray={m.locked ? `${strokeUnit * 4} ${strokeUnit * 2}` : undefined}
+                  strokeWidth={strokeUnit * (isSelected || isBistFocused ? 2.8 : (m.changed ? 2.1 : 1.3))}
                 />
                 {layers.notches && (
                   <circle
@@ -541,7 +649,7 @@ export function FloorplanCanvas({
                   fill="#0f172a"
                   pointerEvents="none"
                 >
-                  {shortName}
+                  {labelText}
                 </text>
               </g>
             )

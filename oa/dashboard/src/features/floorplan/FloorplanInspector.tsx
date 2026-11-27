@@ -1,19 +1,23 @@
 import { useMemo, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Download, Plus, Save, Trash2 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Lock, Plus, RotateCcw, Save, Trash2, Unlock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { appUrl } from '@/lib/appUrl'
 import {
   BIST_PALETTE,
+  DEF_TO_ICC2,
   evaluateSandboxState,
   orientedSize,
   type ChecklistTemplateItem,
   type ChecklistVerdict,
   type DatapathFlow,
+  type EffectiveMacroBox,
   type FloorplanMetricsData,
   type FloorplanScene,
+  type MacroBox,
   type MacroOverride,
   type MetricSlice,
+  type Orient,
   type PlacementProposal,
   type ReviewPin,
 } from './floorplanApi'
@@ -28,7 +32,10 @@ interface FloorplanInspectorProps {
   selectedBistGroup: string
   onSelectBistGroup: (grp: string) => void
   overrides: Map<string, MacroOverride>
+  onOverridesChange: (next: Map<string, MacroOverride>) => void
+  onEnsureSandboxMode: () => void
   onLoadProposalOverrides: (overrides: MacroOverride[]) => void
+  onlyChangedTcl: boolean
   proposals: PlacementProposal[]
   metrics: FloorplanMetricsData | null
   availableUploads: { id: string; original_filename: string; process_label: string }[]
@@ -49,6 +56,15 @@ interface FloorplanInspectorProps {
   onSaveReview: () => Promise<void>
   canWrite: boolean
   demo: boolean
+}
+
+const ALL_ORIENTS: Orient[] = ['N', 'FN', 'S', 'FS', 'W', 'E', 'FW', 'FE']
+
+const KIND_LABELS: Record<MacroBox['kind'], string> = {
+  sram: 'SRAM',
+  ip: 'Hard IP',
+  macro: 'Macro',
+  subblock: 'Sub-block',
 }
 
 function num(v: unknown): number {
@@ -73,7 +89,10 @@ export function FloorplanInspector({
   selectedBistGroup,
   onSelectBistGroup,
   overrides,
+  onOverridesChange,
+  onEnsureSandboxMode,
   onLoadProposalOverrides,
+  onlyChangedTcl,
   proposals,
   metrics,
   availableUploads,
@@ -96,6 +115,8 @@ export function FloorplanInspector({
   demo,
 }: FloorplanInspectorProps) {
   const [tab, setTab] = useState<'layout' | 'metrics' | 'review'>('layout')
+  const [macroKindFilter, setMacroKindFilter] = useState<'all' | MacroBox['kind'] | 'changed'>('all')
+  const [macroQuery, setMacroQuery] = useState('')
   const [editingTpl, setEditingTpl] = useState(false)
   const [newItemTitle, setNewItemTitle] = useState('')
   const [newItemDesc, setNewItemDesc] = useState('')
@@ -104,10 +125,50 @@ export function FloorplanInspector({
   const [savingRev, setSavingRev] = useState(false)
 
   const liveSandbox = useMemo(() => scene ? evaluateSandboxState(scene, overrides) : null, [scene, overrides])
-  const selectedMacro = useMemo(
+  const selectedMacro: EffectiveMacroBox | null = useMemo(
     () => liveSandbox?.effectiveMacros.find(m => m.inst_name === selectedInst) || null,
     [liveSandbox, selectedInst],
   )
+
+  const presentKinds = useMemo(() => {
+    const s = new Set<MacroBox['kind']>()
+    for (const m of scene?.macros || []) s.add(m.kind)
+    return (['subblock', 'sram', 'ip', 'macro'] as const).filter(k => s.has(k))
+  }, [scene?.macros])
+
+  const filteredMacros = useMemo(() => {
+    const list = liveSandbox?.effectiveMacros || []
+    const q = macroQuery.trim().toLowerCase()
+    return list.filter(m => {
+      if (macroKindFilter === 'changed' && !m.changed) return false
+      if (macroKindFilter !== 'all' && macroKindFilter !== 'changed' && m.kind !== macroKindFilter) return false
+      if (selectedBistGroup && m.bist_group !== selectedBistGroup) return false
+      if (q && !m.inst_name.toLowerCase().includes(q) && !m.master.toLowerCase().includes(q)) return false
+      return true
+    })
+  }, [liveSandbox?.effectiveMacros, macroKindFilter, macroQuery, selectedBistGroup])
+
+  function updateSingleMacro(m: EffectiveMacroBox, patch: Partial<MacroOverride>) {
+    onEnsureSandboxMode()
+    const next = new Map(overrides)
+    const prev = next.get(m.inst_name)
+    next.set(m.inst_name, {
+      inst_name: m.inst_name,
+      llx: m.llx,
+      lly: m.lly,
+      orient: m.orient,
+      halo_um: prev?.halo_um ?? m.halo_um,
+      locked: m.locked,
+      ...patch,
+    })
+    onOverridesChange(next)
+  }
+
+  function resetSingleMacro(instName: string) {
+    const next = new Map(overrides)
+    next.delete(instName)
+    onOverridesChange(next)
+  }
 
   const activeMetricSlice: { label: string; slice: MetricSlice | null } = useMemo(() => {
     if (!metrics) return { label: '연결된 CSV 없음', slice: null }
@@ -139,6 +200,12 @@ export function FloorplanInspector({
         const mr = scene.module_regions.find(x => x.hier_path === id)
         return mr ? { label: mr.hier_path, x: mr.cx, y: mr.cy } : null
       }
+      if (kind === 'mac') {
+        const mac = liveSandbox?.effectiveMacros.find(x => x.inst_name === id)
+        if (!mac) return null
+        const [ow, oh] = orientedSize(mac.width, mac.height, mac.orient)
+        return { label: mac.inst_name.split('/').pop() || mac.inst_name, x: Number((mac.llx + ow * 0.5).toFixed(1)), y: Number((mac.lly + oh * 0.5).toFixed(1)) }
+      }
       const b = liveSandbox?.liveBist.find(x => x.bist_group === id)
       return b ? { label: b.bist_group, x: Number(((b.bbox_um[0] + b.bbox_um[2]) / 2).toFixed(1)), y: Number(((b.bbox_um[1] + b.bbox_um[3]) / 2).toFixed(1)) } : null
     }).filter((w): w is { label: string; x: number; y: number } => Boolean(w))
@@ -156,12 +223,13 @@ export function FloorplanInspector({
   const slvt = num(vth.vt_slvt_pct), lvt = num(vth.vt_lvt_pct), rvt = num(vth.vt_rvt_pct), hvt = num(vth.vt_hvt_pct)
   const drv = activeMetricSlice.slice?.drive || {}
   const drvBins = Object.entries(drv.bins || {})
+  const onlyChangedQs = onlyChangedTcl ? '&only_changed=true' : ''
 
   return (
     <aside className="fp-inspector" aria-label="Floorplan 검토 패널">
       <div className="fp-inspector-tabs" role="tablist">
         <button type="button" role="tab" aria-selected={tab === 'layout'} onClick={() => setTab('layout')}>
-          {isTop ? 'Sub-block · IP' : 'BIST · Data-path · Inst'}
+          {isTop ? 'Hard Macro · Sub-block' : 'Hard Macro · BIST · Path'}
         </button>
         <button type="button" role="tab" aria-selected={tab === 'metrics'} onClick={() => setTab('metrics')}>
           Area · LVT · Drive
@@ -174,18 +242,168 @@ export function FloorplanInspector({
       {tab === 'layout' && (
         <div className="fp-tab-body">
           {selectedMacro && (
-            <section className="fp-card fp-selected-macro">
+            <section className="fp-card fp-selected-macro" aria-label="선택 Hard Macro 배치 편집">
               <div className="fp-card-head">
                 <strong>{selectedMacro.inst_name}</strong>
-                <Badge variant="outline">{selectedMacro.kind.toUpperCase()} · {selectedMacro.orient}</Badge>
+                <div className="fp-row-btns">
+                  {selectedMacro.changed && <Badge variant="secondary">수정됨 Δ</Badge>}
+                  <Badge variant="outline">{KIND_LABELS[selectedMacro.kind]} · {selectedMacro.orient} ({DEF_TO_ICC2[selectedMacro.orient]})</Badge>
+                </div>
               </div>
               <small>
-                Master: <code>{selectedMacro.master}</code> · 위치 <code>({selectedMacro.llx}, {selectedMacro.lly}) µm</code> ·
-                크기 <code>{orientedSize(selectedMacro.width, selectedMacro.height, selectedMacro.orient).join(' × ')} µm</code>
+                Master: <code>{selectedMacro.master}</code> · 크기 <code>{orientedSize(selectedMacro.width, selectedMacro.height, selectedMacro.orient).join(' × ')} µm</code>
                 {selectedMacro.bist_group && <> · BIST <strong>{selectedMacro.bist_group}</strong></>}
               </small>
+
+              {canWrite ? (
+                <div className="fp-macro-editor">
+                  <div className="fp-macro-edit-grid">
+                    <label>
+                      <span>LLX (µm)</span>
+                      <input
+                        type="number"
+                        step="0.5"
+                        disabled={selectedMacro.locked}
+                        value={selectedMacro.llx}
+                        onChange={e => updateSingleMacro(selectedMacro, { llx: Number(e.target.value) || 0 })}
+                      />
+                    </label>
+                    <label>
+                      <span>LLY (µm)</span>
+                      <input
+                        type="number"
+                        step="0.5"
+                        disabled={selectedMacro.locked}
+                        value={selectedMacro.lly}
+                        onChange={e => updateSingleMacro(selectedMacro, { lly: Number(e.target.value) || 0 })}
+                      />
+                    </label>
+                    <label>
+                      <span>방향 (Orient)</span>
+                      <select
+                        disabled={selectedMacro.locked}
+                        value={selectedMacro.orient}
+                        onChange={e => updateSingleMacro(selectedMacro, { orient: e.target.value as Orient })}
+                      >
+                        {ALL_ORIENTS.map(o => <option key={o} value={o}>{o} ({DEF_TO_ICC2[o]})</option>)}
+                      </select>
+                    </label>
+                  </div>
+
+                  <div className="fp-halo-edit-row">
+                    <span>Halo L/B/R/T (µm)</span>
+                    <div className="fp-halo-inputs">
+                      {(['L', 'B', 'R', 'T'] as const).map((side, idx) => (
+                        <input
+                          key={side}
+                          type="number"
+                          min={0}
+                          step="1"
+                          disabled={selectedMacro.locked}
+                          aria-label={`Halo ${side}`}
+                          title={`Halo ${side} (µm)`}
+                          value={selectedMacro.halo_um[idx]}
+                          onChange={e => {
+                            const nextHalo = [...selectedMacro.halo_um] as [number, number, number, number]
+                            nextHalo[idx] = Math.max(0, Number(e.target.value) || 0)
+                            updateSingleMacro(selectedMacro, { halo_um: nextHalo })
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="fp-macro-edit-actions">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => updateSingleMacro(selectedMacro, { locked: !selectedMacro.locked })}
+                    >
+                      {selectedMacro.locked ? <><Unlock size={12} />잠금 해제</> : <><Lock size={12} />위치 잠금</>}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={!overrides.has(selectedMacro.inst_name)}
+                      onClick={() => resetSingleMacro(selectedMacro.inst_name)}
+                    >
+                      <RotateCcw size={12} />원위치 복원
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <small>좌표: <code>({selectedMacro.llx}, {selectedMacro.lly}) µm</code> · Halo: <code>{selectedMacro.halo_um.join('/')} µm</code></small>
+              )}
             </section>
           )}
+
+          {/* Unified Hard Macro List (Available in BOTH TOP and Sub-block) */}
+          <section className="fp-card">
+            <div className="fp-card-head">
+              <h4>전체 Hard Macro 목록 ({filteredMacros.length}/{liveSandbox?.effectiveMacros.length || 0})</h4>
+              {liveSandbox && liveSandbox.changedCount > 0 && (
+                <span className="fp-pill is-ok">변경 {liveSandbox.changedCount}개</span>
+              )}
+            </div>
+            <div className="fp-macro-filter-bar">
+              <div className="fp-layer-chips">
+                <button
+                  type="button"
+                  className={`fp-chip-toggle${macroKindFilter === 'all' ? ' is-on' : ''}`}
+                  onClick={() => setMacroKindFilter('all')}
+                >
+                  전체
+                </button>
+                {presentKinds.map(k => (
+                  <button
+                    key={k}
+                    type="button"
+                    className={`fp-chip-toggle${macroKindFilter === k ? ' is-on' : ''}`}
+                    onClick={() => setMacroKindFilter(k)}
+                  >
+                    {KIND_LABELS[k]}
+                  </button>
+                ))}
+                {(liveSandbox?.changedCount || 0) > 0 && (
+                  <button
+                    type="button"
+                    className={`fp-chip-toggle${macroKindFilter === 'changed' ? ' is-on' : ''}`}
+                    onClick={() => setMacroKindFilter('changed')}
+                  >
+                    변경됨 Δ
+                  </button>
+                )}
+              </div>
+              <input
+                type="text"
+                className="fp-macro-search"
+                placeholder="Hard Macro 이름 / 마스터 검색…"
+                value={macroQuery}
+                onChange={e => setMacroQuery(e.target.value)}
+              />
+            </div>
+
+            <div className="fp-compact-list">
+              {filteredMacros.map(m => (
+                <button
+                  key={m.inst_name}
+                  type="button"
+                  className={`fp-list-row${selectedInst === m.inst_name ? ' is-selected' : ''}`}
+                  onClick={() => onSelectInst(m.inst_name)}
+                >
+                  <span className="fp-macro-row-title">
+                    <span className={`fp-kind-tag kind-${m.kind}`}>{KIND_LABELS[m.kind]}</span>
+                    <strong>{m.inst_name}</strong>
+                    <small>({m.master})</small>
+                    {m.locked && <small title="잠금">🔒</small>}
+                    {m.changed && <span className="fp-delta-mark">Δ</span>}
+                  </span>
+                  <code>({m.llx}, {m.lly}) · {m.orient}</code>
+                </button>
+              ))}
+              {!filteredMacros.length && <small className="text-muted">조건에 맞는 Hard Macro가 없습니다.</small>}
+            </div>
+          </section>
 
           {!isTop && liveSandbox && liveSandbox.liveBist.length > 0 && (
             <section className="fp-card">
@@ -222,26 +440,12 @@ export function FloorplanInspector({
             </section>
           )}
 
-          <section className="fp-card">
-            <div className="fp-card-head">
-              <h4>{isTop ? 'Sub-block · Hard IP 목록' : 'Instance별 물리 위치 확인'}</h4>
-              {selectedModule && <button type="button" className="fp-link-btn" onClick={() => onSelectModule('')}>선택 해제</button>}
-            </div>
-            {isTop ? (
-              <div className="fp-compact-list">
-                {(liveSandbox?.effectiveMacros || []).map(m => (
-                  <button
-                    key={m.inst_name}
-                    type="button"
-                    className={`fp-list-row${selectedInst === m.inst_name ? ' is-selected' : ''}`}
-                    onClick={() => onSelectInst(m.inst_name)}
-                  >
-                    <span><strong>{m.inst_name}</strong> <small>({m.master})</small></span>
-                    <code>{m.width}×{m.height} µm</code>
-                  </button>
-                ))}
+          {!isTop && (
+            <section className="fp-card">
+              <div className="fp-card-head">
+                <h4>Instance별 물리 위치 확인 (Std-cell 계층)</h4>
+                {selectedModule && <button type="button" className="fp-link-btn" onClick={() => onSelectModule('')}>선택 해제</button>}
               </div>
-            ) : (
               <div className="fp-compact-list">
                 {(scene?.module_regions || []).map(mr => {
                   const active = selectedModule === mr.hier_path
@@ -259,10 +463,10 @@ export function FloorplanInspector({
                 })}
                 {!(scene?.module_regions.length) && <small className="text-muted">모듈 영역 요약이 없습니다.</small>}
               </div>
-            )}
-          </section>
+            </section>
+          )}
 
-          {!isTop && scene && (
+          {scene && (
             <section className="fp-card">
               <div className="fp-card-head">
                 <h4>Data-path 경로선 검토 ({datapaths.length})</h4>
@@ -287,6 +491,7 @@ export function FloorplanInspector({
                     >
                       <option value="">+ 경유 지점 추가</option>
                       {scene.pins.slice(0, 30).map(p => <option key={`pin:${p.name}`} value={`pin:${p.name}`}>Pin: {p.name}</option>)}
+                      {(liveSandbox?.effectiveMacros || []).map(m => <option key={`mac:${m.inst_name}`} value={`mac:${m.inst_name}`}>Macro: {m.inst_name}</option>)}
                       {scene.module_regions.map(m => <option key={`mod:${m.hier_path}`} value={`mod:${m.hier_path}`}>Inst: {m.hier_path}</option>)}
                       {scene.bist_summary.map(b => <option key={`bist:${b.bist_group}`} value={`bist:${b.bist_group}`}>BIST: {b.bist_group}</option>)}
                     </select>
@@ -306,7 +511,7 @@ export function FloorplanInspector({
           {proposals.length > 0 && (
             <section className="fp-card">
               <div className="fp-card-head">
-                <h4>저장된 Designer 배치 제안안 ({proposals.length})</h4>
+                <h4>저장된 Hard Macro 배치 제안안 ({proposals.length})</h4>
               </div>
               <div className="fp-compact-list">
                 {proposals.map(prop => (
@@ -319,8 +524,8 @@ export function FloorplanInspector({
                       <Button variant="outline" size="sm" onClick={() => onLoadProposalOverrides(prop.overrides)}>캔버스 적용</Button>
                       {!demo && (
                         <>
-                          <a className="fp-dl-link" href={appUrl(`/api/floorplan/proposals/${prop.id}/export?fmt=innovus`)}>Innovus</a>
-                          <a className="fp-dl-link" href={appUrl(`/api/floorplan/proposals/${prop.id}/export?fmt=icc2`)}>ICC2</a>
+                          <a className="fp-dl-link" href={appUrl(`/api/floorplan/proposals/${prop.id}/export?fmt=innovus${onlyChangedQs}`)}>Innovus</a>
+                          <a className="fp-dl-link" href={appUrl(`/api/floorplan/proposals/${prop.id}/export?fmt=icc2${onlyChangedQs}`)}>ICC2</a>
                         </>
                       )}
                     </div>

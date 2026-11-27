@@ -29,6 +29,7 @@ from common.floorplan import (
     export_delta_csv,
     export_icc2_tcl,
     export_innovus_tcl,
+    is_macro_modified,
     parse_confluence_parent_config,
     reject_raw_def_or_lef,
     render_scene_png,
@@ -517,11 +518,7 @@ def save_proposal(service: Any, fp_version_id: UUID, body: SavePlacementProposal
         orig_by_name = {m.inst_name: m for m in scene.macros}
         changed_count = sum(
             1 for ov in body.overrides
-            if ov.inst_name in orig_by_name and (
-                abs(ov.llx - orig_by_name[ov.inst_name].llx) > 1e-3
-                or abs(ov.lly - orig_by_name[ov.inst_name].lly) > 1e-3
-                or ov.orient != orig_by_name[ov.inst_name].orient
-            )
+            if ov.inst_name in orig_by_name and is_macro_modified(orig_by_name[ov.inst_name], ov)
         )
         payload = {
             "title": body.title.strip(),

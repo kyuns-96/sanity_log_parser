@@ -21,7 +21,9 @@ from .models import (
     oriented_size,
 )
 
-_SRAM_RE = re.compile(r"(?:sram|rf_|regfile|rom_|ram_|mem_|spsram|dpsram|2prf|1prf)", re.IGNORECASE)
+_SRAM_RE = re.compile(r"(?:sram|rf_|regfile|rom_|ram_|mem_|spsram|dpsram|2prf|1prf|tcam|cam_)", re.IGNORECASE)
+_HARD_IP_RE = re.compile(r"(?:pll|phy|serdes|pcie|usb|mipi|ddr|adc|dac|ldo|bandgap|efuse|otp|tsensor|osc|analog|pmu_ip)", re.IGNORECASE)
+_STD_EXCLUDE_RE = re.compile(r"(?:^(?:fill|decap|welltap|tap_|endcap|bound|tie|ant_|spare)|_(?:fill|decap|tap|endcap)\b)", re.IGNORECASE)
 _PT_RE = re.compile(r"\(\s*([+-]?\d+|\*)\s+([+-]?\d+|\*)\s*\)")
 _COMP_LINE_RE = re.compile(
     r"^-\s+(\S+)\s+(\S+)(.*?)\+\s*(FIXED|PLACED|COVER)\s*\(\s*([+-]?\d+)\s+([+-]?\d+)\s*\)\s*(\S+)",
@@ -96,17 +98,29 @@ def _expand_def_points(raw_pts: list[tuple[str, str]], dbu: float) -> list[tuple
 
 
 def _classify_macro(inst_name: str, master: str, lef_info: dict[str, Any] | None, in_bist: bool, scope_kind: str) -> str | None:
+    if _STD_EXCLUDE_RE.search(master):
+        return None
     if in_bist or _SRAM_RE.search(master) or _SRAM_RE.search(inst_name):
         return "sram"
     if not lef_info:
+        if _HARD_IP_RE.search(master):
+            return "ip"
         return None
     mclass = lef_info.get("class", "CORE")
-    if mclass in ("BLOCK", "RING", "COVER", "PAD", "ENDCAP"):
-        if mclass in ("ENDCAP",):
-            return None
-        if scope_kind == "top" and lef_info.get("subclass") != "RING" and not _SRAM_RE.search(master):
+    msub = lef_info.get("subclass", "")
+    w = float(lef_info.get("width") or 0.0)
+    h = float(lef_info.get("height") or 0.0)
+    if mclass in ("ENDCAP", "SPACER") or msub in ("SPACER", "WELLTAP", "TIEHIGH", "TIELOW", "ANTENNACELL", "BUMP"):
+        return None
+    if mclass in ("BLOCK", "RING", "COVER", "PAD"):
+        if scope_kind == "top" and mclass == "BLOCK" and msub != "RING" and not _HARD_IP_RE.search(master):
             return "subblock"
-        return "ip" if mclass in ("BLOCK", "RING", "PAD", "COVER") else None
+        if _HARD_IP_RE.search(master) or _HARD_IP_RE.search(inst_name) or mclass in ("RING", "COVER", "PAD"):
+            return "ip"
+        return "macro"
+    # Multi-row custom hard macros even when LEF declares CLASS CORE (whether PLACED or FIXED)
+    if min(w, h) >= 5.0 and (w * h) >= 25.0:
+        return "ip" if (_HARD_IP_RE.search(master) or _HARD_IP_RE.search(inst_name)) else "macro"
     return None
 
 
@@ -466,6 +480,9 @@ def parse_def_to_scene(
             "die_area_um2": round(die_area, 2),
             "macro_count": len(macros),
             "sram_count": sum(1 for m in macros if m.kind == "sram"),
+            "ip_count": sum(1 for m in macros if m.kind == "ip"),
+            "subblock_count": sum(1 for m in macros if m.kind == "subblock"),
+            "custom_macro_count": sum(1 for m in macros if m.kind == "macro"),
             "bist_group_count": len(bist_summary),
             "pin_count": len(pins),
             "std_cell_count": std_cell_count,

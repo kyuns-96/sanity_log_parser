@@ -271,13 +271,37 @@ export function rotateOrient90(orient: Orient): Orient {
   return map[orient]
 }
 
+export interface EffectiveMacroBox extends MacroBox {
+  locked: boolean
+  changed: boolean
+}
+
+export function isMacroModified(orig: MacroBox, ov?: MacroOverride): boolean {
+  if (!ov) return false
+  if (Math.abs(ov.llx - orig.llx) > 1e-3 || Math.abs(ov.lly - orig.lly) > 1e-3 || ov.orient !== orig.orient) {
+    return true
+  }
+  if (ov.halo_um && ov.halo_um.some((v, idx) => Math.abs(v - orig.halo_um[idx]) > 1e-3)) {
+    return true
+  }
+  return false
+}
+
 export function evaluateSandboxState(scene: FloorplanScene, overrideMap: Map<string, MacroOverride>) {
   const [x0, y0, x1, y1] = scene.die_bbox
   const outOfBounds = new Set<string>()
   const overlapping = new Set<string>()
-  const effectiveMacros: MacroBox[] = scene.macros.map(m => {
+  let changedCount = 0
+  let lockedCount = 0
+  const effectiveMacros: EffectiveMacroBox[] = scene.macros.map(m => {
     const ov = overrideMap.get(m.inst_name)
-    return ov ? { ...m, llx: ov.llx, lly: ov.lly, orient: ov.orient, halo_um: ov.halo_um ?? m.halo_um } : m
+    const changed = isMacroModified(m, ov)
+    const locked = Boolean(ov?.locked)
+    if (changed) changedCount++
+    if (locked) lockedCount++
+    return ov
+      ? { ...m, llx: ov.llx, lly: ov.lly, orient: ov.orient, halo_um: ov.halo_um ?? m.halo_um, locked, changed }
+      : { ...m, locked: false, changed: false }
   })
 
   const boxes = effectiveMacros.map(m => {
@@ -337,53 +361,67 @@ export function evaluateSandboxState(scene: FloorplanScene, overrideMap: Map<str
     }
   })
 
-  let changedCount = 0
-  for (const m of scene.macros) {
-    const ov = overrideMap.get(m.inst_name)
-    if (ov && (Math.abs(ov.llx - m.llx) > 1e-3 || Math.abs(ov.lly - m.lly) > 1e-3 || ov.orient !== m.orient)) {
-      changedCount++
-    }
-  }
-
-  return { effectiveMacros, outOfBounds, overlapping, liveBist, changedCount }
+  return { effectiveMacros, outOfBounds, overlapping, liveBist, changedCount, lockedCount }
 }
 
-export function generateClientTcl(scene: FloorplanScene, overrideMap: Map<string, MacroOverride>, format: 'innovus' | 'icc2' | 'csv', title: string): string {
+export function generateClientTcl(
+  scene: FloorplanScene,
+  overrideMap: Map<string, MacroOverride>,
+  format: 'innovus' | 'icc2' | 'csv',
+  title: string,
+  onlyChanged = false,
+): string {
   const { outOfBounds, overlapping } = evaluateSandboxState(scene, overrideMap)
   if (format === 'csv') {
-    const rows = ['inst_name,master,kind,bist_group,orig_llx_um,orig_lly_um,orig_orient,new_llx_um,new_lly_um,new_orient,dx_um,dy_um,changed']
+    const rows = ['inst_name,master,kind,bist_group,orig_llx_um,orig_lly_um,orig_orient,orig_halo_um,new_llx_um,new_lly_um,new_orient,new_halo_um,dx_um,dy_um,locked,changed']
     for (const m of scene.macros) {
       const ov = overrideMap.get(m.inst_name)
+      const ch = isMacroModified(m, ov)
+      if (onlyChanged && !ch) continue
       const nx = ov ? ov.llx : m.llx, ny = ov ? ov.lly : m.lly, no = ov ? ov.orient : m.orient
+      const nh = ov?.halo_um ?? m.halo_um
       const dx = nx - m.llx, dy = ny - m.lly
-      const ch = Math.abs(dx) > 1e-3 || Math.abs(dy) > 1e-3 || no !== m.orient
-      rows.push(`${m.inst_name},${m.master},${m.kind},${m.bist_group || ''},${m.llx.toFixed(3)},${m.lly.toFixed(3)},${m.orient},${nx.toFixed(3)},${ny.toFixed(3)},${no},${dx.toFixed(3)},${dy.toFixed(3)},${ch ? 'Y' : 'N'}`)
+      rows.push(`${m.inst_name},${m.master},${m.kind},${m.bist_group || ''},${m.llx.toFixed(3)},${m.lly.toFixed(3)},${m.orient},${m.halo_um.join('/')},${nx.toFixed(3)},${ny.toFixed(3)},${no},${nh.join('/')},${dx.toFixed(3)},${dy.toFixed(3)},${ov?.locked ? 'Y' : 'N'},${ch ? 'Y' : 'N'}`)
     }
     return rows.join('\n')
   }
   const lines = [
-    `# Design Atlas — ${format === 'innovus' ? 'Cadence Innovus' : 'Synopsys ICC2 / FC'} Macro Placement Script`,
-    `# Design: ${scene.design_name} | FP_VER: ${scene.fp_ver} | Proposal: ${title}`,
+    `# Design Atlas — ${format === 'innovus' ? 'Cadence Innovus' : 'Synopsys ICC2 / FC'} Hard Macro Placement Script (SRAM / IP / Macro / Sub-block)`,
+    `# Design: ${scene.design_name} | FP_VER: ${scene.fp_ver} | Proposal: ${title} | Mode: ${onlyChanged ? 'MODIFIED_ONLY' : 'ALL_HARD_MACROS'}`,
     `# Out-of-bounds: ${outOfBounds.size} | Overlaps: ${overlapping.size}`,
     '',
   ]
   for (const m of scene.macros) {
     const ov = overrideMap.get(m.inst_name)
+    const ch = isMacroModified(m, ov)
+    if (onlyChanged && !ch) continue
     const nx = ov ? ov.llx : m.llx, ny = ov ? ov.lly : m.lly, no = ov ? ov.orient : m.orient
-    const ch = ov && (Math.abs(nx - m.llx) > 1e-3 || Math.abs(ny - m.lly) > 1e-3 || no !== m.orient)
+    const nh = ov?.halo_um ?? m.halo_um
+    const haloChanged = Boolean(ov?.halo_um && ov.halo_um.some((v, idx) => Math.abs(v - m.halo_um[idx]) > 1e-3))
+    const hasHalo = nh.some(v => v > 0)
     if (format === 'innovus') {
-      lines.push(`placeInstance {${m.inst_name}} ${nx.toFixed(4)} ${ny.toFixed(4)} ${no} -fixed${ch ? ' ;# MODIFIED' : ''}`)
+      lines.push(`placeInstance {${m.inst_name}} ${nx.toFixed(4)} ${ny.toFixed(4)} ${no} -fixed ;# [${m.kind.toUpperCase()}]${ch ? ' MODIFIED' : ''}`)
+      if (hasHalo || haloChanged) {
+        lines.push(`deleteHaloFromBlock {${m.inst_name}}`)
+        if (hasHalo) lines.push(`addHaloToBlock ${nh[0].toFixed(3)} ${nh[1].toFixed(3)} ${nh[2].toFixed(3)} ${nh[3].toFixed(3)} {${m.inst_name}}`)
+      }
     } else {
       lines.push(
+        `# [${m.kind.toUpperCase()}] ${m.master}${ch ? ' (MODIFIED)' : ''}`,
         `set _da_cell [get_cells -quiet {${m.inst_name}}]`,
         `if {[sizeof_collection $_da_cell] > 0} {`,
         `  set_attribute $_da_cell orientation ${DEF_TO_ICC2[no]}`,
         `  set_attribute $_da_cell origin {${nx.toFixed(4)} ${ny.toFixed(4)}}`,
         `  set_attribute $_da_cell physical_status fixed`,
-        `}`,
       )
+      if (hasHalo || haloChanged) {
+        lines.push(`  remove_keepout_margins -quiet [get_keepout_margins -quiet -of_objects $_da_cell]`)
+        if (hasHalo) lines.push(`  create_keepout_margin -type hard -outer {${nh[0].toFixed(3)} ${nh[1].toFixed(3)} ${nh[2].toFixed(3)} ${nh[3].toFixed(3)}} $_da_cell`)
+      }
+      lines.push(`}`)
     }
   }
+  if (format === 'icc2') lines.push('unset -nocomplain _da_cell')
   return lines.join('\n') + '\n'
 }
 
@@ -455,6 +493,9 @@ function buildDemoScene(isTop: boolean, blockName: string, fpVer: string): Floor
       { inst_name: 'u_tex/sram_buf_1', master: 'SRAM_512x128', kind: 'sram', llx: 940, lly: 350, width: 190, height: 220, orient: 'FN', status: 'FIXED', halo_um: [8, 8, 8, 8], bist_group: 'MBIST_G1', bist_controller: 'u_mbist_1', hier_prefix: 'u_tex' },
       { inst_name: 'u_warp/rf_bank_0', master: 'RF_128x64', kind: 'sram', llx: 420, lly: 90, width: 130, height: 140, orient: 'N', status: 'FIXED', halo_um: [5, 5, 5, 5], bist_group: 'MBIST_G2', bist_controller: 'u_mbist_2', hier_prefix: 'u_warp' },
       { inst_name: 'u_warp/rf_bank_1', master: 'RF_128x64', kind: 'sram', llx: 960 + shift, lly: 90, width: 130, height: 140, orient: 'S', status: 'FIXED', halo_um: [5, 5, 5, 5], bist_group: 'MBIST_G2', bist_controller: 'u_mbist_2', hier_prefix: 'u_warp' },
+      { inst_name: 'u_clk/pll_core', master: 'PLL_FRAC_N', kind: 'ip', llx: 60, lly: 90, width: 160, height: 150, orient: 'N', status: 'FIXED', halo_um: [20, 20, 20, 20], hier_prefix: 'u_clk' },
+      { inst_name: 'u_phy/serdes_lane0', master: 'SERDES_RXTX', kind: 'ip', llx: 460, lly: 710, width: 210, height: 120, orient: 'FN', status: 'FIXED', halo_um: [15, 15, 15, 15], hier_prefix: 'u_phy' },
+      { inst_name: 'u_sec/aes_crypto_macro', master: 'AES_CRYPTO_HARD', kind: 'macro', llx: 710, lly: 720, width: 140, height: 110, orient: 'N', status: 'FIXED', halo_um: [10, 10, 10, 10], hier_prefix: 'u_sec' },
     ],
     pins: [
       { name: 'in_cmd_valid', direction: 'INPUT', x: 0, y: 720, side: 'L' },
@@ -480,7 +521,7 @@ function buildDemoScene(isTop: boolean, blockName: string, fpVer: string): Floor
       { bist_group: 'MBIST_G1', controller: 'u_mbist_1', member_count: 2, bbox_um: [940, 350, 1130, 830], max_manhattan_span_um: 260, dispersed_warning: false },
       { bist_group: 'MBIST_G2', controller: 'u_mbist_2', member_count: 2, bbox_um: [420, 90, 1090 + shift, 230], max_manhattan_span_um: 540 + shift, dispersed_warning: fpVer === 'FP_v1.2' },
     ],
-    stats: { die_width_um: 1200, die_height_um: 900, macro_count: 7, sram_count: 7, bist_group_count: 3, pin_count: 3, std_cell_count: 263700 },
+    stats: { die_width_um: 1200, die_height_um: 900, macro_count: 10, sram_count: 7, ip_count: 2, custom_macro_count: 1, bist_group_count: 3, pin_count: 3, std_cell_count: 263700 },
   }
 }
 

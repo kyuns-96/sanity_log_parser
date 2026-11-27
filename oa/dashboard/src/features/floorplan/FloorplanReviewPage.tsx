@@ -66,6 +66,7 @@ export default function FloorplanReviewPage() {
   const [checklistVerdicts, setChecklistVerdicts] = useState<ChecklistVerdict[]>([])
   const [reviewPins, setReviewPins] = useState<ReviewPin[]>([])
   const [datapaths, setDatapaths] = useState<DatapathFlow[]>([])
+  const [onlyChangedTcl, setOnlyChangedTcl] = useState(false)
   const [publishOpen, setPublishOpen] = useState(false)
 
   const loadWorkspace = useCallback(async (signal?: AbortSignal) => {
@@ -287,6 +288,8 @@ export default function FloorplanReviewPage() {
             reviewPins={reviewPins}
             onAddPinAt={handleAddPinAt}
             canWrite={canWrite}
+            onlyChangedTcl={onlyChangedTcl}
+            onOnlyChangedTclChange={setOnlyChangedTcl}
             onSaveProposal={handleSaveProposal}
           />
           <FloorplanInspector
@@ -299,10 +302,13 @@ export default function FloorplanReviewPage() {
             selectedBistGroup={selectedBistGroup}
             onSelectBistGroup={setSelectedBistGroup}
             overrides={overrides}
+            onOverridesChange={setOverrides}
+            onEnsureSandboxMode={() => { if (tool !== 'sandbox') setTool('sandbox') }}
             onLoadProposalOverrides={list => {
               setOverrides(new Map(list.map(ov => [ov.inst_name, ov])))
               setTool('sandbox')
             }}
+            onlyChangedTcl={onlyChangedTcl}
             proposals={detail.proposals}
             metrics={detail.metrics}
             availableUploads={blockUploads}

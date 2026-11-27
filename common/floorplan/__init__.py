@@ -29,7 +29,7 @@ from .models import (
     reject_raw_def_or_lef,
 )
 from .svg_render import BIST_PALETTE, apply_overrides, render_scene_png, render_scene_svg
-from .tcl_export import check_placement_collisions, export_delta_csv, export_icc2_tcl, export_innovus_tcl
+from .tcl_export import check_placement_collisions, export_delta_csv, export_icc2_tcl, export_innovus_tcl, is_macro_modified
 
 __all__ = [
     "BIST_PALETTE", "BistGroupSummary", "ConfluenceAttachment", "ConfluenceCreateRequest",
