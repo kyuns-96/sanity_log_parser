@@ -6,6 +6,7 @@ import { WorkspaceBrand } from '@/components/layout/WorkspaceBrand'
 import { ColorModeControl } from '@/components/layout/ColorModeControl'
 import type { AuthConfig, Session } from '@/lib/types'
 import { appUrl } from '@/lib/appUrl'
+import { LoginReel } from './LoginReel'
 
 type Props = {
   config: AuthConfig | null; session: Session | null; checking: boolean; signingOut: boolean; error: string; accountProblem: boolean
@@ -21,6 +22,7 @@ export function DashboardLogin({ config, session, checking, signingOut, error, a
       <div>
         <h1>로그 검토 · 구성·전력 분석</h1>
       </div>
+      <LoginReel />
     </div>
     <main className="login-main" id="workspace-main" tabIndex={-1}>
       <div className="color-mode-login"><ColorModeControl /></div>

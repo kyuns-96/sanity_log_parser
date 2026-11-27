@@ -1,0 +1,16 @@
+/* The login story panel stays a dark layout viewer in both color modes. */
+.login-page .login-decoration {
+  position: relative; overflow: hidden; isolation: isolate; color-scheme: dark;
+  background: #090f19; border-right-color: #1c2a3d;
+  --ink: #edf3fb; --text-secondary: #b9c8dd; --text-muted: #8ea2bd; --accent: #8dbbff;
+}
+.login-page .login-decoration > :not(.login-reel) { position: relative; z-index: 1; }
+.login-page .login-decoration h1 { text-shadow: 0 1px 18px rgb(4 8 14 / 55%); }
+.login-reel { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+.login-reel canvas { display: block; width: 100%; height: 100%; }
+.login-reel::after {
+  content: ''; position: absolute; inset: 0;
+  background:
+    linear-gradient(180deg, rgb(9 15 25 / 82%) 0, rgb(9 15 25 / 0%) 18%, rgb(9 15 25 / 0%) 58%, rgb(9 15 25 / 92%) 100%),
+    radial-gradient(120% 90% at 50% 45%, rgb(9 15 25 / 8%) 50%, rgb(9 15 25 / 60%) 100%);
+}
