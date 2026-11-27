@@ -479,7 +479,7 @@ function buildDemoScene(isTop: boolean, blockName: string, fpVer: string): Floor
     }
   }
   const shift = fpVer === 'FP_v1.1' ? -60 : 0
-  return {
+  const sub: FloorplanScene = {
     schema_version: 1,
     scope_kind: 'subblock',
     design_name: blockName,
@@ -513,10 +513,10 @@ function buildDemoScene(isTop: boolean, blockName: string, fpVer: string): Floor
       return gx >= 5 && gx <= 11 && gy >= 4 && gy <= 12 ? 68 : 24
     }),
     module_regions: [
-      { hier_path: 'u_l1', cell_count: 42100, area_um2: 58400, cx: 290, cy: 560, p10_x: 190, p10_y: 390, p90_x: 430, p90_y: 780, bins: [[5, 14, 80], [6, 15, 95], [7, 16, 75]] },
-      { hier_path: 'u_alu_cluster', cell_count: 118400, area_um2: 164200, cx: 610, cy: 500, p10_x: 450, p10_y: 310, p90_x: 790, p90_y: 710, bins: [[13, 12, 90], [14, 13, 100], [15, 14, 88], [16, 13, 85]] },
-      { hier_path: 'u_tex', cell_count: 64300, area_um2: 89200, cx: 830, cy: 510, p10_x: 720, p10_y: 340, p90_x: 930, p90_y: 730, bins: [[21, 13, 82], [22, 14, 94]] },
-      { hier_path: 'u_warp', cell_count: 38900, area_um2: 51000, cx: 620, cy: 210, p10_x: 410, p10_y: 80, p90_x: 880, p90_y: 290, bins: [[13, 5, 76], [17, 5, 65]] },
+      { hier_path: 'u_l1', cell_count: 42100, area_um2: 58400, cx: 290, cy: 560, p10_x: 190, p10_y: 390, p90_x: 430, p90_y: 780, bins: [] },
+      { hier_path: 'u_alu_cluster', cell_count: 118400, area_um2: 164200, cx: 610, cy: 500, p10_x: 450, p10_y: 310, p90_x: 790, p90_y: 710, bins: [] },
+      { hier_path: 'u_tex', cell_count: 64300, area_um2: 89200, cx: 830, cy: 510, p10_x: 720, p10_y: 340, p90_x: 930, p90_y: 730, bins: [] },
+      { hier_path: 'u_warp', cell_count: 38900, area_um2: 51000, cx: 620, cy: 210, p10_x: 410, p10_y: 80, p90_x: 880, p90_y: 290, bins: [] },
     ],
     bist_summary: [
       { bist_group: 'MBIST_G0', controller: 'u_mbist_0', member_count: 3, bbox_um: [60, 380, 380, 830], max_manhattan_span_um: 415, dispersed_warning: false },
@@ -525,6 +525,48 @@ function buildDemoScene(isTop: boolean, blockName: string, fpVer: string): Floor
     ],
     stats: { die_width_um: 1200, die_height_um: 900, macro_count: 10, sram_count: 7, ip_count: 2, custom_macro_count: 1, bist_group_count: 3, pin_count: 3, std_cell_count: 263700 },
   }
+  sub.module_regions = withDemoModuleBins(sub)
+  return sub
+}
+
+/** Synthetic std-cell placement histograms (32×32 tiles, cells never under macros) so demo contours look realistic. */
+const DEMO_MODULE_BLOBS: Record<string, [number, number, number, number, number][]> = {
+  u_l1: [[300, 520, 90, 120, 1], [420, 720, 60, 70, 0.7], [250, 860, 120, 30, 0.35]],
+  u_alu_cluster: [[610, 500, 150, 120, 1], [500, 370, 80, 60, 0.6], [760, 640, 70, 60, 0.5]],
+  u_tex: [[860, 520, 60, 130, 1], [900, 300, 70, 45, 0.55]],
+  u_warp: [[620, 200, 170, 55, 1], [820, 150, 70, 40, 0.6], [330, 160, 60, 50, 0.4]],
+}
+
+function withDemoModuleBins(scene: FloorplanScene): ModuleRegionSummary[] {
+  const [x0, y0, x1, y1] = scene.die_bbox
+  const g = 32
+  const tw = (x1 - x0) / g, th = (y1 - y0) / g
+  const blocked = (cx: number, cy: number) => scene.macros.some(m => {
+    const [ow, oh] = orientedSize(m.width, m.height, m.orient)
+    const [hl, hb, hr, ht] = m.halo_um
+    return cx > m.llx - hl && cx < m.llx + ow + hr && cy > m.lly - hb && cy < m.lly + oh + ht
+  })
+  return scene.module_regions.map(mr => {
+    const blobs = DEMO_MODULE_BLOBS[mr.hier_path]
+    if (!blobs) return mr
+    const raw: number[] = []
+    for (let gy = 0; gy < g; gy++) {
+      for (let gx = 0; gx < g; gx++) {
+        const cx = x0 + (gx + 0.5) * tw, cy = y0 + (gy + 0.5) * th
+        let v = 0
+        for (const [bx, by, sx, sy, w] of blobs) v += w * Math.exp(-(((cx - bx) / sx) ** 2 + ((cy - by) / sy) ** 2) / 2)
+        const noise = Math.sin((gx + 1) * 12.9898 + (gy + 1) * 78.233 + mr.hier_path.length) * 43758.5453
+        raw.push(blocked(cx, cy) ? 0 : v * (0.8 + 0.4 * (noise - Math.floor(noise))))
+      }
+    }
+    const peak = Math.max(...raw, 1e-9)
+    const bins: [number, number, number][] = []
+    raw.forEach((v, idx) => {
+      const pct = Math.round((v / peak) * 100)
+      if (pct >= 5 && bins.length < 512) bins.push([idx % g, Math.floor(idx / g), pct])
+    })
+    return { ...mr, bins }
+  })
 }
 
 function toNum(v: unknown, fallback = 0): number {

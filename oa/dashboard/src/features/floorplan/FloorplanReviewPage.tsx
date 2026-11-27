@@ -7,6 +7,7 @@ import { useDashboardAuth } from '@/features/auth/useDashboardAuth'
 import { FloorplanCanvas, type CanvasTool } from './FloorplanCanvas'
 import { FloorplanInspector } from './FloorplanInspector'
 import { ConfluencePublishDialog } from './ConfluencePublishDialog'
+import { MODULE_PALETTE, type ModuleLayer } from './moduleContours'
 import {
   floorplanRequest,
   type ChecklistTemplateItem,
@@ -59,6 +60,7 @@ export default function FloorplanReviewPage() {
   const [tool, setTool] = useState<CanvasTool>('inspect')
   const [selectedInst, setSelectedInst] = useState('')
   const [selectedModule, setSelectedModule] = useState('')
+  const [moduleLayers, setModuleLayers] = useState<ModuleLayer[]>([])
   const [selectedBistGroup, setSelectedBistGroup] = useState('')
   const [overrides, setOverrides] = useState<Map<string, MacroOverride>>(new Map())
   const [overallVerdict, setOverallVerdict] = useState<'PENDING' | 'PASS' | 'WARN' | 'ACTION'>('PENDING')
@@ -113,6 +115,7 @@ export default function FloorplanReviewPage() {
     setOverrides(new Map())
     setSelectedInst('')
     setSelectedModule('')
+    setModuleLayers([])
     setSelectedBistGroup('')
     setOverallVerdict(d.review.overall_verdict || 'PENDING')
     setSummaryNote(d.review.summary_note || '')
@@ -184,6 +187,32 @@ export default function FloorplanReviewPage() {
       { id: `pin-${Date.now()}`, number: nextNum, x: xUm, y: yUm, severity: 'ACTION', title: `리뷰 코멘트 #${nextNum}`, comment: '', resolved: false },
     ])
     setTool('inspect')
+  }
+
+  function addModuleLayer(path: string) {
+    setModuleLayers(prev => {
+      if (prev.some(l => l.path === path)) return prev
+      const used = new Set(prev.map(l => l.color))
+      const color = MODULE_PALETTE.find(c => !used.has(c)) || MODULE_PALETTE[prev.length % MODULE_PALETTE.length]
+      return [...prev, { path, color }]
+    })
+  }
+
+  function toggleModuleLayer(path: string) {
+    if (moduleLayers.some(l => l.path === path)) {
+      const rest = moduleLayers.filter(l => l.path !== path)
+      setModuleLayers(rest)
+      if (selectedModule === path) setSelectedModule(rest[rest.length - 1]?.path || '')
+    } else {
+      addModuleLayer(path)
+      setSelectedModule(path)
+    }
+  }
+
+  function handleSelectModule(path: string) {
+    setSelectedModule(path)
+    const region = detail?.scene?.module_regions.find(mr => mr.hier_path === path || path.startsWith(mr.hier_path + '/'))
+    if (region) addModuleLayer(region.hier_path)
   }
 
   const canWrite = Boolean(project?.can_write ?? true)
@@ -287,6 +316,9 @@ export default function FloorplanReviewPage() {
             selectedInst={selectedInst}
             onSelectInst={setSelectedInst}
             selectedModule={selectedModule}
+            moduleLayers={moduleLayers}
+            onToggleModuleLayer={toggleModuleLayer}
+            onFocusModule={setSelectedModule}
             selectedBistGroup={selectedBistGroup}
             overrides={overrides}
             onOverridesChange={setOverrides}
@@ -304,7 +336,10 @@ export default function FloorplanReviewPage() {
             selectedInst={selectedInst}
             onSelectInst={setSelectedInst}
             selectedModule={selectedModule}
-            onSelectModule={setSelectedModule}
+            onSelectModule={handleSelectModule}
+            moduleLayers={moduleLayers}
+            onToggleModuleLayer={toggleModuleLayer}
+            onClearModuleLayers={() => { setModuleLayers([]); setSelectedModule('') }}
             selectedBistGroup={selectedBistGroup}
             onSelectBistGroup={setSelectedBistGroup}
             overrides={overrides}

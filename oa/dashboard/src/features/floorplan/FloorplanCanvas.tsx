@@ -1,8 +1,12 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { DropdownMenu } from 'radix-ui'
 import {
+  AlignCenterHorizontal,
+  AlignCenterVertical,
   AlignEndHorizontal,
+  AlignEndVertical,
   AlignHorizontalDistributeStart,
+  AlignStartHorizontal,
   AlignStartVertical,
   AlignVerticalDistributeStart,
   Check,
@@ -12,16 +16,20 @@ import {
   FlipVertical2,
   Layers,
   Lock,
+  Magnet,
   MapPin,
   Minus,
   MousePointer2,
   Move,
   Plus,
+  Redo2,
   RotateCcw,
   RotateCw,
   Save,
   Scan,
+  Undo2,
   Unlock,
+  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -41,6 +49,7 @@ import {
   type MacroOverride,
   type ReviewPin,
 } from './floorplanApi'
+import { moduleContour, type ModuleContour, type ModuleLayer } from './moduleContours'
 
 export type CanvasTool = 'inspect' | 'pin' | 'sandbox'
 
@@ -52,6 +61,9 @@ interface FloorplanCanvasProps {
   selectedInst: string
   onSelectInst: (inst: string) => void
   selectedModule: string
+  moduleLayers: ModuleLayer[]
+  onToggleModuleLayer: (path: string) => void
+  onFocusModule: (path: string) => void
   selectedBistGroup: string
   overrides: Map<string, MacroOverride>
   onOverridesChange: (next: Map<string, MacroOverride>) => void
@@ -82,11 +94,22 @@ const LAYER_ITEMS: { key: LayerKey; label: string }[] = [
 ]
 
 const TOOL_HINT: Record<CanvasTool, string> = {
-  inspect: '드래그 이동 · 휠 확대/축소 · 클릭 선택',
-  pin: '리뷰 핀을 놓을 위치를 클릭하세요',
-  sandbox: 'Shift+클릭 다중 선택 · 드래그로 이동',
+  inspect: '드래그 이동 · Shift+드래그 영역 선택 · 휠 확대/축소 · F 화면 맞춤',
+  pin: '리뷰 핀을 놓을 위치를 클릭하세요 · Esc 취소',
+  sandbox: '빈 곳 드래그 영역 선택 · Shift/Ctrl+클릭 추가 · 방향키 이동 · Alt 드래그 시 스냅 해제 · Space 드래그 화면 이동',
 }
 
+type AlignEdge = 'left' | 'right' | 'bottom' | 'top' | 'hcenter' | 'vcenter'
+type Box = { x0: number; y0: number; x1: number; y1: number; hl: number; hb: number; hr: number; ht: number }
+type SnapHit = { offset: number; dist: number; line: number; kind: 'align' | 'abut' | 'die'; span: [number, number] }
+type Guide = { axis: 'x' | 'y'; line: number; kind: SnapHit['kind']; span: [number, number] }
+type MacroOrigin = { llx: number; lly: number; orient: MacroBox['orient']; halo_um: MacroBox['halo_um'] }
+type DragState =
+  | { kind: 'pan'; startX: number; startY: number; umPerPx: number; origPan: { x: number; y: number }; moved: boolean; clearOnClick: boolean }
+  | { kind: 'marquee'; startX: number; startY: number; additive: boolean; moved: boolean }
+  | { kind: 'macro'; startUmX: number; startUmY: number; origins: Map<string, MacroOrigin>; group: Box; statics: Box[] }
+
+const SNAP_PX = 8
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 64
 
@@ -110,6 +133,16 @@ function formatUm(v: number) {
 function truncate(text: string, maxChars: number) {
   if (maxChars <= 1) return ''
   return text.length > maxChars ? `${text.slice(0, Math.max(1, maxChars - 1))}…` : text
+}
+
+function round2(v: number) {
+  return Number(v.toFixed(2))
+}
+
+function macroBox(m: EffectiveMacroBox): Box {
+  const [ow, oh] = orientedSize(m.width, m.height, m.orient)
+  const [hl, hb, hr, ht] = m.halo_um
+  return { x0: m.llx, y0: m.lly, x1: m.llx + ow, y1: m.lly + oh, hl, hb, hr, ht }
 }
 
 function scrollOffset(el: HTMLElement) {
@@ -150,6 +183,9 @@ export function FloorplanCanvas({
   selectedInst,
   onSelectInst,
   selectedModule,
+  moduleLayers,
+  onToggleModuleLayer,
+  onFocusModule,
   selectedBistGroup,
   overrides,
   onOverridesChange,
@@ -163,6 +199,10 @@ export function FloorplanCanvas({
 }: FloorplanCanvasProps) {
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '')
   const svgRef = useRef<SVGSVGElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const marqueeRef = useRef<HTMLDivElement>(null)
+  const spaceRef = useRef(false)
+  const pointerInsideRef = useRef(false)
   const stageRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const readoutRef = useRef<HTMLSpanElement>(null)
@@ -187,13 +227,36 @@ export function FloorplanCanvas({
   const [selectedSet, setSelectedSet] = useState<Set<string>>(new Set())
   const [proposalTitle, setProposalTitle] = useState('')
   const [savingProp, setSavingProp] = useState(false)
+  const [snapEnabled, setSnapEnabled] = useState(true)
+  const [guides, setGuides] = useState<Guide[]>([])
+  const [, setHistTick] = useState(0)
+  const histRef = useRef({ undo: [] as Map<string, MacroOverride>[], redo: [] as Map<string, MacroOverride>[], prev: overrides, applying: false, inDrag: false, dragPushed: false })
 
   useEffect(() => {
     setView({ zoom: 1, panX: 0, panY: 0 })
     setHoveredName('')
     setSelectedSet(new Set())
     setLayers(prev => ({ ...prev, bistColor: scene.bist_summary.length > 0 }))
+    histRef.current = { undo: [], redo: [], prev: overrides, applying: false, inDrag: false, dragPushed: false }
+    setHistTick(t => t + 1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- history restarts with the scene only
   }, [scene.design_name, scene.fp_ver, scene.bist_summary.length])
+
+  // Placement history: one entry per discrete edit, one per macro drag (inspector edits included).
+  useEffect(() => {
+    const h = histRef.current
+    if (h.prev === overrides) return
+    if (h.applying) {
+      h.applying = false
+    } else if (!h.inDrag || !h.dragPushed) {
+      h.undo.push(h.prev)
+      if (h.undo.length > 100) h.undo.shift()
+      h.redo = []
+      if (h.inDrag) h.dragPushed = true
+      setHistTick(t => t + 1)
+    }
+    h.prev = overrides
+  }, [overrides])
 
   // The stage fills the remaining viewport height; the viewBox always matches the stage aspect ratio
   // so screen pixels map linearly to µm (no letterboxing) and overlays can be sized in screen pixels.
@@ -220,11 +283,7 @@ export function FloorplanCanvas({
     return () => ro.disconnect()
   }, [])
 
-  const dragRef = useRef<
-    | { kind: 'pan'; startX: number; startY: number; umPerPx: number; origPan: { x: number; y: number } }
-    | { kind: 'macro'; startUmX: number; startUmY: number; origins: Map<string, { llx: number; lly: number; orient: MacroBox['orient']; halo_um: MacroBox['halo_um'] }> }
-    | null
-  >(null)
+  const dragRef = useRef<DragState | null>(null)
 
   const [x0, y0, x1, y1] = scene.die_bbox
   const dw = Math.max(x1 - x0, 10)
@@ -253,10 +312,18 @@ export function FloorplanCanvas({
     return m
   }, [sandbox.liveBist])
 
-  const activeModuleSummary = useMemo(
-    () => scene.module_regions.find(mr => mr.hier_path === selectedModule || selectedModule.startsWith(mr.hier_path + '/')),
-    [scene.module_regions, selectedModule],
-  )
+  const regionByPath = useMemo(() => new Map(scene.module_regions.map(mr => [mr.hier_path, mr])), [scene.module_regions])
+  const contourCache = useMemo(() => new Map<string, ModuleContour>(), [scene.module_regions, scene.die_bbox])
+  const moduleShapes = moduleLayers.flatMap(layer => {
+    const mr = regionByPath.get(layer.path)
+    if (!mr) return []
+    let contour = contourCache.get(layer.path)
+    if (!contour) {
+      contour = moduleContour(mr.bins || [], scene.die_bbox)
+      contourCache.set(layer.path, contour)
+    }
+    return [{ layer, mr, contour }]
+  })
 
   const activeTargets = useMemo(() => {
     const names = selectedSet.size ? [...selectedSet] : (selectedInst ? [selectedInst] : [])
@@ -292,6 +359,7 @@ export function FloorplanCanvas({
     return canvas.toDataURL()
   }, [scene.density_grid, scene.density_grid_size])
 
+  const primaryTarget = activeTargets[0]
   const anySelectedUnlocked = activeTargets.some(m => !m.locked)
   const allSelectedLocked = activeTargets.length > 0 && activeTargets.every(m => m.locked)
 
@@ -337,22 +405,61 @@ export function FloorplanCanvas({
     return () => svg.removeEventListener('wheel', handler)
   }, [])
 
+  function currentSelection(): Set<string> {
+    return selectedSet.size ? selectedSet : new Set(selectedInst ? [selectedInst] : [])
+  }
+
+  function clearSelection() {
+    setSelectedSet(new Set())
+    onSelectInst('')
+  }
+
+  function hideMarquee() {
+    if (marqueeRef.current) marqueeRef.current.style.display = 'none'
+  }
+
+  function finishMarquee(drag: Extract<DragState, { kind: 'marquee' }>, clientX: number, clientY: number) {
+    const [ax, ay] = clientToUm(drag.startX, drag.startY)
+    const [bx, by] = clientToUm(clientX, clientY)
+    const rx0 = Math.min(ax, bx), rx1 = Math.max(ax, bx), ry0 = Math.min(ay, by), ry1 = Math.max(ay, by)
+    // Left→right drag selects fully enclosed macros, right→left selects anything the box touches.
+    const enclose = clientX >= drag.startX
+    const hits = sandbox.effectiveMacros.filter(m => {
+      const b = macroBox(m)
+      return enclose
+        ? b.x0 >= rx0 && b.x1 <= rx1 && b.y0 >= ry0 && b.y1 <= ry1
+        : b.x0 < rx1 && b.x1 > rx0 && b.y0 < ry1 && b.y1 > ry0
+    }).map(m => m.inst_name)
+    const next = drag.additive ? new Set([...currentSelection(), ...hits]) : new Set(hits)
+    setSelectedSet(next)
+    onSelectInst(hits[0] ?? (drag.additive ? selectedInst : ''))
+  }
+
   function onCanvasMouseDown(e: MouseEvent<SVGSVGElement>) {
+    if (e.button === 1 || (e.button === 0 && spaceRef.current)) {
+      e.preventDefault()
+      dragRef.current = { kind: 'pan', startX: e.clientX, startY: e.clientY, umPerPx: k, origPan: { x: view.panX, y: view.panY }, moved: false, clearOnClick: false }
+      return
+    }
     if (e.button !== 0) return
     if (tool === 'pin') {
       const [ux, uy] = clientToUm(e.clientX, e.clientY)
       onAddPinAt(Number(ux.toFixed(1)), Number(uy.toFixed(1)))
       return
     }
-    dragRef.current = { kind: 'pan', startX: e.clientX, startY: e.clientY, umPerPx: k, origPan: { x: view.panX, y: view.panY } }
+    if (tool === 'sandbox' || e.shiftKey) {
+      dragRef.current = { kind: 'marquee', startX: e.clientX, startY: e.clientY, additive: e.shiftKey || e.ctrlKey || e.metaKey, moved: false }
+      return
+    }
+    dragRef.current = { kind: 'pan', startX: e.clientX, startY: e.clientY, umPerPx: k, origPan: { x: view.panX, y: view.panY }, moved: false, clearOnClick: true }
   }
 
   function onMacroMouseDown(e: MouseEvent<SVGGElement>, macro: EffectiveMacroBox) {
-    if (tool === 'pin') return
+    if (tool === 'pin' || e.button !== 0 || spaceRef.current) return
     e.stopPropagation()
-    onSelectInst(macro.inst_name)
-    const nextSel = new Set(selectedSet)
-    if (e.shiftKey) {
+    const toggle = e.shiftKey || e.ctrlKey || e.metaKey
+    const nextSel = new Set(currentSelection())
+    if (toggle) {
       if (nextSel.has(macro.inst_name)) nextSel.delete(macro.inst_name)
       else nextSel.add(macro.inst_name)
     } else if (!nextSel.has(macro.inst_name)) {
@@ -360,20 +467,66 @@ export function FloorplanCanvas({
       nextSel.add(macro.inst_name)
     }
     setSelectedSet(nextSel)
+    onSelectInst(nextSel.has(macro.inst_name) ? macro.inst_name : ([...nextSel][0] || ''))
 
-    if (tool === 'sandbox' && canWrite) {
+    if (tool === 'sandbox' && canWrite && nextSel.has(macro.inst_name)) {
       const [ux, uy] = clientToUm(e.clientX, e.clientY)
-      const origins = new Map<string, { llx: number; lly: number; orient: MacroBox['orient']; halo_um: MacroBox['halo_um'] }>()
+      const origins = new Map<string, MacroOrigin>()
+      const moving: EffectiveMacroBox[] = []
       for (const name of nextSel) {
         const cur = sandbox.effectiveMacros.find(m => m.inst_name === name)
         if (cur && !cur.locked) {
           origins.set(name, { llx: cur.llx, lly: cur.lly, orient: cur.orient, halo_um: cur.halo_um })
+          moving.push(cur)
         }
       }
       if (origins.size > 0) {
-        dragRef.current = { kind: 'macro', startUmX: ux, startUmY: uy, origins }
+        const boxes = moving.map(macroBox)
+        const pick = (better: (a: Box, b: Box) => boolean) => boxes.reduce((acc, b) => (better(b, acc) ? b : acc))
+        const left = pick((a, b) => a.x0 < b.x0), right = pick((a, b) => a.x1 > b.x1)
+        const bottom = pick((a, b) => a.y0 < b.y0), top = pick((a, b) => a.y1 > b.y1)
+        const group: Box = { x0: left.x0, x1: right.x1, y0: bottom.y0, y1: top.y1, hl: left.hl, hr: right.hr, hb: bottom.hb, ht: top.ht }
+        const statics = sandbox.effectiveMacros.filter(m => !origins.has(m.inst_name)).map(macroBox)
+        dragRef.current = { kind: 'macro', startUmX: ux, startUmY: uy, origins, group, statics }
+        histRef.current.inDrag = true
+        histRef.current.dragPushed = false
       }
     }
+  }
+
+  /** Nearest snap target for the moving group along one axis: edge/centre alignment, halo-to-halo abutment, die edges. */
+  function findSnap(axis: 'x' | 'y', drag: Extract<DragState, { kind: 'macro' }>, dx: number, dy: number): SnapHit | null {
+    const g = drag.group
+    const cur = axis === 'x' ? dx : dy
+    const [a0, a1] = axis === 'x' ? [g.x0, g.x1] : [g.y0, g.y1]
+    const [gLo, gHi] = axis === 'x' ? [g.hl, g.hr] : [g.hb, g.ht]
+    const [p0, p1] = axis === 'x' ? [g.y0 + dy, g.y1 + dy] : [g.x0 + dx, g.x1 + dx]
+    const [pLo, pHi] = axis === 'x' ? [g.hb, g.ht] : [g.hl, g.hr]
+    const state: { best: SnapHit | null } = { best: null }
+    const limit = SNAP_PX * k
+    const consider = (offset: number, line: number, kind: SnapHit['kind'], span: [number, number]) => {
+      const dist = Math.abs(offset - cur)
+      if (dist <= limit && (!state.best || dist < state.best.dist)) state.best = { offset, dist, line, kind, span }
+    }
+    for (const sb of drag.statics) {
+      const [s0, s1] = axis === 'x' ? [sb.x0, sb.x1] : [sb.y0, sb.y1]
+      const [sLo, sHi] = axis === 'x' ? [sb.hl, sb.hr] : [sb.hb, sb.ht]
+      const [q0, q1] = axis === 'x' ? [sb.y0, sb.y1] : [sb.x0, sb.x1]
+      const [qLo, qHi] = axis === 'x' ? [sb.hb, sb.ht] : [sb.hl, sb.hr]
+      const union: [number, number] = [Math.min(p0, q0), Math.max(p1, q1)]
+      consider(s0 - a0, s0, 'align', union)
+      consider(s1 - a1, s1, 'align', union)
+      consider((s0 + s1) / 2 - (a0 + a1) / 2, (s0 + s1) / 2, 'align', union)
+      if (p0 - pLo < q1 + qHi && p1 + pHi > q0 - qLo) {
+        const overlap: [number, number] = Math.max(p0, q0) < Math.min(p1, q1) ? [Math.max(p0, q0), Math.min(p1, q1)] : union
+        consider(s0 - sLo - gHi - a1, s0 - sLo, 'abut', overlap)
+        consider(s1 + sHi + gLo - a0, s1 + sHi, 'abut', overlap)
+      }
+    }
+    const [d0, d1] = axis === 'x' ? [x0, x1] : [y0, y1]
+    consider(d0 - a0, d0, 'die', [p0, p1])
+    consider(d1 - a1, d1, 'die', [p0, p1])
+    return state.best
   }
 
   function onMouseMove(e: MouseEvent<SVGSVGElement>) {
@@ -382,6 +535,7 @@ export function FloorplanCanvas({
     const drag = dragRef.current
     if (!drag) return
     if (drag.kind === 'pan') {
+      if (!drag.moved && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) > 3) drag.moved = true
       setView(prev => ({
         ...prev,
         panX: drag.origPan.x - (e.clientX - drag.startX) * drag.umPerPx,
@@ -389,26 +543,148 @@ export function FloorplanCanvas({
       }))
       return
     }
+    if (drag.kind === 'marquee') {
+      const stage = stageRef.current
+      const box = marqueeRef.current
+      if (!stage || !box) return
+      if (!drag.moved && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) <= 3) return
+      drag.moved = true
+      const r = stage.getBoundingClientRect()
+      box.style.display = 'block'
+      box.style.transform = `translate(${Math.min(drag.startX, e.clientX) - r.left}px, ${Math.min(drag.startY, e.clientY) - r.top}px)`
+      box.style.width = `${Math.abs(e.clientX - drag.startX)}px`
+      box.style.height = `${Math.abs(e.clientY - drag.startY)}px`
+      box.dataset.mode = e.clientX >= drag.startX ? 'enclose' : 'touch'
+      return
+    }
     const dx = ux - drag.startUmX
     const dy = uy - drag.startUmY
+    const snapOn = snapEnabled && !e.altKey
+    const hitX = snapOn ? findSnap('x', drag, dx, dy) : null
+    const hitY = snapOn ? findSnap('y', drag, hitX ? hitX.offset : dx, dy) : null
     const next = new Map(overrides)
     for (const [name, orig] of drag.origins.entries()) {
       const prevOv = next.get(name)
       next.set(name, {
         inst_name: name,
-        llx: snap(orig.llx + dx),
-        lly: snap(orig.lly + dy),
+        llx: hitX ? round2(orig.llx + hitX.offset) : snap(orig.llx + dx),
+        lly: hitY ? round2(orig.lly + hitY.offset) : snap(orig.lly + dy),
         orient: orig.orient,
         halo_um: prevOv?.halo_um ?? orig.halo_um,
         locked: false,
       })
     }
     onOverridesChange(next)
+    const nextGuides: Guide[] = []
+    if (hitX) nextGuides.push({ axis: 'x', line: hitX.line, kind: hitX.kind, span: hitX.span })
+    if (hitY) nextGuides.push({ axis: 'y', line: hitY.line, kind: hitY.kind, span: hitY.span })
+    if (nextGuides.length || guides.length) setGuides(nextGuides)
   }
 
-  function stopDrag() {
+  function stopDrag(clientX?: number, clientY?: number) {
+    const drag = dragRef.current
     dragRef.current = null
+    histRef.current.inDrag = false
+    if (guides.length) setGuides([])
+    if (!drag) return
+    if (drag.kind === 'marquee') {
+      hideMarquee()
+      if (drag.moved && clientX !== undefined && clientY !== undefined) finishMarquee(drag, clientX, clientY)
+      else if (!drag.additive) clearSelection()
+    } else if (drag.kind === 'pan' && !drag.moved && drag.clearOnClick) {
+      clearSelection()
+    }
   }
+
+  function undo() {
+    const h = histRef.current
+    if (!canWrite || !h.undo.length) return
+    const prev = h.undo.pop()!
+    h.redo.push(overrides)
+    h.applying = true
+    onOverridesChange(prev)
+    setHistTick(t => t + 1)
+  }
+
+  function redo() {
+    const h = histRef.current
+    if (!canWrite || !h.redo.length) return
+    const next = h.redo.pop()!
+    h.undo.push(overrides)
+    h.applying = true
+    onOverridesChange(next)
+    setHistTick(t => t + 1)
+  }
+
+  function nudge(dxUm: number, dyUm: number) {
+    const movable = activeTargets.filter(m => !m.locked)
+    if (!movable.length) return
+    const next = new Map(overrides)
+    for (const m of movable) {
+      const prevOv = next.get(m.inst_name)
+      next.set(m.inst_name, { inst_name: m.inst_name, llx: round2(m.llx + dxUm), lly: round2(m.lly + dyUm), orient: m.orient, halo_um: prevOv?.halo_um ?? m.halo_um, locked: false })
+    }
+    onOverridesChange(next)
+  }
+
+  const keyRef = useRef<(e: globalThis.KeyboardEvent, isDown: boolean) => void>(() => {})
+  keyRef.current = (e, isDown) => {
+    if (e.key === ' ' && !isDown) {
+      spaceRef.current = false
+      svgRef.current?.classList.remove('is-space')
+      return
+    }
+    if (!isDown) return
+    const target = e.target as HTMLElement | null
+    if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+    const inPanel = Boolean(panelRef.current && document.activeElement && panelRef.current.contains(document.activeElement))
+    if (!pointerInsideRef.current && !inPanel) return
+    const mod = e.ctrlKey || e.metaKey
+    const key = e.key.toLowerCase()
+    if (e.key === ' ') {
+      e.preventDefault()
+      spaceRef.current = true
+      svgRef.current?.classList.add('is-space')
+    } else if (e.key === 'Escape') {
+      if (tool === 'pin') onToolChange('inspect')
+      clearSelection()
+    } else if (mod && key === 'a') {
+      e.preventDefault()
+      selectByFilter('all')
+    } else if (mod && key === 'z') {
+      e.preventDefault()
+      if (e.shiftKey) redo()
+      else undo()
+    } else if (mod && key === 'y') {
+      e.preventDefault()
+      redo()
+    } else if (!mod && key === 'f') {
+      setView({ zoom: 1, panX: 0, panY: 0 })
+    } else if (tool === 'sandbox' && canWrite && e.key.startsWith('Arrow')) {
+      e.preventDefault()
+      const step = (snapUm || 1) * (e.shiftKey ? 10 : 1)
+      if (e.key === 'ArrowLeft') nudge(-step, 0)
+      else if (e.key === 'ArrowRight') nudge(step, 0)
+      else if (e.key === 'ArrowUp') nudge(0, step)
+      else if (e.key === 'ArrowDown') nudge(0, -step)
+    }
+  }
+  useEffect(() => {
+    const down = (e: globalThis.KeyboardEvent) => keyRef.current(e, true)
+    const up = (e: globalThis.KeyboardEvent) => keyRef.current(e, false)
+    const blur = () => {
+      spaceRef.current = false
+      svgRef.current?.classList.remove('is-space')
+    }
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', blur)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', blur)
+    }
+  }, [])
 
   function transformSelected(fn: (m: EffectiveMacroBox) => Partial<MacroOverride>) {
     if (!activeTargets.length) return
@@ -447,20 +723,40 @@ export function FloorplanCanvas({
     onOverridesChange(next)
   }
 
-  function alignEdges(edge: 'left' | 'bottom') {
+  function alignEdges(edge: AlignEdge) {
     if (activeTargets.length < 2) return
+    const horizontal = edge === 'left' || edge === 'right' || edge === 'hcenter'
+    const keyOf = (m: EffectiveMacroBox) => {
+      const b = macroBox(m)
+      switch (edge) {
+        case 'left': return b.x0
+        case 'right': return b.x1
+        case 'hcenter': return (b.x0 + b.x1) / 2
+        case 'bottom': return b.y0
+        case 'top': return b.y1
+        default: return (b.y0 + b.y1) / 2
+      }
+    }
     const lockedAnchor = activeTargets.find(m => m.locked)
+    const values = activeTargets.map(keyOf)
     const refVal = lockedAnchor
-      ? (edge === 'left' ? lockedAnchor.llx : lockedAnchor.lly)
-      : Math.min(...activeTargets.map(m => (edge === 'left' ? m.llx : m.lly)))
+      ? keyOf(lockedAnchor)
+      : edge === 'left' || edge === 'bottom'
+        ? Math.min(...values)
+        : edge === 'right' || edge === 'top'
+          ? Math.max(...values)
+          : values.reduce((a, b) => a + b, 0) / values.length
     const next = new Map(overrides)
     for (const m of activeTargets) {
       if (m.locked) continue
+      const [ow, oh] = orientedSize(m.width, m.height, m.orient)
+      const size = horizontal ? ow : oh
+      const start = edge === 'right' || edge === 'top' ? refVal - size : edge === 'hcenter' || edge === 'vcenter' ? refVal - size / 2 : refVal
       const prevOv = next.get(m.inst_name)
       next.set(m.inst_name, {
         inst_name: m.inst_name,
-        llx: edge === 'left' ? Number(refVal.toFixed(2)) : m.llx,
-        lly: edge === 'bottom' ? Number(refVal.toFixed(2)) : m.lly,
+        llx: horizontal ? round2(start) : m.llx,
+        lly: horizontal ? m.lly : round2(start),
         orient: m.orient,
         halo_um: prevOv?.halo_um ?? m.halo_um,
         locked: false,
@@ -493,15 +789,18 @@ export function FloorplanCanvas({
     onOverridesChange(next)
   }
 
-  function selectByFilter(filter: 'all' | 'sram' | 'non_sram') {
+  function selectByFilter(filter: 'all' | 'sram' | 'non_sram' | 'master' | 'bist') {
+    const primary = activeTargets[0]
     const matched = sandbox.effectiveMacros.filter(m => {
       if (filter === 'sram') return m.kind === 'sram'
       if (filter === 'non_sram') return m.kind !== 'sram'
+      if (filter === 'master') return Boolean(primary) && m.master === primary.master
+      if (filter === 'bist') return Boolean(primary?.bist_group) && m.bist_group === primary.bist_group
       return true
     })
-    const next = new Set(matched.map(m => m.inst_name))
-    setSelectedSet(next)
-    if (matched[0]) onSelectInst(matched[0].inst_name)
+    setSelectedSet(new Set(matched.map(m => m.inst_name)))
+    const focus = (filter === 'master' || filter === 'bist') && primary ? primary : matched[0]
+    if (focus) onSelectInst(focus.inst_name)
   }
 
   function placePopover() {
@@ -555,7 +854,7 @@ export function FloorplanCanvas({
   const diePoints = scene.die_polygon.map(([pxu, pyu]) => `${pxu},${-pyu}`).join(' ')
 
   return (
-    <div className="fp-canvas-panel">
+    <div ref={panelRef} className="fp-canvas-panel">
       <div className="fp-canvas-toolbar" role="toolbar" aria-label="도면 도구">
         <div className="fp-seg" role="group" aria-label="도구">
           <button type="button" aria-pressed={tool === 'inspect'} onClick={() => onToolChange('inspect')}>
@@ -608,22 +907,31 @@ export function FloorplanCanvas({
           <div className="fp-sandbox-row">
             <span className="fp-sb-count"><b>{activeTargets.length}</b>개 선택</span>
             <div className="fp-seg is-small" role="group" aria-label="빠른 선택">
-              <button type="button" onClick={() => selectByFilter('all')}>전체 <span className="fp-num">{scene.macros.length}</span></button>
+              <button type="button" title="Ctrl+A" onClick={() => selectByFilter('all')}>전체 <span className="fp-num">{scene.macros.length}</span></button>
               {hasSram && <button type="button" onClick={() => selectByFilter('sram')}>SRAM</button>}
               {hasNonSram && <button type="button" onClick={() => selectByFilter('non_sram')}>SRAM 외</button>}
+              <button type="button" disabled={!primaryTarget} title="선택한 Hard Macro와 같은 Master 전체 선택" onClick={() => selectByFilter('master')}>같은 Master</button>
+              {scene.bist_summary.length > 0 && (
+                <button type="button" disabled={!primaryTarget?.bist_group} title="선택한 Hard Macro와 같은 BIST 그룹 전체 선택" onClick={() => selectByFilter('bist')}>같은 BIST</button>
+              )}
             </div>
+            <IconButton label="선택 해제 (Esc)" disabled={!activeTargets.length} onClick={clearSelection}><X size={15} /></IconButton>
             <i className="fp-divider" aria-hidden="true" />
             <span className="fp-sb-label">방향</span>
             <IconButton label="좌우 미러링 (MY)" disabled={!canWrite || !anySelectedUnlocked} onClick={() => transformSelected(m => ({ orient: flipOrientX(m.orient) }))}><FlipHorizontal2 size={15} /></IconButton>
             <IconButton label="상하 미러링 (MX)" disabled={!canWrite || !anySelectedUnlocked} onClick={() => transformSelected(m => ({ orient: flipOrientY(m.orient) }))}><FlipVertical2 size={15} /></IconButton>
             <IconButton label="90° 회전" disabled={!canWrite || !anySelectedUnlocked} onClick={() => transformSelected(m => ({ orient: rotateOrient90(m.orient) }))}><RotateCw size={15} /></IconButton>
-            <IconButton label={allSelectedLocked ? '잠금 해제' : '위치 잠금 (드래그·정렬 기준점)'} pressed={allSelectedLocked} disabled={!canWrite || !activeTargets.length} onClick={toggleLockSelected}>
+            <IconButton label={allSelectedLocked ? '잠금 해제' : '위치 잠금 (정렬·배열 기준점)'} pressed={allSelectedLocked} disabled={!canWrite || !activeTargets.length} onClick={toggleLockSelected}>
               {allSelectedLocked ? <Unlock size={15} /> : <Lock size={15} />}
             </IconButton>
             <i className="fp-divider" aria-hidden="true" />
             <span className="fp-sb-label">정렬</span>
-            <IconButton label="좌측 정렬" disabled={!canWrite || activeTargets.length < 2} onClick={() => alignEdges('left')}><AlignStartVertical size={15} /></IconButton>
-            <IconButton label="하단 정렬" disabled={!canWrite || activeTargets.length < 2} onClick={() => alignEdges('bottom')}><AlignEndHorizontal size={15} /></IconButton>
+            <IconButton label="왼쪽 맞춤" disabled={!canWrite || activeTargets.length < 2} onClick={() => alignEdges('left')}><AlignStartVertical size={15} /></IconButton>
+            <IconButton label="가로 가운데 맞춤" disabled={!canWrite || activeTargets.length < 2} onClick={() => alignEdges('hcenter')}><AlignCenterVertical size={15} /></IconButton>
+            <IconButton label="오른쪽 맞춤" disabled={!canWrite || activeTargets.length < 2} onClick={() => alignEdges('right')}><AlignEndVertical size={15} /></IconButton>
+            <IconButton label="위쪽 맞춤" disabled={!canWrite || activeTargets.length < 2} onClick={() => alignEdges('top')}><AlignStartHorizontal size={15} /></IconButton>
+            <IconButton label="세로 가운데 맞춤" disabled={!canWrite || activeTargets.length < 2} onClick={() => alignEdges('vcenter')}><AlignCenterHorizontal size={15} /></IconButton>
+            <IconButton label="아래쪽 맞춤" disabled={!canWrite || activeTargets.length < 2} onClick={() => alignEdges('bottom')}><AlignEndHorizontal size={15} /></IconButton>
             <IconButton label="가로 배열 (채널 간격)" disabled={!canWrite || activeTargets.length < 2} onClick={() => stackSelected('x')}><AlignHorizontalDistributeStart size={15} /></IconButton>
             <IconButton label="세로 배열 (채널 간격)" disabled={!canWrite || activeTargets.length < 2} onClick={() => stackSelected('y')}><AlignVerticalDistributeStart size={15} /></IconButton>
             <label className="fp-field" title="배열 시 Hard Macro 사이 채널 간격">
@@ -631,8 +939,15 @@ export function FloorplanCanvas({
               <input type="number" min={0} max={500} value={channelGapUm} onChange={e => setChannelGapUm(e.target.value)} />
               <em>µm</em>
             </label>
+          </div>
+
+          <div className="fp-sandbox-row is-foot">
+            <IconButton label="실행 취소 (Ctrl+Z)" disabled={!canWrite || !histRef.current.undo.length} onClick={undo}><Undo2 size={15} /></IconButton>
+            <IconButton label="다시 실행 (Ctrl+Shift+Z)" disabled={!canWrite || !histRef.current.redo.length} onClick={redo}><Redo2 size={15} /></IconButton>
+            <IconButton label="전체 초기화" disabled={!overrides.size} onClick={() => onOverridesChange(new Map())}><RotateCcw size={14} /></IconButton>
             <i className="fp-divider" aria-hidden="true" />
-            <label className="fp-field">
+            <IconButton label={`자석 스냅 ${snapEnabled ? '켜짐' : '꺼짐'} — 다른 Hard Macro의 Halo 경계·모서리·중심, Die 경계에 붙음 (드래그 중 Alt로 일시 해제)`} pressed={snapEnabled} onClick={() => setSnapEnabled(v => !v)}><Magnet size={15} /></IconButton>
+            <label className="fp-field is-tight">
               <span>그리드</span>
               <select value={snapUm} onChange={e => setSnapUm(Number(e.target.value))}>
                 <option value={0}>자유</option>
@@ -641,15 +956,10 @@ export function FloorplanCanvas({
                 <option value={10}>10 µm</option>
               </select>
             </label>
-            <button type="button" className="fp-text-btn fp-push-right" disabled={!overrides.size} onClick={() => onOverridesChange(new Map())}>
-              <RotateCcw size={13} aria-hidden="true" />전체 초기화
-            </button>
-          </div>
-
-          <div className="fp-sandbox-row is-foot">
+            <i className="fp-divider" aria-hidden="true" />
             <span className={`fp-sb-status${hasWarnings ? ' is-warn' : ''}`}>
               <i aria-hidden="true" />
-              {hasWarnings ? `경계 이탈 ${sandbox.outOfBounds.size} · 충돌 ${sandbox.overlapping.size}` : '경계 · Halo 충돌 없음'}
+              {hasWarnings ? `경계 이탈 ${sandbox.outOfBounds.size} · 충돌 ${sandbox.overlapping.size}` : '충돌 없음'}
             </span>
             <span className="fp-sb-meta">변경 <b>{sandbox.changedCount}</b> · 잠금 <b>{sandbox.lockedCount}</b></span>
             <span className="fp-push-right" />
@@ -658,7 +968,7 @@ export function FloorplanCanvas({
                 <input
                   type="text"
                   className="fp-proposal-input"
-                  placeholder="제안안 이름 (예: Hard Macro안 #1)"
+                  placeholder="제안안 이름"
                   value={proposalTitle}
                   onChange={e => setProposalTitle(e.target.value)}
                 />
@@ -680,11 +990,11 @@ export function FloorplanCanvas({
                 <i className="fp-divider" aria-hidden="true" />
               </>
             )}
-            <span className="fp-sb-label"><Download size={13} aria-hidden="true" />내보내기</span>
+            <span className="fp-sb-label" title="Tcl/CSV 내보내기"><Download size={14} aria-hidden="true" /></span>
             <div className="fp-seg is-small" role="group" aria-label="내보내기 형식">
-              <button type="button" onClick={() => downloadClientExport('innovus')}>Innovus Tcl</button>
-              <button type="button" onClick={() => downloadClientExport('icc2')}>ICC2 Tcl</button>
-              <button type="button" onClick={() => downloadClientExport('csv')}>CSV</button>
+              <button type="button" title="Innovus Tcl 내려받기" onClick={() => downloadClientExport('innovus')}>Innovus</button>
+              <button type="button" title="ICC2 Tcl 내려받기" onClick={() => downloadClientExport('icc2')}>ICC2</button>
+              <button type="button" title="CSV 내려받기" onClick={() => downloadClientExport('csv')}>CSV</button>
             </div>
             <label className="fp-check" title="위치·방향·Halo가 수정된 Hard Macro만 Tcl/CSV로 내보냅니다">
               <input type="checkbox" checked={onlyChangedTcl} onChange={e => onOnlyChangedTclChange(e.target.checked)} />
@@ -694,7 +1004,13 @@ export function FloorplanCanvas({
         </div>
       )}
 
-      <div ref={stageRef} className="fp-svg-stage" style={{ height: stageHeight }}>
+      <div
+        ref={stageRef}
+        className="fp-svg-stage"
+        style={{ height: stageHeight }}
+        onMouseEnter={() => { pointerInsideRef.current = true }}
+        onMouseLeave={() => { pointerInsideRef.current = false }}
+      >
         <svg
           ref={svgRef}
           viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`}
@@ -702,9 +1018,9 @@ export function FloorplanCanvas({
           className={`fp-svg mode-${tool}`}
           onMouseDown={onCanvasMouseDown}
           onMouseMove={onMouseMove}
-          onMouseUp={stopDrag}
-          onMouseLeave={() => {
-            stopDrag()
+          onMouseUp={e => stopDrag(e.clientX, e.clientY)}
+          onMouseLeave={e => {
+            stopDrag(e.clientX, e.clientY)
             setHoveredName('')
             if (readoutRef.current) readoutRef.current.textContent = '—'
           }}
@@ -725,6 +1041,15 @@ export function FloorplanCanvas({
             <clipPath id={`${uid}-die`}>
               <polygon points={diePoints} />
             </clipPath>
+            {moduleShapes.length > 0 && (
+              <mask id={`${uid}-cells`} maskUnits="userSpaceOnUse" x={vbX} y={vbY} width={vbW} height={vbH}>
+                <rect x={vbX} y={vbY} width={vbW} height={vbH} fill="white" />
+                {sandbox.effectiveMacros.map(m => {
+                  const b = macroBox(m)
+                  return <rect key={m.inst_name} x={b.x0} y={-b.y1} width={b.x1 - b.x0} height={b.y1 - b.y0} fill="black" />
+                })}
+              </mask>
+            )}
             {densityHref && (
               <mask id={`${uid}-density`} maskUnits="userSpaceOnUse" x={x0} y={-(y0 + dh)} width={dw} height={dh}>
                 <image href={densityHref} x={x0} y={-(y0 + dh)} width={dw} height={dh} preserveAspectRatio="none" />
@@ -755,25 +1080,32 @@ export function FloorplanCanvas({
             </g>
           </g>
 
-          {/* Selected hierarchy region */}
-          {activeModuleSummary && (
-            <g pointerEvents="none">
-              <rect
-                x={activeModuleSummary.p10_x}
-                y={-activeModuleSummary.p90_y}
-                width={Math.max(activeModuleSummary.p90_x - activeModuleSummary.p10_x, 12)}
-                height={Math.max(activeModuleSummary.p90_y - activeModuleSummary.p10_y, 12)}
-                className="fp-module-box"
-                strokeDasharray={`${px(5)} ${px(3)}`}
-                strokeWidth={px(1.5)}
-              />
-              <g transform={screen(activeModuleSummary.p10_x, -activeModuleSummary.p90_y)}>
-                <text x={0} y={-6} className="fp-module-label">{activeModuleSummary.hier_path}</text>
-              </g>
-              <g transform={screen(activeModuleSummary.cx, -activeModuleSummary.cy)} className="fp-module-center">
-                <path d="M-7 0H7M0 -7V7" />
-                <circle r={2.5} />
-              </g>
+          {/* Std-cell hierarchy placement contours — several at once, one colour each */}
+          {moduleShapes.length > 0 && (
+            <g clipPath={`url(#${uid}-die)`} mask={`url(#${uid}-cells)`} pointerEvents="none">
+              {moduleShapes.map(({ layer, mr, contour }) => {
+                const focused = layer.path === selectedModule
+                return (
+                  <g key={layer.path}>
+                    {contour.outer ? (
+                      <path d={contour.outer} fillRule="evenodd" style={{ fill: layer.color, stroke: layer.color }} fillOpacity={focused ? 0.18 : 0.11} strokeWidth={px(focused ? 2 : 1.25)} strokeLinejoin="round" />
+                    ) : (
+                      <rect
+                        x={mr.p10_x}
+                        y={-mr.p90_y}
+                        width={Math.max(mr.p90_x - mr.p10_x, 12)}
+                        height={Math.max(mr.p90_y - mr.p10_y, 12)}
+                        rx={px(8)}
+                        style={{ fill: layer.color, stroke: layer.color }}
+                        fillOpacity={0.1}
+                        strokeDasharray={`${px(5)} ${px(3)}`}
+                        strokeWidth={px(focused ? 2 : 1.25)}
+                      />
+                    )}
+                    {contour.core && <path d={contour.core} fillRule="evenodd" style={{ fill: layer.color }} fillOpacity={focused ? 0.28 : 0.18} />}
+                  </g>
+                )
+              })}
             </g>
           )}
 
@@ -942,6 +1274,19 @@ export function FloorplanCanvas({
             )
           })}
 
+          {moduleShapes.map(({ layer, mr }) => (
+            <g key={`mod-${layer.path}`} transform={screen(mr.cx, -mr.cy)} pointerEvents="none" className={`fp-mod-marker${layer.path === selectedModule ? ' is-focused' : ''}`} style={{ color: layer.color }}>
+              <circle r={4} />
+              <text x={9} y={4}>{layer.path}</text>
+            </g>
+          ))}
+
+          {guides.map((g, gi) => (g.axis === 'x' ? (
+            <line key={gi} x1={g.line} x2={g.line} y1={-g.span[1] - px(16)} y2={-g.span[0] + px(16)} className={`fp-guide is-${g.kind}`} strokeWidth={px(1)} strokeDasharray={g.kind === 'abut' ? `${px(4)} ${px(3)}` : undefined} pointerEvents="none" />
+          ) : (
+            <line key={gi} y1={-g.line} y2={-g.line} x1={g.span[0] - px(16)} x2={g.span[1] + px(16)} className={`fp-guide is-${g.kind}`} strokeWidth={px(1)} strokeDasharray={g.kind === 'abut' ? `${px(4)} ${px(3)}` : undefined} pointerEvents="none" />
+          )))}
+
           {/* IO pins */}
           {layers.pins && scene.pins.map((p, idx) => {
             const tri = p.side === 'R' ? '0,-4.5 -7.5,0 0,4.5' : p.side === 'B' ? '-4.5,0 0,-7.5 4.5,0' : p.side === 'T' ? '-4.5,0 0,7.5 4.5,0' : '0,-4.5 7.5,0 0,4.5'
@@ -997,6 +1342,24 @@ export function FloorplanCanvas({
             </g>
           ))}
         </svg>
+
+        <div ref={marqueeRef} className="fp-marquee" aria-hidden="true" />
+
+        {moduleShapes.length > 0 && (
+          <div className="fp-mod-legend" aria-label="표시 중인 Instance 위치">
+            <div className="fp-mod-legend-head">Instance 위치<span>{moduleShapes.length}</span></div>
+            {moduleShapes.map(({ layer, mr }) => (
+              <div key={layer.path} className={`fp-mod-legend-row${layer.path === selectedModule ? ' is-focused' : ''}`}>
+                <button type="button" className="fp-mod-legend-name" title={`${layer.path} 강조`} onClick={() => onFocusModule(layer.path)}>
+                  <i style={{ background: layer.color }} aria-hidden="true" />
+                  <span>{layer.path}</span>
+                  <small>{mr.cell_count.toLocaleString()}</small>
+                </button>
+                <button type="button" className="fp-mod-legend-x" aria-label={`${layer.path} 숨기기`} title="숨기기" onClick={() => onToggleModuleLayer(layer.path)}><X size={12} /></button>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="fp-scalebar" aria-hidden="true">
           <span style={{ width: scaleUm / k }} />

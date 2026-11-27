@@ -21,6 +21,7 @@ import {
   type PlacementProposal,
   type ReviewPin,
 } from './floorplanApi'
+import type { ModuleLayer } from './moduleContours'
 
 interface FloorplanInspectorProps {
   scene: FloorplanScene | null
@@ -29,6 +30,9 @@ interface FloorplanInspectorProps {
   onSelectInst: (inst: string) => void
   selectedModule: string
   onSelectModule: (mod: string) => void
+  moduleLayers: ModuleLayer[]
+  onToggleModuleLayer: (path: string) => void
+  onClearModuleLayers: () => void
   selectedBistGroup: string
   onSelectBistGroup: (grp: string) => void
   overrides: Map<string, MacroOverride>
@@ -86,6 +90,9 @@ export function FloorplanInspector({
   onSelectInst,
   selectedModule,
   onSelectModule,
+  moduleLayers,
+  onToggleModuleLayer,
+  onClearModuleLayers,
   selectedBistGroup,
   onSelectBistGroup,
   overrides,
@@ -450,20 +457,27 @@ export function FloorplanInspector({
           {!isTop && (
             <section className="fp-card">
               <div className="fp-card-head">
-                <h4>Instance별 물리 위치 확인 (Std-cell 계층)</h4>
-                {selectedModule && <button type="button" className="fp-link-btn" onClick={() => onSelectModule('')}>선택 해제</button>}
+                <h4>Instance별 물리 위치 확인 (Std-cell 계층){moduleLayers.length > 0 && <span className="fp-mod-count">{moduleLayers.length}개 표시</span>}</h4>
+                {moduleLayers.length > 0 && <button type="button" className="fp-link-btn" onClick={onClearModuleLayers}>모두 해제</button>}
               </div>
               <div className="fp-compact-list">
                 {(scene?.module_regions || []).map(mr => {
-                  const active = selectedModule === mr.hier_path
+                  const layer = moduleLayers.find(l => l.path === mr.hier_path)
+                  const focused = Boolean(layer && selectedModule === mr.hier_path)
                   return (
                     <button
                       key={mr.hier_path}
                       type="button"
-                      className={`fp-list-row${active ? ' is-selected' : ''}`}
-                      onClick={() => onSelectModule(active ? '' : mr.hier_path)}
+                      aria-pressed={Boolean(layer)}
+                      className={`fp-list-row fp-mod-row${layer ? ' is-on' : ''}${focused ? ' is-selected' : ''}`}
+                      style={layer ? { borderColor: layer.color } : undefined}
+                      onClick={() => onToggleModuleLayer(mr.hier_path)}
+                      title={layer ? '도면에서 숨기기' : '도면에 표시 (여러 개 동시 표시 가능)'}
                     >
-                      <span><strong>{mr.hier_path}</strong> <small>{mr.cell_count.toLocaleString()} cells</small></span>
+                      <span className="fp-mod-name">
+                        <i className="fp-mod-swatch" style={layer ? { background: layer.color, borderColor: layer.color } : undefined} aria-hidden="true" />
+                        <strong>{mr.hier_path}</strong> <small>{mr.cell_count.toLocaleString()} cells</small>
+                      </span>
                       <code>중심 ({mr.cx}, {mr.cy})</code>
                     </button>
                   )
