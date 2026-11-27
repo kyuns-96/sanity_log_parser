@@ -43,7 +43,7 @@ const areaPower = applicationPath === '/' && params.get('page') === 'area-power'
 const workspace = productionWorkbench || applicationPath === '/workspace' || applicationPath === '/workspace/' || workspaceDemo
 const integratedDemo = workspaceDemo && ['/', '/workspace', '/workspace/'].includes(applicationPath)
 const dashboard = applicationPath === '/' && (productionWorkbench || areaPower || params.get('demo') !== '1')
-if (dashboard) document.title = 'Design Atlas · 설계 검토와 구성·전력 분석'
+if (dashboard) document.title = 'Design Atlas · 로그 · Area/Power'
 else if (workspace) document.title = `${params.get('demo') === '1' ? '합성 워크스페이스 데모' : '로그 워크스페이스'} | Design Atlas`
 if (versionDemo) document.title = 'PRE · POST · ECO · PoR | Design Atlas · 데모'
 if (reportsPreview) document.title = 'GCA · VC LP · SpyGlass | Design Atlas · 미리보기'

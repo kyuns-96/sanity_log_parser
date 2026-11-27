@@ -19,9 +19,6 @@ export function DashboardLogin({ config, session, checking, signingOut, error, a
     <a className="skip-link" href="#workspace-main">본문으로 건너뛰기</a>
     <div className="login-decoration">
       <WorkspaceBrand />
-      <div>
-        <h1>로그 검토 · 구성·전력 분석</h1>
-      </div>
       <LoginReel />
     </div>
     <main className="login-main" id="workspace-main" tabIndex={-1}>
