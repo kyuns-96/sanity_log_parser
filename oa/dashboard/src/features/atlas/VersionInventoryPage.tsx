@@ -12,6 +12,7 @@ import {
   Search,
   ShieldCheck,
   Trash2,
+  Zap,
 } from 'lucide-react'
 import { useAtlas } from './atlasContext'
 import { useDashboardAuth } from '@/features/auth/useDashboardAuth'
@@ -323,7 +324,8 @@ export default function VersionInventoryPage() {
                 <th className="px-3 py-2.5">블록</th>
                 <th className="px-3 py-2.5">NET_VER · REVISION · ECO</th>
                 <th className="px-3 py-2.5">Sanity 보고서</th>
-                <th className="px-3 py-2.5">Area / Power 현황</th>
+                <th className="px-3 py-2.5">Area 기준</th>
+                <th className="px-3 py-2.5">Power 코너</th>
                 <th className="px-3 py-2.5">최근 갱신</th>
                 <th className="px-3 py-2.5 text-right">빠른 이동</th>
               </tr>
@@ -333,6 +335,10 @@ export default function VersionInventoryPage() {
                 const key = `${item.block_id}:${item.version_id}`
                 const isOpen = expanded.has(key)
                 const reportState = reportsByVer[key]
+                const areaBaseUploads = item.area_power.uploads.filter(u => !u.is_power_layer)
+                const powerLayerUploads = item.area_power.uploads.filter(u => u.is_power_layer)
+                const powerCorners = item.area_power.corners.filter(c => !c.is_area_only)
+                const latestAreaBase = areaBaseUploads.find(u => u.state === 'ready') || areaBaseUploads[0]
                 return (
                   <Fragment key={key}>
                     <tr
@@ -363,15 +369,31 @@ export default function VersionInventoryPage() {
                         )}
                       </td>
                       <td className="px-3 py-2.5">
-                        {item.area_power.total_uploads > 0 ? (
+                        {item.area_power.has_area ? (
                           <div className="flex flex-wrap items-center gap-1">
-                            {item.area_power.has_area && <Badge variant="outline">Area 기준 {item.area_power.area_base_count}</Badge>}
-                            {item.area_power.power_layer_count > 0 && <Badge variant="secondary">Power 레이어 {item.area_power.power_layer_count}</Badge>}
-                            {item.area_power.corners.map(c => (
+                            <Badge variant="outline">
+                              {latestAreaBase?.is_area_only ? 'Area 전용' : 'Area+Power 기준'}
+                              {item.area_power.area_base_count > 1 ? ` ${item.area_power.area_base_count}건` : ''}
+                            </Badge>
+                            {latestAreaBase?.row_count != null && (
+                              <span className="text-[11px] text-muted-foreground">{latestAreaBase.row_count.toLocaleString()}행</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">미업로드</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        {powerCorners.length > 0 ? (
+                          <div className="flex flex-wrap items-center gap-1">
+                            {powerCorners.map(c => (
                               <span key={c.label} className="rounded bg-muted px-1.5 py-0.5 text-[11px]">
                                 {c.label}{c.count > 1 ? ` ×${c.count}` : ''}
                               </span>
                             ))}
+                            {item.area_power.power_layer_count > 0 && (
+                              <Badge variant="secondary">레이어 {item.area_power.power_layer_count}</Badge>
+                            )}
                           </div>
                         ) : (
                           <span className="text-muted-foreground">미업로드</span>
@@ -388,7 +410,7 @@ export default function VersionInventoryPage() {
 
                     {isOpen && (
                       <tr className="border-b border-border bg-muted/10">
-                        <td colSpan={7} className="p-4">
+                        <td colSpan={8} className="p-4">
                           <div className="space-y-4">
                             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
                               <div className="text-xs text-muted-foreground">
@@ -416,22 +438,21 @@ export default function VersionInventoryPage() {
                               </div>
                             </div>
 
-                            <div className="grid gap-4 lg:grid-cols-2">
+                            <div className="grid gap-4 lg:grid-cols-3">
                               <div className="rounded-md border border-border bg-background p-3">
                                 <div className="mb-2 flex items-center gap-1.5 font-medium">
-                                  <FileSpreadsheet size={14} />Area / Power CSV ({item.area_power.uploads.length}건)
+                                  <FileSpreadsheet size={14} />Area 기준 CSV ({areaBaseUploads.length}건)
                                 </div>
-                                {!item.area_power.uploads.length ? (
-                                  <p className="text-xs text-muted-foreground">이 버전에 업로드된 Area/Power CSV가 없습니다.</p>
+                                {!areaBaseUploads.length ? (
+                                  <p className="text-xs text-muted-foreground">이 버전에 업로드된 Area 기준 CSV가 없습니다.</p>
                                 ) : (
                                   <ul className="divide-y divide-border">
-                                    {item.area_power.uploads.map(u => (
+                                    {areaBaseUploads.map(u => (
                                       <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
                                         <div>
                                           <div className="flex flex-wrap items-center gap-1.5">
                                             <strong>{u.execution_name || u.original_filename || u.id.slice(0, 8)}</strong>
-                                            <Badge variant="outline">{u.corner_label}</Badge>
-                                            {u.is_power_layer && <Badge variant="secondary">Power 레이어</Badge>}
+                                            <Badge variant="outline">{u.is_area_only ? 'Area 전용' : `기준 · ${u.corner_label}`}</Badge>
                                             {u.state !== 'ready' && <Badge variant="destructive">{u.state}</Badge>}
                                           </div>
                                           <div className="mt-0.5 text-[11px] text-muted-foreground">
@@ -444,7 +465,48 @@ export default function VersionInventoryPage() {
                                             <Download size={14} />
                                           </Button>
                                           {canWrite && !atlas.demo && (
-                                            <Button size="sm" variant="ghost" aria-label="CSV 삭제" onClick={() => setDeletingUpload(u)}>
+                                            <Button size="sm" variant="ghost" aria-label="Area 기준 CSV 삭제" onClick={() => setDeletingUpload(u)}>
+                                              <Trash2 size={14} />
+                                            </Button>
+                                          )}
+                                        </div>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+
+                              <div className="rounded-md border border-border bg-background p-3">
+                                <div className="mb-2 flex items-center gap-1.5 font-medium">
+                                  <Zap size={14} />Power 레이어 CSV ({powerLayerUploads.length}건)
+                                </div>
+                                {!powerLayerUploads.length ? (
+                                  <p className="text-xs text-muted-foreground">
+                                    {powerCorners.length > 0
+                                      ? '단독 85컬럼 기준 CSV에 Power가 포함되어 있습니다. 추가 코너 업로드 시 이곳에 Power 레이어로 적재됩니다.'
+                                      : '이 버전에 업로드된 Power 레이어 CSV가 없습니다.'}
+                                  </p>
+                                ) : (
+                                  <ul className="divide-y divide-border">
+                                    {powerLayerUploads.map(u => (
+                                      <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                                        <div>
+                                          <div className="flex flex-wrap items-center gap-1.5">
+                                            <strong>{u.execution_name || u.original_filename || u.id.slice(0, 8)}</strong>
+                                            <Badge variant="secondary">{u.corner_label}</Badge>
+                                            {u.state !== 'ready' && <Badge variant="destructive">{u.state}</Badge>}
+                                          </div>
+                                          <div className="mt-0.5 text-[11px] text-muted-foreground">
+                                            {u.row_count != null ? `${u.row_count.toLocaleString()}행 · ` : ''}
+                                            저장 {formatBytes(u.compressed_byte_length)} · {formatTime(u.created_at)}
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                          <Button size="sm" variant="ghost" aria-label="병합 CSV gzip 다운로드" onClick={() => void downloadUpload(u)}>
+                                            <Download size={14} />
+                                          </Button>
+                                          {canWrite && !atlas.demo && (
+                                            <Button size="sm" variant="ghost" aria-label="Power 레이어 CSV 삭제" onClick={() => setDeletingUpload(u)}>
                                               <Trash2 size={14} />
                                             </Button>
                                           )}
