@@ -50,6 +50,7 @@ import {
   type ReviewPin,
 } from './floorplanApi'
 import { moduleContour, type ModuleContour, type ModuleLayer } from './moduleContours'
+import { isMemory, memoryGroupStats, UNGROUPED_LABEL, type ColorBy, type MemoryGrouping } from './memoryGroups'
 
 export type CanvasTool = 'inspect' | 'pin' | 'sandbox'
 
@@ -65,6 +66,11 @@ interface FloorplanCanvasProps {
   onToggleModuleLayer: (path: string) => void
   onFocusModule: (path: string) => void
   selectedBistGroup: string
+  selectedSet: Set<string>
+  onSelectedSetChange: (next: Set<string>) => void
+  colorBy: ColorBy
+  onColorByChange: (next: ColorBy) => void
+  memoryGrouping: MemoryGrouping | null
   overrides: Map<string, MacroOverride>
   onOverridesChange: (next: Map<string, MacroOverride>) => void
   datapaths: DatapathFlow[]
@@ -77,7 +83,7 @@ interface FloorplanCanvasProps {
 }
 
 type MacroKind = MacroBox['kind']
-type LayerKey = 'density' | 'halo' | 'notches' | 'labels' | 'pins' | 'bistColor' | 'datapaths' | 'reviewPins' | 'diffOverlay'
+type LayerKey = 'density' | 'halo' | 'notches' | 'labels' | 'pins' | 'datapaths' | 'reviewPins' | 'diffOverlay'
 
 const KIND_ORDER: MacroKind[] = ['sram', 'ip', 'macro', 'subblock']
 const KIND_LABEL: Record<MacroKind, string> = { sram: 'SRAM', ip: 'Hard IP', macro: 'Macro', subblock: 'Sub-block' }
@@ -87,7 +93,6 @@ const LAYER_ITEMS: { key: LayerKey; label: string }[] = [
   { key: 'notches', label: 'Pin-1 방향' },
   { key: 'halo', label: 'Halo · Blockage' },
   { key: 'density', label: '셀 밀도' },
-  { key: 'bistColor', label: 'BIST 그룹 색상' },
   { key: 'pins', label: 'IO Pin' },
   { key: 'datapaths', label: 'Data-path' },
   { key: 'reviewPins', label: '리뷰 핀' },
@@ -158,7 +163,6 @@ function LayerSwatch({ layer }: { layer: LayerKey }) {
       {layer === 'notches' && <><rect x="2.5" y="2.5" width="11" height="11" className="sw-box" /><path d="M2.5 13.5v-5l5 5z" className="sw-fill" /></>}
       {layer === 'halo' && <><rect x="1.5" y="1.5" width="13" height="13" className="sw-dash" /><rect x="4.5" y="4.5" width="7" height="7" className="sw-box" /></>}
       {layer === 'density' && <rect x="1.5" y="1.5" width="13" height="13" rx="2" className="sw-density" />}
-      {layer === 'bistColor' && <><rect x="1.5" y="1.5" width="6" height="6" className="sw-b1" /><rect x="8.5" y="8.5" width="6" height="6" className="sw-b2" /></>}
       {layer === 'pins' && <path d="M2 4.5 8 8l-6 3.5z" className="sw-fill" />}
       {layer === 'datapaths' && <path d="M2 12 7 6l3 3 4-5" className="sw-line" />}
       {layer === 'reviewPins' && <circle cx="8" cy="8" r="5" className="sw-fill" />}
@@ -187,6 +191,11 @@ export function FloorplanCanvas({
   onToggleModuleLayer,
   onFocusModule,
   selectedBistGroup,
+  selectedSet,
+  onSelectedSetChange,
+  colorBy,
+  onColorByChange,
+  memoryGrouping,
   overrides,
   onOverridesChange,
   datapaths,
@@ -203,6 +212,8 @@ export function FloorplanCanvas({
   const marqueeRef = useRef<HTMLDivElement>(null)
   const spaceRef = useRef(false)
   const pointerInsideRef = useRef(false)
+  /** A plain click on a macro that is already part of a multi-selection narrows the selection on release. */
+  const narrowRef = useRef<{ name: string; x: number; y: number } | null>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const readoutRef = useRef<HTMLSpanElement>(null)
@@ -217,14 +228,13 @@ export function FloorplanCanvas({
     notches: true,
     labels: false,
     pins: true,
-    bistColor: scene.bist_summary.length > 0,
     datapaths: true,
     reviewPins: true,
     diffOverlay: true,
   })
   const [snapUm, setSnapUm] = useState(5)
   const [channelGapUm, setChannelGapUm] = useState('15')
-  const [selectedSet, setSelectedSet] = useState<Set<string>>(new Set())
+  const setSelectedSet = onSelectedSetChange
   const [proposalTitle, setProposalTitle] = useState('')
   const [savingProp, setSavingProp] = useState(false)
   const [snapEnabled, setSnapEnabled] = useState(true)
@@ -236,11 +246,10 @@ export function FloorplanCanvas({
     setView({ zoom: 1, panX: 0, panY: 0 })
     setHoveredName('')
     setSelectedSet(new Set())
-    setLayers(prev => ({ ...prev, bistColor: scene.bist_summary.length > 0 }))
     histRef.current = { undo: [], redo: [], prev: overrides, applying: false, inDrag: false, dragPushed: false }
     setHistTick(t => t + 1)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- history restarts with the scene only
-  }, [scene.design_name, scene.fp_ver, scene.bist_summary.length])
+  }, [scene.design_name, scene.fp_ver])
 
   // Placement history: one entry per discrete edit, one per macro drag (inspector edits included).
   useEffect(() => {
@@ -311,6 +320,13 @@ export function FloorplanCanvas({
     sandbox.liveBist.forEach((b, idx) => m.set(b.bist_group, BIST_PALETTE[idx % BIST_PALETTE.length]))
     return m
   }, [sandbox.liveBist])
+
+  const memoryStats = useMemo(
+    () => (memoryGrouping ? memoryGroupStats(memoryGrouping, sandbox.effectiveMacros, scene.die_bbox) : []),
+    [memoryGrouping, sandbox.effectiveMacros, scene.die_bbox],
+  )
+  const memoryColor = useMemo(() => new Map(memoryGrouping?.groups.map(g => [g.id, g.color]) || []), [memoryGrouping])
+  const hasMemoryGroups = Boolean(memoryGrouping && Object.keys(memoryGrouping.assign).length)
 
   const regionByPath = useMemo(() => new Map(scene.module_regions.map(mr => [mr.hier_path, mr])), [scene.module_regions])
   const contourCache = useMemo(() => new Map<string, ModuleContour>(), [scene.module_regions, scene.die_bbox])
@@ -459,6 +475,7 @@ export function FloorplanCanvas({
     e.stopPropagation()
     const toggle = e.shiftKey || e.ctrlKey || e.metaKey
     const nextSel = new Set(currentSelection())
+    narrowRef.current = !toggle && nextSel.has(macro.inst_name) && nextSel.size > 1 ? { name: macro.inst_name, x: e.clientX, y: e.clientY } : null
     if (toggle) {
       if (nextSel.has(macro.inst_name)) nextSel.delete(macro.inst_name)
       else nextSel.add(macro.inst_name)
@@ -583,8 +600,14 @@ export function FloorplanCanvas({
 
   function stopDrag(clientX?: number, clientY?: number) {
     const drag = dragRef.current
+    const narrow = narrowRef.current
     dragRef.current = null
+    narrowRef.current = null
     histRef.current.inDrag = false
+    if (narrow && clientX !== undefined && clientY !== undefined && Math.hypot(clientX - narrow.x, clientY - narrow.y) <= 3) {
+      setSelectedSet(new Set([narrow.name]))
+      onSelectInst(narrow.name)
+    }
     if (guides.length) setGuides([])
     if (!drag) return
     if (drag.kind === 'marquee') {
@@ -879,6 +902,25 @@ export function FloorplanCanvas({
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content className="fp-layer-menu" align="start" sideOffset={6} collisionPadding={12}>
+              <DropdownMenu.Label className="fp-layer-menu-label">색상 기준</DropdownMenu.Label>
+              <DropdownMenu.RadioGroup value={colorBy} onValueChange={value => onColorByChange(value as ColorBy)}>
+                {([
+                  ['kind', '매크로 종류', true],
+                  ['bist', 'BIST 그룹', scene.bist_summary.length > 0],
+                  ['memgroup', 'Data Memory 그룹', hasMemoryGroups],
+                ] as const).map(([value, label, enabled]) => (
+                  <DropdownMenu.RadioItem key={value} value={value} disabled={!enabled} className="fp-layer-option" onSelect={e => e.preventDefault()}>
+                    <svg className="fp-layer-swatch" viewBox="0 0 16 16" aria-hidden="true">
+                      {value === 'kind' && <><rect x="1.5" y="1.5" width="6" height="6" className="sw-box" /><rect x="8.5" y="8.5" width="6" height="6" className="sw-ip" /></>}
+                      {value === 'bist' && <><rect x="1.5" y="1.5" width="6" height="6" className="sw-b1" /><rect x="8.5" y="8.5" width="6" height="6" className="sw-b2" /></>}
+                      {value === 'memgroup' && <><rect x="1" y="1" width="14" height="14" rx="2" className="sw-dash" /><rect x="3.5" y="3.5" width="4" height="9" className="sw-b1" /><rect x="8.5" y="3.5" width="4" height="9" className="sw-b1" /></>}
+                    </svg>
+                    <span>{label}</span>
+                    <DropdownMenu.ItemIndicator className="fp-layer-check"><Check size={14} aria-hidden="true" /></DropdownMenu.ItemIndicator>
+                  </DropdownMenu.RadioItem>
+                ))}
+              </DropdownMenu.RadioGroup>
+              <DropdownMenu.Separator className="fp-layer-sep" />
               <DropdownMenu.Label className="fp-layer-menu-label">표시 레이어</DropdownMenu.Label>
               {layerItems.map(item => (
                 <DropdownMenu.CheckboxItem
@@ -1153,7 +1195,7 @@ export function FloorplanCanvas({
           })}
 
           {/* Live BIST group bounding boxes */}
-          {layers.bistColor && sandbox.liveBist.map(b => {
+          {colorBy === 'bist' && sandbox.liveBist.map(b => {
             if (selectedBistGroup && selectedBistGroup !== b.bist_group) return null
             const [bx0, by0, bx1, by1] = b.bbox_um
             const col = bistColorMap.get(b.bist_group) || BIST_PALETTE[0]
@@ -1177,6 +1219,31 @@ export function FloorplanCanvas({
             )
           })}
 
+          {/* Data memory groups */}
+          {colorBy === 'memgroup' && memoryStats.map(st => {
+            if (!st.bbox) return null
+            const [gx0, gy0, gx1, gy1] = st.bbox
+            return (
+              <g key={`mg-${st.group.id}`} pointerEvents="none">
+                <rect
+                  x={gx0 - px(7)}
+                  y={-gy1 - px(7)}
+                  width={gx1 - gx0 + px(14)}
+                  height={gy1 - gy0 + px(14)}
+                  rx={px(4)}
+                  fill={st.group.color}
+                  fillOpacity={0.05}
+                  stroke={st.group.color}
+                  strokeDasharray={`${px(6)} ${px(3)}`}
+                  strokeWidth={px(st.dispersed ? 2 : 1.25)}
+                />
+                <g transform={screen(gx0 - px(7), -gy1 - px(7))}>
+                  <text x={0} y={-5} className="fp-bist-label" style={{ fill: st.group.color }}>{st.group.name} · {st.members.length}</text>
+                </g>
+              </g>
+            )
+          })}
+
           {/* Hard macros: SRAM / Hard IP / custom macro / sub-block */}
           {sandbox.effectiveMacros.map(m => {
             const kind: MacroKind = KIND_LABEL[m.kind] ? m.kind : 'macro'
@@ -1190,7 +1257,12 @@ export function FloorplanCanvas({
             const isBistFocused = Boolean(selectedBistGroup && m.bist_group === selectedBistGroup)
             const dimmed = Boolean(selectedBistGroup && m.bist_group !== selectedBistGroup)
             const hasCollision = sandbox.outOfBounds.has(m.inst_name) || sandbox.overlapping.has(m.inst_name)
-            const bCol = layers.bistColor && m.bist_group ? bistColorMap.get(m.bist_group) : undefined
+            const memGroupId = memoryGrouping?.assign[m.inst_name]
+            const bCol = colorBy === 'bist' && m.bist_group
+              ? bistColorMap.get(m.bist_group)
+              : colorBy === 'memgroup' && isMemory(m) && memGroupId
+                ? memoryColor.get(memGroupId)
+                : undefined
             const line = hasCollision ? 'var(--fp-danger)' : m.locked ? 'var(--fp-locked)' : bCol || (m.changed ? 'var(--fp-changed)' : `var(--fp-${kind}-line)`)
             const fill = bCol ? `${bCol}1f` : `var(--fp-${kind}-fill)`
             const [hl, hb, hr, ht] = m.halo_um
@@ -1386,6 +1458,9 @@ export function FloorplanCanvas({
               <dt>크기</dt><dd>{orientedSize(hovered.width, hovered.height, hovered.orient).map(formatUm).join(' × ')} µm</dd>
               <dt>방향</dt><dd>{hovered.orient} <span className="fp-pop-dim">/ {DEF_TO_ICC2[hovered.orient]}</span></dd>
               <dt>상태</dt><dd>{hovered.status}</dd>
+              {memoryGrouping && isMemory(hovered) && (
+                <><dt>Memory 그룹</dt><dd>{memoryGrouping.groups.find(g => g.id === memoryGrouping.assign[hovered.inst_name])?.name || UNGROUPED_LABEL}</dd></>
+              )}
               {hovered.bist_group && (<><dt>BIST</dt><dd>{hovered.bist_group}{hovered.bist_controller ? <span className="fp-pop-dim"> · {hovered.bist_controller}</span> : null}</dd></>)}
             </dl>
             {hovered.attributes && Object.keys(hovered.attributes).length > 0 && (

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Lock, Plus, RotateCcw, Save, Trash2, Unlock } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, FolderInput, Lock, Pencil, Plus, RotateCcw, Save, Trash2, Unlock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { appUrl } from '@/lib/appUrl'
@@ -22,6 +22,18 @@ import {
   type ReviewPin,
 } from './floorplanApi'
 import type { ModuleLayer } from './moduleContours'
+import {
+  initMemoryGrouping,
+  isMemory,
+  memoryGroupStats,
+  memoryMoves,
+  nextGroupColor,
+  nextGroupName,
+  UNGROUPED_LABEL,
+  type ColorBy,
+  type MemoryGrouping,
+  type MemoryGroupStat,
+} from './memoryGroups'
 
 interface FloorplanInspectorProps {
   scene: FloorplanScene | null
@@ -35,6 +47,11 @@ interface FloorplanInspectorProps {
   onClearModuleLayers: () => void
   selectedBistGroup: string
   onSelectBistGroup: (grp: string) => void
+  selectedSet: Set<string>
+  onSelectedSetChange: (next: Set<string>) => void
+  onColorByChange: (next: ColorBy) => void
+  memoryGrouping: MemoryGrouping | null
+  onMemoryGroupingChange: (next: MemoryGrouping) => void
   overrides: Map<string, MacroOverride>
   onOverridesChange: (next: Map<string, MacroOverride>) => void
   onEnsureSandboxMode: () => void
@@ -95,6 +112,11 @@ export function FloorplanInspector({
   onClearModuleLayers,
   selectedBistGroup,
   onSelectBistGroup,
+  selectedSet,
+  onSelectedSetChange,
+  onColorByChange,
+  memoryGrouping,
+  onMemoryGroupingChange,
   overrides,
   onOverridesChange,
   onEnsureSandboxMode,
@@ -185,6 +207,67 @@ export function FloorplanInspector({
     }
     return { label: '블록 전체 (Root)', slice: metrics.root }
   }, [metrics, selectedModule])
+
+  const [editingGroup, setEditingGroup] = useState<{ id: string; name: string } | null>(null)
+  const memoryStats = useMemo(
+    () => (memoryGrouping && liveSandbox && scene ? memoryGroupStats(memoryGrouping, liveSandbox.effectiveMacros, scene.die_bbox) : []),
+    [memoryGrouping, liveSandbox, scene],
+  )
+  const memoryChanges = useMemo(() => (memoryGrouping ? memoryMoves(memoryGrouping) : []), [memoryGrouping])
+  const ungroupedMemories = useMemo(
+    () => (memoryGrouping && liveSandbox ? liveSandbox.effectiveMacros.filter(m => isMemory(m) && !memoryGrouping.assign[m.inst_name]) : []),
+    [memoryGrouping, liveSandbox],
+  )
+  const selectedMemoryNames = useMemo(() => {
+    const names = selectedSet.size ? [...selectedSet] : selectedInst ? [selectedInst] : []
+    return names.filter(n => memoryGrouping && n in memoryGrouping.assign)
+  }, [selectedSet, selectedInst, memoryGrouping])
+
+  function showMemoryMembers(names: string[]) {
+    onSelectedSetChange(new Set(names))
+    onSelectInst(names[0] || '')
+    onColorByChange('memgroup')
+  }
+
+  function moveSelectedMemories(groupId: string | null) {
+    if (!memoryGrouping || !selectedMemoryNames.length) return
+    const assign = { ...memoryGrouping.assign }
+    for (const name of selectedMemoryNames) assign[name] = groupId
+    onMemoryGroupingChange({ ...memoryGrouping, assign })
+    onColorByChange('memgroup')
+  }
+
+  function addMemoryGroup() {
+    if (!memoryGrouping) return
+    const id = `mg-u${Date.now().toString(36)}`
+    const group = { id, name: nextGroupName(memoryGrouping.groups), color: nextGroupColor(memoryGrouping.groups), origin: 'user' as const }
+    const assign = { ...memoryGrouping.assign }
+    for (const name of selectedMemoryNames) assign[name] = id
+    onMemoryGroupingChange({ ...memoryGrouping, groups: [...memoryGrouping.groups, group], assign })
+    setEditingGroup({ id, name: group.name })
+    onColorByChange('memgroup')
+  }
+
+  function commitGroupName() {
+    if (!memoryGrouping || !editingGroup) return
+    const name = editingGroup.name.trim()
+    if (name) {
+      onMemoryGroupingChange({ ...memoryGrouping, groups: memoryGrouping.groups.map(g => (g.id === editingGroup.id ? { ...g, name } : g)) })
+    }
+    setEditingGroup(null)
+  }
+
+  function deleteMemoryGroup(groupId: string) {
+    if (!memoryGrouping) return
+    const assign = { ...memoryGrouping.assign }
+    for (const [name, gid] of Object.entries(assign)) if (gid === groupId) assign[name] = null
+    onMemoryGroupingChange({ ...memoryGrouping, groups: memoryGrouping.groups.filter(g => g.id !== groupId), assign })
+  }
+
+  function memoryGroupMeta(st: MemoryGroupStat) {
+    const origin = st.group.origin === 'bist' ? 'BIST' : st.group.origin === 'hier' ? '계층' : '사용자'
+    return `${st.members.length}개 · 최대 이격 ${st.maxSpanUm} µm · ${origin}`
+  }
 
   const verdictMap = useMemo(() => new Map(checklistVerdicts.map(v => [v.item_id, v])), [checklistVerdicts])
 
@@ -451,6 +534,100 @@ export function FloorplanInspector({
                   )
                 })}
               </div>
+            </section>
+          )}
+
+          {!isTop && memoryGrouping && Object.keys(memoryGrouping.assign).length > 0 && (
+            <section className="fp-card">
+              <div className="fp-card-head">
+                <h4>Data Memory 그룹 ({memoryGrouping.groups.length})</h4>
+                <div className="fp-row-btns">
+                  {canWrite && <button type="button" className="fp-link-btn" onClick={addMemoryGroup}><Plus size={12} />새 그룹</button>}
+                  {memoryChanges.length > 0 && scene && (
+                    <button type="button" className="fp-link-btn" onClick={() => onMemoryGroupingChange(initMemoryGrouping(scene))}>원래대로</button>
+                  )}
+                </div>
+              </div>
+              {canWrite && (
+                <p className="fp-mg-hint">
+                  {selectedMemoryNames.length
+                    ? <>선택한 메모리 <b>{selectedMemoryNames.length}</b>개 — 그룹의 <FolderInput size={12} aria-hidden="true" /> 버튼으로 옮기거나 새 그룹을 만드세요.</>
+                    : '도면에서 메모리를 선택(Shift+클릭·영역 드래그)한 뒤 그룹으로 옮길 수 있습니다.'}
+                </p>
+              )}
+              <div className="fp-bist-list fp-mg-list">
+                {memoryStats.map(st => {
+                  const editing = editingGroup?.id === st.group.id
+                  const canMoveHere = canWrite && selectedMemoryNames.some(n => memoryGrouping.assign[n] !== st.group.id)
+                  return (
+                    <div key={st.group.id} className="fp-mg-row">
+                      {editing ? (
+                        <div className="fp-mg-main">
+                          <span className="fp-color-dot" style={{ background: st.group.color }} />
+                          <input
+                            className="fp-mg-name-input"
+                            autoFocus
+                            value={editingGroup.name}
+                            maxLength={60}
+                            aria-label="그룹 이름"
+                            onChange={e => setEditingGroup({ id: st.group.id, name: e.target.value })}
+                            onBlur={commitGroupName}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') commitGroupName()
+                              if (e.key === 'Escape') setEditingGroup(null)
+                            }}
+                          />
+                        </div>
+                      ) : (
+                        <button type="button" className="fp-mg-main" title="멤버를 도면에서 선택" onClick={() => showMemoryMembers(st.members.map(m => m.inst_name))}>
+                          <span className="fp-color-dot" style={{ background: st.group.color }} />
+                          <span className="fp-bist-meta">
+                            <strong>{st.group.name}</strong>
+                            <small>{memoryGroupMeta(st)}</small>
+                          </span>
+                          {(st.movedIn > 0 || st.movedOut > 0) && (
+                            <span className="fp-mg-delta" title="처음 그룹 대비 들어온/나간 메모리">{st.movedIn > 0 && `+${st.movedIn}`}{st.movedIn > 0 && st.movedOut > 0 && ' '}{st.movedOut > 0 && `−${st.movedOut}`}</span>
+                          )}
+                          {st.dispersed && <span className="fp-pill is-warn"><AlertTriangle size={12} />분산</span>}
+                        </button>
+                      )}
+                      {canWrite && !editing && (
+                        <div className="fp-mg-actions">
+                          <button type="button" className="fp-icon-btn" disabled={!canMoveHere} title="선택한 메모리를 이 그룹으로" aria-label={`선택한 메모리를 ${st.group.name}(으)로`} onClick={() => moveSelectedMemories(st.group.id)}><FolderInput size={14} /></button>
+                          <button type="button" className="fp-icon-btn" title="이름 변경" aria-label={`${st.group.name} 이름 변경`} onClick={() => setEditingGroup({ id: st.group.id, name: st.group.name })}><Pencil size={13} /></button>
+                          <button type="button" className="fp-icon-btn" title="그룹 삭제 (멤버는 미분류로)" aria-label={`${st.group.name} 삭제`} onClick={() => deleteMemoryGroup(st.group.id)}><Trash2 size={13} /></button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+                {(ungroupedMemories.length > 0 || (canWrite && selectedMemoryNames.some(n => memoryGrouping.assign[n]))) && (
+                  <div className="fp-mg-row is-ungrouped">
+                    <button type="button" className="fp-mg-main" disabled={!ungroupedMemories.length} onClick={() => showMemoryMembers(ungroupedMemories.map(m => m.inst_name))}>
+                      <span className="fp-color-dot fp-dot-empty" />
+                      <span className="fp-bist-meta"><strong>{UNGROUPED_LABEL}</strong><small>{ungroupedMemories.length}개</small></span>
+                    </button>
+                    {canWrite && (
+                      <div className="fp-mg-actions">
+                        <button type="button" className="fp-icon-btn" disabled={!selectedMemoryNames.some(n => memoryGrouping.assign[n])} title="선택한 메모리를 그룹에서 빼기" aria-label="선택한 메모리를 미분류로" onClick={() => moveSelectedMemories(null)}><FolderInput size={14} /></button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              {memoryChanges.length > 0 && (
+                <details className="fp-mg-moves">
+                  <summary>그룹 변경 {memoryChanges.length}건</summary>
+                  <ul>
+                    {memoryChanges.map(mv => (
+                      <li key={mv.inst_name}>
+                        <code title={mv.inst_name}>{mv.inst_name.split('/').pop()}</code>
+                        <span>{mv.from}</span><span aria-hidden="true">→</span><strong>{mv.to}</strong>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
             </section>
           )}
 

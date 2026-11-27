@@ -8,6 +8,7 @@ import { FloorplanCanvas, type CanvasTool } from './FloorplanCanvas'
 import { FloorplanInspector } from './FloorplanInspector'
 import { ConfluencePublishDialog } from './ConfluencePublishDialog'
 import { MODULE_PALETTE, type ModuleLayer } from './moduleContours'
+import { initMemoryGrouping, type ColorBy, type MemoryGrouping } from './memoryGroups'
 import {
   floorplanRequest,
   type ChecklistTemplateItem,
@@ -61,6 +62,9 @@ export default function FloorplanReviewPage() {
   const [selectedInst, setSelectedInst] = useState('')
   const [selectedModule, setSelectedModule] = useState('')
   const [moduleLayers, setModuleLayers] = useState<ModuleLayer[]>([])
+  const [selectedSet, setSelectedSet] = useState<Set<string>>(new Set())
+  const [colorBy, setColorBy] = useState<ColorBy>('kind')
+  const [memoryGrouping, setMemoryGrouping] = useState<MemoryGrouping | null>(null)
   const [selectedBistGroup, setSelectedBistGroup] = useState('')
   const [overrides, setOverrides] = useState<Map<string, MacroOverride>>(new Map())
   const [overallVerdict, setOverallVerdict] = useState<'PENDING' | 'PASS' | 'WARN' | 'ACTION'>('PENDING')
@@ -116,6 +120,9 @@ export default function FloorplanReviewPage() {
     setSelectedInst('')
     setSelectedModule('')
     setModuleLayers([])
+    setSelectedSet(new Set())
+    setColorBy(d.scene?.bist_summary.length ? 'bist' : 'kind')
+    setMemoryGrouping(d.scene ? initMemoryGrouping(d.scene) : null)
     setSelectedBistGroup('')
     setOverallVerdict(d.review.overall_verdict || 'PENDING')
     setSummaryNote(d.review.summary_note || '')
@@ -213,6 +220,11 @@ export default function FloorplanReviewPage() {
     setSelectedModule(path)
     const region = detail?.scene?.module_regions.find(mr => mr.hier_path === path || path.startsWith(mr.hier_path + '/'))
     if (region) addModuleLayer(region.hier_path)
+  }
+
+  function handleSelectBistGroup(group: string) {
+    setSelectedBistGroup(group)
+    if (group) setColorBy('bist')
   }
 
   const canWrite = Boolean(project?.can_write ?? true)
@@ -320,6 +332,11 @@ export default function FloorplanReviewPage() {
             onToggleModuleLayer={toggleModuleLayer}
             onFocusModule={setSelectedModule}
             selectedBistGroup={selectedBistGroup}
+            selectedSet={selectedSet}
+            onSelectedSetChange={setSelectedSet}
+            colorBy={colorBy}
+            onColorByChange={setColorBy}
+            memoryGrouping={memoryGrouping}
             overrides={overrides}
             onOverridesChange={setOverrides}
             datapaths={datapaths}
@@ -341,7 +358,12 @@ export default function FloorplanReviewPage() {
             onToggleModuleLayer={toggleModuleLayer}
             onClearModuleLayers={() => { setModuleLayers([]); setSelectedModule('') }}
             selectedBistGroup={selectedBistGroup}
-            onSelectBistGroup={setSelectedBistGroup}
+            onSelectBistGroup={handleSelectBistGroup}
+            selectedSet={selectedSet}
+            onSelectedSetChange={setSelectedSet}
+            onColorByChange={setColorBy}
+            memoryGrouping={memoryGrouping}
+            onMemoryGroupingChange={setMemoryGrouping}
             overrides={overrides}
             onOverridesChange={setOverrides}
             onEnsureSandboxMode={() => { if (tool !== 'sandbox') setTool('sandbox') }}
