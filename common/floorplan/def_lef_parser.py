@@ -77,7 +77,11 @@ _SKIP_SECTIONS: dict[bytes, bytes] = {
     b"BEGINEXT": b"ENDEXT",
 }
 
-_LEF_MACRO_B_RE = re.compile(rb"^[ \t]*MACRO[ \t]+([^\s;]+)", re.IGNORECASE | re.MULTILINE)
+_LEF_TOP_B_RE = re.compile(
+    rb"^[ \t]*(?:(PROPERTYDEFINITIONS)\b|MACRO[ \t]+([^\s;]+)[ \t]*\r?$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_LEF_PROPDEF_END_B_RE = re.compile(rb"^[ \t]*END[ \t]+PROPERTYDEFINITIONS\b", re.IGNORECASE | re.MULTILINE)
 _LEF_CLASS_B_RE = re.compile(rb"^[ \t]*CLASS[ \t]+([^\s;]+)(?:[ \t]+([^\s;]+))?", re.IGNORECASE | re.MULTILINE)
 _LEF_SIZE_B_RE = re.compile(rb"^[ \t]*SIZE[ \t]+([0-9.eE+-]+)[ \t]+BY[ \t]+([0-9.eE+-]+)", re.IGNORECASE | re.MULTILINE)
 
@@ -128,8 +132,34 @@ def _iter_raw_chunks(path: Path, chunk_size: int = CHUNK_BYTES) -> Iterable[byte
             yield chunk
 
 
+def _find_lef_macro_end(data: bytes, name_b: bytes, start: int) -> tuple[int, int] | None:
+    """Locate line-anchored `END <name>` with exact token boundary (avoids matching `END RAM10` for `RAM1`)."""
+    n = len(data)
+    end_tok = b"END " + name_b
+    tok_len = len(end_tok)
+    search_from = start
+    while search_from < n:
+        ep = data.find(end_tok, search_from)
+        if ep < 0:
+            break
+        # Verify line start (preceded only by spaces/tabs after '\n' or start-of-file)
+        ls = data.rfind(b"\n", 0, ep)
+        lead_ok = all(ch in (32, 9) for ch in data[ls + 1 : ep])
+        after_idx = ep + tok_len
+        trail_ok = after_idx >= n or data[after_idx] in (32, 9, 10, 13, 59)  # space/tab/LF/CR/';'
+        if lead_ok and trail_ok:
+            return ep, after_idx
+        search_from = ep + tok_len
+    # Fallback for lowercase `end` or extra whitespace (`END  <name>` / `END\t<name>`)
+    end_re = re.compile(rb"^[ \t]*END[ \t]+" + re.escape(name_b) + rb"(?=[ \t;\r\n]|$)", re.IGNORECASE | re.MULTILINE)
+    em = end_re.search(data, start)
+    if em:
+        return em.start(), em.end()
+    return None
+
+
 def parse_lef_macros(lef_paths: Iterable[Path]) -> dict[str, dict[str, Any]]:
-    """Fast byte-scanning LEF macro extractor; skips PIN and OBS geometry blocks in C."""
+    """Fast byte-scanning LEF macro extractor; skips PROPERTYDEFINITIONS, PIN, and OBS blocks safely."""
     macros: dict[str, dict[str, Any]] = {}
     for path in lef_paths:
         data = b"".join(_iter_raw_chunks(path))
@@ -138,17 +168,24 @@ def parse_lef_macros(lef_paths: Iterable[Path]) -> dict[str, dict[str, Any]]:
         pos = 0
         n = len(data)
         while pos < n:
-            m = _LEF_MACRO_B_RE.search(data, pos)
+            m = _LEF_TOP_B_RE.search(data, pos)
             if not m:
                 break
-            name_b = m.group(1)
+            if m.group(1) is not None:
+                # Skip PROPERTYDEFINITIONS ... END PROPERTYDEFINITIONS (contains `MACRO <prop> STRING ;`)
+                pe = _LEF_PROPDEF_END_B_RE.search(data, m.end())
+                pos = pe.end() if pe else m.end()
+                continue
+
+            name_b = m.group(2)
             body_start = m.end()
-            end_tok = b"END " + name_b
-            end_pos = data.find(end_tok, body_start)
-            if end_pos < 0:
-                end_re = re.compile(rb"(?:^|\n)[ \t]*END[ \t]+" + re.escape(name_b) + rb"\b", re.IGNORECASE)
-                em = end_re.search(data, body_start)
-                end_pos = em.start() if em else n
+            end_hit = _find_lef_macro_end(data, name_b, body_start)
+            if end_hit is None:
+                # Missing END <name>: resync to the next line instead of aborting the rest of the LEF file
+                pos = body_start
+                continue
+            end_pos, next_pos = end_hit
+
             # CLASS and SIZE are in the macro header right after MACRO <name> (before PIN/OBS)
             probe_end = min(end_pos, body_start + 8192)
             header = data[body_start:probe_end]
@@ -169,7 +206,7 @@ def parse_lef_macros(lef_paths: Iterable[Path]) -> dict[str, dict[str, Any]]:
                         "width": w,
                         "height": h,
                     }
-            pos = end_pos + len(end_tok)
+            pos = next_pos
     return macros
 
 
@@ -274,6 +311,7 @@ def _process_components_block(
     block: bytes,
     *,
     master_cache: dict[bytes, float | MacroClassification],
+    lef_macros: dict[str, dict[str, Any]],
     classifier: FloorplanMacroClassifier | None,
     default_classifier: DefaultMacroClassifier,
     scope_kind: str,
@@ -317,11 +355,29 @@ def _process_components_block(
 
         info = master_cache.get(master_b)
         if info is None:
-            master_str_init = master_b.decode("utf-8", "replace")
+            raw_master_str = master_b.decode("utf-8", "replace")
+            clean_master_str = master_b.replace(b"\\", b"").decode("utf-8", "replace") if b"\\" in master_b else raw_master_str
+            lef_info = lef_macros.get(clean_master_str) or lef_macros.get(raw_master_str)
             res = _classify_master_with_fallback(
-                master_str_init, None, scope_kind=scope_kind, classifier=classifier, default_classifier=default_classifier
+                clean_master_str, lef_info, scope_kind=scope_kind, classifier=classifier, default_classifier=default_classifier
             )
-            info = res if res.is_hard_macro else 0.25
+            if res.is_hard_macro:
+                if lef_info and (res.width_um is None or res.height_um is None):
+                    res = MacroClassification(
+                        is_hard_macro=True,
+                        kind=res.kind,
+                        width_um=res.width_um or float(lef_info.get("width") or 40.0),
+                        height_um=res.height_um or float(lef_info.get("height") or 40.0),
+                        bist_group=res.bist_group,
+                        bist_controller=res.bist_controller,
+                        attributes=res.attributes,
+                    )
+                info = res
+            else:
+                if lef_info:
+                    info = float(lef_info.get("width") or 0.5) * float(lef_info.get("height") or 0.5)
+                else:
+                    info = 0.25
             master_cache[master_b] = info
 
         # Optional exact instance promotion (O(1) bytes lookup ONLY when corporate set or BIST map is non-empty)
@@ -500,6 +556,7 @@ def _fork_parse_range(args: tuple[int, int]) -> tuple[list[MacroBox], list[float
     def_path: Path = ctx["def_path"]
     grid_size: int = ctx["grid_size"]
     master_cache = dict(ctx["master_seed"])
+    lef_macros: dict[str, dict[str, Any]] = ctx["lef_macros"]
     classifier: FloorplanMacroClassifier | None = ctx["classifier"]
     default_classifier: DefaultMacroClassifier = ctx["default_classifier"]
     scope_kind: str = ctx["scope_kind"]
@@ -542,6 +599,7 @@ def _fork_parse_range(args: tuple[int, int]) -> tuple[list[MacroBox], list[float
             c, a = _process_components_block(
                 block,
                 master_cache=master_cache,
+                lef_macros=lef_macros,
                 classifier=classifier,
                 default_classifier=default_classifier,
                 scope_kind=scope_kind,
@@ -569,6 +627,7 @@ def _fork_parse_range(args: tuple[int, int]) -> tuple[list[MacroBox], list[float
         c, a = _process_components_block(
             rem,
             master_cache=master_cache,
+            lef_macros=lef_macros,
             classifier=classifier,
             default_classifier=default_classifier,
             scope_kind=scope_kind,
@@ -900,6 +959,7 @@ def parse_def_to_scene(
                         c, a = _process_components_block(
                             work[: last_semi + 1],
                             master_cache=master_cache,
+                            lef_macros=lef_macros,
                             classifier=macro_classifier,
                             default_classifier=default_classifier,
                             scope_kind=scope_kind,
@@ -935,6 +995,7 @@ def parse_def_to_scene(
                     c, a = _process_components_block(
                         work,
                         master_cache=master_cache,
+                        lef_macros=lef_macros,
                         classifier=macro_classifier,
                         default_classifier=default_classifier,
                         scope_kind=scope_kind,
@@ -1070,6 +1131,7 @@ def parse_def_to_scene(
             def_path=def_path,
             grid_size=grid_size,
             master_seed=master_seed,
+            lef_macros=lef_macros,
             classifier=macro_classifier,
             default_classifier=default_classifier,
             scope_kind=scope_kind,
