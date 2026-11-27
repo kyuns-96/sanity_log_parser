@@ -58,6 +58,8 @@ class RequestBoundary:
             ceiling = 65536
             if scope["path"].startswith("/api/workbench/"):
                 ceiling = workbench_body_ceiling(scope["path"], default_ceiling=65536)
+            elif scope["path"].startswith("/api/floorplan/"):
+                ceiling = 25 * 1024 * 1024 if scope["path"].endswith("/attachments") else 1024 * 1024
             chunks, size = [], 0
             while True:
                 message = await receive()
@@ -158,6 +160,7 @@ def _review_error_status(code: str) -> int:
         "PROJECT_HAS_DATA", "BLOCK_HAS_DATA", "CONFIRMATION_MISMATCH",
         "AI_EVIDENCE_CHANGED", "AI_EVIDENCE_NOT_READY",
         "SOURCE_INTAKE_NOT_READY", "SOURCE_SCOPE_CONFIRMATION_REQUIRED",
+        "CONFLUENCE_PAT_REQUIRED",
         "AREA_BINDING_CONFLICT", "AREA_PREVIOUS_NOT_PREPARED", "AREA_LINEAGE_REQUIRED",
     }:
         return 409
@@ -272,10 +275,14 @@ def create_app(*, auth_mode: AuthMode | None = None,
     app.include_router(create_atlas_router(authorized_actor))
     if area_enabled:
         from oa.area_power.app import create_area_power_router
+        from oa.floorplan.app import create_floorplan_router
         app.include_router(create_area_power_router(authorized_actor, authenticated))
+        app.include_router(create_floorplan_router(authorized_actor))
     else:
         @app.api_route("/api/area-power", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
         @app.api_route("/api/area-power/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+        @app.api_route("/api/floorplan", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+        @app.api_route("/api/floorplan/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
         def area_unavailable(path: str = "", actor=Depends(authenticated)):
             return JSONResponse({"code": "AREA_POWER_UNAVAILABLE"}, 503)
 

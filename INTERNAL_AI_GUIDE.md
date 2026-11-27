@@ -66,8 +66,12 @@ OA는 사람의 검토·제어와 함께 **사례 검색·사내 OA AI 호출·�
 | `oa/integration/company_sso/` — 신규 작업용 위치 | SSO/source 동일 계정 조회를 지원하는 SDK wrapper·인증 router·모의 SDK 테스트만 추가 | 업무 데이터 조회/수정 API, 프로젝트 권한 엔진, DB migration, 공통 모듈 monkey patch |
 | `oa/integration/corporate_mail.py` | `create_mail_sender` 본문·필요 import에서 확인된 사내 메일 어댑터를 명시적으로 생성 | 서명/Protocol 변경, SMTP·모의 성공 fallback, 공통 worker·SSO·DB 변경 |
 | `oa/integration/company_mail/` — 사내 메일 구현 위치 | 승인된 회사 API/SDK wrapper와 지원 설정 주입, 접수/거부/불명 응답 대응 | DB 직접 쓰기, 자체 worker/자동 재전송, 원문/비밀 하드코딩, 새 테스트/fixture/mock/검증 스크립트 파일 추가 |
+| `oa/integration/corporate_confluence.py` | `create_confluence_publisher` 본문·필요 import에서 Create-Only(`POST` 전용) Confluence 어댑터 생성 | 서명/`ConfluencePublisher` Protocol 변경, `GET`/`PUT`/`DELETE` 호출, 개인 PAT 로그 기록, 공통 API·암호화 저장소·UI·DB 수정 |
+| `oa/integration/company_confluence/` — 사내 Confluence 구현 위치 | 승인된 사내 Confluence REST(`POST` 전용)·CA/TLS wrapper 구현 | DB 직접 쓰기, 공용 계정 PAT 공유/대체, 원문/비밀 하드코딩, 새 테스트/fixture/mock/검증 스크립트 파일 추가 |
 | `oa/requirements.txt` — 3.1절의 승인된 SSO 의존성만 | OA 담당이 `signxml==5.2.0`, `lxml==6.1.3`, `cryptography==50.0.2`를 없을 때 추가 | 다른 의존성 추가·삭제·버전 변경, 루트/VWP/VWP-bridge 의존성·lockfile·Docker 수정 |
 | `vwp/integration/corporate_plan.py` | `CorporatePlanProvider.get_plan` 본문, 필요한 import, 승인된 실행/예상 목록 조회 client 주입용 생성자 | 추상 서명/plan schema 변경, 목록 승인 자동 부여, report/설계 변경·sanity 실행·DB 쓰기·공통 CLI 수정 |
+| `vwp/integration/corporate_floorplan.py` | `extract_bist_groups` 본문·필요 import에서 로컬 BIST 그룹 매핑(`inst_path -> bist_group/controller`) 반환 | 서명 변경, 원본 DEF/LEF/GDS를 네트워크·bridge·OA·DB로 전송, 설계 파일 수정, 공통 `common/floorplan/`·`vwp/floorplan/` 수정 |
+| `vwp/integration/company_floorplan/` — 사내 BIST 매핑 구현 위치 | 로컬 BIST spec/report 읽기 helper wrapper | DB/네트워크 접근, 원본 DEF/LEF 반출, 새 테스트/fixture/mock/검증 스크립트 파일 추가 |
 | `vwp/integration/corporate_submission.py` | `CorporateSubmissionInput.prepare`, `CorporateSubmissionAuthority.current/inbox_owner/authorize/approval_valid` 본문, 필요한 import·승인 SDK 주입 생성자, `create_submission_adapters`의 명시적 주입 | 서명/모델·V2 schema 변경, 파일/DB 쓰기·실행, 자동 승인, 사용자명만으로 인증, CLI/상태/권한 우회 |
 | `vwp/integration/company_plan/` — 신규 작업용 위치 | schema 1/V2 입력·원천/제출 신원/담당·승인 SDK wrapper, 기존 plan 작성·VWP 내부 byte 동일 export/collector 호출용 별도 launcher·전용 합성/모의 테스트 | 파일 목록으로 예상 unit 누락 은폐·자동 승인, 새 전송/DB 계약·worker 연결, 원본 report/설계 파일 변경 |
 | `vwp_bridge/integration/corporate_parsers.py` | `CorporateReportParser.parse` 본문, 필요한 import, `create_parser_registry`의 명시적 회사 파서 등록 | 메서드/함수 서명·반환 계약 변경, 자동 import/발견, 내장 파서 교체, 공통 판정 우회 |
@@ -226,6 +230,14 @@ STALE로 처리하며 토큰을 다른 연결/사용자로 대체하지 않는�
 
 공통 `common/area_power/mail.py`, `oa/area_power/mail.py`, `oa/mail_app.py`·설정·SQL·UI·SSO는 읽기 전용이다. 이번 메일 연동에는 새 테스트/fixture/mock/검증 스크립트 파일을 추가하지 않는다. 기존 역할 검증과 실제 사내 SDK/서비스 확인을 구분하고 오류 시 `WAITING_FOR_EXTERNAL_AI`로 중단한다. 이 추가 허용은 메일 어댑터에만 한정되며 다른 회사 지점의 소유권을 바꾸지 않는다.
 
+### 3.18. Floorplan BIST 매핑 및 Create-Only Confluence 연동 — 2026-11-27
+
+사용자 요청으로 Floorplan 리뷰(`/?page=floorplan`)의 로컬 DEF/LEF 추출·검토·메모리 배치·Confluence 게시 공통 코드를 제공한다. **원본 DEF/LEF/GDS/OAS 파일은 어떤 경우에도 VWP-bridge·OA·PostgreSQL로 업로드하지 않으며**, VWP 로컬(`python -m vwp.floorplan`)에서 정제된 벡터 SVG·`FloorplanScene` JSON으로 변환해 수집한다.
+
+- **VWP 담당:** [Floorplan 연동 계약](vwp/FLOORPLAN_INTEGRATION.md)에 따라 `vwp/integration/corporate_floorplan.py:extract_bist_groups`와 필요 시 `vwp/integration/company_floorplan/`에 사내 instance별 Memory BIST 그룹 매핑 추출기만 구현한다.
+- **OA 담당:** [Confluence 연동 계약](oa/CONFLUENCE_INTEGRATION.md)에 따라 사내 Confluence 토큰의 **쓰기(`POST`) 전용 제약(`GET`/`PUT`/`DELETE` 금지)**을 준수해 `oa/integration/corporate_confluence.py:create_confluence_publisher`와 필요 시 `oa/integration/company_confluence/`만 구현한다. 사용자별 업로드 한도 분산을 위해 개인 PAT(`req.personal_pat`)만 사용하며 로그에 토큰을 남기지 않는다.
+- 공통 `common/floorplan/`, `vwp/floorplan/`, `vwp_bridge/area_power/floorplan_ingest.py`, `oa/floorplan/`, `oa/confluence_pat_store.py`, UI·SQL·기존 테스트는 읽기 전용이며 새 테스트/fixture/mock/검증 스크립트 파일을 추가하지 않는다.
+
 
 ## 4. 내부 AI가 절대 수정하지 않는 부분
 
@@ -240,6 +252,7 @@ STALE로 처리하며 토큰을 다른 연결/사용자로 대체하지 않는�
 | AI 호출·분류·규칙·작업자 | `vwp_bridge/sanity_ai.py`, `common/sanity_clustering.py`, `vwp_bridge/sanity_cluster_worker.py`, `oa/sanity_cluster_store.py`, `common/sanity_workers.py`, `vwp_bridge/worker.py`, `oa/worker.py` | strict JSON·근거 검증, scope, 전체 적용, 중단 복구, 불확실 호출 재시도 금지, 사람 확정 |
 | OA AI 판단·검색·작업·기준 | `oa/sanity_ai_*.py`, `oa/ai_worker.py`, `common/sanity_ai_*.py`, `oa/sanity_production_workspace.py`, workbench API | 완전한 모델 입력, schema 2·근거/기준/사례 참조, 현재 유효성·권한·개정, 불변 작업과 결과 불명 재호출 금지 |
 | 사내 메일 Protocol·작업 소비 | `common/area_power/mail.py`, `oa/area_power/mail.py`, `oa/mail_app.py` | 명시적 주입, 발송 전 시도 기록, 전체/일부 접수·거부·불명 구분, DB 잠금 경계와 자동 재발송 금지 |
+| Floorplan 추출·리뷰·Tcl·Confluence 공통 | `common/floorplan/`, `vwp/floorplan/`, `vwp_bridge/area_power/floorplan_ingest.py`, `oa/floorplan/`, `oa/confluence_pat_store.py` | 원본 DEF/LEF 반출 차단, SVG/PNG·메타데이터 계약, 개인 PAT 암호화 격리, Create-Only(`POST` 전용) 게시 계약 |
 | 검토·보고서·인증·업무 API | `oa/sanity_oa_store.py`, `oa/sanity_auth.py`, `oa/main.py`, `oa/dashboard_api.py` | 검토 개정·불변 이력·서버 검토자, 신원/권한 검사, API 계약 |
 | 대시보드 전체 | `oa/dashboard/` | 로그인·권한·사용자 범위, 데모와 실데이터 분리, 분류/검토/PoR의 의미 |
 | 설정·의존성·기존 테스트 | `common/sanity_config.py`, 각 서버의 `.env.example`·`requirements.txt`, 루트 `requirements.txt`, 모든 기존 test/runner와 lockfile | 설정/실패 처리, 재현성, 기존 테스트 기대값과 skip 조건 |

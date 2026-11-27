@@ -24,11 +24,18 @@ from common.area_power.errors import ConfigurationError, DomainError
 from common.area_power.jsonutil import loads, public
 from common.area_power.models import UploadMetadata
 from vwp_bridge.area_power.catalog import register_version, resolve_catalog
+from vwp_bridge.area_power.floorplan_ingest import (
+    FloorplanAttachmentInput,
+    FloorplanIngestInput,
+    ingest_floorplan,
+    ingest_floorplan_attachment,
+)
 from vwp_bridge.area_power.ingest import ingest_upload
 from vwp_bridge.area_power.worker import ProcessingWorker
 
 logger = logging.getLogger(__name__)
 _METADATA_LIMIT = 65536
+_FLOORPLAN_METADATA_LIMIT = 4 * 1024 * 1024
 
 
 class CatalogVersionInput(BaseModel):
@@ -133,7 +140,7 @@ def create_app(settings=None, db=None) -> FastAPI:
     app.state.settings = settings
     app.state.db = db
     app.state.worker = None
-    app.add_middleware(_BoundedBody, maximum=settings.max_upload_bytes + _METADATA_LIMIT + 65536)
+    app.add_middleware(_BoundedBody, maximum=settings.max_upload_bytes + _FLOORPLAN_METADATA_LIMIT + 65536)
     app.add_middleware(_SafeErrors)
 
     @app.exception_handler(DomainError)
@@ -257,5 +264,50 @@ def create_app(settings=None, db=None) -> FastAPI:
             with db.connect() as conn:
                 return db.upload(conn, upload_id)
         return JSONResponse(public(await run_in_threadpool(read_upload)))
+
+    async def _read_multipart_upload(request: Request, meta_limit: int) -> tuple[str, str, bytes]:
+        async with request.form(max_files=1, max_fields=1, max_part_size=meta_limit) as form:
+            if len(form.multi_items()) != 2 or set(form.keys()) != {"metadata", "file"}:
+                raise DomainError("Provide exactly one metadata field and one file.", code="invalid_request")
+            metadata_json = form["metadata"]
+            file = form["file"]
+            if not isinstance(metadata_json, str) or not isinstance(file, UploadFile):
+                raise DomainError("metadata must be JSON text and file must be an uploaded file.", code="invalid_request")
+            if len(metadata_json.encode("utf-8")) > meta_limit:
+                raise DomainError("Metadata exceeds the configured size limit.", code="file_too_large", status_code=413)
+            filename = file.filename
+            if not filename or not filename.strip() or len(filename) > 1024 or any(ord(char) < 32 for char in filename):
+                raise DomainError("A valid original filename is required.", code="invalid_request")
+            max_file = 16 * 1024 * 1024
+            chunks, length = [], 0
+            while True:
+                chunk = await file.read(min(65536, max_file - length + 1))
+                if not chunk:
+                    break
+                length += len(chunk)
+                if length > max_file:
+                    raise DomainError("Upload exceeds the 16 MiB artifact limit.", code="file_too_large", status_code=413)
+                chunks.append(chunk)
+            return metadata_json, filename, b"".join(chunks)
+
+    @app.post("/api/area-power/floorplans", status_code=201)
+    async def upload_floorplan(request: Request):
+        metadata_json, filename, raw_bytes = await _read_multipart_upload(request, _FLOORPLAN_METADATA_LIMIT)
+        try:
+            body = FloorplanIngestInput.model_validate(loads(metadata_json))
+        except (ValueError, TypeError, ValidationError) as exc:
+            raise DomainError("Floorplan metadata is invalid.", code="invalid_metadata") from exc
+        result = await run_in_threadpool(ingest_floorplan, db, settings, raw_bytes, filename, body, "vwp_server")
+        return JSONResponse(public(result), status_code=201)
+
+    @app.post("/api/area-power/floorplans/attachments", status_code=201)
+    async def upload_floorplan_attachment(request: Request):
+        metadata_json, filename, raw_bytes = await _read_multipart_upload(request, _METADATA_LIMIT)
+        try:
+            body = FloorplanAttachmentInput.model_validate(loads(metadata_json))
+        except (ValueError, TypeError, ValidationError) as exc:
+            raise DomainError("Attachment metadata is invalid.", code="invalid_metadata") from exc
+        result = await run_in_threadpool(ingest_floorplan_attachment, db, settings, raw_bytes, filename, body, "vwp_server")
+        return JSONResponse(public(result), status_code=201)
 
     return app

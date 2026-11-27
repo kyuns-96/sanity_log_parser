@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import type { ReactNode } from 'react'
-import { BookOpen, FolderKanban, GitCompareArrows, Home, Layers3, LogOut, Menu, Settings2, ShieldCheck, X } from 'lucide-react'
+import { BookOpen, FolderKanban, GitCompareArrows, Home, Layers3, LayoutGrid, LogOut, Menu, Settings2, ShieldCheck, X } from 'lucide-react'
 import { WorkspaceBrand } from '@/components/layout/WorkspaceBrand'
 import { ColorModeControl } from '@/components/layout/ColorModeControl'
 import PersonalAiToken from '@/features/ai/PersonalAiToken'
@@ -22,6 +22,9 @@ const navigationGroups: { id: string; title: string; links: NavigationLink[] }[]
   ] },
   { id: 'area-power', title: 'Area/Power', links: [
     { title: '프로젝트 비교', path: '/?page=area-power', page: 'area-power', icon: GitCompareArrows },
+  ] },
+  { id: 'floorplan', title: 'Floorplan', links: [
+    { title: 'Floorplan 리뷰', path: '/?page=floorplan', page: 'floorplan', icon: LayoutGrid },
   ] },
   { id: 'account', title: '', links: [
     { title: '내 계정 · 권한', path: '/?page=welcome', page: 'welcome', icon: ShieldCheck },
