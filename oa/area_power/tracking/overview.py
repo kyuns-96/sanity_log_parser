@@ -13,8 +13,11 @@ from common.area_power.tracking import (
     aggregate_block_tracking_row,
     build_live_round_mail_snapshots,
     compute_next_tracking_action,
+    make_carried_over_block_row,
     render_block_mail,
     render_top_mail,
+    resolve_carried_over_source,
+    round_sort_key,
     summarize_block_counts,
 )
 from common.area_power.triage import Thresholds
@@ -125,14 +128,50 @@ def overview(service, project_id: UUID) -> dict[str, Any]:
         }
         block_cfg_rows = service.all_records(conn, "tracking_block_config", project_id=project_id, latest=True)
         block_cfgs = {str(row["block_id"]): row for row in block_cfg_rows}
+        active_blocks = [
+            b for b in service.all_records(conn, "block", project_id=project_id)
+            if b.get("state") == "active"
+        ]
         round_rows = service.all_records(conn, "tracking_round", project_id=project_id)
-        round_rows.sort(key=lambda r: (r["payload"].get("netlist_arrived_at") or "", str(r.get("created_at") or "")), reverse=True)
+        round_rows.sort(key=round_sort_key, reverse=True)
 
+        slot_cache: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
+
+        def _load_slots(rid: UUID, bid: UUID) -> dict[str, dict[str, Any]]:
+            ck = (str(rid), str(bid))
+            if ck not in slot_cache:
+                slot_cache[ck] = {
+                    s["payload"]["corner_id"]: s
+                    for s in service.all_records(conn, "tracking_slot", parent_id=rid, block_id=bid)
+                }
+            return slot_cache[ck]
+
+        project_name = project_row["payload"].get("name") or ""
         rounds_out = []
-        for r in round_rows:
+        for idx, r in enumerate(round_rows):
             rp = r["payload"]
             target_ids = [UUID(str(bid)) for bid in rp.get("target_block_ids") or []]
+            target_id_set = {str(bid) for bid in target_ids}
             blocks = [_block_live_row(service, conn, r, project_row, bid, proj_cfg, block_cfgs, include_recipients=is_admin) for bid in target_ids]
+            earlier_rounds = round_rows[idx + 1:]
+            carried_over_blocks = []
+            for blk in active_blocks:
+                if str(blk["id"]) in target_id_set:
+                    continue
+                src_round, src_slots = resolve_carried_over_source(blk["id"], earlier_rounds, _load_slots)
+                bcfg_row = block_cfgs.get(str(blk["id"]))
+                carried_over_blocks.append(
+                    make_carried_over_block_row(
+                        project_id=r["project_id"],
+                        project_name=project_name,
+                        block_id=blk["id"],
+                        block_name=(blk.get("payload") or {}).get("name") or "",
+                        proj_cfg=proj_cfg,
+                        block_cfg=bcfg_row["payload"] if bcfg_row else {},
+                        source_round=src_round,
+                        source_slots_by_corner=src_slots,
+                    )
+                )
             _, fc_counts, sub_counts = summarize_block_counts(blocks)
             top_mail_id = rp.get("top_mail_record_id")
             top_mail_row = service.db.record(conn, UUID(str(top_mail_id)), kind="tracking_top_mail") if top_mail_id else None
@@ -152,6 +191,7 @@ def overview(service, project_id: UUID) -> dict[str, Any]:
                 "top_mail": mail_delivery_info(service, conn, top_mail_row, include_recipients=is_admin),
                 "has_post_top_revisions": any(b["post_top_mail_revised"] for b in blocks),
                 "blocks": blocks,
+                "carried_over_blocks": carried_over_blocks,
             })
 
         expectations = [

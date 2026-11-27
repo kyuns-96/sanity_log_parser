@@ -11,7 +11,10 @@ from common.area_power.tracking import (
     aggregate_block_tracking_row,
     block_mail_dedupe_key,
     evaluate_typical_and_same_condition,
+    make_carried_over_block_row,
+    resolve_carried_over_source,
     resolve_versioned_spec,
+    round_sort_key,
     summarize_block_counts,
     top_mail_dedupe_key,
 )
@@ -188,6 +191,42 @@ def maybe_dispatch_top_mail(db, round_id: UUID, *, trigger: str = "all_completed
         if trigger == "all_completed" and not all(b["all_completed"] for b in blocks):
             return None
 
+        target_id_set = {str(bid) for bid in target_ids}
+        active_blocks = [
+            b for b in all_records(db, conn, "block", project_id=round_row["project_id"])
+            if b.get("state") == "active"
+        ]
+        all_rounds = all_records(db, conn, "tracking_round", project_id=round_row["project_id"])
+        all_rounds.sort(key=round_sort_key, reverse=True)
+        cur_idx = next((i for i, rr in enumerate(all_rounds) if str(rr["id"]) == str(round_id)), -1)
+        earlier_rounds = all_rounds[cur_idx + 1:] if cur_idx >= 0 else []
+
+        def _load_slots(rid: UUID, bid: UUID) -> dict[str, dict[str, Any]]:
+            return {
+                s["payload"]["corner_id"]: s
+                for s in all_records(db, conn, "tracking_slot", parent_id=rid, block_id=bid)
+            }
+
+        carried_over_blocks = []
+        for blk in active_blocks:
+            if str(blk["id"]) in target_id_set:
+                continue
+            src_round, src_slots = resolve_carried_over_source(blk["id"], earlier_rounds, _load_slots)
+            bcfg_row = latest_one(db, conn, "tracking_block_config", project_id=round_row["project_id"], block_id=blk["id"])
+            carried_over_blocks.append(
+                make_carried_over_block_row(
+                    project_id=str(round_row["project_id"]),
+                    project_name=project_row["payload"].get("name") or "",
+                    block_id=str(blk["id"]),
+                    block_name=(blk.get("payload") or {}).get("name") or "",
+                    proj_cfg=proj_cfg,
+                    block_cfg=bcfg_row["payload"] if bcfg_row else {},
+                    source_round=src_round,
+                    source_slots_by_corner=src_slots,
+                    auth_error_label="인증 만료/오류",
+                )
+            )
+
         full_chips, fc_counts, sub_counts = summarize_block_counts(blocks)
         recipients = rp.get("applied_config_snapshot", {}).get("top_recipients") or proj_cfg.get("top_recipients") or []
         snapshot = {
@@ -204,6 +243,7 @@ def maybe_dispatch_top_mail(db, round_id: UUID, *, trigger: str = "all_completed
             "full_chip_counts": fc_counts,
             "sub_block_counts": sub_counts,
             "blocks": blocks,
+            "carried_over_blocks": carried_over_blocks,
         }
         owner_actor = proj_cfg.get("owner_user_id") or ACTOR
         mail_rec = db.insert_record(

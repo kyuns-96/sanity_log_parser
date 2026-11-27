@@ -1,11 +1,14 @@
 import type { TrackingRound } from '../trackingApi'
 
+export const LATEST_VIEW_ID = '__latest__'
+
 interface TrackingSummaryStripProps {
   baselineName: string
   baselineStatus: 'unset' | 'available' | 'unavailable'
   currentProcess: string
   baselineProcess: string
   rounds: TrackingRound[]
+  selectedRoundId: string
   activeRound?: TrackingRound
   onSelectRound: (roundId: string) => void
   latestDetectedNet: string
@@ -20,6 +23,7 @@ export function TrackingSummaryStrip({
   currentProcess,
   baselineProcess,
   rounds,
+  selectedRoundId,
   activeRound,
   onSelectRound,
   latestDetectedNet,
@@ -27,6 +31,7 @@ export function TrackingSummaryStrip({
   blockCount,
   uploadCount,
 }: TrackingSummaryStripProps) {
+  const skippedCount = activeRound?.carried_over_blocks?.length || 0
   return (
     <section className="project-summary-strip cols-3" aria-label="프로젝트 핵심 요약">
       <article className="summary-card">
@@ -42,13 +47,13 @@ export function TrackingSummaryStrip({
 
       <article className="summary-card">
         <div className="summary-card-head">
-          <span>현재 버전 (NET_VER)</span>
+          <span>보기 기준 (NET_VER)</span>
         </div>
-        {rounds.length > 1 ? (
+        {rounds.length > 0 ? (
           <select
             className="summary-round-select"
             aria-label="버전 선택"
-            value={activeRound?.id || ''}
+            value={selectedRoundId || activeRound?.id || LATEST_VIEW_ID}
             onChange={event => onSelectRound(event.target.value)}
           >
             {rounds.map(r => (
@@ -56,16 +61,19 @@ export function TrackingSummaryStrip({
                 {r.net_ver} (마감 {r.deadline_date || '—'})
               </option>
             ))}
+            <option value={LATEST_VIEW_ID}>전체 최신 (블록별 최종 NET_VER)</option>
           </select>
         ) : (
-          <strong>{activeRound?.net_ver || latestDetectedNet || '등록된 버전 없음'}</strong>
+          <strong>{latestDetectedNet || '등록된 버전 없음'}</strong>
         )}
         <small>
           {activeRound
             ? `도착 ${activeRound.netlist_arrived_at || '—'} · 마감 ${activeRound.deadline_date || '—'} ${activeRound.deadline_time || ''}`
-            : latestDetectedNet
-              ? '최근 업로드 버전 기준'
-              : '아직 업로드된 버전이 없습니다'}
+            : rounds.length > 0
+              ? '블록마다 다른 최종 NET_VER를 한 표에서 확인'
+              : latestDetectedNet
+                ? '최근 업로드 버전 기준'
+                : '아직 업로드된 버전이 없습니다'}
         </small>
       </article>
 
@@ -84,6 +92,7 @@ export function TrackingSummaryStrip({
             <div className="summary-progress" role="progressbar" aria-valuenow={progressPct} aria-valuemin={0} aria-valuemax={100}>
               <span style={{ width: `${progressPct}%` }} />
             </div>
+            {skippedCount > 0 && <small>이번 회차 제외 {skippedCount}개 (이전 NET_VER 유지)</small>}
           </>
         ) : (
           <>

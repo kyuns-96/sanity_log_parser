@@ -20,7 +20,7 @@ import {
   type ResolvedVersionMeta,
 } from './tracking/trackingUtils'
 import { TrackingMailSnapshotBanner } from './tracking/TrackingMailSnapshotBanner'
-import { TrackingSummaryStrip } from './tracking/TrackingSummaryStrip'
+import { LATEST_VIEW_ID, TrackingSummaryStrip } from './tracking/TrackingSummaryStrip'
 
 // Long block names wrap after "_" rather than mid-word.
 function breakableName(name: string) {
@@ -89,13 +89,14 @@ export function TrackingOverview({
 
   const rounds = data?.rounds || []
   const activeRound: TrackingRound | undefined = useMemo(() => {
-    if (!rounds.length) return undefined
+    if (!rounds.length || selectedRoundId === LATEST_VIEW_ID) return undefined
     return rounds.find(r => r.id === selectedRoundId) || rounds[0]
   }, [rounds, selectedRoundId])
 
   useEffect(() => {
+    if (selectedRoundId === LATEST_VIEW_ID) return
     if (activeRound && activeRound.id !== selectedRoundId) setSelectedRoundId(activeRound.id)
-  }, [activeRound?.id])
+  }, [activeRound?.id, selectedRoundId])
 
   const knownNetVers = useMemo(() => {
     const set = new Set<string>()
@@ -145,6 +146,14 @@ export function TrackingOverview({
       { name: b.block_name, isFullChip: b.is_full_chip },
     )),
     [activeRound?.blocks],
+  )
+
+  const sortedCarriedBlocks = useMemo(
+    () => [...(activeRound?.carried_over_blocks || [])].sort((a, b) => compareTrackingBlocks(
+      { name: a.block_name, isFullChip: a.is_full_chip },
+      { name: b.block_name, isFullChip: b.is_full_chip },
+    )),
+    [activeRound?.carried_over_blocks],
   )
 
   const latestUploadByBlock = useMemo(() => {
@@ -280,6 +289,7 @@ export function TrackingOverview({
         currentProcess={currentProcess}
         baselineProcess={baselineProcess}
         rounds={rounds}
+        selectedRoundId={selectedRoundId}
         activeRound={activeRound}
         onSelectRound={setSelectedRoundId}
         latestDetectedNet={latestDetectedNet}
@@ -416,6 +426,91 @@ export function TrackingOverview({
                     </tr>
                   )
                 })}
+                {sortedCarriedBlocks.length > 0 && (
+                  <>
+                    <tr className="tracking-carryover-divider">
+                      <td colSpan={6}>
+                        이번 회차 제외 · 이전 NET_VER 유지 ({sortedCarriedBlocks.length}개) — 완료율·마감 판정에는 포함되지 않습니다
+                      </td>
+                    </tr>
+                    {sortedCarriedBlocks.map(row => {
+                      const baseInfo = baselineForBlock(row.block_id, row.block_name)
+                      const currentScope = `${project.name} · ${row.block_name}`
+                      const keptNet = row.carried_from_net_ver || ''
+                      const currentMeta = keptNet ? resolveRoundVersionMeta(row, keptNet, project, uploadById) : null
+                      const completedCornerMetrics = row.corners.filter(c => c.logic_area_delta_pct || c.power_current_mw)
+                      const firstComp = row.corners.find(c => c.comparison_id)
+                      const keptAction = firstComp?.comparison_id
+                        ? { label: `${keptNet || '이전'} 결과 보기`, run: () => onOpenResult({ blockId: row.block_id, comparisonId: firstComp.comparison_id! }) }
+                        : null
+                      return (
+                        <tr key={`carried:${row.block_id}`} className="tracking-row-carried">
+                          <td>
+                            <div className="tracking-block-name">
+                              <strong>{breakableName(row.is_full_chip ? `${project.name} (Full-chip)` : row.block_name)}</strong>
+                              {row.is_full_chip && <span className="side-tag">Full-chip</span>}
+                            </div>
+                            <div className="tracking-tags">
+                              <span className="tracking-skip-pill">{keptNet ? `제외 · ${keptNet} 유지` : '이번 회차 제외'}</span>
+                            </div>
+                          </td>
+                          <td className="tracking-ver-cell">
+                            <div className="tracking-ver-box">
+                              <div className="tracking-ver-scope" title={baseInfo.label}>
+                                <span className={baseInfo.configured ? '' : 'text-muted'}>{baseInfo.label}</span>
+                                {baseInfo.scopeTag && <span className="tracking-scope-tag">{baseInfo.scopeTag}</span>}
+                                {baseInfo.version?.isPor && <span className="tracking-por-pill">PoR</span>}
+                              </div>
+                              {renderVersionMeta(baseInfo.version, baseInfo.emptyHint)}
+                            </div>
+                          </td>
+                          <td className="tracking-ver-cell">
+                            <div className="tracking-ver-box">
+                              <div className="tracking-ver-scope" title={currentScope}>
+                                <span className={currentMeta ? '' : 'text-muted'}>{currentScope}</span>
+                                {currentMeta?.isPor && <span className="tracking-por-pill">PoR</span>}
+                              </div>
+                              {renderVersionMeta(currentMeta, '이전 추적 이력 없음')}
+                            </div>
+                          </td>
+                          <td>
+                            <div className="tracking-corner-chips">
+                              {row.corners.length > 0 ? row.corners.map(c => (
+                                <span key={c.corner_id} className="tracking-chip">
+                                  {c.corner_label} · {SLOT_STATE_LABEL[c.status] || c.status}
+                                </span>
+                              )) : <small className="text-muted">이번 회차 미대상</small>}
+                            </div>
+                          </td>
+                          <td>
+                            <div className="tracking-cell-stack">
+                              {completedCornerMetrics.length > 0 ? (
+                                <div className="tracking-metric-lines">
+                                  {completedCornerMetrics.map(c => (
+                                    <small key={c.corner_id}>
+                                      <strong>{c.corner_label}</strong>
+                                      {c.logic_area_delta_pct ? ` Logic ${formatSignedPct(c.logic_area_delta_pct)}` : ''}
+                                      {c.power_current_mw ? ` · Power ${format(c.power_current_mw)} mW` : ''}
+                                      {c.power_delta_pct ? ` (${formatSignedPct(c.power_delta_pct)})` : ''}
+                                    </small>
+                                  ))}
+                                </div>
+                              ) : (
+                                <small className="text-muted">{keptNet ? `${keptNet} 분석 결과 없음` : '이전 이력 없음'}</small>
+                              )}
+                            </div>
+                          </td>
+                          <td>
+                            <div className="tracking-status-action">
+                              <span className="text-muted">{row.status_summary}</span>
+                              {keptAction && <Button variant="ghost" size="sm" onClick={keptAction.run}>{keptAction.label} →</Button>}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </>
+                )}
               </tbody>
             </table>
           </div>

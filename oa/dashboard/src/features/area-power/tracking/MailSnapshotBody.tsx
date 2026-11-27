@@ -11,6 +11,7 @@ interface MailSnapshotBodyProps {
 
 export function MailSnapshotBody({ kind, snapshot, onOpenComparison, className = '' }: MailSnapshotBodyProps) {
   if (kind === 'tracking_top_mail') {
+    const carriedRows = array(snapshot.carried_over_blocks).map(object)
     return (
       <div className={`table-scroll${className ? ` ${className}` : ''}`}>
         <table>
@@ -47,6 +48,38 @@ export function MailSnapshotBody({ kind, snapshot, onOpenComparison, className =
                 </tr>
               )
             })}
+            {carriedRows.length > 0 && (
+              <>
+                <tr className="tracking-carryover-divider">
+                  <td colSpan={5}>이번 회차 제외 · 이전 NET_VER 유지 (참고 {carriedRows.length}개)</td>
+                </tr>
+                {carriedRows.map(row => {
+                  const firstComp = array(row.corners).map(object).find(c => text(c.comparison_id))
+                  const keptVer = text(row.carried_from_net_ver)
+                  return (
+                    <tr key={`carried:${text(row.block_id) || text(row.block_name)}`} className="tracking-row-carried">
+                      <td>
+                        <div className="tracking-cell-stack">
+                          <strong>{row.is_full_chip ? `${text(snapshot.project_name)} (Full-chip)` : text(row.block_name)}</strong>
+                          {text(row.revision_label) && <small>{text(row.revision_label)}</small>}
+                        </div>
+                      </td>
+                      <td colSpan={2} className="numeric">
+                        <span className="tracking-skip-pill">{keptVer ? `${keptVer} 유지` : '이력 없음'}</span>
+                      </td>
+                      <td className="text-muted">{text(row.status_summary) || '이번 회차 제외'}</td>
+                      <td>
+                        {firstComp && text(firstComp.comparison_id) ? (
+                          <Button variant="ghost" size="sm" onClick={() => onOpenComparison(text(firstComp.comparison_id))}>
+                            비교 열기 →
+                          </Button>
+                        ) : <small className="text-muted">—</small>}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </>
+            )}
           </tbody>
         </table>
       </div>

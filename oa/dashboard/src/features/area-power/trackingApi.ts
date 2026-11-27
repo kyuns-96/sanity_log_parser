@@ -66,6 +66,9 @@ export const trackingBlockRowSchema = z.object({
   next_action: loose,
   block_mail: mailDeliverySchema.optional(),
   needs_attention: z.boolean(),
+  skipped_in_round: z.boolean().optional(),
+  carried_from_round_id: optionalText,
+  carried_from_net_ver: optionalText,
 }).passthrough()
 export type TrackingBlockRow = z.infer<typeof trackingBlockRowSchema>
 
@@ -85,6 +88,7 @@ export const trackingRoundSchema = z.object({
   top_mail: mailDeliverySchema,
   has_post_top_revisions: z.boolean().optional(),
   blocks: z.array(trackingBlockRowSchema),
+  carried_over_blocks: z.array(trackingBlockRowSchema).optional(),
 }).passthrough()
 export type TrackingRound = z.infer<typeof trackingRoundSchema>
 

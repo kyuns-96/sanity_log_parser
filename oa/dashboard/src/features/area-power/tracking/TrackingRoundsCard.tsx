@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Mail, Plus, RefreshCw } from 'lucide-react'
-import { date, request, text, unknownSchema, type Auth } from '../api'
+import { useMemo, useState } from 'react'
+import { Mail, Pencil, Plus, RefreshCw } from 'lucide-react'
+import { date, request, revision, text, unknownSchema, type Auth } from '../api'
 import { Badge, Button, Field } from '../components/workspace'
 import type { AtlasBlock, AtlasProject } from '@/features/atlas/atlasContext'
 import {
@@ -45,17 +45,42 @@ export function TrackingRoundsCard({
     return [...set]
   }, [project.blocks])
 
-  const [addingRound, setAddingRound] = useState(false)
+  const blockNameByAreaId = useMemo(
+    () => new Map(areaBlocks.map(b => [b.area_id!, b.name])),
+    [areaBlocks],
+  )
+
+  const [formOpen, setFormOpen] = useState(false)
+  const [editingRound, setEditingRound] = useState<TrackingRound | null>(null)
   const [netVerDraft, setNetVerDraft] = useState('')
   const [arrivedDraft, setArrivedDraft] = useState(() => new Date().toISOString().slice(0, 10))
   const [targetBlocks, setTargetBlocks] = useState<string[]>([])
   const [mailSnapshot, setMailSnapshot] = useState<TrackingMailSnapshot | null>(null)
 
-  useEffect(() => {
-    if (addingRound && !targetBlocks.length && areaBlocks.length) {
-      setTargetBlocks(areaBlocks.map(b => b.area_id!))
+  function openNewRoundForm() {
+    if (formOpen && !editingRound) {
+      setFormOpen(false)
+      return
     }
-  }, [addingRound, areaBlocks, targetBlocks.length])
+    setEditingRound(null)
+    setNetVerDraft('')
+    setArrivedDraft(new Date().toISOString().slice(0, 10))
+    setTargetBlocks(areaBlocks.map(b => b.area_id!))
+    setFormOpen(true)
+  }
+
+  function openEditRoundForm(round: TrackingRound) {
+    setEditingRound(round)
+    setNetVerDraft(round.net_ver)
+    setArrivedDraft(round.netlist_arrived_at || new Date().toISOString().slice(0, 10))
+    setTargetBlocks([...round.target_block_ids])
+    setFormOpen(true)
+  }
+
+  function closeForm() {
+    setFormOpen(false)
+    setEditingRound(null)
+  }
 
   async function submitRound() {
     const trimmed = netVerDraft.trim()
@@ -66,8 +91,9 @@ export function TrackingRoundsCard({
       net_ver: trimmed,
       netlist_arrived_at: arrivedDraft,
       target_block_ids: targetBlocks,
+      ...(editingRound ? { expected_row_version: revision(editingRound.row_version) } : {}),
     })
-    setAddingRound(false)
+    closeForm()
     setNetVerDraft('')
     await onReload()
   }
@@ -82,28 +108,31 @@ export function TrackingRoundsCard({
     setMailSnapshot(snap)
   }
 
+  const skippedCount = Math.max(0, areaBlocks.length - targetBlocks.length)
+
   return (
     <section className="panel" aria-label="버전 회차 관리">
       <div className="section-heading">
         <div>
           <h2>버전 회차 (NET_VER) 관리</h2>
-          <p>Netlist 도착일과 추적 대상 블록을 등록해 마감 및 TOP 요약 메일 일정을 관리합니다.</p>
+          <p>도착한 NET_VER별로 실제 업데이트되는 대상 블록만 선택합니다. 제외된 블록은 직전 NET_VER 유지로 참고 표시됩니다.</p>
         </div>
         {project.can_write && (
-          <Button variant="outline" size="sm" onClick={() => setAddingRound(v => !v)}>
-            <Plus size={14} />{addingRound ? '입력 닫기' : '새 버전 회차 등록'}
+          <Button variant="outline" size="sm" onClick={openNewRoundForm}>
+            <Plus size={14} />{formOpen && !editingRound ? '입력 닫기' : '새 버전 회차 등록'}
           </Button>
         )}
       </div>
 
-      {addingRound && (
+      {formOpen && (
         <div className="tracking-round-form-panel admin-round-form">
           <div className="tracking-form-row">
-            <Field label="버전 (NET_VER)">
+            <Field label={editingRound ? '수정 대상 버전 (NET_VER)' : '버전 (NET_VER)'}>
               <input
                 type="text"
                 list="admin-net-ver-options"
                 value={netVerDraft}
+                disabled={Boolean(editingRound)}
                 onChange={event => setNetVerDraft(event.target.value)}
                 placeholder="예: NET_023"
               />
@@ -117,7 +146,32 @@ export function TrackingRoundsCard({
             </Field>
           </div>
           <div className="tracking-block-checks">
-            <span>추적 대상 블록</span>
+            <div className="tracking-check-head">
+              <span>
+                추적 대상 블록 ({targetBlocks.length}/{areaBlocks.length}개 선택
+                {skippedCount > 0 ? ` · ${skippedCount}개 제외` : ''})
+              </span>
+              {areaBlocks.length > 0 && (
+                <div className="actions">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={targetBlocks.length === areaBlocks.length}
+                    onClick={() => setTargetBlocks(areaBlocks.map(b => b.area_id!))}
+                  >
+                    전체 선택
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={targetBlocks.length === 0}
+                    onClick={() => setTargetBlocks([])}
+                  >
+                    전체 해제
+                  </Button>
+                </div>
+              )}
+            </div>
             <div className="tracking-check-grid">
               {areaBlocks.map(block => {
                 const id = block.area_id!
@@ -138,10 +192,14 @@ export function TrackingRoundsCard({
             </div>
           </div>
           <div className="actions">
-            <Button size="sm" disabled={busy || !project.can_write || !areaBlocks.length} onClick={() => runAction(submitRound, '버전 회차를 등록했습니다.')}>
-              회차 등록
+            <Button
+              size="sm"
+              disabled={busy || !project.can_write || !areaBlocks.length}
+              onClick={() => runAction(submitRound, editingRound ? '회차 대상 블록을 수정했습니다.' : '버전 회차를 등록했습니다.')}
+            >
+              {editingRound ? '회차 변경 저장' : '회차 등록'}
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setAddingRound(false)}>취소</Button>
+            <Button variant="ghost" size="sm" onClick={closeForm}>취소</Button>
           </div>
         </div>
       )}
@@ -153,42 +211,65 @@ export function TrackingRoundsCard({
               <tr>
                 <th>NET_VER</th>
                 <th>도착일 · 마감</th>
+                <th>대상 · 제외 블록</th>
                 <th>진행 현황</th>
-                <th>TOP 메일 상태</th>
+                <th>TOP 메일</th>
                 <th>관리</th>
               </tr>
             </thead>
             <tbody>
-              {rounds.map(r => (
-                <tr key={r.id}>
-                  <td>
-                    <strong>{r.net_ver}</strong>
-                    {r.has_post_top_revisions && <Badge value="발송 후 수정" />}
-                  </td>
-                  <td>{r.netlist_arrived_at || '—'} → {r.deadline_date || '—'} {r.deadline_time || ''}</td>
-                  <td>
-                    {r.full_chip_counts.total > 0 && `Full-chip ${r.full_chip_counts.completed}/${r.full_chip_counts.total} · `}
-                    블록 {r.sub_block_counts.completed}/{r.sub_block_counts.total} 완료
-                  </td>
-                  <td>
-                    <Badge value={MAIL_STATE_LABEL[r.top_mail.state] || r.top_mail.state} />
-                  </td>
-                  <td>
-                    <div className="actions">
-                      {project.can_write && (
-                        <Button variant="outline" size="sm" disabled={busy} onClick={() => runAction(() => reconcileRound(r.id), '회차 상태를 재점검하도록 요청했습니다.')}>
-                          <RefreshCw size={13} />재점검
-                        </Button>
-                      )}
-                      {r.top_mail.mail_id && (
-                        <Button variant="ghost" size="sm" onClick={() => runAction(() => openMailSnapshot(r.top_mail.mail_id!))}>
-                          <Mail size={13} />발송 스냅샷
-                        </Button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {rounds.map(r => {
+                const targetSet = new Set(r.target_block_ids)
+                const excludedNames = (r.carried_over_blocks || []).length
+                  ? (r.carried_over_blocks || []).map(b => b.block_name)
+                  : areaBlocks.filter(b => !targetSet.has(b.area_id!)).map(b => b.name)
+                const includedNames = r.target_block_ids.map(id => blockNameByAreaId.get(id) || r.blocks.find(b => b.block_id === id)?.block_name || id)
+                return (
+                  <tr key={r.id}>
+                    <td>
+                      <strong>{r.net_ver}</strong>
+                      {r.has_post_top_revisions && <Badge value="발송 후 수정" />}
+                    </td>
+                    <td>{r.netlist_arrived_at || '—'} → {r.deadline_date || '—'} {r.deadline_time || ''}</td>
+                    <td>
+                      <div className="tracking-round-scope">
+                        <span title={includedNames.join(', ')}>대상 {r.target_block_ids.length}/{Math.max(areaBlocks.length, r.target_block_ids.length)}</span>
+                        {excludedNames.length > 0 && (
+                          <small className="text-muted" title={excludedNames.join(', ')}>
+                            제외: {excludedNames.slice(0, 3).join(', ')}{excludedNames.length > 3 ? ` 외 ${excludedNames.length - 3}` : ''}
+                          </small>
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      {r.full_chip_counts.total > 0 && `Full-chip ${r.full_chip_counts.completed}/${r.full_chip_counts.total} · `}
+                      블록 {r.sub_block_counts.completed}/{r.sub_block_counts.total} 완료
+                    </td>
+                    <td>
+                      <Badge value={MAIL_STATE_LABEL[r.top_mail.state] || r.top_mail.state} />
+                    </td>
+                    <td>
+                      <div className="actions">
+                        {project.can_write && (
+                          <Button variant="outline" size="sm" disabled={busy} onClick={() => openEditRoundForm(r)}>
+                            <Pencil size={13} />대상 블록 수정
+                          </Button>
+                        )}
+                        {project.can_write && (
+                          <Button variant="outline" size="sm" disabled={busy} onClick={() => runAction(() => reconcileRound(r.id), '회차 상태를 재점검하도록 요청했습니다.')}>
+                            <RefreshCw size={13} />재점검
+                          </Button>
+                        )}
+                        {r.top_mail.mail_id && (
+                          <Button variant="ghost" size="sm" onClick={() => runAction(() => openMailSnapshot(r.top_mail.mail_id!))}>
+                            <Mail size={13} />발송 스냅샷
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

@@ -222,8 +222,109 @@ def summarize_block_counts(blocks: list[dict[str, Any]]) -> tuple[list[dict[str,
     return full_chips, fc_counts, sub_counts
 
 
+def round_sort_key(round_row: dict[str, Any]) -> tuple[str, str]:
+    payload = round_row.get("payload") or {}
+    return (str(payload.get("netlist_arrived_at") or ""), str(round_row.get("created_at") or ""))
+
+
+def resolve_carried_over_source(
+    block_id: Any,
+    earlier_rounds_desc: list[dict[str, Any]],
+    load_slots,
+) -> tuple[dict[str, Any] | None, dict[str, dict[str, Any]]]:
+    """Find the most recent earlier round where a skipped block was tracked, preferring one with arrived data."""
+    bid_str = str(block_id)
+    fallback_round: dict[str, Any] | None = None
+    fallback_slots: dict[str, dict[str, Any]] = {}
+    for prev_round in earlier_rounds_desc:
+        targets = {str(tid) for tid in (prev_round.get("payload") or {}).get("target_block_ids") or []}
+        if bid_str not in targets:
+            continue
+        slots = load_slots(prev_round["id"], block_id)
+        has_arrived = any((s.get("payload") or {}).get("latest_upload_id") for s in slots.values())
+        if has_arrived:
+            return prev_round, slots
+        if fallback_round is None:
+            fallback_round = prev_round
+            fallback_slots = slots
+    return fallback_round, fallback_slots
+
+
+def make_carried_over_block_row(
+    *,
+    project_id: Any,
+    project_name: str,
+    block_id: Any,
+    block_name: str,
+    proj_cfg: dict[str, Any],
+    block_cfg: dict[str, Any],
+    source_round: dict[str, Any] | None,
+    source_slots_by_corner: dict[str, dict[str, Any]] | None,
+    auth_error_label: str = "인증 만료/권한 오류",
+) -> dict[str, Any]:
+    """Build a read-only reference row for a block skipped in the active NET_VER round."""
+    if source_round is not None:
+        src_net_ver = str((source_round.get("payload") or {}).get("net_ver") or "")
+        agg = aggregate_block_tracking_row(
+            project_id=project_id,
+            project_name=project_name,
+            block_id=block_id,
+            block_name=block_name,
+            net_ver=src_net_ver,
+            proj_cfg=proj_cfg,
+            block_cfg=block_cfg,
+            slots_by_corner=source_slots_by_corner or {},
+            auth_error_label=auth_error_label,
+        )
+        next_act = compute_next_tracking_action(agg)
+        if next_act.get("kind") == "result" and next_act.get("comparison_id"):
+            next_act = {**next_act, "label": f"{src_net_ver} 결과 보기"}
+        else:
+            next_act = {"kind": "skipped", "label": "이번 회차 제외"}
+        base_summary = agg.get("status_summary") or ""
+        if agg.get("arrived_corners", 0) > 0 and base_summary:
+            summary = f"{src_net_ver} 유지 · {base_summary}"
+        else:
+            summary = f"{src_net_ver} 유지 · 업로드 없음"
+        return {
+            **{k: v for k, v in agg.items() if k not in ("project_id", "project_name", "net_ver")},
+            "skipped_in_round": True,
+            "carried_from_round_id": source_round["id"],
+            "carried_from_net_ver": src_net_ver,
+            "post_top_mail_revised": False,
+            "needs_attention": False,
+            "status_summary": summary,
+            "next_action": next_act,
+        }
+
+    full_chip = is_full_chip_block(project_name, block_name)
+    return {
+        "block_id": block_id,
+        "block_name": block_name,
+        "is_full_chip": full_chip,
+        "revision_label": "",
+        "eco_label": "",
+        "required_corners": 0,
+        "arrived_corners": 0,
+        "completed_corners": 0,
+        "missing_corners": [],
+        "all_completed": False,
+        "totals": {"unexpected": 0, "needs_review": 0, "expected": 0, "minor": 0, "code_explained": 0},
+        "power_evaluation": None,
+        "corners": [],
+        "post_top_mail_revised": False,
+        "needs_attention": False,
+        "status_summary": "이번 회차 제외 · 이전 추적 이력 없음",
+        "next_action": {"kind": "skipped", "label": "이번 회차 제외"},
+        "skipped_in_round": True,
+        "carried_from_round_id": None,
+        "carried_from_net_ver": None,
+    }
+
+
 def build_live_round_mail_snapshots(project_name: str, chosen_round: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     blocks = chosen_round["blocks"]
+    carried_over = list(chosen_round.get("carried_over_blocks") or [])
     full_chip = next((b for b in blocks if b["is_full_chip"]), None)
     top_snapshot = {
         "project_name": project_name,
@@ -235,6 +336,7 @@ def build_live_round_mail_snapshots(project_name: str, chosen_round: dict[str, A
         "full_chip_counts": chosen_round["full_chip_counts"],
         "sub_block_counts": chosen_round["sub_block_counts"],
         "blocks": blocks,
+        "carried_over_blocks": carried_over,
     }
     block_snapshots = [
         {

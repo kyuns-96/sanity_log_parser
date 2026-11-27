@@ -215,6 +215,21 @@ def render_top_mail_text(snapshot: dict[str, Any], *, mail_id: str | None = None
             f"분석 완료 {row.get('completed_corners', 0)}/{row.get('required_corners', 0)} | {row.get('status_summary') or '대기'}"
         )
 
+    carried = list(snapshot.get("carried_over_blocks") or [])
+    if carried:
+        carried.sort(key=lambda row: (0 if row.get("is_full_chip") else 1, row.get("block_name") or ""))
+        lines += ["", f"■ 이번 회차 제외 · 이전 NET_VER 유지 (참고 {len(carried)}개)"]
+        for row in carried:
+            name = row.get("block_name") or str(row.get("block_id"))
+            if row.get("is_full_chip"):
+                name = f"{project} · Full-chip"
+            kept_ver = row.get("carried_from_net_ver") or "이전 이력 없음"
+            rev = (
+                (f" · {row['revision_label']}" if row.get("revision_label") else "")
+                + (f" · {row['eco_label']}" if row.get("eco_label") else "")
+            )
+            lines.append(f"- {name}{rev} | 유지 버전: {kept_ver} | {row.get('status_summary') or '이번 회차 제외'}")
+
     if mail_id:
         lines += ["", f"발송 당시 고정 요약 링크: /?page=area-power&tracking_mail={mail_id}"]
     lines += [

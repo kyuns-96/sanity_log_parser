@@ -590,6 +590,59 @@ def render_top_mail_html(
                 tone="info",
             )
         )
+
+    carried = list(snapshot.get("carried_over_blocks") or [])
+    if carried and not omitted_blocks:
+        carried.sort(key=lambda row: (0 if row.get("is_full_chip") else 1, row.get("block_name") or ""))
+        carried_heading = section_heading(
+            "이번 회차 제외 · 이전 NET_VER 유지 (참고)",
+            badge_html=pill(f"{len(carried)}개 제외", "neutral"),
+            subtitle="이번 NET_VER에서 업데이트가 생략된 블록입니다. 완료율·마감 판정에는 포함되지 않습니다.",
+        )
+        carried_rows: list[list[str]] = []
+        carried_bgs: list[str | None] = []
+        used_carried = utf8_len(carried_heading)
+        omitted_carried = 0
+        for idx, row in enumerate(carried):
+            is_fc = bool(row.get("is_full_chip"))
+            name = f"{project} · Full-chip" if is_fc else str(row.get("block_name") or row.get("block_id") or "—")
+            name_html = f'<strong style="color:#334155;">{esc(name)}</strong>'
+            if is_fc:
+                name_html += f'&nbsp;{pill("Full-chip", "neutral")}'
+            rev_parts = [p for p in (row.get("revision_label"), row.get("eco_label")) if p]
+            if rev_parts:
+                name_html += f'<div style="margin-top:2px;font-family:{FONT_MONO};font-size:11px;color:#64748b;">{esc(" · ".join(str(p) for p in rev_parts))}</div>'
+            kept_ver = str(row.get("carried_from_net_ver") or "")
+            ver_cell = pill(f"{kept_ver} 유지", "neutral", mono=True) if kept_ver else pill("이력 없음", "neutral")
+            summary_cell = f'<span style="color:#475569;">{esc(row.get("status_summary") or "이번 회차 제외")}</span>'
+            built_row = [name_html, ver_cell, summary_cell]
+            bg = "#f8fafc"
+            exact_bytes = utf8_len(render_data_table_row(built_row, ("left", "center", "left"), bg=bg))
+            if used_rows + used_carried + exact_bytes > row_budget:
+                omitted_carried = len(carried) - idx
+                break
+            carried_rows.append(built_row)
+            carried_bgs.append(bg)
+            used_carried += exact_bytes
+        if carried_rows:
+            parts.append(carried_heading)
+            parts.append(
+                data_table(
+                    ["제외 블록", "유지 버전", "직전 상태 요약"],
+                    carried_rows,
+                    aligns=["left", "center", "left"],
+                    row_bgs=carried_bgs,
+                )
+            )
+            if omitted_carried:
+                parts.append(
+                    callout(
+                        f"메일 본문 크기 한도(1MB)로 나머지 {omitted_carried}개 제외 블록 행이 생략되었습니다.",
+                        ["전체 블록 현황은 Design Atlas 화면에서 확인할 수 있습니다."],
+                        tone="info",
+                    )
+                )
+
     if cta_html:
         parts.append(cta_html)
 

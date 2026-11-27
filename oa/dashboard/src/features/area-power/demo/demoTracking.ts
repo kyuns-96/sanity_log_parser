@@ -42,9 +42,15 @@ export function demoTrackingOverview(projectId: string, visible: Set<string>, ca
     })
     roundRows = [seededRound]
   }
-  const rounds = roundRows.map(r => {
+  const allActiveBlocks = [...records.values()].filter(r => r.record_type === 'block' && r.project_id === projectId && r.state === 'active')
+  const sortedRounds = [...roundRows].sort((a, b) =>
+    (text(b.payload.netlist_arrived_at) || '').localeCompare(text(a.payload.netlist_arrived_at) || '')
+    || (text(b.created_at) || '').localeCompare(text(a.created_at) || ''),
+  )
+  const rounds = sortedRounds.map((r, idx) => {
     const targetIds = strings(r.payload.target_block_ids)
-    const blocks = targetIds.map(bid => {
+    const targetSet = new Set(targetIds)
+    const buildBlockRow = (bid: string, netVer: string) => {
       const blkRec = records.get(bid)
       const blkName = text(blkRec?.payload.name) || bid
       const isFc = blkName.trim() === projectName.trim()
@@ -77,7 +83,7 @@ export function demoTrackingOverview(projectId: string, visible: Set<string>, ca
       else if (arrived > completed) summaryParts.push('기준 실행 승인 또는 분석 대기')
       return {
         block_id: bid, block_name: blkName, is_full_chip: isFc,
-        revision_label: nativeProject?.blocks.find(b => b.area_id === bid)?.versions.find(v => v.net_ver === text(r.payload.net_ver))?.revision || '',
+        revision_label: nativeProject?.blocks.find(b => b.area_id === bid)?.versions.find(v => v.net_ver === netVer)?.revision || '',
         required_corners: reqCorners.length, arrived_corners: arrived, completed_corners: completed, missing_corners: missing,
         all_completed: reqCorners.length > 0 && completed === reqCorners.length,
         totals: { unexpected: 0, needs_review: 0, expected: 0, minor: 0, code_explained: 0 },
@@ -85,7 +91,37 @@ export function demoTrackingOverview(projectId: string, visible: Set<string>, ca
         next_action: firstDone ? { kind: 'result', label: isFc ? 'Full-chip 결과 보기' : '블록 결과 보기', comparison_id: firstDone.comparison_id } : { kind: 'configure', label: '추적 설정' },
         block_mail: { state: 'waiting', mail_id: null }, needs_attention: missing.length > 0 || arrived > completed,
       }
-    })
+    }
+    const blocks = targetIds.map(bid => buildBlockRow(bid, text(r.payload.net_ver)))
+    const earlierRounds = sortedRounds.slice(idx + 1)
+    const carried_over_blocks = allActiveBlocks
+      .filter(b => !targetSet.has(b.id))
+      .map(b => {
+        const src = earlierRounds.find(prev => strings(prev.payload.target_block_ids).includes(b.id))
+        if (src) {
+          const srcNet = text(src.payload.net_ver)
+          const row = buildBlockRow(b.id, srcNet)
+          return {
+            ...row,
+            skipped_in_round: true,
+            carried_from_round_id: src.id,
+            carried_from_net_ver: srcNet,
+            needs_attention: false,
+            post_top_mail_revised: false,
+            status_summary: `${srcNet} 유지 · ${row.status_summary}`,
+          }
+        }
+        const blkName = text(b.payload.name) || b.id
+        return {
+          block_id: b.id, block_name: blkName, is_full_chip: blkName.trim() === projectName.trim(),
+          revision_label: '', required_corners: 0, arrived_corners: 0, completed_corners: 0, missing_corners: [],
+          all_completed: false, totals: { unexpected: 0, needs_review: 0, expected: 0, minor: 0, code_explained: 0 },
+          power_evaluation: null, corners: [], post_top_mail_revised: false, needs_attention: false,
+          status_summary: '이번 회차 제외 · 이전 추적 이력 없음',
+          next_action: { kind: 'skipped', label: '이번 회차 제외' },
+          skipped_in_round: true, carried_from_round_id: null, carried_from_net_ver: null,
+        }
+      })
     const fcs = blocks.filter(b => b.is_full_chip), subs = blocks.filter(b => !b.is_full_chip)
     return {
       id: r.id, row_version: r.row_version, state: r.state, net_ver: text(r.payload.net_ver),
@@ -95,7 +131,7 @@ export function demoTrackingOverview(projectId: string, visible: Set<string>, ca
       full_chip_counts: { total: fcs.length, arrived: fcs.filter(b => b.arrived_corners > 0).length, completed: fcs.filter(b => b.all_completed).length },
       sub_block_counts: { total: subs.length, arrived: subs.filter(b => b.arrived_corners > 0).length, completed: subs.filter(b => b.all_completed).length },
       top_mail: { state: text(r.payload.top_mail_state) || 'waiting', mail_id: text(r.payload.top_mail_record_id) || null },
-      has_post_top_revisions: false, blocks,
+      has_post_top_revisions: false, blocks, carried_over_blocks,
     }
   })
   const expectations = latest([...records.values()].filter(r => r.record_type === 'tracking_expectation' && r.project_id === projectId && r.payload.archived !== true))
@@ -208,7 +244,7 @@ export function handleTrackingRoute(route: string, body: Payload | undefined, vi
         subject: `[Design Atlas] TOP 요약 · ${ov.project_name} · ${r.net_ver}`,
         body: `프로젝트: ${ov.project_name} · NET_VER: ${r.net_ver}\n마감: ${r.deadline_date} ${r.deadline_time} (${r.deadline_timezone})\n\n` +
           r.blocks.map(b => `- ${b.is_full_chip ? `${ov.project_name} · Full-chip` : b.block_name} | 도착 ${b.arrived_corners}/${b.required_corners} | 완료 ${b.completed_corners}/${b.required_corners} | ${b.status_summary}`).join('\n'),
-        snapshot: { project_name: ov.project_name, net_ver: r.net_ver, blocks: r.blocks },
+        snapshot: { project_name: ov.project_name, net_ver: r.net_ver, blocks: r.blocks, carried_over_blocks: r.carried_over_blocks },
       },
       block_reports: r.blocks.map(b => ({
         block_id: b.block_id, block_name: b.block_name, is_full_chip: b.is_full_chip, revision_label: b.revision_label, mail_sent: false,
