@@ -28,6 +28,8 @@ OA 브라우저의 로컬 API 접속은 브리지 간 통신과 별개다.
 | 파일 | 내용 | 사용할 곳 |
 |---|---|---|
 | `form/*.columns.sql` | 테이블별 컬럼·자료형·기본값·PK/UNIQUE/CHECK 정의. 바깥 `CREATE TABLE`은 없음 | GUI의 **컬럼 정의(SQL)** 입력란 |
+| [area_power/](area_power/01_di_area_power_csv.columns.sql) | Area/Power 전용 `di_area_power_csv`·`di_area_power_tracking_record` 컬럼/제약/인덱스 | Area/Power 선택 도입 시 신청·적용 |
+| [design_artifact/](design_artifact/README.md) | 블록·버전별 Floorplan·스크린샷 전용 `di_design_artifact` 컬럼/제약/인덱스·JOIN 설계 | Floorplan/스크린샷 보관 기능 도입 시 신규 1테이블 신청·적용 |
 | [002_indexes.sql](002_indexes.sql) | 추가 인덱스·부분 UNIQUE·테이블 간 FK·저장 설정 | 테이블 생성 후 SQL 실행 |
 | [003_grants.sql](003_grants.sql) | VWP/OA 역할별 테이블·컬럼 권한 | 역할 준비 후 SQL 실행 |
 | [004_clustering.sql](004_clustering.sql) | 분류 작업·개정용 컬럼 2개, CHECK 확장, 인덱스 추가 | 기존 테이블의 `002`·`003` 준비 후 owner/DBA가 한 번 실행 |

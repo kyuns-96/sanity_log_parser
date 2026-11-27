@@ -55,7 +55,7 @@ flowchart LR
     D -->|현황·결과 조회| O
 ```
 
-Sanity의 VWP-bridge와 OA 업무 데이터 전달은 기존 PostgreSQL 네 테이블을 사용합니다. 선택형 Area/Power는 이미 신청한 `di_area_power_csv`, `di_area_power_tracking_record` 두 테이블과 별도 namespace를 사용하며 Sanity 네 테이블을 바꾸지 않습니다. 양쪽 업무 모두 OA↔VWP 전달은 DB뿐입니다. 모델 API 호출과 사용자 CLI의 HTTPS 제출은 이 DB 경계와 별도입니다.
+Sanity의 VWP-bridge와 OA 업무 데이터 전달은 기존 PostgreSQL 네 테이블을 사용합니다. 선택형 Area/Power는 이미 신청한 `di_area_power_csv`, `di_area_power_tracking_record` 두 테이블과 별도 namespace를 사용하며 Sanity 네 테이블을 바꾸지 않습니다. 블록·버전별 Floorplan·스크린샷 보관용 신규 단일 테이블(`di_design_artifact`) 신청안과 JOIN 설계는 [db/design_artifact/README.md](db/design_artifact/README.md)에 있습니다. 양쪽 업무 모두 OA↔VWP 전달은 DB뿐입니다. 모델 API 호출과 사용자 CLI의 HTTPS 제출은 이 DB 경계와 별도입니다.
 
 | 실행 위치 / 역할 | 코드 | 책임 |
 |---|---|---|
