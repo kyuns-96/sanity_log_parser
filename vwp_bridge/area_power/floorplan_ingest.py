@@ -21,6 +21,7 @@ from common.area_power.atlas_bindings import (
 from common.area_power.errors import ConfigurationError, DomainError
 from common.area_power.jsonutil import digest, dumps
 from common.floorplan import FloorplanScene, reject_raw_def_or_lef, render_scene_png
+from common.floorplan.temp_artifact_fallback import should_write_temp_fallback, temp_insert_artifact  # [TEMP_ARTIFACT_FALLBACK]
 from common.sanity_common import ReviewError
 from common.sanity_config import load_environment
 from common.sanity_db import Database as HostDatabase
@@ -163,6 +164,38 @@ def insert_design_artifact_row(
     thumbnail_bytes: bytes | None,
     uploaded_by: str,
 ) -> dict[str, Any]:
+    # [TEMP_ARTIFACT_FALLBACK] Route to di_area_power_tracking_record when di_design_artifact is not provisioned yet.
+    tbl_exists_row = conn.execute("SELECT to_regclass(%s) IS NOT NULL AS ok", (f"{schema}.di_design_artifact",)).fetchone()
+    if should_write_temp_fallback(bool(tbl_exists_row and tbl_exists_row["ok"])):
+        return temp_insert_artifact(
+            conn,
+            schema,
+            artifact_id=artifact_id,
+            project_id=project_id,
+            block_id=block_id,
+            fp_ver=fp_ver,
+            net_ver=net_ver,
+            revision=revision,
+            eco_num=eco_num,
+            layout=layout,
+            area_project_id=area_project_id,
+            area_block_id=area_block_id,
+            area_version_id=area_version_id,
+            area_upload_id=area_upload_id,
+            artifact_kind=artifact_kind,
+            view_name=view_name,
+            title=title,
+            caption=caption,
+            metadata=metadata,
+            original_filename=original_filename,
+            mime_type=mime_type,
+            width_px=width_px,
+            height_px=height_px,
+            artifact_bytes=artifact_bytes,
+            thumbnail_bytes=thumbnail_bytes,
+            uploaded_by=uploaded_by,
+        )
+
     digest_bytes = sha256(artifact_bytes).digest()
     version_tag = f"fp:{fp_ver}"
     tbl = sql.Identifier(schema, "di_design_artifact")

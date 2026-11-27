@@ -237,6 +237,12 @@ export default function FloorplanReviewPage() {
         </div>
 
         <div className="fp-topbar-actions">
+          {/* [TEMP_ARTIFACT_FALLBACK] */}
+          {workspace?.storage_mode === 'temp_tracking_fallback' && (
+            <Badge variant="outline" title="di_design_artifact 테이블 생성 전까지 di_area_power_tracking_record 임시 저장 경로로 동작 중">
+              임시 DB 우회 모드
+            </Badge>
+          )}
           {detail && (
             <>
               <Badge variant="outline">{activeIsTop ? 'TOP Full-chip' : 'Sub-block'}</Badge>

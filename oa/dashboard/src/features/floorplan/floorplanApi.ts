@@ -197,6 +197,7 @@ export interface FloorplanWorkspaceData {
   project_id: string
   project_name: string
   artifact_table_ready: boolean
+  storage_mode?: 'di_design_artifact' | 'temp_tracking_fallback' | 'unavailable' // [TEMP_ARTIFACT_FALLBACK]
   versions: FloorplanVersionSummary[]
   checklist_template: {
     top_items: ChecklistTemplateItem[]

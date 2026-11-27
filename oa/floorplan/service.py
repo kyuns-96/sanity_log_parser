@@ -35,6 +35,12 @@ from common.floorplan import (
     render_scene_png,
     render_scene_svg,
 )
+from common.floorplan.temp_artifact_fallback import (  # [TEMP_ARTIFACT_FALLBACK]
+    is_temp_fallback_enabled,
+    should_write_temp_fallback,
+    temp_get_artifact,
+    temp_list_version_artifacts,
+)
 from oa.integration.corporate_confluence import create_confluence_publisher
 
 KST = timezone(timedelta(hours=9))
@@ -285,7 +291,8 @@ def get_workspace_overview(service: Any, project_id: UUID, block_id: UUID | None
         return {
             "project_id": str(project["id"]),
             "project_name": (project.get("payload") or {}).get("name") or "",
-            "artifact_table_ready": table_ready,
+            "artifact_table_ready": table_ready or is_temp_fallback_enabled(),
+            "storage_mode": "di_design_artifact" if table_ready else ("temp_tracking_fallback" if is_temp_fallback_enabled() else "unavailable"),  # [TEMP_ARTIFACT_FALLBACK]
             "versions": versions_out,
             "checklist_template": checklist_tpl,
             "project_confluence": proj_conf or {"space_key": "", "parent_page_id": "", "raw_url": ""},
@@ -322,44 +329,64 @@ def get_version_detail(
 
         scene: dict[str, Any] | None = None
         attachments: list[dict[str, Any]] = []
-        if table_ready:
-            version_tag = f"fp:{p['fp_ver']}"
-            art_rows = conn.execute(
-                sql.SQL(
-                    "SELECT id, artifact_kind, view_name, title, caption, mime_type, "
-                    "width_px, height_px, byte_length, metadata, created_at "
-                    "FROM {} WHERE project_id=%s AND block_id=%s AND version_id=%s AND state='active' "
-                    "ORDER BY created_at DESC"
-                ).format(tbl),
-                (p["native_project_id"], p["native_block_id"], version_tag),
-            ).fetchall()
-            for a in art_rows:
-                if a["artifact_kind"] == "floorplan" and a["view_name"] == "vector_master" and scene is None:
-                    scene = a["metadata"]
-                else:
-                    attachments.append({
-                        "id": str(a["id"]),
-                        "artifact_kind": a["artifact_kind"],
-                        "view_name": a["view_name"] or "",
-                        "title": a["title"] or a["view_name"] or "",
-                        "caption": a["caption"] or "",
-                        "mime_type": a["mime_type"],
-                        "byte_length": a["byte_length"],
-                        "created_at": a["created_at"],
-                    })
+        version_tag = f"fp:{p['fp_ver']}"
+        art_rows: list[dict[str, Any]] = []
+        if table_ready and not should_write_temp_fallback(True):
+            art_rows = list(
+                conn.execute(
+                    sql.SQL(
+                        "SELECT id, artifact_kind, view_name, title, caption, mime_type, "
+                        "width_px, height_px, byte_length, metadata, created_at "
+                        "FROM {} WHERE project_id=%s AND block_id=%s AND version_id=%s AND state='active' "
+                        "ORDER BY created_at DESC"
+                    ).format(tbl),
+                    (p["native_project_id"], p["native_block_id"], version_tag),
+                ).fetchall()
+            )
+        # [TEMP_ARTIFACT_FALLBACK] Merge/fallback from di_area_power_tracking_record when di_design_artifact has no rows yet
+        seen_ids = {str(r["id"]) for r in art_rows}
+        for tmp_row in temp_list_version_artifacts(
+            conn,
+            schema,
+            native_project_id=p["native_project_id"],
+            native_block_id=p["native_block_id"],
+            version_tag=version_tag,
+            area_project_id=fp_row["project_id"],
+            area_block_id=fp_row["block_id"],
+        ):
+            if str(tmp_row["id"]) not in seen_ids:
+                art_rows.append(tmp_row)
+
+        for a in art_rows:
+            if a["artifact_kind"] == "floorplan" and a["view_name"] == "vector_master" and scene is None:
+                scene = a["metadata"]
+            else:
+                attachments.append({
+                    "id": str(a["id"]),
+                    "artifact_kind": a["artifact_kind"],
+                    "view_name": a["view_name"] or "",
+                    "title": a["title"] or a["view_name"] or "",
+                    "caption": a["caption"] or "",
+                    "mime_type": a["mime_type"],
+                    "byte_length": a["byte_length"],
+                    "created_at": a["created_at"],
+                })
 
         # Compare Floorplan version scene if requested
         compare_scene: dict[str, Any] | None = None
-        if compare_fp_version_id and table_ready:
+        if compare_fp_version_id:
             cmp_row = service.db.record(conn, compare_fp_version_id, kind="fp_version")
             cp = cmp_row["payload"]
             if cp.get("master_artifact_id"):
-                crow = conn.execute(
-                    sql.SQL("SELECT metadata FROM {} WHERE id=%s").format(tbl),
-                    (UUID(str(cp["master_artifact_id"])),),
-                ).fetchone()
+                cmp_aid = UUID(str(cp["master_artifact_id"]))
+                crow = conn.execute(sql.SQL("SELECT metadata FROM {} WHERE id=%s").format(tbl), (cmp_aid,)).fetchone() if table_ready else None
                 if crow:
                     compare_scene = crow["metadata"]
+                else:
+                    # [TEMP_ARTIFACT_FALLBACK]
+                    t_cmp = temp_get_artifact(conn, schema, cmp_aid, include_bytes=False)
+                    if t_cmp:
+                        compare_scene = t_cmp["metadata"]
 
         # Review + carried-over unresolved ACTION items from prev_fp_ver
         rev_rows = service.db.records(conn, "fp_review", parent_id=fp_version_id, latest=True, limit=1)
@@ -441,15 +468,20 @@ def read_artifact_binary(service: Any, artifact_id: UUID, *, thumbnail: bool = F
     schema = service.db.raw.settings.db_schema
     tbl = sql.Identifier(schema, "di_design_artifact")
     with service.db.connect() as conn:
-        if not _artifact_table_exists(conn, schema):
-            raise DomainError("Artifact table is not provisioned yet.", code="not_found", status_code=404)
-        row = conn.execute(
-            sql.SQL(
-                "SELECT area_project_id, mime_type, sha256, artifact_bytes, thumbnail_bytes "
-                "FROM {} WHERE id=%s AND state='active'"
-            ).format(tbl),
-            (artifact_id,),
-        ).fetchone()
+        row = None
+        if _artifact_table_exists(conn, schema):
+            row = conn.execute(
+                sql.SQL(
+                    "SELECT area_project_id, mime_type, sha256, artifact_bytes, thumbnail_bytes "
+                    "FROM {} WHERE id=%s AND state='active'"
+                ).format(tbl),
+                (artifact_id,),
+            ).fetchone()
+        if not row:
+            # [TEMP_ARTIFACT_FALLBACK]
+            t_row = temp_get_artifact(conn, schema, artifact_id, include_bytes=True)
+            if t_row and t_row.get("state") == "active":
+                row = t_row
         if not row:
             raise DomainError("Artifact not found.", code="not_found", status_code=404)
         if row["area_project_id"]:
@@ -498,10 +530,16 @@ def save_review(service: Any, fp_version_id: UUID, body: SaveFloorplanReviewInpu
 
 def _load_master_scene(conn: Any, schema: str, fp_row: dict[str, Any]) -> FloorplanScene:
     p = fp_row["payload"]
-    if not p.get("master_artifact_id") or not _artifact_table_exists(conn, schema):
+    if not p.get("master_artifact_id"):
         raise DomainError("No vector floorplan scene is attached to this version.", code="scene_not_found", status_code=404)
-    tbl = sql.Identifier(schema, "di_design_artifact")
-    row = conn.execute(sql.SQL("SELECT metadata FROM {} WHERE id=%s").format(tbl), (UUID(str(p["master_artifact_id"])),)).fetchone()
+    aid = UUID(str(p["master_artifact_id"]))
+    row = None
+    if _artifact_table_exists(conn, schema):
+        tbl = sql.Identifier(schema, "di_design_artifact")
+        row = conn.execute(sql.SQL("SELECT metadata FROM {} WHERE id=%s").format(tbl), (aid,)).fetchone()
+    if not row:
+        # [TEMP_ARTIFACT_FALLBACK]
+        row = temp_get_artifact(conn, schema, aid, include_bytes=False)
     if not row or not row["metadata"]:
         raise DomainError("Master floorplan scene metadata not found.", code="scene_not_found", status_code=404)
     return FloorplanScene.model_validate(row["metadata"])
@@ -587,7 +625,7 @@ def upload_web_attachment(service: Any, fp_version_id: UUID, body: UploadWebAtta
         fp_row = service.db.record(conn, fp_version_id, kind="fp_version")
         proj = service.db.record(conn, fp_row["project_id"], kind="project")
         service.authorize(conn, proj, write=True)
-        if not _artifact_table_exists(conn, schema):
+        if not _artifact_table_exists(conn, schema) and not is_temp_fallback_enabled():  # [TEMP_ARTIFACT_FALLBACK]
             raise DomainError("di_design_artifact table is not provisioned in PostgreSQL yet.", code="table_not_provisioned", status_code=503)
         p = fp_row["payload"]
         from vwp_bridge.area_power.floorplan_ingest import insert_design_artifact_row
@@ -699,7 +737,8 @@ def _build_confluence_package(
     attachment_specs: list[tuple[str, str]] = []
     inline_svgs: list[tuple[str, str]] = []
 
-    if _artifact_table_exists(conn, schema) and p.get("master_artifact_id"):
+    table_ready = _artifact_table_exists(conn, schema)
+    if p.get("master_artifact_id") and (table_ready or is_temp_fallback_enabled()):  # [TEMP_ARTIFACT_FALLBACK]
         scene = _load_master_scene(conn, schema, fp_row)
         if opts.include_overview:
             png = render_scene_png(scene, mode="overview", review_pins=pins_models)
@@ -722,13 +761,22 @@ def _build_confluence_package(
             attachment_specs.append(("fp_04_designer_proposal.png", f"Designer 제안 배치안: {prop_summary.get('title')}"))
             inline_svgs.append((f"Designer 제안 배치안: {prop_summary.get('title')}", render_scene_svg(scene, mode="overview", placement_overrides=prop_overrides).decode("utf-8")))
 
-    if opts.extra_artifact_ids and _artifact_table_exists(conn, schema):
+    if opts.extra_artifact_ids and (table_ready or is_temp_fallback_enabled()):  # [TEMP_ARTIFACT_FALLBACK]
         tbl = sql.Identifier(schema, "di_design_artifact")
         for idx, aid in enumerate(opts.extra_artifact_ids, start=1):
-            arow = conn.execute(
-                sql.SQL("SELECT title, view_name, mime_type, artifact_bytes FROM {} WHERE id=%s AND state='active'").format(tbl),
-                (aid,),
-            ).fetchone()
+            arow = (
+                conn.execute(
+                    sql.SQL("SELECT title, view_name, mime_type, artifact_bytes FROM {} WHERE id=%s AND state='active'").format(tbl),
+                    (aid,),
+                ).fetchone()
+                if table_ready
+                else None
+            )
+            if not arow:
+                # [TEMP_ARTIFACT_FALLBACK]
+                t_extra = temp_get_artifact(conn, schema, aid, include_bytes=True)
+                if t_extra and t_extra.get("state") == "active":
+                    arow = t_extra
             if arow:
                 ext = ".png" if arow["mime_type"] == "image/png" else (".webp" if arow["mime_type"] == "image/webp" else ".jpg")
                 fname = f"fp_extra_{idx:02d}{ext}"
