@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import type { ReactNode } from 'react'
-import { BookOpen, FolderKanban, GitCompareArrows, Home, LogOut, Menu, Settings2, ShieldCheck, X } from 'lucide-react'
+import { BookOpen, FolderKanban, GitCompareArrows, Home, Layers3, LogOut, Menu, Settings2, ShieldCheck, X } from 'lucide-react'
 import { WorkspaceBrand } from '@/components/layout/WorkspaceBrand'
 import { ColorModeControl } from '@/components/layout/ColorModeControl'
 import PersonalAiToken from '@/features/ai/PersonalAiToken'
@@ -14,6 +14,7 @@ type NavigationLink = { title: string; path: string; page: string; icon: typeof 
 const navigationGroups: { id: string; title: string; links: NavigationLink[] }[] = [
   { id: 'home', title: '', links: [
     { title: '홈 · 프로젝트', path: '/', page: 'home', icon: Home },
+    { title: '버전 · 자료 현황', path: '/?page=versions', page: 'versions', icon: Layers3 },
   ] },
   { id: 'logs', title: '로그 검토', links: [
     { title: '로그 검토', path: '/?page=workbench', page: 'workbench', icon: BookOpen },

@@ -170,6 +170,18 @@ def create_atlas_router(authorized_dependency):
                 from common.area_power.jsonutil import public
                 return JSONResponse(public(result))
             return result
+    @router.get("/projects/{project_id}/version-inventory")
+    def version_inventory(
+        project_id: ID,
+        request: Request,
+        block_id: ID | None = Query(default=None),
+        actor=Depends(authorized_dependency, scope="function"),
+    ):
+        from oa.version_inventory import build_version_inventory
+        area_on = bool(getattr(request.app.state, "area_power_enabled", False))
+        with context(actor, readonly=True) as store:
+            return build_version_inventory(store, project_id, block_id=block_id, area_enabled=area_on)
+
     @router.get("/reports")
     def reports(project_id: ID, block_id: ID, version_id: ID,
                 offset: int = Query(default=0, ge=0), limit: int = Query(default=100, ge=1, le=100),

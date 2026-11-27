@@ -13,7 +13,7 @@ export function useDashboardSidebarState() {
 }
 
 const returnKey = 'user_view'
-const userPages: Record<string, true> = { workbench: true, welcome: true, review: true, 'area-power': true }
+const userPages: Record<string, true> = { versions: true, workbench: true, welcome: true, review: true, 'area-power': true }
 
 export function userModeUrl(canRead: boolean, current = new URL(location.href)): string {
   const fallback = appUrl(canRead ? '/?page=workbench' : '/?page=welcome')

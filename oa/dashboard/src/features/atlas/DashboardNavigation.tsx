@@ -11,13 +11,14 @@ import type { DashboardNavigate } from '@/lib/dashboardMode'
 import { AtlasProvider } from './atlasContext'
 import AtlasShell from './AtlasShell'
 import AtlasHome from './AtlasHome'
+import VersionInventoryPage from './VersionInventoryPage'
 import { AtlasRouteSurface } from './AtlasRouteSurface'
 
-type DashboardPage = 'home' | 'review' | 'welcome' | 'admin' | 'workbench' | 'area-power'
+type DashboardPage = 'home' | 'versions' | 'review' | 'welcome' | 'admin' | 'workbench' | 'area-power'
 type Destination = { page: DashboardPage; href: string }
 type ScrollPositions = RefObject<Map<DashboardPage, { x: number; y: number }>>
 type NavigationState = { route: Destination; visited: DashboardPage[]; epoch: number; initialWorkspace?: WorkspaceSession }
-const pages: Record<DashboardPage, true> = { home: true, review: true, welcome: true, admin: true, workbench: true, 'area-power': true }
+const pages: Record<DashboardPage, true> = { home: true, versions: true, review: true, welcome: true, admin: true, workbench: true, 'area-power': true }
 
 function destination(href: string, demo = false): Destination {
   const url = new URL(appUrl(href), location.origin)
@@ -107,7 +108,7 @@ export default function DashboardNavigation({ demo = false, demoToolbar, demoAcc
             next = destination('/?page=welcome', demo); discard = true
           }
           if (current.current.page === 'admin' && session.is_admin !== true) discard = true
-          if (ready && ['review', 'workbench', 'area-power'].includes(current.current.page) && session.can_read_business !== true) discard = true
+          if (ready && ['versions', 'review', 'workbench', 'area-power'].includes(current.current.page) && session.can_read_business !== true) discard = true
           if (next.page === 'workbench' && ready) {
             const value = await auth.request<WorkspaceSession>('/api/workbench/session', undefined, false, controller.signal)
             if (value.environment !== 'PRODUCTION_SSO' || value.user.id !== session.user_id) throw new Error('현재 계정을 다시 확인해 주세요.')
@@ -124,7 +125,7 @@ export default function DashboardNavigation({ demo = false, demoToolbar, demoAcc
       current.current = next
       setError('')
       setState(previous => ({ route: next, visited: discard ? [next.page] : Array.from(new Set([...previous.visited, next.page])), epoch: previous.epoch + (discard ? 1 : 0), initialWorkspace: initialWorkspace ?? (discard ? undefined : previous.initialWorkspace) }))
-      document.title = `${demo ? '합성 데모 · ' : ''}${next.page === 'home' ? '홈 · 프로젝트' : next.page === 'area-power' ? '프로젝트 비교' : next.page === 'admin' ? '서비스 · 권한 관리' : next.page === 'workbench' ? '로그 워크스페이스' : next.page === 'welcome' ? '내 계정 · 권한' : '수신 로그 대장'} | Design Atlas`
+      document.title = `${demo ? '합성 데모 · ' : ''}${next.page === 'home' ? '홈 · 프로젝트' : next.page === 'versions' ? '버전 · 자료 현황' : next.page === 'area-power' ? '프로젝트 비교' : next.page === 'admin' ? '서비스 · 권한 관리' : next.page === 'workbench' ? '로그 워크스페이스' : next.page === 'welcome' ? '내 계정 · 권한' : '수신 로그 대장'} | Design Atlas`
     } catch (cause) {
       if (!controller.signal.aborted) throw cause
     } finally {
@@ -161,7 +162,7 @@ export default function DashboardNavigation({ demo = false, demoToolbar, demoAcc
   return <DashboardAuthContext value={auth}><DashboardNavigationContext value={navigate}><DashboardSidebarContext value={sidebar}>
     <AtlasProvider demo={demo} routeSearch={new URL(state.route.href, location.origin).search} replaceRoute={replaceRoute}><AtlasShell demoToolbar={demoToolbar}>
       {state.visited.map(page => <Activity key={`${state.epoch}:${page}`} mode={state.route.page === page ? 'visible' : 'hidden'}>
-        <DashboardSurface page={page} positions={positions}>{page === 'home' ? <AtlasHome /> : page === 'workbench' ? auth.session?.auth_method === 'local_token' ? <main className="atlas-home"><h1>회사 SSO 전용 로그 워크스페이스</h1><p>현재는 실제 로컬 모드입니다. 회사 계정·권한이 필요한 검토 워크스페이스를 사용할 수 없습니다. 실제 수신 보고서는 수신 로그 대장에서 확인하세요.</p><button className="atlas-button" onClick={() => { const url = new URL(location.href); url.searchParams.set('page', 'review'); void navigate(url.pathname + url.search).catch(cause => setError(String(cause))) }}>수신 로그 대장 열기</button></main> : <Workspace routeSearch={workbenchSearch.current} initialSession={state.initialWorkspace} /> : page === 'area-power' ? <AreaPower /> : demo && (page === 'welcome' || page === 'admin') ? demoAccount : <AtlasRouteSurface page={page} />}</DashboardSurface>
+        <DashboardSurface page={page} positions={positions}>{page === 'home' ? <AtlasHome /> : page === 'versions' ? <VersionInventoryPage /> : page === 'workbench' ? auth.session?.auth_method === 'local_token' ? <main className="atlas-home"><h1>회사 SSO 전용 로그 워크스페이스</h1><p>현재는 실제 로컬 모드입니다. 회사 계정·권한이 필요한 검토 워크스페이스를 사용할 수 없습니다. 실제 수신 보고서는 수신 로그 대장에서 확인하세요.</p><button className="atlas-button" onClick={() => { const url = new URL(location.href); url.searchParams.set('page', 'review'); void navigate(url.pathname + url.search).catch(cause => setError(String(cause))) }}>수신 로그 대장 열기</button></main> : <Workspace routeSearch={workbenchSearch.current} initialSession={state.initialWorkspace} /> : page === 'area-power' ? <AreaPower /> : demo && (page === 'welcome' || page === 'admin') ? demoAccount : <AtlasRouteSurface page={page} />}</DashboardSurface>
       </Activity>)}
     </AtlasShell></AtlasProvider>
     {error && <p className="dashboard-navigation-error" role="alert">{error}<button type="button" onClick={() => setError('')}>닫기</button></p>}
