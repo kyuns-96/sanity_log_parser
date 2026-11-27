@@ -23,6 +23,12 @@ import sys
 from typing import Any, BinaryIO, Iterable
 import zlib
 
+from .classifier import (
+    DefaultMacroClassifier,
+    FloorplanMacroClassifier,
+    MacroClassification,
+    sanitize_macro_attributes,
+)
 from .models import (
     BistGroupSummary,
     FloorplanScene,
@@ -39,12 +45,6 @@ CHUNK_BYTES = 16 * 1024 * 1024  # 16 MiB streaming chunks
 COMP_BLOCK_BYTES = 8 * 1024 * 1024  # 8 MiB semicolon-aligned component blocks
 PARALLEL_DEF_MIN_BYTES = 32 * 1024 * 1024  # Use fork workers for >= 32 MiB uncompressed DEF
 
-_SRAM_RE = re.compile(r"(?:sram|rf_|regfile|rom_|ram_|mem_|spsram|dpsram|2prf|1prf|tcam|cam_)", re.IGNORECASE)
-_HARD_IP_RE = re.compile(r"(?:pll|phy|serdes|pcie|usb|mipi|ddr|adc|dac|ldo|bandgap|efuse|otp|tsensor|osc|analog|pmu_ip)", re.IGNORECASE)
-_STD_EXCLUDE_RE = re.compile(r"(?:^(?:fill|decap|welltap|tap_|endcap|bound|tie|ant_|spare)|_(?:fill|decap|tap|endcap)\b)", re.IGNORECASE)
-
-_SRAM_B_RE = re.compile(rb"(?:sram|rf_|regfile|rom_|ram_|mem_|spsram|dpsram|2prf|1prf|tcam|cam_)", re.IGNORECASE)
-_HARD_IP_B_RE = re.compile(rb"(?:pll|phy|serdes|pcie|usb|mipi|ddr|adc|dac|ldo|bandgap|efuse|otp|tsensor|osc|analog|pmu_ip)", re.IGNORECASE)
 _COMMENT_B_RE = re.compile(rb"#[^\n]*")
 _HALO_B_RE = re.compile(rb"\+\s*HALO(?:\s+SOFT)?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)", re.IGNORECASE)
 _PT_B_RE = re.compile(rb"\(\s*([+-]?\d+|\*)\s+([+-]?\d+|\*)\s*\)")
@@ -187,32 +187,6 @@ def _expand_def_points_b(raw_pts: list[tuple[bytes, bytes]], dbu: float) -> list
     return pts
 
 
-def _classify_master_only(master: str, lef_info: dict[str, Any] | None, scope_kind: str) -> str | None:
-    if _STD_EXCLUDE_RE.search(master):
-        return None
-    if _SRAM_RE.search(master):
-        return "sram"
-    if not lef_info:
-        if _HARD_IP_RE.search(master):
-            return "ip"
-        return None
-    mclass = lef_info.get("class", "CORE")
-    msub = lef_info.get("subclass", "")
-    w = float(lef_info.get("width") or 0.0)
-    h = float(lef_info.get("height") or 0.0)
-    if mclass in ("ENDCAP", "SPACER") or msub in ("SPACER", "WELLTAP", "TIEHIGH", "TIELOW", "ANTENNACELL", "BUMP"):
-        return None
-    if mclass in ("BLOCK", "RING", "COVER", "PAD"):
-        if scope_kind == "top" and mclass == "BLOCK" and msub != "RING" and not _HARD_IP_RE.search(master):
-            return "subblock"
-        if _HARD_IP_RE.search(master) or mclass in ("RING", "COVER", "PAD"):
-            return "ip"
-        return "macro"
-    if min(w, h) >= 5.0 and (w * h) >= 25.0:
-        return "ip" if _HARD_IP_RE.search(master) else "macro"
-    return None
-
-
 def _pin_side(x: float, y: float, die_bbox: tuple[float, float, float, float]) -> str:
     x0, y0, x1, y1 = die_bbox
     dists = [("L", abs(x - x0)), ("R", abs(x1 - x)), ("B", abs(y - y0)), ("T", abs(y1 - y))]
@@ -249,31 +223,62 @@ class _FastModAcc:
                 t_self[idx] += v
 
 
+def _classify_master_with_fallback(
+    master: str,
+    lef_info: dict[str, Any] | None,
+    *,
+    scope_kind: str,
+    classifier: FloorplanMacroClassifier | None,
+    default_classifier: DefaultMacroClassifier,
+) -> MacroClassification:
+    if classifier is not None:
+        res = classifier.classify_master(master, lef_info, scope_kind=scope_kind)
+        if res is not None:
+            return res
+    return default_classifier.classify_master(master, lef_info, scope_kind=scope_kind)
+
+
 def _build_master_seed(
     lef_macros: dict[str, dict[str, Any]],
     scope_kind: str,
-) -> tuple[dict[bytes, float | tuple[str, float, float]], set[bytes]]:
-    """Pre-classify all LEF masters once into bytes -> float (stdcell area) or (kind, w, h) (hard macro)."""
-    seed: dict[bytes, float | tuple[str, float, float]] = {}
-    known_lef_b: set[bytes] = set()
+    classifier: FloorplanMacroClassifier | None,
+    default_classifier: DefaultMacroClassifier,
+) -> dict[bytes, float | MacroClassification]:
+    """Pre-classify all LEF masters once into bytes -> float (stdcell area) or MacroClassification (Hard Macro)."""
+    seed: dict[bytes, float | MacroClassification] = {}
     for master, info in lef_macros.items():
         mb = master.encode("utf-8")
-        known_lef_b.add(mb)
-        mkind = _classify_master_only(master, info, scope_kind)
+        res = _classify_master_with_fallback(
+            master, info, scope_kind=scope_kind, classifier=classifier, default_classifier=default_classifier
+        )
         w = float(info.get("width") or 0.5)
         h = float(info.get("height") or 0.5)
-        if mkind is not None:
-            seed[mb] = (mkind, w, h)
+        if res.is_hard_macro:
+            if res.width_um is None or res.height_um is None:
+                res = MacroClassification(
+                    is_hard_macro=True,
+                    kind=res.kind,
+                    width_um=res.width_um or w,
+                    height_um=res.height_um or h,
+                    bist_group=res.bist_group,
+                    bist_controller=res.bist_controller,
+                    attributes=res.attributes,
+                )
+            seed[mb] = res
         else:
             seed[mb] = w * h
-    return seed, known_lef_b
+    return seed
 
 
 def _process_components_block(
     block: bytes,
     *,
-    master_cache: dict[bytes, float | tuple[str, float, float]],
-    known_lef_b: set[bytes],
+    master_cache: dict[bytes, float | MacroClassification],
+    classifier: FloorplanMacroClassifier | None,
+    default_classifier: DefaultMacroClassifier,
+    scope_kind: str,
+    exact_macro_b_set: set[bytes],
+    has_exact_macros: bool,
     bist_b_lookup: dict[bytes, tuple[str, str | None]],
     has_bist: bool,
     dbu: float,
@@ -289,7 +294,11 @@ def _process_components_block(
     density_out: list[float],
     mod_accs: dict[bytes, _FastModAcc],
 ) -> tuple[int, float]:
-    """Ultra-fast zero-regex bytes parser for a semicolon-aligned COMPONENTS block."""
+    """Ultra-fast zero-regex bytes parser for a semicolon-aligned COMPONENTS block.
+
+    NEVER runs regexes against `inst_name` hierarchy paths (avoids false positives on std cells inside
+    e.g. `u_sram_ctrl/...`). Macro promotion uses ONLY `master` / LEF / corporate classifier / exact instance sets.
+    """
     if b"#" in block:
         block = _COMMENT_B_RE.sub(b"", block)
 
@@ -308,25 +317,27 @@ def _process_components_block(
 
         info = master_cache.get(master_b)
         if info is None:
-            if _SRAM_B_RE.search(master_b):
-                info = ("sram", 40.0, 40.0)
-            elif _HARD_IP_B_RE.search(master_b):
-                info = ("ip", 40.0, 40.0)
-            else:
-                info = 0.25  # 0.5 * 0.5 default std-cell area when stdcell LEF omitted
+            master_str_init = master_b.decode("utf-8", "replace")
+            res = _classify_master_with_fallback(
+                master_str_init, None, scope_kind=scope_kind, classifier=classifier, default_classifier=default_classifier
+            )
+            info = res if res.is_hard_macro else 0.25
             master_cache[master_b] = info
 
-        # Check if instance-level BIST map or instance-name macro hint overrides an unknown/std master
+        # Optional exact instance promotion (O(1) bytes lookup ONLY when corporate set or BIST map is non-empty)
         bist_entry = None
         if has_bist:
             bist_entry = bist_b_lookup.get(raw_inst_b)
             if bist_entry is None and b"\\" in raw_inst_b:
                 bist_entry = bist_b_lookup.get(raw_inst_b.replace(b"\\", b""))
 
-        is_macro = isinstance(info, tuple) or (bist_entry is not None)
-        if not is_macro and master_b not in known_lef_b and b"FIXED" in rest_b:
-            if _SRAM_B_RE.search(raw_inst_b) or _HARD_IP_B_RE.search(raw_inst_b):
-                is_macro = True
+        exact_hit = False
+        if has_exact_macros:
+            exact_hit = raw_inst_b in exact_macro_b_set
+            if not exact_hit and b"\\" in raw_inst_b:
+                exact_hit = raw_inst_b.replace(b"\\", b"") in exact_macro_b_set
+
+        is_macro = isinstance(info, MacroClassification) or (bist_entry is not None) or exact_hit
 
         # Fast coordinate extraction
         kw = rest_b.find(b"PLACED")
@@ -412,16 +423,37 @@ def _process_components_block(
         orient: Orient = _VALID_ORIENTS_B.get(orient_b, "N")
         inst_str = raw_inst_b.replace(b"\\", b"").decode("utf-8", "replace")
         master_str = master_b.decode("utf-8", "replace")
+        llx_um = round(ix / dbu, 4)
+        lly_um = round(iy / dbu, 4)
 
-        if isinstance(info, tuple):
-            mkind, w, h = info
-            if bist_entry is not None or _SRAM_B_RE.search(raw_inst_b):
-                mkind = "sram"
-            elif mkind == "macro" and _HARD_IP_B_RE.search(raw_inst_b):
-                mkind = "ip"
+        if isinstance(info, MacroClassification):
+            base_cls = info
         else:
-            mkind = "sram" if (bist_entry is not None or _SRAM_B_RE.search(raw_inst_b)) else "ip"
-            w, h = 40.0, 40.0
+            base_cls = MacroClassification(
+                is_hard_macro=True,
+                kind="sram" if bist_entry is not None else "macro",
+            )
+
+        final_cls: MacroClassification | None = base_cls
+        if classifier is not None:
+            final_cls = classifier.enrich_macro_instance(
+                inst_str,
+                master_str,
+                base_cls,
+                status=status_str,
+                llx=llx_um,
+                lly=lly_um,
+                orient=orient,
+            )
+            if final_cls is None or not final_cls.is_hard_macro:
+                continue
+
+        mkind = "sram" if bist_entry is not None else final_cls.kind
+        w = float(final_cls.width_um or 40.0)
+        h = float(final_cls.height_um or 40.0)
+        bist_grp = (bist_entry[0] if bist_entry else None) or final_cls.bist_group
+        bist_ctrl = (bist_entry[1] if bist_entry else None) or final_cls.bist_controller
+        attrs = sanitize_macro_attributes(final_cls.attributes)
 
         halo = (0.0, 0.0, 0.0, 0.0)
         if b"HALO" in rest_b or b"halo" in rest_b:
@@ -441,16 +473,17 @@ def _process_components_block(
                 inst_name=inst_str,
                 master=master_str,
                 kind=mkind,  # type: ignore[arg-type]
-                llx=round(ix / dbu, 4),
-                lly=round(iy / dbu, 4),
+                llx=llx_um,
+                lly=lly_um,
                 width=round(w, 4),
                 height=round(h, 4),
                 orient=orient,
                 status="FIXED" if status_str == "FIXED" else "PLACED",
                 halo_um=halo,
-                bist_group=bist_entry[0] if bist_entry else None,
-                bist_controller=bist_entry[1] if bist_entry else None,
+                bist_group=bist_grp,
+                bist_controller=bist_ctrl,
                 hier_prefix=hier_pref,
+                attributes=attrs,
             )
         )
 
@@ -467,7 +500,11 @@ def _fork_parse_range(args: tuple[int, int]) -> tuple[list[MacroBox], list[float
     def_path: Path = ctx["def_path"]
     grid_size: int = ctx["grid_size"]
     master_cache = dict(ctx["master_seed"])
-    known_lef_b: set[bytes] = ctx["known_lef_b"]
+    classifier: FloorplanMacroClassifier | None = ctx["classifier"]
+    default_classifier: DefaultMacroClassifier = ctx["default_classifier"]
+    scope_kind: str = ctx["scope_kind"]
+    exact_macro_b_set: set[bytes] = ctx["exact_macro_b_set"]
+    has_exact_macros: bool = ctx["has_exact_macros"]
     bist_b_lookup: dict[bytes, tuple[str, str | None]] = ctx["bist_b_lookup"]
     has_bist: bool = ctx["has_bist"]
     dbu: float = ctx["dbu"]
@@ -505,7 +542,11 @@ def _fork_parse_range(args: tuple[int, int]) -> tuple[list[MacroBox], list[float
             c, a = _process_components_block(
                 block,
                 master_cache=master_cache,
-                known_lef_b=known_lef_b,
+                classifier=classifier,
+                default_classifier=default_classifier,
+                scope_kind=scope_kind,
+                exact_macro_b_set=exact_macro_b_set,
+                has_exact_macros=has_exact_macros,
                 bist_b_lookup=bist_b_lookup,
                 has_bist=has_bist,
                 dbu=dbu,
@@ -528,7 +569,11 @@ def _fork_parse_range(args: tuple[int, int]) -> tuple[list[MacroBox], list[float
         c, a = _process_components_block(
             rem,
             master_cache=master_cache,
-            known_lef_b=known_lef_b,
+            classifier=classifier,
+            default_classifier=default_classifier,
+            scope_kind=scope_kind,
+            exact_macro_b_set=exact_macro_b_set,
+            has_exact_macros=has_exact_macros,
             bist_b_lookup=bist_b_lookup,
             has_bist=has_bist,
             dbu=dbu,
@@ -696,11 +741,12 @@ def parse_def_to_scene(
     prev_fp_ver: str | None = None,
     scope_kind: str = "subblock",
     bist_map: dict[str, dict[str, str | None] | str] | None = None,
+    macro_classifier: FloorplanMacroClassifier | None = None,
     hierarchy_separator: str = "/",
     grid_size: int = 64,
     workers: int | None = None,
 ) -> FloorplanScene:
-    """High-speed DEF(.gz) + LEF extractor using C byte-chunk skipping and multi-core fork workers."""
+    """High-speed DEF(.gz) + LEF extractor using C byte-chunk skipping, FloorplanMacroClassifier, and fork workers."""
     bist_b_lookup: dict[bytes, tuple[str, str | None]] = {}
     for k, v in (bist_map or {}).items():
         clean_b = k.strip().replace("\\", "").encode("utf-8")
@@ -712,8 +758,16 @@ def parse_def_to_scene(
                 str(v["controller"]).strip() if v.get("controller") else None,
             )
     has_bist = bool(bist_b_lookup)
+    default_classifier = DefaultMacroClassifier()
+    exact_macro_b_set: set[bytes] = set()
+    if macro_classifier is not None:
+        for raw_inst in macro_classifier.exact_hard_macro_instances() or ():
+            clean_inst = str(raw_inst).strip().replace("\\", "")
+            if clean_inst:
+                exact_macro_b_set.add(clean_inst.encode("utf-8"))
+    has_exact_macros = bool(exact_macro_b_set)
     sep_b = hierarchy_separator.encode("ascii")
-    master_seed, known_lef_b = _build_master_seed(lef_macros, scope_kind)
+    master_seed = _build_master_seed(lef_macros, scope_kind, macro_classifier, default_classifier)
     master_cache = dict(master_seed)
 
     design_name = def_path.stem.removesuffix(".def")
@@ -846,7 +900,11 @@ def parse_def_to_scene(
                         c, a = _process_components_block(
                             work[: last_semi + 1],
                             master_cache=master_cache,
-                            known_lef_b=known_lef_b,
+                            classifier=macro_classifier,
+                            default_classifier=default_classifier,
+                            scope_kind=scope_kind,
+                            exact_macro_b_set=exact_macro_b_set,
+                            has_exact_macros=has_exact_macros,
                             bist_b_lookup=bist_b_lookup,
                             has_bist=has_bist,
                             dbu=dbu,
@@ -877,7 +935,11 @@ def parse_def_to_scene(
                     c, a = _process_components_block(
                         work,
                         master_cache=master_cache,
-                        known_lef_b=known_lef_b,
+                        classifier=macro_classifier,
+                        default_classifier=default_classifier,
+                        scope_kind=scope_kind,
+                        exact_macro_b_set=exact_macro_b_set,
+                        has_exact_macros=has_exact_macros,
                         bist_b_lookup=bist_b_lookup,
                         has_bist=has_bist,
                         dbu=dbu,
@@ -1008,7 +1070,11 @@ def parse_def_to_scene(
             def_path=def_path,
             grid_size=grid_size,
             master_seed=master_seed,
-            known_lef_b=known_lef_b,
+            classifier=macro_classifier,
+            default_classifier=default_classifier,
+            scope_kind=scope_kind,
+            exact_macro_b_set=exact_macro_b_set,
+            has_exact_macros=has_exact_macros,
             bist_b_lookup=bist_b_lookup,
             has_bist=has_bist,
             dbu=dbu,

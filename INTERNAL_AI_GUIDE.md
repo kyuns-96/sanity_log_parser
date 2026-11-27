@@ -70,8 +70,8 @@ OA는 사람의 검토·제어와 함께 **사례 검색·사내 OA AI 호출·�
 | `oa/integration/company_confluence/` — 사내 Confluence 구현 위치 | 승인된 사내 Confluence REST(`POST` 전용)·CA/TLS wrapper 구현 | DB 직접 쓰기, 공용 계정 PAT 공유/대체, 원문/비밀 하드코딩, 새 테스트/fixture/mock/검증 스크립트 파일 추가 |
 | `oa/requirements.txt` — 3.1절의 승인된 SSO 의존성만 | OA 담당이 `signxml==5.2.0`, `lxml==6.1.3`, `cryptography==50.0.2`를 없을 때 추가 | 다른 의존성 추가·삭제·버전 변경, 루트/VWP/VWP-bridge 의존성·lockfile·Docker 수정 |
 | `vwp/integration/corporate_plan.py` | `CorporatePlanProvider.get_plan` 본문, 필요한 import, 승인된 실행/예상 목록 조회 client 주입용 생성자 | 추상 서명/plan schema 변경, 목록 승인 자동 부여, report/설계 변경·sanity 실행·DB 쓰기·공통 CLI 수정 |
-| `vwp/integration/corporate_floorplan.py` | `extract_bist_groups` 본문·필요 import에서 로컬 BIST 그룹 매핑(`inst_path -> bist_group/controller`) 반환 | 서명 변경, 원본 DEF/LEF/GDS를 네트워크·bridge·OA·DB로 전송, 설계 파일 수정, 공통 `common/floorplan/`·`vwp/floorplan/` 수정 |
-| `vwp/integration/company_floorplan/` — 사내 BIST 매핑 구현 위치 | 로컬 BIST spec/report 읽기 helper wrapper | DB/네트워크 접근, 원본 DEF/LEF 반출, 새 테스트/fixture/mock/검증 스크립트 파일 추가 |
+| `vwp/integration/corporate_floorplan.py` | `create_macro_classifier` (`FloorplanMacroClassifier` 반환) 및 `extract_bist_groups` 본문·필요 import 구현 | 서명/추상 계약 변경, 원본 DEF/LEF/GDS/넷리스트 외부 전송, 설계 파일 수정, 공통 `common/floorplan/`·`vwp/floorplan/` 수정 |
+| `vwp/integration/company_floorplan/` — 사내 Hard Macro 분류·속성·BIST 구현 위치 | `FloorplanMacroClassifier` 하위 클래스, 로컬 마스터/인스턴스 속성·BIST spec/report 읽기 helper wrapper | DB/네트워크 접근, 원본 DEF/LEF/민감 원문 반출, 새 테스트/fixture/mock/검증 스크립트 파일 추가 |
 | `vwp/integration/corporate_submission.py` | `CorporateSubmissionInput.prepare`, `CorporateSubmissionAuthority.current/inbox_owner/authorize/approval_valid` 본문, 필요한 import·승인 SDK 주입 생성자, `create_submission_adapters`의 명시적 주입 | 서명/모델·V2 schema 변경, 파일/DB 쓰기·실행, 자동 승인, 사용자명만으로 인증, CLI/상태/권한 우회 |
 | `vwp/integration/company_plan/` — 신규 작업용 위치 | schema 1/V2 입력·원천/제출 신원/담당·승인 SDK wrapper, 기존 plan 작성·VWP 내부 byte 동일 export/collector 호출용 별도 launcher·전용 합성/모의 테스트 | 파일 목록으로 예상 unit 누락 은폐·자동 승인, 새 전송/DB 계약·worker 연결, 원본 report/설계 파일 변경 |
 | `vwp_bridge/integration/corporate_parsers.py` | `CorporateReportParser.parse` 본문, 필요한 import, `create_parser_registry`의 명시적 회사 파서 등록 | 메서드/함수 서명·반환 계약 변경, 자동 import/발견, 내장 파서 교체, 공통 판정 우회 |
@@ -234,7 +234,7 @@ STALE로 처리하며 토큰을 다른 연결/사용자로 대체하지 않는�
 
 사용자 요청으로 Floorplan 리뷰(`/?page=floorplan`)의 로컬 DEF/LEF 추출·검토·메모리 배치·Confluence 게시 공통 코드를 제공한다. **원본 DEF/LEF/GDS/OAS 파일은 어떤 경우에도 VWP-bridge·OA·PostgreSQL로 업로드하지 않으며**, VWP 로컬(`python -m vwp.floorplan`)에서 정제된 벡터 SVG·`FloorplanScene` JSON으로 변환해 수집한다.
 
-- **VWP 담당:** [Floorplan 연동 계약](vwp/FLOORPLAN_INTEGRATION.md)에 따라 `vwp/integration/corporate_floorplan.py:extract_bist_groups`와 필요 시 `vwp/integration/company_floorplan/`에 사내 instance별 Memory BIST 그룹 매핑 추출기만 구현한다.
+- **VWP 담당:** [Floorplan 연동 계약](vwp/FLOORPLAN_INTEGRATION.md)에 따라 `vwp/integration/corporate_floorplan.py`의 `create_macro_classifier`(`common/floorplan/classifier.py:FloorplanMacroClassifier` 추상 계약 구현) 및 `extract_bist_groups`와 `vwp/integration/company_floorplan/`에 사내 전용 Hard Macro 분류, 로컬 instance 속성 보강, Memory BIST 그룹 매핑만 구현한다. `attributes`에는 비민감 검토 속성만 스칼라 값으로 담으며 원본 DEF/LEF/넷리스트를 반출하지 않는다.
 - **OA 담당:** [Confluence 연동 계약](oa/CONFLUENCE_INTEGRATION.md)에 따라 사내 Confluence 토큰의 **쓰기(`POST`) 전용 제약(`GET`/`PUT`/`DELETE` 금지)**을 준수해 `oa/integration/corporate_confluence.py:create_confluence_publisher`와 필요 시 `oa/integration/company_confluence/`만 구현한다. 사용자별 업로드 한도 분산을 위해 개인 PAT(`req.personal_pat`)만 사용하며 로그에 토큰을 남기지 않는다.
 - 공통 `common/floorplan/`, `vwp/floorplan/`, `vwp_bridge/area_power/floorplan_ingest.py`, `oa/floorplan/`, `oa/confluence_pat_store.py`, UI·SQL·기존 테스트는 읽기 전용이며 새 테스트/fixture/mock/검증 스크립트 파일을 추가하지 않는다.
 

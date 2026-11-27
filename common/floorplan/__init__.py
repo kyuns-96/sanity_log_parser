@@ -1,4 +1,5 @@
 """Shared Floorplan Review domain package (VWP extraction, SVG/PNG rendering, Tcl & Confluence)."""
+from .classifier import DefaultMacroClassifier, FloorplanMacroClassifier, MacroClassification, sanitize_macro_attributes
 from .confluence import (
     ConfluenceAttachment,
     ConfluenceCreateRequest,
@@ -34,10 +35,12 @@ from .tcl_export import check_placement_collisions, export_delta_csv, export_icc
 __all__ = [
     "BIST_PALETTE", "BistGroupSummary", "ConfluenceAttachment", "ConfluenceCreateRequest",
     "ConfluenceNotConfigured", "ConfluencePublishError", "ConfluencePublisher", "ConfluenceReceipt",
-    "DEF_TO_ICC2_ORIENT", "DatapathFlow", "FloorplanScene", "MacroBox", "MacroOverride",
+    "DEF_TO_ICC2_ORIENT", "DatapathFlow", "DefaultMacroClassifier", "FloorplanMacroClassifier",
+    "FloorplanScene", "MacroBox", "MacroClassification", "MacroOverride",
     "ModuleRegionSummary", "Orient", "PinMarker", "RegionBox", "ReviewPin", "VALID_ORIENTS",
-    "apply_overrides", "build_confluence_storage_xhtml", "build_standalone_review_html",
+    "apply_bist_map_to_scene", "apply_overrides", "build_confluence_storage_xhtml", "build_standalone_review_html",
     "check_placement_collisions", "export_delta_csv", "export_icc2_tcl", "export_innovus_tcl",
-    "oriented_size", "parse_confluence_parent_config", "parse_def_to_scene", "parse_lef_macros",
-    "pin1_corner_offset", "reject_raw_def_or_lef", "render_scene_png", "render_scene_svg",
+    "is_macro_modified", "oriented_size", "parse_confluence_parent_config", "parse_def_to_scene",
+    "parse_lef_macros", "pin1_corner_offset", "reject_raw_def_or_lef", "render_scene_png",
+    "render_scene_svg", "sanitize_macro_attributes",
 ]

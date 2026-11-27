@@ -25,6 +25,7 @@ export interface MacroBox {
   bist_group?: string | null
   bist_controller?: string | null
   hier_prefix?: string
+  attributes?: Record<string, string | number | boolean>
 }
 
 export interface PinMarker {

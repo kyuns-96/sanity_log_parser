@@ -99,6 +99,7 @@ class MacroBox(BaseModel):
     bist_group: str | None = None
     bist_controller: str | None = None
     hier_prefix: str = ""
+    attributes: dict[str, Any] = Field(default_factory=dict)
 
     def bbox(self) -> tuple[float, float, float, float]:
         ow, oh = oriented_size(self.width, self.height, self.orient)

@@ -23,7 +23,11 @@ from common.floorplan import (
     reject_raw_def_or_lef,
     render_scene_svg,
 )
-from vwp.integration.corporate_floorplan import extract_bist_groups
+from vwp.integration.corporate_floorplan import (
+    CorporateClassifierNotConfigured,
+    create_macro_classifier,
+    extract_bist_groups,
+)
 
 
 def _load_bist_map_file(path: Path) -> dict[str, dict[str, str | None] | str]:
@@ -60,6 +64,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lef", dest="lef_paths", nargs="*", type=Path, default=[], help="Local LEF or .lef.gz paths for macro sizes (parsed locally, NEVER uploaded)")
     p.add_argument("--bist-map", dest="bist_map", type=Path, help="Optional JSON or CSV mapping SRAM instances to BIST groups")
     p.add_argument("--use-corporate-bist", action="store_true", help="Invoke vwp.integration.corporate_floorplan.extract_bist_groups")
+    p.add_argument("--use-corporate-classifier", action="store_true", help="Require vwp.integration.corporate_floorplan.create_macro_classifier()")
     p.add_argument("--extra-image", dest="extra_images", action="append", default=[], metavar="KIND:VIEW:PATH",
                    help="Optional auxiliary PNG/WebP/JPEG screenshot (e.g. congestion:routing_cong:./cong.png)")
     p.add_argument("--dry-run-svg", dest="dry_run_svg", type=Path, help="Write extracted SVG locally and exit without HTTP upload")
@@ -87,6 +92,20 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"LEF file not found: {lp}", file=sys.stderr)
                 return 2
         lef_macros = parse_lef_macros(args.lef_paths)
+        classifier = create_macro_classifier()
+        if args.use_corporate_classifier and classifier is None:
+            raise CorporateClassifierNotConfigured(
+                "Corporate macro classifier is not configured yet. Implement vwp/integration/corporate_floorplan.py:create_macro_classifier()."
+            )
+        if classifier is not None:
+            classifier.prepare(
+                work_dir=args.def_path.resolve().parent,
+                project=args.project.strip(),
+                block=args.block.strip(),
+                fp_ver=args.fp_ver.strip(),
+                scope_kind=args.scope_kind,
+                lef_macros=lef_macros,
+            )
         bist_map: dict[str, Any] = {}
         if args.bist_map:
             bist_map.update(_load_bist_map_file(args.bist_map))
@@ -97,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
             prev_fp_ver=args.prev_fp_ver.strip() if args.prev_fp_ver else None,
             scope_kind=args.scope_kind,
             bist_map=bist_map,
+            macro_classifier=classifier,
             workers=args.workers,
         )
         if args.use_corporate_bist:

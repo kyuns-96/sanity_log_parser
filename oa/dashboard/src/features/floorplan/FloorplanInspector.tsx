@@ -254,6 +254,13 @@ export function FloorplanInspector({
                 Master: <code>{selectedMacro.master}</code> · 크기 <code>{orientedSize(selectedMacro.width, selectedMacro.height, selectedMacro.orient).join(' × ')} µm</code>
                 {selectedMacro.bist_group && <> · BIST <strong>{selectedMacro.bist_group}</strong></>}
               </small>
+              {selectedMacro.attributes && Object.keys(selectedMacro.attributes).length > 0 && (
+                <div className="fp-layer-chips">
+                  {Object.entries(selectedMacro.attributes).map(([k, v]) => (
+                    <Badge key={k} variant="outline">{k}: {String(v)}</Badge>
+                  ))}
+                </div>
+              )}
 
               {canWrite ? (
                 <div className="fp-macro-editor">
