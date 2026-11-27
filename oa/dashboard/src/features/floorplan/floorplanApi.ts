@@ -527,6 +527,59 @@ function buildDemoScene(isTop: boolean, blockName: string, fpVer: string): Floor
   }
 }
 
+function toNum(v: unknown, fallback = 0): number {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : fallback
+}
+
+function normalizeScene(raw: FloorplanScene | null | undefined): FloorplanScene | null {
+  if (!raw) return null
+  const db = Array.isArray(raw.die_bbox) && raw.die_bbox.length >= 4
+    ? [toNum(raw.die_bbox[0]), toNum(raw.die_bbox[1]), toNum(raw.die_bbox[2]), toNum(raw.die_bbox[3])] as [number, number, number, number]
+    : [0, 0, 1000, 1000] as [number, number, number, number]
+  return {
+    ...raw,
+    schema_version: toNum(raw.schema_version, 1),
+    die_bbox: db,
+    die_polygon: (raw.die_polygon || []).map(pt => [toNum(pt[0]), toNum(pt[1])] as [number, number]),
+    macros: (raw.macros || []).map(m => {
+      const h = Array.isArray(m.halo_um) && m.halo_um.length >= 4 ? m.halo_um : [0, 0, 0, 0]
+      return {
+        ...m,
+        llx: toNum(m.llx),
+        lly: toNum(m.lly),
+        width: toNum(m.width, 40),
+        height: toNum(m.height, 40),
+        halo_um: [toNum(h[0]), toNum(h[1]), toNum(h[2]), toNum(h[3])] as [number, number, number, number],
+      }
+    }),
+    pins: (raw.pins || []).map(p => ({ ...p, x: toNum(p.x), y: toNum(p.y) })),
+    regions: (raw.regions || []).map(r => ({
+      ...r,
+      points: (r.points || []).map(pt => [toNum(pt[0]), toNum(pt[1])] as [number, number]),
+    })),
+    density_grid_size: toNum(raw.density_grid_size, 64),
+    density_grid: (raw.density_grid || []).map(v => toNum(v)),
+    module_regions: (raw.module_regions || []).map(mr => ({
+      ...mr,
+      cell_count: toNum(mr.cell_count),
+      area_um2: toNum(mr.area_um2),
+      cx: toNum(mr.cx),
+      cy: toNum(mr.cy),
+      p10_x: toNum(mr.p10_x),
+      p10_y: toNum(mr.p10_y),
+      p90_x: toNum(mr.p90_x),
+      p90_y: toNum(mr.p90_y),
+    })),
+    bist_summary: (raw.bist_summary || []).map(b => ({
+      ...b,
+      member_count: toNum(b.member_count),
+      bbox_um: [toNum(b.bbox_um?.[0]), toNum(b.bbox_um?.[1]), toNum(b.bbox_um?.[2]), toNum(b.bbox_um?.[3])] as [number, number, number, number],
+      max_manhattan_span_um: toNum(b.max_manhattan_span_um),
+    })),
+  }
+}
+
 export async function floorplanRequest<T>(
   authRequest: <R>(path: string, body?: Record<string, unknown>, plain?: boolean | 'blob', signal?: AbortSignal) => Promise<R>,
   demo: boolean,
@@ -536,7 +589,35 @@ export async function floorplanRequest<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   if (!demo) {
-    return authRequest<T>(`/api/floorplan${path}`, body, false, signal)
+    const res = await authRequest<T>(`/api/floorplan${path}`, body, false, signal)
+    // Defensively coerce all numeric CAD coordinates so stringified numbers never concatenate in SVG math
+    if (res && typeof res === 'object' && 'scene' in (res as Record<string, unknown>)) {
+      const det = res as unknown as FloorplanVersionDetail
+      det.scene = normalizeScene(det.scene)
+      det.compare_scene = normalizeScene(det.compare_scene)
+      if (det.review) {
+        det.review.review_pins = (det.review.review_pins || []).map(p => ({ ...p, number: toNum(p.number, 1), x: toNum(p.x), y: toNum(p.y) }))
+        det.review.datapaths = (det.review.datapaths || []).map(dp => ({
+          ...dp,
+          waypoints: (dp.waypoints || []).map(wp => ({ ...wp, x: toNum(wp.x), y: toNum(wp.y) })),
+        }))
+      }
+      if (det.proposals) {
+        det.proposals = det.proposals.map(prop => ({
+          ...prop,
+          changed_count: toNum(prop.changed_count),
+          out_of_bounds_count: toNum(prop.out_of_bounds_count),
+          overlap_count: toNum(prop.overlap_count),
+          overrides: (prop.overrides || []).map(ov => ({
+            ...ov,
+            llx: toNum(ov.llx),
+            lly: toNum(ov.lly),
+            halo_um: ov.halo_um ? [toNum(ov.halo_um[0]), toNum(ov.halo_um[1]), toNum(ov.halo_um[2]), toNum(ov.halo_um[3])] : ov.halo_um,
+          })),
+        }))
+      }
+    }
+    return res
   }
 
   // Synthetic memory demo handler

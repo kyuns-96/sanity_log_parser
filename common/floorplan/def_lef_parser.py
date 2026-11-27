@@ -46,6 +46,7 @@ COMP_BLOCK_BYTES = 8 * 1024 * 1024  # 8 MiB semicolon-aligned component blocks
 PARALLEL_DEF_MIN_BYTES = 32 * 1024 * 1024  # Use fork workers for >= 32 MiB uncompressed DEF
 
 _COMMENT_B_RE = re.compile(rb"#[^\n]*")
+_COMP_PLACE_B_RE = re.compile(rb"\+\s*(FIXED|PLACED|COVER)\s*\(\s*([+-]?\d+)\s+([+-]?\d+)\s*\)\s*(\S+)", re.IGNORECASE)
 _HALO_B_RE = re.compile(rb"\+\s*HALO(?:\s+SOFT)?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)", re.IGNORECASE)
 _PT_B_RE = re.compile(rb"\(\s*([+-]?\d+|\*)\s+([+-]?\d+|\*)\s*\)")
 
@@ -395,34 +396,33 @@ def _process_components_block(
 
         is_macro = isinstance(info, MacroClassification) or (bist_entry is not None) or exact_hit
 
-        # Fast coordinate extraction
-        kw = rest_b.find(b"PLACED")
-        status_str = "PLACED"
-        if kw < 0:
-            kw = rest_b.find(b"FIXED")
-            if kw >= 0:
-                status_str = "FIXED"
-            else:
-                kw = rest_b.find(b"COVER")
-                if kw >= 0:
-                    status_str = "FIXED"
-                else:
-                    continue  # UNPLACED component
-
-        lp = rest_b.find(b"(", kw + 5)
-        if lp < 0:
-            continue
-        rp = rest_b.find(b")", lp + 1)
-        if rp < 0:
-            continue
-        xy = rest_b[lp + 1 : rp].split()
-        if len(xy) < 2:
-            continue
-        ix = int(xy[0])
-        iy = int(xy[1])
-
         if not is_macro:
             # === HOT PATH: 99.99% Standard Cell ===
+            kw = rest_b.find(b"+ PLACED")
+            if kw < 0:
+                kw = rest_b.find(b"+ FIXED")
+                if kw < 0:
+                    kw = rest_b.find(b"+ COVER")
+                    if kw < 0:
+                        pm_std = _COMP_PLACE_B_RE.search(rest_b)
+                        if pm_std is None:
+                            continue
+                        ix = int(pm_std.group(2))
+                        iy = int(pm_std.group(3))
+                        kw = -2
+            if kw >= 0:
+                lp = rest_b.find(b"(", kw + 7)
+                if lp < 0:
+                    continue
+                rp = rest_b.find(b")", lp + 1)
+                if rp < 0:
+                    continue
+                xy = rest_b[lp + 1 : rp].split()
+                if len(xy) < 2:
+                    continue
+                ix = int(xy[0])
+                iy = int(xy[1])
+
             c_area: float = info  # type: ignore[assignment]
             std_count += 1
             std_area += c_area
@@ -474,11 +474,17 @@ def _process_components_block(
         # === COLD PATH: Hard Macro (SRAM / IP / Custom Macro / Sub-block) ===
         if len(macros_out) >= 4000:
             continue
-        after_paren = rest_b[rp + 1 :].split(None, 1)
-        orient_b = after_paren[0] if after_paren else b"N"
+        pm = _COMP_PLACE_B_RE.search(rest_b)
+        if pm is None:
+            continue
+        status_raw = pm.group(1).upper()
+        status_str = "FIXED" if status_raw in (b"FIXED", b"COVER") else "PLACED"
+        ix = int(pm.group(2))
+        iy = int(pm.group(3))
+        orient_b = pm.group(4).upper()
         orient: Orient = _VALID_ORIENTS_B.get(orient_b, "N")
         inst_str = raw_inst_b.replace(b"\\", b"").decode("utf-8", "replace")
-        master_str = master_b.decode("utf-8", "replace")
+        master_str = master_b.replace(b"\\", b"").decode("utf-8", "replace")
         llx_um = round(ix / dbu, 4)
         lly_um = round(iy / dbu, 4)
 
@@ -831,6 +837,7 @@ def parse_def_to_scene(
 
     design_name = def_path.stem.removesuffix(".def")
     dbu = 1000.0
+    raw_die_pts: list[tuple[bytes, bytes]] = []
     die_polygon: list[tuple[float, float]] = []
     die_bbox: tuple[float, float, float, float] = (0.0, 0.0, 1000.0, 1000.0)
     macros: list[MacroBox] = []
@@ -918,8 +925,16 @@ def parse_def_to_scene(
                     um = re.search(rb"MICRONS\s+(\d+)", stmt_b, re.IGNORECASE)
                     if um:
                         dbu = float(int(um.group(1)))
+                        if raw_die_pts:
+                            pts = _expand_def_points_b(raw_die_pts, dbu)
+                            if len(pts) >= 3:
+                                die_polygon = pts
+                                xs = [p[0] for p in pts]
+                                ys = [p[1] for p in pts]
+                                die_bbox = (min(xs), min(ys), max(xs), max(ys))
                 elif header_kw == b"DIEAREA":
-                    pts = _expand_def_points_b(_PT_B_RE.findall(stmt_b), dbu)
+                    raw_die_pts = _PT_B_RE.findall(stmt_b)
+                    pts = _expand_def_points_b(raw_die_pts, dbu)
                     if len(pts) >= 3:
                         die_polygon = pts
                         xs = [p[0] for p in pts]

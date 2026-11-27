@@ -1,7 +1,10 @@
 """OA Floorplan Review FastAPI router mounted under /api/floorplan."""
 from __future__ import annotations
 
-from typing import Literal
+from datetime import date, datetime
+from decimal import Decimal
+from math import isfinite
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -11,7 +14,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from common.area_power.config import Settings
 from common.area_power.db import Database as AreaDatabase
 from common.area_power.errors import DomainError
-from common.area_power.jsonutil import public
 from common.floorplan import ConfluenceNotConfigured, ConfluencePublishError
 from common.sanity_common import ReviewError
 from common.sanity_db import Database as HostDatabase
@@ -90,11 +92,35 @@ def _close_pat_context(ctx) -> None:
             host.__exit__(None, None, None)
 
 
+def _floorplan_json(value: Any) -> Any:
+    """Serialize Floorplan payloads preserving real JSON numbers (not Decimal strings) for SVG/CAD geometry."""
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise DomainError("Non-finite numeric value in Floorplan payload.", code="invalid_number", status_code=500)
+        f = float(value)
+        return int(f) if f.is_integer() and value == int(f) else f
+    if isinstance(value, float):
+        if not isfinite(value):
+            raise DomainError("Non-finite float value in Floorplan payload.", code="invalid_number", status_code=500)
+        return value
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).hex()
+    if isinstance(value, dict):
+        return {str(k): _floorplan_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_floorplan_json(v) for v in value]
+    return value
+
+
 def create_floorplan_router(authorized_dependency):
     router = APIRouter(prefix="/api/floorplan", route_class=SafeAreaRoute)
 
     def json_resp(value, status_code: int = 200) -> JSONResponse:
-        return JSONResponse(public(value), status_code=status_code)
+        return JSONResponse(_floorplan_json(value), status_code=status_code)
 
     def context(request: Request, identity=Depends(authorized_dependency, scope="function")):
         if request.method not in {"GET", "HEAD", "OPTIONS"}:

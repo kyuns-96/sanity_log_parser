@@ -1,8 +1,9 @@
-import { useMemo, useRef, useState, type MouseEvent, type WheelEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type WheelEvent } from 'react'
 import { Download, FlipHorizontal2, FlipVertical2, Lock, Maximize2, MousePointer, Move, MapPin, RotateCcw, RotateCw, Save, Unlock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   BIST_PALETTE,
+  DEF_TO_ICC2,
   evaluateSandboxState,
   flipOrientX,
   flipOrientY,
@@ -67,13 +68,16 @@ export function FloorplanCanvas({
   onSaveProposal,
 }: FloorplanCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [hoveredMacro, setHoveredMacro] = useState<{ macro: EffectiveMacroBox; x: number; y: number; flipLeft: boolean; flipUp: boolean } | null>(null)
   const [layers, setLayers] = useState({
     density: true,
     regions: true,
     halo: true,
     notches: true,
+    labels: false,
     pins: true,
     bistColor: scene.bist_summary.length > 0,
     datapaths: true,
@@ -85,6 +89,13 @@ export function FloorplanCanvas({
   const [selectedSet, setSelectedSet] = useState<Set<string>>(new Set())
   const [proposalTitle, setProposalTitle] = useState('')
   const [savingProp, setSavingProp] = useState(false)
+
+  useEffect(() => {
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
+    setHoveredMacro(null)
+    setSelectedSet(new Set())
+  }, [scene.design_name, scene.fp_ver])
 
   const dragRef = useRef<
     | { kind: 'pan'; startX: number; startY: number; origPan: { x: number; y: number } }
@@ -310,6 +321,25 @@ export function FloorplanCanvas({
     if (matched[0]) onSelectInst(matched[0].inst_name)
   }
 
+  function updateHoverPopover(e: MouseEvent<SVGGElement>, macro: EffectiveMacroBox) {
+    if (dragRef.current) {
+      setHoveredMacro(null)
+      return
+    }
+    const stage = stageRef.current
+    if (!stage) return
+    const rect = stage.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    setHoveredMacro({
+      macro,
+      x,
+      y,
+      flipLeft: x > rect.width - 320,
+      flipUp: y > rect.height - 160,
+    })
+  }
+
   function downloadClientExport(format: 'innovus' | 'icc2' | 'csv') {
     const content = generateClientTcl(scene, overrides, format, proposalTitle || 'Designer_Draft', onlyChangedTcl)
     const ext = format === 'csv' ? 'csv' : 'tcl'
@@ -346,6 +376,7 @@ export function FloorplanCanvas({
             [
               ['bistColor', 'BIST 색상'],
               ['notches', 'Pin-1 방향'],
+              ['labels', '고정 라벨'],
               ['halo', 'Halo/Blockage'],
               ['density', '셀 밀도'],
               ['pins', 'IO Pin'],
@@ -477,7 +508,7 @@ export function FloorplanCanvas({
         </div>
       )}
 
-      <div className="fp-svg-stage">
+      <div ref={stageRef} className="fp-svg-stage">
         <svg
           ref={svgRef}
           viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`}
@@ -486,7 +517,7 @@ export function FloorplanCanvas({
           onMouseDown={onCanvasMouseDown}
           onMouseMove={onMouseMove}
           onMouseUp={stopDrag}
-          onMouseLeave={stopDrag}
+          onMouseLeave={() => { stopDrag(); setHoveredMacro(null) }}
         >
           {/* Die Polygon */}
           <polygon
@@ -609,7 +640,10 @@ export function FloorplanCanvas({
                 key={m.inst_name}
                 className={`fp-macro-node${m.locked ? ' is-locked' : ''}`}
                 opacity={dimmed ? 0.28 : 1}
-                onMouseDown={e => onMacroMouseDown(e, m)}
+                onMouseDown={e => { setHoveredMacro(null); onMacroMouseDown(e, m) }}
+                onMouseEnter={e => updateHoverPopover(e, m)}
+                onMouseMove={e => updateHoverPopover(e, m)}
+                onMouseLeave={() => setHoveredMacro(prev => (prev?.macro.inst_name === m.inst_name ? null : prev))}
               >
                 {layers.halo && (hl > 0 || hb > 0 || hr > 0 || ht > 0) && (
                   <rect
@@ -641,16 +675,18 @@ export function FloorplanCanvas({
                     fill={stroke}
                   />
                 )}
-                <text
-                  x={rx + ow * 0.5}
-                  y={ry + oh * 0.54}
-                  textAnchor="middle"
-                  fontSize={fontSize}
-                  fill="#0f172a"
-                  pointerEvents="none"
-                >
-                  {labelText}
-                </text>
+                {layers.labels && (
+                  <text
+                    x={rx + ow * 0.5}
+                    y={ry + oh * 0.54}
+                    textAnchor="middle"
+                    fontSize={fontSize}
+                    fill="#0f172a"
+                    pointerEvents="none"
+                  >
+                    {labelText}
+                  </text>
+                )}
               </g>
             )
           })}
@@ -699,6 +735,48 @@ export function FloorplanCanvas({
             )
           })}
         </svg>
+
+        {hoveredMacro && (
+          <div
+            className="fp-macro-popover"
+            role="tooltip"
+            style={{
+              left: hoveredMacro.flipLeft ? Math.max(8, hoveredMacro.x - 14) : hoveredMacro.x + 14,
+              top: hoveredMacro.flipUp ? Math.max(8, hoveredMacro.y - 12) : hoveredMacro.y + 14,
+              transform: `${hoveredMacro.flipLeft ? 'translateX(-100%)' : ''} ${hoveredMacro.flipUp ? 'translateY(-100%)' : ''}`.trim() || undefined,
+            }}
+          >
+            <div className="fp-popover-head">
+              <span className={`fp-kind-tag kind-${hoveredMacro.macro.kind}`}>{hoveredMacro.macro.kind.toUpperCase()}</span>
+              <strong>{hoveredMacro.macro.inst_name}</strong>
+              {hoveredMacro.macro.locked && <span title="잠금">🔒</span>}
+              {hoveredMacro.macro.changed && <span className="fp-delta-mark">Δ</span>}
+            </div>
+            <div className="fp-popover-meta">
+              <div><span>Master</span><code>{hoveredMacro.macro.master}</code></div>
+              <div>
+                <span>좌표 · 크기</span>
+                <code>
+                  ({hoveredMacro.macro.llx}, {hoveredMacro.macro.lly}) µm · {orientedSize(hoveredMacro.macro.width, hoveredMacro.macro.height, hoveredMacro.macro.orient).join(' × ')} µm
+                </code>
+              </div>
+              <div>
+                <span>방향 · 상태</span>
+                <code>{hoveredMacro.macro.orient} ({DEF_TO_ICC2[hoveredMacro.macro.orient]}) · {hoveredMacro.macro.status}</code>
+              </div>
+              {hoveredMacro.macro.bist_group && (
+                <div><span>BIST</span><code>{hoveredMacro.macro.bist_group}{hoveredMacro.macro.bist_controller ? ` (${hoveredMacro.macro.bist_controller})` : ''}</code></div>
+              )}
+              {hoveredMacro.macro.attributes && Object.keys(hoveredMacro.macro.attributes).length > 0 && (
+                <div className="fp-popover-attrs">
+                  {Object.entries(hoveredMacro.macro.attributes).map(([k, v]) => (
+                    <span key={k}>{k}: {String(v)}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
