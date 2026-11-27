@@ -1,13 +1,27 @@
-"""Streaming VWP-local DEF(.gz) + LEF(.gz) extractor producing a compact FloorplanScene.
+"""High-throughput VWP-local DEF(.gz) + LEF(.gz) streaming & parallel extractor.
 
-Raw DEF/LEF files are read strictly locally on VWP in O(1) line memory and never uploaded.
+Raw DEF/LEF files are parsed strictly locally on VWP in bounded chunk memory and NEVER uploaded.
+Optimizations for multi-GB DEF files (1.5 GB - 10+ GB):
+1. Raw 16 MiB byte-chunk scanner skips `NETS`, `SPECIALNETS`, `FILLS`, `VIAS`, `SCANCHAINS`, etc.
+   at C `memmem` / `sre` speed (~2-5 GB/s) with zero per-line Python string allocations.
+2. `parse_lef_macros` jumps directly from `MACRO <name>` header (`CLASS`/`SIZE`) to `END <name>`,
+   bypassing millions of `PIN` / `OBS` geometry `RECT` lines.
+3. `COMPONENTS` uses a zero-regex `bytes` fast path with per-master area/macro memoization, flat
+   1024-entry tile arrays, integer DBU binning, and multi-core `fork` range parallelism on Linux
+   for uncompressed `.def` files >= 32 MiB (plus `pigz`/`gzip -dc` pipeline for `.def.gz`).
 """
 from __future__ import annotations
 
 import gzip
+import multiprocessing as mp
+import os
 from pathlib import Path
 import re
-from typing import Any, Iterable, TextIO
+import shutil
+import subprocess
+import sys
+from typing import Any, BinaryIO, Iterable
+import zlib
 
 from .models import (
     BistGroupSummary,
@@ -21,74 +35,150 @@ from .models import (
     oriented_size,
 )
 
+CHUNK_BYTES = 16 * 1024 * 1024  # 16 MiB streaming chunks
+COMP_BLOCK_BYTES = 8 * 1024 * 1024  # 8 MiB semicolon-aligned component blocks
+PARALLEL_DEF_MIN_BYTES = 32 * 1024 * 1024  # Use fork workers for >= 32 MiB uncompressed DEF
+
 _SRAM_RE = re.compile(r"(?:sram|rf_|regfile|rom_|ram_|mem_|spsram|dpsram|2prf|1prf|tcam|cam_)", re.IGNORECASE)
 _HARD_IP_RE = re.compile(r"(?:pll|phy|serdes|pcie|usb|mipi|ddr|adc|dac|ldo|bandgap|efuse|otp|tsensor|osc|analog|pmu_ip)", re.IGNORECASE)
 _STD_EXCLUDE_RE = re.compile(r"(?:^(?:fill|decap|welltap|tap_|endcap|bound|tie|ant_|spare)|_(?:fill|decap|tap|endcap)\b)", re.IGNORECASE)
-_PT_RE = re.compile(r"\(\s*([+-]?\d+|\*)\s+([+-]?\d+|\*)\s*\)")
-_COMP_LINE_RE = re.compile(
-    r"^-\s+(\S+)\s+(\S+)(.*?)\+\s*(FIXED|PLACED|COVER)\s*\(\s*([+-]?\d+)\s+([+-]?\d+)\s*\)\s*(\S+)",
+
+_SRAM_B_RE = re.compile(rb"(?:sram|rf_|regfile|rom_|ram_|mem_|spsram|dpsram|2prf|1prf|tcam|cam_)", re.IGNORECASE)
+_HARD_IP_B_RE = re.compile(rb"(?:pll|phy|serdes|pcie|usb|mipi|ddr|adc|dac|ldo|bandgap|efuse|otp|tsensor|osc|analog|pmu_ip)", re.IGNORECASE)
+_COMMENT_B_RE = re.compile(rb"#[^\n]*")
+_HALO_B_RE = re.compile(rb"\+\s*HALO(?:\s+SOFT)?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)", re.IGNORECASE)
+_PT_B_RE = re.compile(rb"\(\s*([+-]?\d+|\*)\s+([+-]?\d+|\*)\s*\)")
+
+# Top-level DEF keyword matcher (skips ROW/TRACKS/GCELLGRID/comments in C without line splitting)
+_TOP_KW_B_RE = re.compile(
+    rb"^[ \t]*(DESIGN|UNITS|DIEAREA|COMPONENTS|PINS|BLOCKAGES|REGIONS|"
+    rb"VIAS|NONDEFAULTRULES|PROPERTYDEFINITIONS|PINPROPERTIES|SLOTS|FILLS|"
+    rb"SPECIALNETS|NETS|SCANCHAINS|GROUPS|STYLES|BEGINEXT)\b",
+    re.IGNORECASE | re.MULTILINE,
 )
-_HALO_RE = re.compile(r"\+\s*HALO(?:\s+SOFT)?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)")
+
+_END_SEC_RES: dict[bytes, re.Pattern[bytes]] = {
+    s: re.compile(rb"^[ \t]*END[ \t]+" + s + rb"\b", re.IGNORECASE | re.MULTILINE)
+    for s in (b"COMPONENTS", b"PINS", b"BLOCKAGES", b"REGIONS")
+}
+
+_SKIP_SECTIONS: dict[bytes, bytes] = {
+    b"VIAS": b"END VIAS",
+    b"NONDEFAULTRULES": b"END NONDEFAULTRULES",
+    b"PROPERTYDEFINITIONS": b"END PROPERTYDEFINITIONS",
+    b"PINPROPERTIES": b"END PINPROPERTIES",
+    b"SLOTS": b"END SLOTS",
+    b"FILLS": b"END FILLS",
+    b"SPECIALNETS": b"END SPECIALNETS",
+    b"NETS": b"END NETS",
+    b"SCANCHAINS": b"END SCANCHAINS",
+    b"GROUPS": b"END GROUPS",
+    b"STYLES": b"END STYLES",
+    b"BEGINEXT": b"ENDEXT",
+}
+
+_LEF_MACRO_B_RE = re.compile(rb"^[ \t]*MACRO[ \t]+([^\s;]+)", re.IGNORECASE | re.MULTILINE)
+_LEF_CLASS_B_RE = re.compile(rb"^[ \t]*CLASS[ \t]+([^\s;]+)(?:[ \t]+([^\s;]+))?", re.IGNORECASE | re.MULTILINE)
+_LEF_SIZE_B_RE = re.compile(rb"^[ \t]*SIZE[ \t]+([0-9.eE+-]+)[ \t]+BY[ \t]+([0-9.eE+-]+)", re.IGNORECASE | re.MULTILINE)
+
+_VALID_ORIENTS_B: dict[bytes, Orient] = {k.encode("ascii"): k for k in VALID_ORIENTS}
 
 
-def _open_text(path: Path) -> TextIO:
+def _iter_raw_chunks(path: Path, chunk_size: int = CHUNK_BYTES) -> Iterable[bytes]:
+    """Yield raw uncompressed byte chunks using C `pigz`/`gzip` when `.gz`, else direct file reads."""
     if path.name.lower().endswith(".gz"):
-        return gzip.open(path, "rt", encoding="utf-8", errors="replace")
-    return path.open("r", encoding="utf-8", errors="replace")
+        decomp_bin = shutil.which("pigz") or shutil.which("gzip")
+        if decomp_bin:
+            proc = subprocess.Popen(
+                [decomp_bin, "-dc", str(path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=chunk_size,
+            )
+            assert proc.stdout is not None
+            try:
+                while True:
+                    chunk = proc.stdout.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                proc.stdout.close()
+                proc.wait()
+            return
+        with path.open("rb") as raw_f:
+            zobj = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            while True:
+                compressed = raw_f.read(4 * 1024 * 1024)
+                if not compressed:
+                    tail = zobj.flush()
+                    if tail:
+                        yield tail
+                    break
+                out = zobj.decompress(compressed)
+                if out:
+                    yield out
+        return
+
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
 
 
 def parse_lef_macros(lef_paths: Iterable[Path]) -> dict[str, dict[str, Any]]:
-    """Extract only MACRO name, CLASS, and SIZE (width, height in um) from LEF headers."""
+    """Fast byte-scanning LEF macro extractor; skips PIN and OBS geometry blocks in C."""
     macros: dict[str, dict[str, Any]] = {}
-    macro_start = re.compile(r"^\s*MACRO\s+(\S+)", re.IGNORECASE)
-    class_re = re.compile(r"^\s*CLASS\s+(\S+)(?:\s+(\S+))?", re.IGNORECASE)
-    size_re = re.compile(r"^\s*SIZE\s+([0-9.eE+-]+)\s+BY\s+([0-9.eE+-]+)", re.IGNORECASE)
-
     for path in lef_paths:
-        cur_name: str | None = None
-        cur_class = "CORE"
-        cur_sub = ""
-        cur_w: float | None = None
-        cur_h: float | None = None
-        with _open_text(path) as handle:
-            for line in handle:
-                stripped = line.strip()
-                if not stripped or stripped.startswith("#"):
-                    continue
-                if cur_name is None:
-                    m = macro_start.match(stripped)
-                    if m:
-                        cur_name = m.group(1)
-                        cur_class, cur_sub, cur_w, cur_h = "CORE", "", None, None
-                    continue
-                if stripped.upper().startswith(f"END {cur_name.upper()}"):
-                    if cur_w and cur_h and cur_w > 0 and cur_h > 0:
-                        macros[cur_name] = {
-                            "class": cur_class.upper(),
-                            "subclass": cur_sub.upper(),
-                            "width": float(cur_w),
-                            "height": float(cur_h),
-                        }
-                    cur_name = None
-                    continue
-                cm = class_re.match(stripped)
-                if cm:
-                    cur_class = cm.group(1)
-                    cur_sub = cm.group(2) or ""
-                    continue
-                sm = size_re.match(stripped)
-                if sm:
-                    cur_w = float(sm.group(1))
-                    cur_h = float(sm.group(2))
+        data = b"".join(_iter_raw_chunks(path))
+        if b"#" in data:
+            data = _COMMENT_B_RE.sub(b"", data)
+        pos = 0
+        n = len(data)
+        while pos < n:
+            m = _LEF_MACRO_B_RE.search(data, pos)
+            if not m:
+                break
+            name_b = m.group(1)
+            body_start = m.end()
+            end_tok = b"END " + name_b
+            end_pos = data.find(end_tok, body_start)
+            if end_pos < 0:
+                end_re = re.compile(rb"(?:^|\n)[ \t]*END[ \t]+" + re.escape(name_b) + rb"\b", re.IGNORECASE)
+                em = end_re.search(data, body_start)
+                end_pos = em.start() if em else n
+            # CLASS and SIZE are in the macro header right after MACRO <name> (before PIN/OBS)
+            probe_end = min(end_pos, body_start + 8192)
+            header = data[body_start:probe_end]
+            sm = _LEF_SIZE_B_RE.search(header)
+            if sm is None and probe_end < end_pos:
+                header = data[body_start:end_pos]
+                sm = _LEF_SIZE_B_RE.search(header)
+            if sm is not None:
+                w = float(sm.group(1))
+                h = float(sm.group(2))
+                if w > 0 and h > 0:
+                    cm = _LEF_CLASS_B_RE.search(header)
+                    mclass = cm.group(1).decode("ascii", "replace").upper() if cm else "CORE"
+                    msub = cm.group(2).decode("ascii", "replace").upper() if (cm and cm.group(2)) else ""
+                    macros[name_b.decode("utf-8", "replace")] = {
+                        "class": mclass,
+                        "subclass": msub,
+                        "width": w,
+                        "height": h,
+                    }
+            pos = end_pos + len(end_tok)
     return macros
 
 
-def _expand_def_points(raw_pts: list[tuple[str, str]], dbu: float) -> list[tuple[float, float]]:
+def _expand_def_points_b(raw_pts: list[tuple[bytes, bytes]], dbu: float) -> list[tuple[float, float]]:
     pts: list[tuple[float, float]] = []
     prev_x, prev_y = 0.0, 0.0
     for rx, ry in raw_pts:
-        x = prev_x if rx == "*" else int(rx) / dbu
-        y = prev_y if ry == "*" else int(ry) / dbu
+        x = prev_x if rx == b"*" else int(rx) / dbu
+        y = prev_y if ry == b"*" else int(ry) / dbu
         pts.append((round(x, 4), round(y, 4)))
         prev_x, prev_y = x, y
     if len(pts) == 2:
@@ -97,10 +187,10 @@ def _expand_def_points(raw_pts: list[tuple[str, str]], dbu: float) -> list[tuple
     return pts
 
 
-def _classify_macro(inst_name: str, master: str, lef_info: dict[str, Any] | None, in_bist: bool, scope_kind: str) -> str | None:
+def _classify_master_only(master: str, lef_info: dict[str, Any] | None, scope_kind: str) -> str | None:
     if _STD_EXCLUDE_RE.search(master):
         return None
-    if in_bist or _SRAM_RE.search(master) or _SRAM_RE.search(inst_name):
+    if _SRAM_RE.search(master):
         return "sram"
     if not lef_info:
         if _HARD_IP_RE.search(master):
@@ -115,12 +205,11 @@ def _classify_macro(inst_name: str, master: str, lef_info: dict[str, Any] | None
     if mclass in ("BLOCK", "RING", "COVER", "PAD"):
         if scope_kind == "top" and mclass == "BLOCK" and msub != "RING" and not _HARD_IP_RE.search(master):
             return "subblock"
-        if _HARD_IP_RE.search(master) or _HARD_IP_RE.search(inst_name) or mclass in ("RING", "COVER", "PAD"):
+        if _HARD_IP_RE.search(master) or mclass in ("RING", "COVER", "PAD"):
             return "ip"
         return "macro"
-    # Multi-row custom hard macros even when LEF declares CLASS CORE (whether PLACED or FIXED)
     if min(w, h) >= 5.0 and (w * h) >= 25.0:
-        return "ip" if (_HARD_IP_RE.search(master) or _HARD_IP_RE.search(inst_name)) else "macro"
+        return "ip" if _HARD_IP_RE.search(master) else "macro"
     return None
 
 
@@ -131,303 +220,411 @@ def _pin_side(x: float, y: float, die_bbox: tuple[float, float, float, float]) -
     return dists[0][0]
 
 
-class _ModuleAcc:
-    __slots__ = ("count", "area", "sum_x", "sum_y", "xs", "ys", "tiles")
+class _FastModAcc:
+    __slots__ = ("count", "area", "sum_ix", "sum_iy", "ixs", "iys", "tiles")
 
     def __init__(self) -> None:
         self.count = 0
         self.area = 0.0
-        self.sum_x = 0.0
-        self.sum_y = 0.0
-        self.xs: list[float] = []
-        self.ys: list[float] = []
-        self.tiles: dict[tuple[int, int], int] = {}
+        self.sum_ix = 0
+        self.sum_iy = 0
+        self.ixs: list[int] = []
+        self.iys: list[int] = []
+        self.tiles: list[int] = [0] * 1024
 
-    def add(self, x: float, y: float, cell_area: float, tx: int, ty: int) -> None:
-        self.count += 1
-        self.area += cell_area
-        self.sum_x += x
-        self.sum_y += y
-        # Reservoir-like stride sampling keeps memory tiny even for 10M cells
-        if self.count <= 512 or self.count % 16 == 0:
-            if len(self.xs) < 2048:
-                self.xs.append(x)
-                self.ys.append(y)
-        key = (tx, ty)
-        self.tiles[key] = self.tiles.get(key, 0) + 1
+    def merge_from(self, other: "_FastModAcc") -> None:
+        self.count += other.count
+        self.area += other.area
+        self.sum_ix += other.sum_ix
+        self.sum_iy += other.sum_iy
+        if len(self.ixs) < 2048:
+            room = 2048 - len(self.ixs)
+            self.ixs.extend(other.ixs[:room])
+            self.iys.extend(other.iys[:room])
+        t_self = self.tiles
+        t_other = other.tiles
+        for idx in range(1024):
+            v = t_other[idx]
+            if v:
+                t_self[idx] += v
 
 
-def parse_def_to_scene(
-    def_path: Path,
+def _build_master_seed(
     lef_macros: dict[str, dict[str, Any]],
+    scope_kind: str,
+) -> tuple[dict[bytes, float | tuple[str, float, float]], set[bytes]]:
+    """Pre-classify all LEF masters once into bytes -> float (stdcell area) or (kind, w, h) (hard macro)."""
+    seed: dict[bytes, float | tuple[str, float, float]] = {}
+    known_lef_b: set[bytes] = set()
+    for master, info in lef_macros.items():
+        mb = master.encode("utf-8")
+        known_lef_b.add(mb)
+        mkind = _classify_master_only(master, info, scope_kind)
+        w = float(info.get("width") or 0.5)
+        h = float(info.get("height") or 0.5)
+        if mkind is not None:
+            seed[mb] = (mkind, w, h)
+        else:
+            seed[mb] = w * h
+    return seed, known_lef_b
+
+
+def _process_components_block(
+    block: bytes,
     *,
-    fp_ver: str,
-    prev_fp_ver: str | None = None,
-    scope_kind: str = "subblock",
-    bist_map: dict[str, dict[str, str | None] | str] | None = None,
-    hierarchy_separator: str = "/",
-    grid_size: int = 64,
-) -> FloorplanScene:
-    """Stream-parse DEF(.gz) + LEF sizes into a lightweight FloorplanScene without retaining raw DEF."""
-    bist_lookup: dict[str, tuple[str, str | None]] = {}
-    for k, v in (bist_map or {}).items():
-        clean_k = k.strip().replace("\\", "")
-        if isinstance(v, str):
-            bist_lookup[clean_k] = (v.strip(), None)
-        elif isinstance(v, dict) and v.get("bist_group"):
-            bist_lookup[clean_k] = (str(v["bist_group"]).strip(), str(v["controller"]).strip() if v.get("controller") else None)
+    master_cache: dict[bytes, float | tuple[str, float, float]],
+    known_lef_b: set[bytes],
+    bist_b_lookup: dict[bytes, tuple[str, str | None]],
+    has_bist: bool,
+    dbu: float,
+    die_x0_i: int,
+    die_y0_i: int,
+    inv_span_x_grid: float,
+    inv_span_y_grid: float,
+    inv_span_x_tile: float,
+    inv_span_y_tile: float,
+    grid_size: int,
+    sep_b: bytes,
+    macros_out: list[MacroBox],
+    density_out: list[float],
+    mod_accs: dict[bytes, _FastModAcc],
+) -> tuple[int, float]:
+    """Ultra-fast zero-regex bytes parser for a semicolon-aligned COMPONENTS block."""
+    if b"#" in block:
+        block = _COMMENT_B_RE.sub(b"", block)
 
-    design_name = def_path.stem.removesuffix(".def")
-    dbu = 1000.0
-    die_polygon: list[tuple[float, float]] = []
-    die_bbox = (0.0, 0.0, 1000.0, 1000.0)
-    macros: list[MacroBox] = []
-    pins: list[PinMarker] = []
-    regions: list[RegionBox] = []
-    density = [0.0] * (grid_size * grid_size)
-    mod_accs: dict[str, _ModuleAcc] = {}
-    std_cell_count = 0
-    std_cell_area = 0.0
+    std_count = 0
+    std_area = 0.0
+    grid_m1 = grid_size - 1
 
-    section: str | None = None
-    stmt_buf: list[str] = []
+    for st in block.split(b";"):
+        st_s = st.lstrip()
+        if len(st_s) < 10 or st_s[0] != 45 or st_s[1] > 32:  # Must start with '- '
+            continue
+        head = st_s[2:].split(None, 2)
+        if len(head) < 3:
+            continue
+        raw_inst_b, master_b, rest_b = head
 
-    def _hier_prefix(inst_name: str) -> str:
-        clean = inst_name.replace("\\", "")
-        if hierarchy_separator not in clean:
-            return ""
-        parts = [p for p in clean.split(hierarchy_separator) if p]
-        if len(parts) <= 1:
-            return ""
-        return hierarchy_separator.join(parts[: min(2, len(parts) - 1)])
+        info = master_cache.get(master_b)
+        if info is None:
+            if _SRAM_B_RE.search(master_b):
+                info = ("sram", 40.0, 40.0)
+            elif _HARD_IP_B_RE.search(master_b):
+                info = ("ip", 40.0, 40.0)
+            else:
+                info = 0.25  # 0.5 * 0.5 default std-cell area when stdcell LEF omitted
+            master_cache[master_b] = info
 
-    def _handle_component(stmt: str) -> None:
-        nonlocal std_cell_count, std_cell_area
-        m = _COMP_LINE_RE.match(stmt)
-        if not m:
-            return
-        raw_inst, master, middle, status, sx, sy, raw_orient = m.groups()
-        inst = raw_inst.replace("\\", "")
-        orient: Orient = raw_orient if raw_orient in VALID_ORIENTS else "N"  # type: ignore[assignment]
-        x = int(sx) / dbu
-        y = int(sy) / dbu
-        lef_info = lef_macros.get(master)
-        bist_entry = bist_lookup.get(inst) or bist_lookup.get(raw_inst)
-        mkind = _classify_macro(inst, master, lef_info, bist_entry is not None, scope_kind)
-        if mkind is not None or (status == "FIXED" and lef_info and lef_info["width"] * lef_info["height"] >= 25.0):
-            w = lef_info["width"] if lef_info else 40.0
-            h = lef_info["height"] if lef_info else 40.0
-            halo = (0.0, 0.0, 0.0, 0.0)
-            hm = _HALO_RE.search(stmt)
+        # Check if instance-level BIST map or instance-name macro hint overrides an unknown/std master
+        bist_entry = None
+        if has_bist:
+            bist_entry = bist_b_lookup.get(raw_inst_b)
+            if bist_entry is None and b"\\" in raw_inst_b:
+                bist_entry = bist_b_lookup.get(raw_inst_b.replace(b"\\", b""))
+
+        is_macro = isinstance(info, tuple) or (bist_entry is not None)
+        if not is_macro and master_b not in known_lef_b and b"FIXED" in rest_b:
+            if _SRAM_B_RE.search(raw_inst_b) or _HARD_IP_B_RE.search(raw_inst_b):
+                is_macro = True
+
+        # Fast coordinate extraction
+        kw = rest_b.find(b"PLACED")
+        status_str = "PLACED"
+        if kw < 0:
+            kw = rest_b.find(b"FIXED")
+            if kw >= 0:
+                status_str = "FIXED"
+            else:
+                kw = rest_b.find(b"COVER")
+                if kw >= 0:
+                    status_str = "FIXED"
+                else:
+                    continue  # UNPLACED component
+
+        lp = rest_b.find(b"(", kw + 5)
+        if lp < 0:
+            continue
+        rp = rest_b.find(b")", lp + 1)
+        if rp < 0:
+            continue
+        xy = rest_b[lp + 1 : rp].split()
+        if len(xy) < 2:
+            continue
+        ix = int(xy[0])
+        iy = int(xy[1])
+
+        if not is_macro:
+            # === HOT PATH: 99.99% Standard Cell ===
+            c_area: float = info  # type: ignore[assignment]
+            std_count += 1
+            std_area += c_area
+
+            gx = int((ix - die_x0_i) * inv_span_x_grid)
+            if gx < 0:
+                gx = 0
+            elif gx > grid_m1:
+                gx = grid_m1
+            gy = int((iy - die_y0_i) * inv_span_y_grid)
+            if gy < 0:
+                gy = 0
+            elif gy > grid_m1:
+                gy = grid_m1
+            density_out[gy * grid_size + gx] += c_area
+
+            s1 = raw_inst_b.find(sep_b)
+            if s1 > 0:
+                s2 = raw_inst_b.find(sep_b, s1 + 1)
+                prefix_b = raw_inst_b[:s2] if s2 > 0 else raw_inst_b[:s1]
+                acc = mod_accs.get(prefix_b)
+                if acc is None:
+                    if len(mod_accs) < 600:
+                        acc = _FastModAcc()
+                        mod_accs[prefix_b] = acc
+                    else:
+                        continue
+                cnt = acc.count + 1
+                acc.count = cnt
+                acc.area += c_area
+                acc.sum_ix += ix
+                acc.sum_iy += iy
+                if (cnt <= 512 or (cnt & 63) == 0) and len(acc.ixs) < 2048:
+                    acc.ixs.append(ix)
+                    acc.iys.append(iy)
+                tx = int((ix - die_x0_i) * inv_span_x_tile)
+                if tx < 0:
+                    tx = 0
+                elif tx > 31:
+                    tx = 31
+                ty = int((iy - die_y0_i) * inv_span_y_tile)
+                if ty < 0:
+                    ty = 0
+                elif ty > 31:
+                    ty = 31
+                acc.tiles[(ty << 5) | tx] += 1
+            continue
+
+        # === COLD PATH: Hard Macro (SRAM / IP / Custom Macro / Sub-block) ===
+        if len(macros_out) >= 4000:
+            continue
+        after_paren = rest_b[rp + 1 :].split(None, 1)
+        orient_b = after_paren[0] if after_paren else b"N"
+        orient: Orient = _VALID_ORIENTS_B.get(orient_b, "N")
+        inst_str = raw_inst_b.replace(b"\\", b"").decode("utf-8", "replace")
+        master_str = master_b.decode("utf-8", "replace")
+
+        if isinstance(info, tuple):
+            mkind, w, h = info
+            if bist_entry is not None or _SRAM_B_RE.search(raw_inst_b):
+                mkind = "sram"
+            elif mkind == "macro" and _HARD_IP_B_RE.search(raw_inst_b):
+                mkind = "ip"
+        else:
+            mkind = "sram" if (bist_entry is not None or _SRAM_B_RE.search(raw_inst_b)) else "ip"
+            w, h = 40.0, 40.0
+
+        halo = (0.0, 0.0, 0.0, 0.0)
+        if b"HALO" in rest_b or b"halo" in rest_b:
+            hm = _HALO_B_RE.search(rest_b)
             if hm:
                 halo = tuple(round(int(hm.group(i)) / dbu, 3) for i in range(1, 5))  # type: ignore[assignment]
-            if len(macros) < 4000:
-                macros.append(
-                    MacroBox(
-                        inst_name=inst,
-                        master=master,
-                        kind=mkind or "macro",  # type: ignore[arg-type]
-                        llx=round(x, 4),
-                        lly=round(y, 4),
-                        width=round(w, 4),
-                        height=round(h, 4),
-                        orient=orient,
-                        status="FIXED" if status == "FIXED" else "PLACED",
-                        halo_um=halo,
-                        bist_group=bist_entry[0] if bist_entry else None,
-                        bist_controller=bist_entry[1] if bist_entry else None,
-                        hier_prefix=_hier_prefix(inst),
-                    )
-                )
-            return
 
-        # Standard cell -> aggregate into coarse density grid and module summaries
-        cw = lef_info["width"] if lef_info else 0.5
-        ch = lef_info["height"] if lef_info else 0.5
-        c_area = cw * ch
-        std_cell_count += 1
-        std_cell_area += c_area
-        x0, y0, x1, y1 = die_bbox
-        span_x = max(x1 - x0, 1e-6)
-        span_y = max(y1 - y0, 1e-6)
-        gx = min(grid_size - 1, max(0, int((x - x0) / span_x * grid_size)))
-        gy = min(grid_size - 1, max(0, int((y - y0) / span_y * grid_size)))
-        density[gy * grid_size + gx] += c_area
-        prefix = _hier_prefix(inst)
-        if prefix:
-            tx = min(31, max(0, int((x - x0) / span_x * 32)))
-            ty = min(31, max(0, int((y - y0) / span_y * 32)))
-            acc = mod_accs.get(prefix)
-            if acc is None and len(mod_accs) < 600:
-                acc = _ModuleAcc()
-                mod_accs[prefix] = acc
-            if acc is not None:
-                acc.add(x, y, c_area, tx, ty)
+        sep_str = sep_b.decode("ascii")
+        hier_pref = ""
+        if sep_str in inst_str:
+            parts = [p for p in inst_str.split(sep_str) if p]
+            if len(parts) > 1:
+                hier_pref = sep_str.join(parts[: min(2, len(parts) - 1)])
 
-    def _handle_pin(stmt: str) -> None:
-        if len(pins) >= 4000:
-            return
-        head = re.match(r"^-\s+(\S+)", stmt)
-        if not head:
-            return
-        name = head.group(1)
-        dir_m = re.search(r"\+\s*DIRECTION\s+(INPUT|OUTPUT|INOUT|FEEDTHRU)", stmt, re.IGNORECASE)
-        direction = dir_m.group(1).upper() if dir_m else "INOUT"
-        loc_m = re.search(r"\+\s*(?:PLACED|FIXED|COVER)\s*\(\s*([+-]?\d+)\s+([+-]?\d+)\s*\)", stmt, re.IGNORECASE)
-        layer_m = re.search(r"\+\s*LAYER\s+(\S+)", stmt, re.IGNORECASE)
-        if not loc_m:
-            pts = _PT_RE.findall(stmt)
-            if not pts or pts[0][0] == "*" or pts[0][1] == "*":
-                return
-            px, py = int(pts[0][0]) / dbu, int(pts[0][1]) / dbu
+        macros_out.append(
+            MacroBox(
+                inst_name=inst_str,
+                master=master_str,
+                kind=mkind,  # type: ignore[arg-type]
+                llx=round(ix / dbu, 4),
+                lly=round(iy / dbu, 4),
+                width=round(w, 4),
+                height=round(h, 4),
+                orient=orient,
+                status="FIXED" if status_str == "FIXED" else "PLACED",
+                halo_um=halo,
+                bist_group=bist_entry[0] if bist_entry else None,
+                bist_controller=bist_entry[1] if bist_entry else None,
+                hier_prefix=hier_pref,
+            )
+        )
+
+    return std_count, std_area
+
+
+# Globals populated right before `fork` so child processes inherit read-only state with zero IPC pickling
+_FORK_CTX: dict[str, Any] = {}
+
+
+def _fork_parse_range(args: tuple[int, int]) -> tuple[list[MacroBox], list[float], dict[bytes, _FastModAcc], int, float]:
+    start_off, end_off = args
+    ctx = _FORK_CTX
+    def_path: Path = ctx["def_path"]
+    grid_size: int = ctx["grid_size"]
+    master_cache = dict(ctx["master_seed"])
+    known_lef_b: set[bytes] = ctx["known_lef_b"]
+    bist_b_lookup: dict[bytes, tuple[str, str | None]] = ctx["bist_b_lookup"]
+    has_bist: bool = ctx["has_bist"]
+    dbu: float = ctx["dbu"]
+    die_x0_i: int = ctx["die_x0_i"]
+    die_y0_i: int = ctx["die_y0_i"]
+    inv_span_x_grid: float = ctx["inv_span_x_grid"]
+    inv_span_y_grid: float = ctx["inv_span_y_grid"]
+    inv_span_x_tile: float = ctx["inv_span_x_tile"]
+    inv_span_y_tile: float = ctx["inv_span_y_tile"]
+    sep_b: bytes = ctx["sep_b"]
+
+    macros_part: list[MacroBox] = []
+    density_part = [0.0] * (grid_size * grid_size)
+    mod_accs_part: dict[bytes, _FastModAcc] = {}
+    total_cnt = 0
+    total_area = 0.0
+
+    rem = b""
+    pos = start_off
+    with def_path.open("rb") as f:
+        f.seek(start_off)
+        while pos < end_off:
+            to_read = min(COMP_BLOCK_BYTES, end_off - pos)
+            chunk = f.read(to_read)
+            if not chunk:
+                break
+            pos += len(chunk)
+            buf = rem + chunk
+            last_semi = buf.rfind(b";")
+            if last_semi < 0:
+                rem = buf
+                continue
+            block = buf[: last_semi + 1]
+            rem = buf[last_semi + 1 :]
+            c, a = _process_components_block(
+                block,
+                master_cache=master_cache,
+                known_lef_b=known_lef_b,
+                bist_b_lookup=bist_b_lookup,
+                has_bist=has_bist,
+                dbu=dbu,
+                die_x0_i=die_x0_i,
+                die_y0_i=die_y0_i,
+                inv_span_x_grid=inv_span_x_grid,
+                inv_span_y_grid=inv_span_y_grid,
+                inv_span_x_tile=inv_span_x_tile,
+                inv_span_y_tile=inv_span_y_tile,
+                grid_size=grid_size,
+                sep_b=sep_b,
+                macros_out=macros_part,
+                density_out=density_part,
+                mod_accs=mod_accs_part,
+            )
+            total_cnt += c
+            total_area += a
+
+    if rem.strip():
+        c, a = _process_components_block(
+            rem,
+            master_cache=master_cache,
+            known_lef_b=known_lef_b,
+            bist_b_lookup=bist_b_lookup,
+            has_bist=has_bist,
+            dbu=dbu,
+            die_x0_i=die_x0_i,
+            die_y0_i=die_y0_i,
+            inv_span_x_grid=inv_span_x_grid,
+            inv_span_y_grid=inv_span_y_grid,
+            inv_span_x_tile=inv_span_x_tile,
+            inv_span_y_tile=inv_span_y_tile,
+            grid_size=grid_size,
+            sep_b=sep_b,
+            macros_out=macros_part,
+            density_out=density_part,
+            mod_accs=mod_accs_part,
+        )
+        total_cnt += c
+        total_area += a
+
+    return macros_part, density_part, mod_accs_part, total_cnt, total_area
+
+
+def _parse_pins_bytes(buf: bytes, dbu: float, die_bbox: tuple[float, float, float, float], pins_out: list[PinMarker]) -> None:
+    if b"#" in buf:
+        buf = _COMMENT_B_RE.sub(b"", buf)
+    dir_re = re.compile(rb"\+\s*DIRECTION\s+(INPUT|OUTPUT|INOUT|FEEDTHRU)", re.IGNORECASE)
+    loc_re = re.compile(rb"\+\s*(?:PLACED|FIXED|COVER)\s*\(\s*([+-]?\d+)\s+([+-]?\d+)\s*\)", re.IGNORECASE)
+    lay_re = re.compile(rb"\+\s*LAYER\s+(\S+)", re.IGNORECASE)
+    use_pg_re = re.compile(rb"\+\s*USE\s+(?:POWER|GROUND)\b", re.IGNORECASE)
+    for st in buf.split(b";"):
+        if len(pins_out) >= 4000:
+            break
+        st_s = st.lstrip()
+        if len(st_s) < 6 or st_s[0] != 45 or st_s[1] > 32:
+            continue
+        if use_pg_re.search(st_s):
+            continue
+        parts = st_s[2:].split(None, 1)
+        if not parts:
+            continue
+        name = parts[0].decode("utf-8", "replace")
+        lm = loc_re.search(st_s)
+        if lm:
+            px, py = int(lm.group(1)) / dbu, int(lm.group(2)) / dbu
         else:
-            px, py = int(loc_m.group(1)) / dbu, int(loc_m.group(2)) / dbu
-        pins.append(
+            pts = _PT_B_RE.findall(st_s)
+            if not pts or pts[0][0] == b"*" or pts[0][1] == b"*":
+                continue
+            px, py = int(pts[0][0]) / dbu, int(pts[0][1]) / dbu
+        dm = dir_re.search(st_s)
+        direction = dm.group(1).decode("ascii").upper() if dm else "INOUT"
+        lay_m = lay_re.search(st_s)
+        pins_out.append(
             PinMarker(
                 name=name,
                 direction=direction,  # type: ignore[arg-type]
                 x=round(px, 4),
                 y=round(py, 4),
-                layer=layer_m.group(1) if layer_m else None,
+                layer=lay_m.group(1).decode("utf-8", "replace") if lay_m else None,
                 side=_pin_side(px, py, die_bbox),  # type: ignore[arg-type]
             )
         )
 
-    def _handle_region_or_blockage(stmt: str, sec: str) -> None:
-        if len(regions) >= 1000:
-            return
-        raw_pts = _PT_RE.findall(stmt)
-        if len(raw_pts) < 2:
-            return
-        if sec == "BLOCKAGES":
-            if "LAYER" in stmt.upper() and "PLACEMENT" not in stmt.upper():
-                return
-            kind = "soft_blockage" if "SOFT" in stmt.upper() or "PARTIAL" in stmt.upper() else "blockage"
-            for i in range(0, len(raw_pts) - 1, 2):
-                box = _expand_def_points([raw_pts[i], raw_pts[i + 1]], dbu)
-                if len(box) >= 3 and len(regions) < 1000:
-                    regions.append(RegionBox(name=f"BLK_{len(regions) + 1}", kind=kind, points=box))  # type: ignore[arg-type]
-        else:
-            nm = re.match(r"^-\s+(\S+)", stmt)
-            rname = nm.group(1) if nm else f"REG_{len(regions) + 1}"
-            for i in range(0, len(raw_pts) - 1, 2):
-                box = _expand_def_points([raw_pts[i], raw_pts[i + 1]], dbu)
-                if len(box) >= 3 and len(regions) < 1000:
-                    regions.append(RegionBox(name=rname, kind="region", points=box))
 
-    with _open_text(def_path) as handle:
-        for raw_line in handle:
-            line = raw_line.split("#", 1)[0].strip()
-            if not line:
-                continue
-            if section is None:
-                if line.upper().startswith("DESIGN "):
-                    dm = re.match(r"^DESIGN\s+(\S+)", line, re.IGNORECASE)
-                    if dm:
-                        design_name = dm.group(1).rstrip(";")
-                elif line.upper().startswith("UNITS DISTANCE MICRONS"):
-                    um = re.search(r"MICRONS\s+(\d+)", line, re.IGNORECASE)
-                    if um:
-                        dbu = float(um.group(1))
-                elif line.upper().startswith("DIEAREA"):
-                    stmt_buf = [line]
-                    if ";" in line:
-                        pts = _expand_def_points(_PT_RE.findall(line), dbu)
-                        if len(pts) >= 3:
-                            die_polygon = pts
-                            xs = [p[0] for p in pts]
-                            ys = [p[1] for p in pts]
-                            die_bbox = (min(xs), min(ys), max(xs), max(ys))
-                        stmt_buf = []
-                    else:
-                        section = "DIEAREA"
-                elif re.match(r"^(COMPONENTS|PINS|BLOCKAGES|REGIONS)\b", line, re.IGNORECASE):
-                    section = line.split()[0].upper()
-                    stmt_buf = []
-                continue
-
-            if section == "DIEAREA":
-                stmt_buf.append(line)
-                if ";" in line:
-                    joined = " ".join(stmt_buf)
-                    pts = _expand_def_points(_PT_RE.findall(joined), dbu)
-                    if len(pts) >= 3:
-                        die_polygon = pts
-                        xs = [p[0] for p in pts]
-                        ys = [p[1] for p in pts]
-                        die_bbox = (min(xs), min(ys), max(xs), max(ys))
-                    stmt_buf = []
-                    section = None
-                continue
-
-            if line.upper().startswith(f"END {section}"):
-                stmt_buf = []
-                section = None
-                continue
-
-            if line.startswith("-") and stmt_buf:
-                stmt_buf = [line]
-            else:
-                stmt_buf.append(line)
-
-            if ";" in line:
-                joined = " ".join(stmt_buf)
-                stmt_buf = []
-                if joined.startswith("-"):
-                    if section == "COMPONENTS":
-                        _handle_component(joined)
-                    elif section == "PINS":
-                        _handle_pin(joined)
-                    elif section in ("BLOCKAGES", "REGIONS"):
-                        _handle_region_or_blockage(joined, section)
-
-    if not die_polygon:
-        if macros:
-            xs = [b for m in macros for b in (m.llx, m.bbox()[2])]
-            ys = [b for m in macros for b in (m.lly, m.bbox()[3])]
-            pad = 20.0
-            die_bbox = (round(min(xs) - pad, 2), round(min(ys) - pad, 2), round(max(xs) + pad, 2), round(max(ys) + pad, 2))
-        x0, y0, x1, y1 = die_bbox
-        die_polygon = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
-
-    x0, y0, x1, y1 = die_bbox
-    tile_area = max(((x1 - x0) / grid_size) * ((y1 - y0) / grid_size), 1e-6)
-    density_pct = [min(100, int(round((val / tile_area) * 100))) for val in density]
-
-    sorted_mods = sorted(mod_accs.items(), key=lambda kv: kv[1].area, reverse=True)[:250]
-    module_regions: list[ModuleRegionSummary] = []
-    for path_key, acc in sorted_mods:
-        if acc.count == 0:
+def _parse_regions_or_blockages_bytes(buf: bytes, sec: bytes, dbu: float, regions_out: list[RegionBox]) -> None:
+    if b"#" in buf:
+        buf = _COMMENT_B_RE.sub(b"", buf)
+    is_blk = sec == b"BLOCKAGES"
+    for st in buf.split(b";"):
+        if len(regions_out) >= 1000:
+            break
+        st_s = st.lstrip()
+        if len(st_s) < 6 or st_s[0] != 45:
             continue
-        sxs = sorted(acc.xs)
-        sys_ = sorted(acc.ys)
-        n = len(sxs)
-        p10_x = sxs[int(n * 0.1)]
-        p90_x = sxs[min(n - 1, int(n * 0.9))]
-        p10_y = sys_[int(n * 0.1)]
-        p90_y = sys_[min(n - 1, int(n * 0.9))]
-        max_tile = max(acc.tiles.values()) if acc.tiles else 1
-        bins = [
-            (tx, ty, max(1, int(round(cnt / max_tile * 100))))
-            for (tx, ty), cnt in sorted(acc.tiles.items())
-            if cnt / max_tile >= 0.05
-        ][:512]
-        module_regions.append(
-            ModuleRegionSummary(
-                hier_path=path_key,
-                cell_count=acc.count,
-                area_um2=round(acc.area, 2),
-                cx=round(acc.sum_x / acc.count, 2),
-                cy=round(acc.sum_y / acc.count, 2),
-                p10_x=round(p10_x, 2),
-                p10_y=round(p10_y, 2),
-                p90_x=round(p90_x, 2),
-                p90_y=round(p90_y, 2),
-                bins=bins,
-            )
-        )
+        raw_pts = _PT_B_RE.findall(st_s)
+        if len(raw_pts) < 2:
+            continue
+        if is_blk:
+            up = st_s.upper()
+            if b"LAYER" in up and b"PLACEMENT" not in up:
+                continue
+            kind = "soft_blockage" if (b"SOFT" in up or b"PARTIAL" in up) else "blockage"
+            for i in range(0, len(raw_pts) - 1, 2):
+                box = _expand_def_points_b([raw_pts[i], raw_pts[i + 1]], dbu)
+                if len(box) >= 3 and len(regions_out) < 1000:
+                    regions_out.append(RegionBox(name=f"BLK_{len(regions_out) + 1}", kind=kind, points=box))  # type: ignore[arg-type]
+        else:
+            parts = st_s[1:].split(None, 1)
+            rname = parts[0].decode("utf-8", "replace") if parts else f"REG_{len(regions_out) + 1}"
+            for i in range(0, len(raw_pts) - 1, 2):
+                box = _expand_def_points_b([raw_pts[i], raw_pts[i + 1]], dbu)
+                if len(box) >= 3 and len(regions_out) < 1000:
+                    regions_out.append(RegionBox(name=rname, kind="region", points=box))
 
-    # Summarize BIST groups
+
+def _compute_bist_summary(macros: list[MacroBox], die_bbox: tuple[float, float, float, float]) -> list[BistGroupSummary]:
+    x0, y0, x1, y1 = die_bbox
     bist_groups: dict[str, list[MacroBox]] = {}
     for m in macros:
         if m.bist_group:
@@ -457,7 +654,454 @@ def parse_def_to_scene(
                 dispersed_warning=len(members) > 1 and (max_span / die_diag_manhattan) > 0.45,
             )
         )
+    return bist_summary
 
+
+def apply_bist_map_to_scene(
+    scene: FloorplanScene,
+    bist_map: dict[str, dict[str, str | None] | str] | None,
+) -> FloorplanScene:
+    """Attach/update BIST group assignments on an already-parsed FloorplanScene in O(macros) time."""
+    if not bist_map:
+        return scene
+    bist_lookup: dict[str, tuple[str, str | None]] = {}
+    for k, v in bist_map.items():
+        clean_k = k.strip().replace("\\", "")
+        if isinstance(v, str) and v.strip():
+            bist_lookup[clean_k] = (v.strip(), None)
+        elif isinstance(v, dict) and v.get("bist_group"):
+            bist_lookup[clean_k] = (str(v["bist_group"]).strip(), str(v["controller"]).strip() if v.get("controller") else None)
+    if not bist_lookup:
+        return scene
+
+    updated_macros: list[MacroBox] = []
+    for m in scene.macros:
+        entry = bist_lookup.get(m.inst_name)
+        if entry:
+            updated_macros.append(m.model_copy(update={"kind": "sram", "bist_group": entry[0], "bist_controller": entry[1]}))
+        else:
+            updated_macros.append(m)
+    bist_summary = _compute_bist_summary(updated_macros, scene.die_bbox)
+    new_stats = dict(scene.stats)
+    new_stats["sram_count"] = sum(1 for m in updated_macros if m.kind == "sram")
+    new_stats["bist_group_count"] = len(bist_summary)
+    return scene.model_copy(update={"macros": updated_macros, "bist_summary": bist_summary, "stats": new_stats})
+
+
+def parse_def_to_scene(
+    def_path: Path,
+    lef_macros: dict[str, dict[str, Any]],
+    *,
+    fp_ver: str,
+    prev_fp_ver: str | None = None,
+    scope_kind: str = "subblock",
+    bist_map: dict[str, dict[str, str | None] | str] | None = None,
+    hierarchy_separator: str = "/",
+    grid_size: int = 64,
+    workers: int | None = None,
+) -> FloorplanScene:
+    """High-speed DEF(.gz) + LEF extractor using C byte-chunk skipping and multi-core fork workers."""
+    bist_b_lookup: dict[bytes, tuple[str, str | None]] = {}
+    for k, v in (bist_map or {}).items():
+        clean_b = k.strip().replace("\\", "").encode("utf-8")
+        if isinstance(v, str) and v.strip():
+            bist_b_lookup[clean_b] = (v.strip(), None)
+        elif isinstance(v, dict) and v.get("bist_group"):
+            bist_b_lookup[clean_b] = (
+                str(v["bist_group"]).strip(),
+                str(v["controller"]).strip() if v.get("controller") else None,
+            )
+    has_bist = bool(bist_b_lookup)
+    sep_b = hierarchy_separator.encode("ascii")
+    master_seed, known_lef_b = _build_master_seed(lef_macros, scope_kind)
+    master_cache = dict(master_seed)
+
+    design_name = def_path.stem.removesuffix(".def")
+    dbu = 1000.0
+    die_polygon: list[tuple[float, float]] = []
+    die_bbox: tuple[float, float, float, float] = (0.0, 0.0, 1000.0, 1000.0)
+    macros: list[MacroBox] = []
+    pins: list[PinMarker] = []
+    regions: list[RegionBox] = []
+    density = [0.0] * (grid_size * grid_size)
+    mod_accs: dict[bytes, _FastModAcc] = {}
+    std_cell_count = 0
+    std_cell_area = 0.0
+
+    is_gz = def_path.name.lower().endswith(".gz")
+    file_size = def_path.stat().st_size if def_path.is_file() else 0
+    can_fork = (
+        not is_gz
+        and file_size >= PARALLEL_DEF_MIN_BYTES
+        and sys.platform.startswith("linux")
+        and "fork" in mp.get_all_start_methods()
+        and (workers or (os.cpu_count() or 1)) >= 2
+    )
+    comp_ranges: list[tuple[int, int]] = []  # Recorded during scan if can_fork is True
+
+    def _grid_factors() -> tuple[int, int, float, float, float, float]:
+        x0, y0, x1, y1 = die_bbox
+        dx_i = max(int(round((x1 - x0) * dbu)), 1)
+        dy_i = max(int(round((y1 - y0) * dbu)), 1)
+        return (
+            int(round(x0 * dbu)),
+            int(round(y0 * dbu)),
+            grid_size / dx_i,
+            grid_size / dy_i,
+            32.0 / dx_i,
+            32.0 / dy_i,
+        )
+
+    # State machine over 16 MiB raw byte chunks
+    mode: bytes = b"TOP"  # TOP | SKIP | COMPONENTS | PINS | BLOCKAGES | REGIONS | HEADER_STMT
+    skip_end_tok: bytes = b""
+    header_kw: bytes = b""
+    sec_buf = bytearray()
+    comp_rem = b""
+    comp_start_abs = 0
+    buf = b""
+    buf_abs_start = 0  # Absolute file byte offset corresponding to buf[0]
+
+    for chunk in _iter_raw_chunks(def_path, CHUNK_BYTES):
+        buf = buf + chunk
+        pos = 0
+        blen = len(buf)
+
+        while pos < blen:
+            if mode == b"SKIP":
+                # C memmem scan across multi-hundred-MB NETS / SPECIALNETS / FILLS / VIAS
+                ep = buf.find(skip_end_tok, pos)
+                if ep < 0:
+                    # Keep last 64 bytes in case 'END NETS' straddles a 16 MiB chunk boundary
+                    keep = min(64, blen - pos)
+                    drop = blen - keep
+                    buf = buf[drop:]
+                    buf_abs_start += drop
+                    pos = blen  # exit inner while -> read next chunk
+                    break
+                nl = buf.find(b"\n", ep + len(skip_end_tok))
+                pos = (nl + 1) if nl >= 0 else (ep + len(skip_end_tok))
+                mode = b"TOP"
+                continue
+
+            if mode == b"HEADER_STMT":
+                semi = buf.find(b";", pos)
+                if semi < 0:
+                    sec_buf.extend(buf[pos:])
+                    buf_abs_start += blen
+                    buf = b""
+                    break
+                sec_buf.extend(buf[pos : semi + 1])
+                pos = semi + 1
+                stmt_b = bytes(sec_buf)
+                sec_buf.clear()
+                if b"#" in stmt_b:
+                    stmt_b = _COMMENT_B_RE.sub(b"", stmt_b)
+                if header_kw == b"DESIGN":
+                    dm = re.search(rb"DESIGN\s+([^\s;]+)", stmt_b, re.IGNORECASE)
+                    if dm:
+                        design_name = dm.group(1).decode("utf-8", "replace")
+                elif header_kw == b"UNITS":
+                    um = re.search(rb"MICRONS\s+(\d+)", stmt_b, re.IGNORECASE)
+                    if um:
+                        dbu = float(int(um.group(1)))
+                elif header_kw == b"DIEAREA":
+                    pts = _expand_def_points_b(_PT_B_RE.findall(stmt_b), dbu)
+                    if len(pts) >= 3:
+                        die_polygon = pts
+                        xs = [p[0] for p in pts]
+                        ys = [p[1] for p in pts]
+                        die_bbox = (min(xs), min(ys), max(xs), max(ys))
+                mode = b"TOP"
+                continue
+
+            if mode == b"COMPONENTS":
+                if can_fork:
+                    ep = buf.find(b"END COMPONENTS", pos)
+                    if ep >= 0:
+                        end_m = _END_SEC_RES[b"COMPONENTS"].search(buf, max(pos, ep - 16), min(blen, ep + 32))
+                    elif buf.find(b"END  COMPONENTS", pos) >= 0 or buf.find(b"END\tCOMPONENTS", pos) >= 0 or buf.find(b"end components", pos) >= 0:
+                        end_m = _END_SEC_RES[b"COMPONENTS"].search(buf, pos)
+                    else:
+                        end_m = None
+                    if end_m is None:
+                        keep = min(64, blen - pos)
+                        drop = blen - keep
+                        buf = buf[drop:]
+                        buf_abs_start += drop
+                        break
+                    comp_end_abs = buf_abs_start + end_m.start()
+                    comp_ranges.append((comp_start_abs, comp_end_abs))
+                    pos = end_m.end()
+                    mode = b"TOP"
+                    continue
+
+                end_m = _END_SEC_RES[b"COMPONENTS"].search(buf, pos)
+                # Streaming single-process bytes fast path (for .def.gz or < 32 MiB .def)
+                die_x0_i, die_y0_i, inv_gx, inv_gy, inv_tx, inv_ty = _grid_factors()
+                if end_m is None:
+                    work = comp_rem + buf[pos:]
+                    last_semi = work.rfind(b";")
+                    if last_semi >= 0:
+                        c, a = _process_components_block(
+                            work[: last_semi + 1],
+                            master_cache=master_cache,
+                            known_lef_b=known_lef_b,
+                            bist_b_lookup=bist_b_lookup,
+                            has_bist=has_bist,
+                            dbu=dbu,
+                            die_x0_i=die_x0_i,
+                            die_y0_i=die_y0_i,
+                            inv_span_x_grid=inv_gx,
+                            inv_span_y_grid=inv_gy,
+                            inv_span_x_tile=inv_tx,
+                            inv_span_y_tile=inv_ty,
+                            grid_size=grid_size,
+                            sep_b=sep_b,
+                            macros_out=macros,
+                            density_out=density,
+                            mod_accs=mod_accs,
+                        )
+                        std_cell_count += c
+                        std_cell_area += a
+                        comp_rem = work[last_semi + 1 :]
+                    else:
+                        comp_rem = work
+                    buf_abs_start += blen
+                    buf = b""
+                    break
+
+                work = comp_rem + buf[pos : end_m.start()]
+                comp_rem = b""
+                if work:
+                    c, a = _process_components_block(
+                        work,
+                        master_cache=master_cache,
+                        known_lef_b=known_lef_b,
+                        bist_b_lookup=bist_b_lookup,
+                        has_bist=has_bist,
+                        dbu=dbu,
+                        die_x0_i=die_x0_i,
+                        die_y0_i=die_y0_i,
+                        inv_span_x_grid=inv_gx,
+                        inv_span_y_grid=inv_gy,
+                        inv_span_x_tile=inv_tx,
+                        inv_span_y_tile=inv_ty,
+                        grid_size=grid_size,
+                        sep_b=sep_b,
+                        macros_out=macros,
+                        density_out=density,
+                        mod_accs=mod_accs,
+                    )
+                    std_cell_count += c
+                    std_cell_area += a
+                pos = end_m.end()
+                mode = b"TOP"
+                continue
+
+            if mode in (b"PINS", b"BLOCKAGES", b"REGIONS"):
+                em = _END_SEC_RES[mode].search(buf, pos)
+                cap_reached = (mode == b"PINS" and len(pins) >= 4000) or (mode != b"PINS" and len(regions) >= 1000)
+                if cap_reached:
+                    skip_end_tok = b"END " + mode
+                    mode = b"SKIP"
+                    continue
+                if em is None:
+                    # Flush complete statements incrementally so memory stays bounded even on huge PINS
+                    work = bytes(sec_buf) + buf[pos:]
+                    sec_buf.clear()
+                    last_semi = work.rfind(b";")
+                    if last_semi >= 0:
+                        ready = work[: last_semi + 1]
+                        sec_buf.extend(work[last_semi + 1 :])
+                        if mode == b"PINS":
+                            _parse_pins_bytes(ready, dbu, die_bbox, pins)
+                        else:
+                            _parse_regions_or_blockages_bytes(ready, mode, dbu, regions)
+                    else:
+                        sec_buf.extend(work)
+                    buf_abs_start += blen
+                    buf = b""
+                    break
+
+                ready = bytes(sec_buf) + buf[pos : em.start()]
+                sec_buf.clear()
+                if ready:
+                    if mode == b"PINS":
+                        _parse_pins_bytes(ready, dbu, die_bbox, pins)
+                    else:
+                        _parse_regions_or_blockages_bytes(ready, mode, dbu, regions)
+                pos = em.end()
+                mode = b"TOP"
+                continue
+
+            # === mode == b"TOP": C regex jumps over ROW / TRACKS / GCELLGRID / comments ===
+            km = _TOP_KW_B_RE.search(buf, pos)
+            if km is None:
+                keep = min(64, blen - pos)
+                drop = blen - keep
+                buf = buf[drop:]
+                buf_abs_start += drop
+                break
+
+            kw_upper = km.group(1).upper()
+            if kw_upper in (b"DESIGN", b"UNITS", b"DIEAREA"):
+                header_kw = kw_upper
+                sec_buf.clear()
+                pos = km.start(1)
+                mode = b"HEADER_STMT"
+                continue
+
+            if kw_upper in _SKIP_SECTIONS:
+                skip_end_tok = _SKIP_SECTIONS[kw_upper]
+                pos = km.end()
+                mode = b"SKIP"
+                continue
+
+            # COMPONENTS | PINS | BLOCKAGES | REGIONS -> advance past header ';'
+            semi = buf.find(b";", km.end())
+            if semi < 0:
+                # Section header ';' is in the next chunk; keep from keyword start
+                drop = km.start()
+                buf = buf[drop:]
+                buf_abs_start += drop
+                break
+            pos = semi + 1
+            if kw_upper == b"COMPONENTS":
+                comp_rem = b""
+                comp_start_abs = buf_abs_start + pos
+                mode = b"COMPONENTS"
+            else:
+                sec_buf.clear()
+                mode = kw_upper
+
+        else:
+            buf_abs_start += blen
+            buf = b""
+
+    # Execute parallel fork range workers for large uncompressed DEF COMPONENTS
+    if can_fork and comp_ranges:
+        die_x0_i, die_y0_i, inv_gx, inv_gy, inv_tx, inv_ty = _grid_factors()
+        n_workers = min(workers or (os.cpu_count() or 4), 16)
+        sub_ranges: list[tuple[int, int]] = []
+        with def_path.open("rb") as f:
+            for c_start, c_end in comp_ranges:
+                span = c_end - c_start
+                if span <= 0:
+                    continue
+                actual_w = max(1, min(n_workers, span // (4 * 1024 * 1024) or 1))
+                cuts = [c_start]
+                for wi in range(1, actual_w):
+                    approx = c_start + (span * wi) // actual_w
+                    f.seek(approx)
+                    probe = f.read(min(65536, c_end - approx))
+                    semi_off = probe.find(b";")
+                    if semi_off >= 0:
+                        cuts.append(approx + semi_off + 1)
+                cuts.append(c_end)
+                for i in range(len(cuts) - 1):
+                    if cuts[i + 1] > cuts[i]:
+                        sub_ranges.append((cuts[i], cuts[i + 1]))
+
+        _FORK_CTX.clear()
+        _FORK_CTX.update(
+            def_path=def_path,
+            grid_size=grid_size,
+            master_seed=master_seed,
+            known_lef_b=known_lef_b,
+            bist_b_lookup=bist_b_lookup,
+            has_bist=has_bist,
+            dbu=dbu,
+            die_x0_i=die_x0_i,
+            die_y0_i=die_y0_i,
+            inv_span_x_grid=inv_gx,
+            inv_span_y_grid=inv_gy,
+            inv_span_x_tile=inv_tx,
+            inv_span_y_tile=inv_ty,
+            sep_b=sep_b,
+        )
+        try:
+            ctx_mp = mp.get_context("fork")
+            with ctx_mp.Pool(processes=min(len(sub_ranges), n_workers)) as pool:
+                results = pool.map(_fork_parse_range, sub_ranges)
+        finally:
+            _FORK_CTX.clear()
+
+        for m_part, d_part, mod_part, cnt_part, area_part in results:
+            if len(macros) < 4000:
+                macros.extend(m_part[: 4000 - len(macros)])
+            for idx in range(len(density)):
+                density[idx] += d_part[idx]
+            for pk, pacc in mod_part.items():
+                existing_acc = mod_accs.get(pk)
+                if existing_acc is not None:
+                    existing_acc.merge_from(pacc)
+                elif len(mod_accs) < 800:
+                    mod_accs[pk] = pacc
+            std_cell_count += cnt_part
+            std_cell_area += area_part
+
+    if not die_polygon:
+        if macros:
+            xs = [b for m in macros for b in (m.llx, m.bbox()[2])]
+            ys = [b for m in macros for b in (m.lly, m.bbox()[3])]
+            pad = 20.0
+            die_bbox = (round(min(xs) - pad, 2), round(min(ys) - pad, 2), round(max(xs) + pad, 2), round(max(ys) + pad, 2))
+        x0, y0, x1, y1 = die_bbox
+        die_polygon = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+
+    x0, y0, x1, y1 = die_bbox
+    tile_area = max(((x1 - x0) / grid_size) * ((y1 - y0) / grid_size), 1e-6)
+    density_pct = [min(100, int(round((val / tile_area) * 100))) for val in density]
+
+    # Clean escaped backslashes on the <= 600 module keys once (instead of 10M times per cell)
+    cleaned_mods: dict[str, _FastModAcc] = {}
+    for raw_pk, acc in mod_accs.items():
+        if acc.count == 0:
+            continue
+        pk_str = raw_pk.replace(b"\\", b"").decode("utf-8", "replace").strip(hierarchy_separator)
+        if not pk_str:
+            continue
+        prev_acc = cleaned_mods.get(pk_str)
+        if prev_acc is not None:
+            prev_acc.merge_from(acc)
+        else:
+            cleaned_mods[pk_str] = acc
+
+    inv_dbu = 1.0 / dbu
+    sorted_mods = sorted(cleaned_mods.items(), key=lambda kv: kv[1].area, reverse=True)[:250]
+    module_regions: list[ModuleRegionSummary] = []
+    for path_key, acc in sorted_mods:
+        sxs = sorted(acc.ixs)
+        sys_ = sorted(acc.iys)
+        n = len(sxs)
+        p10_x = sxs[int(n * 0.1)] * inv_dbu
+        p90_x = sxs[min(n - 1, int(n * 0.9))] * inv_dbu
+        p10_y = sys_[int(n * 0.1)] * inv_dbu
+        p90_y = sys_[min(n - 1, int(n * 0.9))] * inv_dbu
+        max_tile = max(acc.tiles) if acc.tiles else 1
+        max_tile = max(max_tile, 1)
+        bins = [
+            (t_idx & 31, t_idx >> 5, max(1, int(round(cnt / max_tile * 100))))
+            for t_idx, cnt in enumerate(acc.tiles)
+            if cnt > 0 and (cnt / max_tile) >= 0.05
+        ][:512]
+        module_regions.append(
+            ModuleRegionSummary(
+                hier_path=path_key,
+                cell_count=acc.count,
+                area_um2=round(acc.area, 2),
+                cx=round((acc.sum_ix / acc.count) * inv_dbu, 2),
+                cy=round((acc.sum_iy / acc.count) * inv_dbu, 2),
+                p10_x=round(p10_x, 2),
+                p10_y=round(p10_y, 2),
+                p90_x=round(p90_x, 2),
+                p90_y=round(p90_y, 2),
+                bins=bins,
+            )
+        )
+
+    bist_summary = _compute_bist_summary(macros, die_bbox)
     macro_area = sum(oriented_size(m.width, m.height, m.orient)[0] * oriented_size(m.width, m.height, m.orient)[1] for m in macros)
     die_area = max((x1 - x0) * (y1 - y0), 1.0)
     return FloorplanScene(

@@ -17,6 +17,7 @@ import httpx
 
 from common.area_power.jsonutil import dumps, loads
 from common.floorplan import (
+    apply_bist_map_to_scene,
     parse_def_to_scene,
     parse_lef_macros,
     reject_raw_def_or_lef,
@@ -62,6 +63,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--extra-image", dest="extra_images", action="append", default=[], metavar="KIND:VIEW:PATH",
                    help="Optional auxiliary PNG/WebP/JPEG screenshot (e.g. congestion:routing_cong:./cong.png)")
     p.add_argument("--dry-run-svg", dest="dry_run_svg", type=Path, help="Write extracted SVG locally and exit without HTTP upload")
+    p.add_argument("--workers", type=int, default=None, help="Parallel worker processes for large uncompressed DEF parsing (default: auto)")
     p.add_argument("--url", default=os.environ.get("AREA_POWER_SERVER_URL"), help="VWP-bridge base URL (or AREA_POWER_SERVER_URL)")
     p.add_argument("--timeout", type=float, default=180.0, help="HTTP timeout seconds")
     return p
@@ -95,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
             prev_fp_ver=args.prev_fp_ver.strip() if args.prev_fp_ver else None,
             scope_kind=args.scope_kind,
             bist_map=bist_map,
+            workers=args.workers,
         )
         if args.use_corporate_bist:
             sram_list = [
@@ -109,15 +112,8 @@ def main(argv: list[str] | None = None) -> int:
                 block=args.block,
                 fp_ver=args.fp_ver.strip(),
             )
-            bist_map.update(corp_map)
-            prelim = parse_def_to_scene(
-                args.def_path,
-                lef_macros,
-                fp_ver=args.fp_ver.strip(),
-                prev_fp_ver=args.prev_fp_ver.strip() if args.prev_fp_ver else None,
-                scope_kind=args.scope_kind,
-                bist_map=bist_map,
-            )
+            if corp_map:
+                prelim = apply_bist_map_to_scene(prelim, corp_map)
         svg_bytes = render_scene_svg(prelim, mode="overview")
         reject_raw_def_or_lef(svg_bytes, f"{prelim.design_name}.svg")
         scene_dict = prelim.model_dump(mode="python")

@@ -10,7 +10,7 @@ from .confluence import (
     build_standalone_review_html,
     parse_confluence_parent_config,
 )
-from .def_lef_parser import parse_def_to_scene, parse_lef_macros
+from .def_lef_parser import apply_bist_map_to_scene, parse_def_to_scene, parse_lef_macros
 from .models import (
     BistGroupSummary,
     DEF_TO_ICC2_ORIENT,
