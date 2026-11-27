@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { ArrowRight, Boxes, Check, CheckCircle2, ChevronRight, FolderPlus, Link2, Pencil, Plus, RefreshCw, ShieldCheck } from 'lucide-react'
+import { ArrowRight, Boxes, Check, CheckCircle2, ChevronRight, FolderPlus, Link2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
 import { useAtlas } from './atlasContext'
 import type { AtlasBlock, AtlasProject, AtlasVersion, UnboundArea } from './atlasContext'
 import { useDashboardAuth } from '@/features/auth/useDashboardAuth'
 import { useDashboardNavigation } from '@/lib/dashboardMode'
 import { formatVersionLabel } from '@/lib/versionUtils'
 import { BlockCreateFields, ProjectCreateFields, formatCatalogAreaNotice } from './CatalogCreateFields'
+import BlockDeleteDialog from './BlockDeleteDialog'
 import ProjectManageDialog from './ProjectManageDialog'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
@@ -15,6 +16,7 @@ export default function AtlasHome() {
   const navigate = useDashboardNavigation()
   const [kind, setKind] = useState<'project' | 'block' | null>(null)
   const [managingProject, setManagingProject] = useState<AtlasProject | null>(null)
+  const [deletingBlock, setDeletingBlock] = useState<{ project: AtlasProject; block: AtlasBlock } | null>(null)
   const [porOpen, setPorOpen] = useState(false)
   const [busyAction, setBusyAction] = useState(false)
   const [error, setError] = useState('')
@@ -105,7 +107,15 @@ export default function AtlasHome() {
         </button></li>)}</ul>}
       </div>
       <div className="atlas-picker-column">
-        <header><h2>블록{atlas.project && <span>{atlas.project.blocks.length}</span>}</h2>{catalog?.can_manage_catalog && atlas.project && <button className="atlas-button secondary" onClick={() => setKind('block')}><Plus size={15} />블록 등록</button>}</header>
+        <header>
+          <h2>블록{atlas.project && <span>{atlas.project.blocks.length}</span>}</h2>
+          {catalog?.can_manage_catalog && atlas.project && (
+            <div className="flex items-center gap-2">
+              {atlas.block && <button type="button" className="atlas-button secondary" onClick={() => setDeletingBlock({ project: atlas.project!, block: atlas.block! })}><Trash2 size={14} />블록 삭제</button>}
+              <button className="atlas-button secondary" onClick={() => setKind('block')}><Plus size={15} />블록 등록</button>
+            </div>
+          )}
+        </header>
         {!atlas.project ? <p className="atlas-picker-empty">프로젝트를 선택하면 블록이 표시됩니다.</p> : !atlas.project.blocks.length ? <p className="atlas-picker-empty">등록된 블록이 없습니다.</p> : <ul>{atlas.project.blocks.map(block => { const porText = blockPorLabel(block); return <li key={block.id}><button type="button" className="atlas-picker-item" aria-pressed={atlas.block?.id === block.id} onClick={() => select({ projectId: atlas.project!.id, blockId: block.id, versionId: '' })}>
           <span className="atlas-picker-text"><strong>{block.name}</strong><small>{porText ? `PoR: ${porText} · ` : 'PoR 미지정 · '}버전 {block.versions.length}</small></span><ChevronRight size={16} />
         </button></li> })}</ul>}
@@ -131,6 +141,22 @@ export default function AtlasHome() {
           setManagingProject(null)
           setNotice(message)
           if (deleted) select({ projectId: '', blockId: '', versionId: '' })
+        }}
+      />
+    )}
+    {deletingBlock && (
+      <BlockDeleteDialog
+        projectId={deletingBlock.project.id}
+        projectName={deletingBlock.project.name}
+        block={deletingBlock.block}
+        apiPrefix="/api/atlas"
+        api={auth.request}
+        reload={atlas.reload}
+        onClose={() => setDeletingBlock(null)}
+        onDeleted={message => {
+          setDeletingBlock(null)
+          setNotice(message)
+          select({ projectId: deletingBlock.project.id, blockId: '', versionId: '' })
         }}
       />
     )}

@@ -505,7 +505,7 @@ function ProjectComparison(props: ComparisonProps & { project: AtlasProject; pic
       netVers={[...new Set(currentBlock?.versions.map(row => row.net_ver) || [])]} currentNet={current.net}
       baselineProject={mode === 'project' && baseline?.status === 'available' && baseline.baseline_project_id ? { areaId: baseline.baseline_project_id, name: savedProject?.name || text(baseline.baseline_project?.payload.name) } : null}
       records={props.records} onSaved={props.refresh} />}
-    <details className="panel upload-history"><summary>업로드 이력 · PC CLI 메타데이터</summary><Uploads auth={props.auth} access={props.access} uploads={props.uploads} records={props.records} filters={filters} /></details>
+    <details className="panel upload-history"><summary>업로드 이력 · PC CLI 메타데이터</summary><Uploads auth={props.auth} access={props.access} uploads={props.uploads} records={props.records} filters={filters} canWrite={project.can_write} onRefresh={props.refresh} /></details>
     {currentAreaId && (
       <section className="panel history-shortcut-bar">
         <span>이 프로젝트에 저장된 비교 이력 <strong>{history.length}건</strong>을 블록·버전·코너별로 검색해 다시 열 수 있습니다.</span>

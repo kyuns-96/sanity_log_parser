@@ -370,6 +370,25 @@ class AtlasCatalog:
             area_enabled=area_enabled,
         )
 
+    def block_delete_preview(self, project_id: str, block_id: str, *, area_enabled: bool = False):
+        if not self.can_manage:
+            fail("FORBIDDEN")
+        self.project(project_id, manage=True)
+        from oa.block_lifecycle import block_delete_preview
+        return block_delete_preview(self.db, project_id, block_id, area_enabled=area_enabled)
+
+    def delete_block(self, project_id: str, block_id: str, *, force: bool = False, confirm_name: str = "", reason: str = "", area_enabled: bool = False):
+        if not self.can_manage:
+            fail("FORBIDDEN")
+        self.project(project_id, manage=True)
+        from oa.block_lifecycle import delete_block
+        return delete_block(
+            self.db, self.actor, project_id, block_id,
+            force=force, confirm_name=confirm_name, reason=reason,
+            access_store=None if self.local else self.access,
+            area_enabled=area_enabled,
+        )
+
     def set_project_status(self, project_id: str, status: str):
         if status not in ("active", "completed"):
             fail("INVALID_REQUEST")

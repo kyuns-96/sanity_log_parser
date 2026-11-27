@@ -1,28 +1,105 @@
-import { useState } from 'react'
-import { Download, FileJson } from 'lucide-react'
-import { date, formatCornerLabel, isPowerLayerUpload, jsonObject, nameOf, object, pretty, text, type AreaAccess, type Auth, type Filters, type TrackingRecord, type Upload } from './api'
+import { useEffect, useState } from 'react'
+import { Download, FileJson, Trash2 } from 'lucide-react'
+import { z } from 'zod'
+import { date, formatCornerLabel, isPowerLayerUpload, jsonObject, nameOf, object, pretty, request, text, unknownSchema, type AreaAccess, type Auth, type Filters, type TrackingRecord, type Upload } from './api'
 import { Badge, Button, CopyButton, Empty, Field, Json, JsonEditor, Modal, RecordOptions, Submit, prevent, useAction } from './components/workspace'
 import { useAtlas } from '@/features/atlas/atlasContext'
 
-export interface UploadProps { auth: Auth; access: AreaAccess; uploads: Upload[]; records: TrackingRecord[]; filters: Filters }
-export function Uploads({ auth, access, uploads, records, filters }: UploadProps) {
+const uploadDeletePreviewSchema = z.object({
+  upload_id: z.string(),
+  execution_name: z.string().nullish(),
+  original_filename: z.string().nullish(),
+  is_power_layer: z.boolean(),
+  counts: z.object({
+    dependent_power_layers: z.union([z.string(), z.number()]).transform(Number),
+    snapshot_siblings: z.union([z.string(), z.number()]).transform(Number),
+    comparisons: z.union([z.string(), z.number()]).transform(Number),
+    tracking_records: z.union([z.string(), z.number()]).transform(Number),
+  }),
+  is_standalone_unused: z.boolean(),
+  delete_available: z.boolean(),
+  can_delete: z.boolean(),
+  can_force_delete: z.boolean(),
+  blockers: z.array(z.string()),
+})
+type UploadDeletePreview = z.infer<typeof uploadDeletePreviewSchema>
+
+export interface UploadProps { auth: Auth; access: AreaAccess; uploads: Upload[]; records: TrackingRecord[]; filters: Filters; canWrite?: boolean; onRefresh?: () => Promise<void> | void }
+export function Uploads({ auth, access, uploads, records, filters, canWrite = false, onRefresh }: UploadProps) {
   const atlas = useAtlas()!
   const [detail, setDetail] = useState<Upload | null>(null)
+  const [deleting, setDeleting] = useState<Upload | null>(null)
   const [metadata, setMetadata] = useState(false)
   const action = useAction()
   const scoped = uploads.filter(row => row.project_id === filters.project_id)
   const detailProject = atlas.catalog?.projects.find(project => project.area_id === detail?.project_id)
   const detailBlock = detailProject?.blocks.find(block => block.area_id === detail?.block_id)
+  const allowDelete = (canWrite || Boolean(atlas.catalog?.can_manage_catalog)) && !auth.demo
   async function download(upload: Upload) {
     const blob = await auth.request<Blob>(`/api/area-power/uploads/${encodeURIComponent(upload.id)}/download`, undefined, 'blob')
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${upload.id}.csv.gz`; anchor.click(); URL.revokeObjectURL(url)
   }
   return <div className="upload-history-content"><div className="section-heading"><p className="muted">프로젝트의 원본과 실행 이력입니다. 비교 입력은 위에서 따로 선택하며 업로드 시각으로 자동 교체하지 않습니다.</p><Button variant="outline" onClick={() => setMetadata(true)}><FileJson size={16} />PC CLI 메타데이터</Button></div>{action.feedback}
-    {scoped.length ? <div className="table-scroll"><table><thead><tr><th>실행 / 원본</th><th>ECO_NUM</th><th>Corner</th><th>상태 / 등록</th><th>원본 / 메타데이터</th></tr></thead><tbody>{scoped.map(upload => { const ecoVal = text(object(object(upload.input_contract).metadata).eco_num).trim(); return <tr key={upload.id}><td><strong>{upload.execution_name || upload.original_filename || '이름 미확인'}</strong></td><td>{ecoVal ? <span className="tracking-eco-pill">{ecoVal}</span> : <span className="text-muted">—</span>}</td><td>{formatCornerLabel(upload)}{isPowerLayerUpload(upload) && <span className="tracking-eco-pill" style={{ marginLeft: '0.4rem' }}>Power 레이어</span>}</td><td><Badge value={upload.state} /><small>{date(upload.created_at)}</small></td><td><div className="actions"><Button variant="ghost" size="sm" onClick={() => setDetail(upload)}>메타데이터</Button><Button variant="ghost" size="icon-sm" aria-label={`${upload.execution_name || upload.id} 원본 gzip 다운로드`} disabled={action.busy} onClick={() => action.run(() => download(upload), '원본 다운로드를 요청했습니다.')}><Download size={16} /></Button></div></td></tr> })}</tbody></table></div> : <Empty title="이 프로젝트에 업로드가 없습니다">비교할 Block·버전의 수치 연결을 준비한 뒤 PC CLI용 메타데이터를 만드세요. 브라우저에서 VWP 서버로 직접 업로드하지 않습니다.</Empty>}
+    {scoped.length ? <div className="table-scroll"><table><thead><tr><th>실행 / 원본</th><th>ECO_NUM</th><th>Corner</th><th>상태 / 등록</th><th>원본 / 메타데이터</th></tr></thead><tbody>{scoped.map(upload => { const ecoVal = text(object(object(upload.input_contract).metadata).eco_num).trim(); return <tr key={upload.id}><td><strong>{upload.execution_name || upload.original_filename || '이름 미확인'}</strong></td><td>{ecoVal ? <span className="tracking-eco-pill">{ecoVal}</span> : <span className="text-muted">—</span>}</td><td>{formatCornerLabel(upload)}{isPowerLayerUpload(upload) && <span className="tracking-eco-pill" style={{ marginLeft: '0.4rem' }}>Power 레이어</span>}</td><td><Badge value={upload.state} /><small>{date(upload.created_at)}</small></td><td><div className="actions"><Button variant="ghost" size="sm" onClick={() => setDetail(upload)}>메타데이터</Button><Button variant="ghost" size="icon-sm" aria-label={`${upload.execution_name || upload.id} 원본 gzip 다운로드`} disabled={action.busy} onClick={() => action.run(() => download(upload), '원본 다운로드를 요청했습니다.')}><Download size={16} /></Button>{allowDelete && <Button variant="ghost" size="icon-sm" aria-label={`${upload.execution_name || upload.id} CSV 삭제`} disabled={action.busy} onClick={() => setDeleting(upload)}><Trash2 size={15} /></Button>}</div></td></tr> })}</tbody></table></div> : <Empty title="이 프로젝트에 업로드가 없습니다">비교할 Block·버전의 수치 연결을 준비한 뒤 PC CLI용 메타데이터를 만드세요. 브라우저에서 VWP 서버로 직접 업로드하지 않습니다.</Empty>}
     {detail && <Modal title="업로드 메타데이터" onClose={() => setDetail(null)}><div className="form-grid"><Field label="프로젝트"><input readOnly value={detailProject?.name || text(records.find(row => row.id === detail.project_id)?.payload.name) || '프로젝트 정보 없음'} /></Field><Field label="블록"><input readOnly value={detailBlock?.name || text(records.find(row => row.id === detail.block_id)?.payload.name) || '블록 정보 없음'} /></Field></div><CopyButton value={pretty(detail)} label="메타데이터 JSON 복사" /><Json label="업로드 상세" value={Object.fromEntries(Object.entries(detail).filter(([key]) => key !== 'project_id' && key !== 'block_id'))} open /><Json value={object(detail.root_summary).quality} label="입력 품질과 분류 coverage" /></Modal>}
+    {deleting && <UploadDeleteModal auth={auth} upload={deleting} onClose={() => setDeleting(null)} onDeleted={async () => { setDeleting(null); await onRefresh?.() }} />}
     {metadata && <MetadataBuilder access={access} records={records} filters={filters} onClose={() => setMetadata(false)} />}
   </div>
+}
+function UploadDeleteModal({ auth, upload, onClose, onDeleted }: { auth: Auth; upload: Upload; onClose: () => void; onDeleted: () => Promise<void> }) {
+  const [preview, setPreview] = useState<UploadDeletePreview | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [force, setForce] = useState(false)
+  const [error, setError] = useState('')
+  const action = useAction()
+  useEffect(() => {
+    let active = true
+    setLoading(true); setError(''); setForce(false)
+    request(auth, `/uploads/${encodeURIComponent(upload.id)}/delete-preview`, uploadDeletePreviewSchema)
+      .then(data => { if (active) setPreview(data) })
+      .catch(cause => { if (active) setError(cause instanceof Error ? cause.message : String(cause)) })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [auth, upload.id])
+  const label = upload.execution_name || upload.original_filename || upload.id
+  const canSubmit = Boolean(preview && preview.delete_available && (preview.is_standalone_unused || force))
+  return <Modal title={`CSV 삭제 · ${label}`} onClose={onClose}>
+    <p className="muted">Corner: <strong>{formatCornerLabel(upload)}</strong>{isPowerLayerUpload(upload) ? ' · Power 레이어' : ''}</p>
+    {error && <p className="notice error" role="alert">{error}</p>}
+    {action.feedback}
+    {loading || !preview ? <p className="muted" role="status">연관된 Power 레이어 및 비교 결과를 확인하고 있습니다…</p> : <>
+      <div className="notice">
+        <div>연관 Power 레이어: <strong>{preview.counts.dependent_power_layers}건</strong> · 동일 snapshot 형제: <strong>{preview.counts.snapshot_siblings}건</strong></div>
+        <div>연관 비교 결과: <strong>{preview.counts.comparisons}건</strong> · 추적/작업 레코드: <strong>{preview.counts.tracking_records}건</strong></div>
+      </div>
+      {!preview.delete_available && <p className="notice error">현재 DB 계정에 Area/Power 테이블 DELETE 권한이 없어 CSV를 삭제할 수 없습니다.</p>}
+      {preview.delete_available && preview.is_standalone_unused && <p className="muted">이 CSV를 참조하는 Power 레이어나 저장된 비교 결과가 없습니다. 바로 영구 삭제할 수 있습니다.</p>}
+      {preview.delete_available && !preview.is_standalone_unused && (
+        <div className="notice">
+          <p>이 CSV는 다른 Power 레이어({preview.counts.dependent_power_layers}건) 또는 비교 결과({preview.counts.comparisons}건)에서 참조 중입니다.</p>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem', cursor: 'pointer' }}>
+            <input type="checkbox" checked={force} disabled={action.busy} onChange={e => setForce(e.target.checked)} />
+            <strong>연관 Power 레이어·비교 결과까지 함께 영구 삭제 (강제 삭제)</strong>
+          </label>
+        </div>
+      )}
+    </>}
+    <div className="form-actions">
+      <Button type="button" variant="outline" disabled={action.busy} onClick={onClose}>취소</Button>
+      <Button
+        type="button"
+        variant="destructive"
+        disabled={action.busy || !canSubmit}
+        onClick={() => action.run(async () => {
+          await request(auth, `/uploads/${encodeURIComponent(upload.id)}/delete`, unknownSchema, { force: Boolean(!preview?.is_standalone_unused && force), reason: '' })
+          await onDeleted()
+        }, 'CSV 업로드를 삭제했습니다.')}
+      >
+        {preview && !preview.is_standalone_unused ? '연관 데이터 포함 삭제' : 'CSV 삭제'}
+      </Button>
+    </div>
+  </Modal>
 }
 function MetadataBuilder({ access, records, filters, onClose }: { access: AreaAccess; records: TrackingRecord[]; filters: Filters; onClose: () => void }) {
   const atlas = useAtlas()!

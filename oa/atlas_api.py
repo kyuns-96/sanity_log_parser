@@ -306,6 +306,20 @@ def create_atlas_router(authorized_dependency):
                 project_id, force=body.force, confirm_name=body.confirm_name, reason=body.reason, area_enabled=area_on,
             )
 
+    @router.get("/projects/{project_id}/blocks/{block_id}/delete-preview")
+    def block_delete_preview_route(project_id: ID, block_id: ID, request: Request, actor=Depends(authorized_dependency, scope="function")):
+        area_on = bool(getattr(request.app.state, "area_power_enabled", False))
+        with context(actor, readonly=True) as store:
+            return store.block_delete_preview(project_id, block_id, area_enabled=area_on)
+
+    @router.post("/projects/{project_id}/blocks/{block_id}/delete")
+    def delete_block_route(project_id: ID, block_id: ID, body: ProjectDelete, request: Request, actor=Depends(mutation)):
+        area_on = bool(getattr(request.app.state, "area_power_enabled", False))
+        with context(actor) as store:
+            return store.delete_block(
+                project_id, block_id, force=body.force, confirm_name=body.confirm_name, reason=body.reason, area_enabled=area_on,
+            )
+
     @router.post("/blocks/{block_id}/por")
     def block_por(block_id: ID, body: PorAssign, actor=Depends(mutation)):
         with context(actor) as store:

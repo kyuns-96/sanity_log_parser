@@ -314,6 +314,22 @@ class AccessStore:
                         req["status"] = "REJECTED"
                         req["decided_by"] = event["actor_id"]
                         req["decision_reason"] = "PROJECT_DELETED"
+            elif kind == "BLOCK_DELETE":
+                if (set(data) != {"project_id", "block_id", "force", "reason"}
+                        or not _identifier(data["project_id"]) or not _identifier(data["block_id"])
+                        or type(data["force"]) is not bool or not _text(data["reason"], 1000, empty=True)
+                        or data["project_id"] not in projects or data["block_id"] not in blocks
+                        or blocks[data["block_id"]]["project_id"] != data["project_id"]):
+                    _error()
+                bid = data["block_id"]
+                del blocks[bid]
+                for gid in [k for k, g in grants.items() if g.get("block_id") == bid]:
+                    del grants[gid]
+                for req in requests.values():
+                    if req.get("block_id") == bid and req["status"] == "PENDING":
+                        req["status"] = "REJECTED"
+                        req["decided_by"] = event["actor_id"]
+                        req["decision_reason"] = "BLOCK_DELETED"
             else:
                 _error()
         self._validate_registry(projects, blocks)
@@ -372,6 +388,19 @@ class AccessStore:
         command_id = str(uuid4())
         return self._append(command_id, "PROJECT_DELETE", actor, {
             "project_id": project_id, "force": bool(force), "reason": reason,
+        })
+
+    def record_block_deleted(self, actor, project_id, block_id, *, force=False, reason=""):
+        self._admin(actor)
+        if not _identifier(project_id) or not _identifier(block_id) or not _text(reason, 1000, empty=True):
+            _error("INVALID_REQUEST")
+        state = self._state()
+        if project_id not in state["projects"] or block_id not in state["blocks"] or state["blocks"][block_id]["project_id"] != project_id:
+            _error("RESOURCE_NOT_FOUND")
+        from uuid import uuid4
+        command_id = str(uuid4())
+        return self._append(command_id, "BLOCK_DELETE", actor, {
+            "project_id": project_id, "block_id": block_id, "force": bool(force), "reason": reason,
         })
 
     def catalog(self, *, include_hidden=False):

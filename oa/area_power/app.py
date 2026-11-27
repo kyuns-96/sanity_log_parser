@@ -23,10 +23,10 @@ from oa.sanity_auth import AuthError
 from .access import AreaAccess
 from .schemas import (
     AlertStateInput, BaselineInput, CONFIG_TYPES, ConfigInput, ProcessInput, RejudgeInput,
-    RerunInput, SelectionInput,
+    RerunInput, SelectionInput, UploadDeleteInput,
 )
 from .service import Service
-from . import analysis_deletion, mapping_suggestions, tracking, triage
+from . import analysis_deletion, mapping_suggestions, tracking, triage, upload_deletion
 from .mapping_suggestions import Approval, ProposalInput
 from .tracking import PreviewInput
 from .triage import TriageInput, TriageMailInput
@@ -193,6 +193,14 @@ def create_area_power_router(authorized_dependency, authenticated_dependency):
             "Content-Disposition": f'attachment; filename="{identifier}.csv.gz"',
             "X-Content-Type-Options": "nosniff",
         })
+
+    @router.get("/uploads/{identifier}/delete-preview")
+    def upload_delete_preview(identifier: UUID, context=Depends(service)):
+        return json(upload_deletion.preview(context, identifier))
+
+    @router.post("/uploads/{identifier}/delete")
+    def delete_upload(identifier: UUID, body: UploadDeleteInput, context=Depends(service)):
+        return json(upload_deletion.remove(context, identifier, force=body.force, reason=body.reason))
 
     @router.get("/records")
     def records(scope=Depends(filters), context=Depends(service),

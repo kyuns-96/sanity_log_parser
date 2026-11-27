@@ -119,3 +119,8 @@ class AlertStateInput(Input):
 
 class RerunInput(Input):
     expected_row_version: int | None = Field(default=None, ge=1)
+
+
+class UploadDeleteInput(Input):
+    force: bool = False
+    reason: str = Field(default="", max_length=500)

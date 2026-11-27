@@ -195,6 +195,27 @@ def create_access_router(authenticated_dependency):
             block_name=body.name.strip(),
         )
 
+    @router.get("/api/admin/projects/{project_id}/blocks/{block_id}/delete-preview")
+    def block_delete_preview_admin(project_id: Identifier, block_id: Identifier, request: Request, actor=Depends(authenticated_dependency)):
+        from oa.block_lifecycle import block_delete_preview
+        area_on = bool(getattr(request.app.state, "area_power_enabled", False))
+        with _access(actor) as store:
+            store.require_admin(actor)
+            return block_delete_preview(store.db, project_id, block_id, area_enabled=area_on)
+
+    @router.post("/api/admin/projects/{project_id}/blocks/{block_id}/delete")
+    def delete_block_admin(project_id: Identifier, block_id: Identifier, body: ProjectDeleteCommand, request: Request, actor=Depends(authenticated_dependency)):
+        require_mutation_request(request)
+        from oa.block_lifecycle import delete_block
+        area_on = bool(getattr(request.app.state, "area_power_enabled", False))
+        with _access(actor, write=True) as store:
+            store.require_admin(actor)
+            return delete_block(
+                store.db, actor, project_id, block_id,
+                force=body.force, confirm_name=body.confirm_name, reason=body.reason,
+                access_store=store, area_enabled=area_on,
+            )
+
     @router.post("/api/admin/requests/{request_id}/decision")
     def decision(request_id: UUID, body: DecisionCommand, request: Request, actor=Depends(authenticated_dependency)):
         require_mutation_request(request)

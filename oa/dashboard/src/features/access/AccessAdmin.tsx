@@ -10,10 +10,11 @@ import AIConnectionsAdmin from '@/features/ai/AIConnectionsAdmin'
 import { AreaTrackingAdmin } from '@/features/area-power/TrackingSettings'
 import UserGrants from './UserGrants'
 import { BlockCreateFields, ProjectCreateFields, formatCatalogAreaNotice } from '@/features/atlas/CatalogCreateFields'
+import BlockDeleteDialog from '@/features/atlas/BlockDeleteDialog'
 import ProjectManageDialog from '@/features/atlas/ProjectManageDialog'
 import type { AccessScreenProps } from './AccessWelcome'
 import { accessError, requestStatus, roleLabel, scopeName } from './accessApi'
-import type { AccessCatalog, AccessGrant, AccessProject, AccessRequest, AdminAccess } from './accessApi'
+import type { AccessBlock, AccessCatalog, AccessGrant, AccessProject, AccessRequest, AdminAccess } from './accessApi'
 
 type Decision = { kind: 'request'; value: AccessRequest; decision: 'APPROVE' | 'REJECT' } | { kind: 'revoke'; value: AccessGrant }
 
@@ -39,6 +40,7 @@ export default function AccessAdmin(props: AccessScreenProps) {
   const [commandId, setCommandId] = useState(() => crypto.randomUUID())
   const [includeHidden, setIncludeHidden] = useState(true)
   const [managing, setManaging] = useState<{ project: AccessProject; tab: 'edit' | 'visibility' | 'delete' } | null>(null)
+  const [deletingBlock, setDeletingBlock] = useState<{ project: AccessProject; block: AccessBlock } | null>(null)
 
   const catalogPath = includeHidden ? '/api/access/catalog?include_hidden=true' : '/api/access/catalog'
 
@@ -158,7 +160,21 @@ export default function AccessAdmin(props: AccessScreenProps) {
               </div>
               {project.description && <p>{project.description}</p>}
               <div className="am-block-tags">
-                {catalog.blocks.filter(block => block.project_id === project.id).map(block => <span key={block.id}>{block.name}</span>)}
+                {catalog.blocks.filter(block => block.project_id === project.id).map(block => (
+                  <span key={block.id} className="inline-flex items-center gap-1">
+                    {block.name}
+                    <button
+                      type="button"
+                      aria-label={`${project.name} ${block.name} 블록 삭제`}
+                      title={`${block.name} 블록 삭제`}
+                      disabled={busy}
+                      className="ml-0.5 rounded p-0.5 text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
+                      onClick={() => setDeletingBlock({ project, block })}
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
                 {!catalog.blocks.some(block => block.project_id === project.id) && <span>아직 등록된 블록이 없습니다.</span>}
               </div>
             </div>
@@ -184,6 +200,21 @@ export default function AccessAdmin(props: AccessScreenProps) {
         onClose={() => setManaging(null)}
         onCompleted={message => {
           setManaging(null)
+          setNotice(message)
+        }}
+      />
+    )}
+    {deletingBlock && (
+      <BlockDeleteDialog
+        projectId={deletingBlock.project.id}
+        projectName={deletingBlock.project.name}
+        block={deletingBlock.block}
+        apiPrefix="/api/admin"
+        api={api}
+        reload={refresh}
+        onClose={() => setDeletingBlock(null)}
+        onDeleted={message => {
+          setDeletingBlock(null)
           setNotice(message)
         }}
       />
